@@ -6,6 +6,7 @@ using System.Net.Http;
 using System.Net.Mail;
 using System.Text;
 using System.Threading.Tasks;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace AccessAPP.Services
 {
@@ -43,7 +44,7 @@ namespace AccessAPP.Services
                         {
                             var pincodeResult = checkPincodeReply.GetResult();
                             ResponseModel responseBody = Helper.CreateResponseWithMessage(macAddress, result, pincodeResult.Msg,  pincodeResult.Ack);
-
+                            responseBody.PinCodeAccepted = true;
                             var pincodeCheckResult = new PincodeCheckResponseModel
                             {
                                 Status = result.StatusCode.ToString(),

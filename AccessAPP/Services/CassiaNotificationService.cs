@@ -29,7 +29,7 @@ public class CassiaNotificationService : IDisposable
             using (var stream = await response.Content.ReadAsStreamAsync())
             using (var reader = new System.IO.StreamReader(stream))
             {
-                while (!reader.EndOfStream)
+                while (true/*!reader.EndOfStream*/)
                 {
                     string line = await reader.ReadLineAsync();
 
