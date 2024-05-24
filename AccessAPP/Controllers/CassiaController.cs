@@ -59,52 +59,86 @@ namespace AccessAPP.Controllers
             }
         }
 
+
+        [HttpDelete("disconnect")]
+        public async Task<IActionResult> DisconnectToBleDevice([FromBody] List<string> macAddresses)
+        {
+            try
+            {
+                string gatewayIpAddress = "192.168.0.20";
+
+                var responses = new List<ResponseModel>();
+
+                //before connecting to the device, try logging in to the device
+                foreach (var macAddress in macAddresses)
+                {
+                    var response = await _connectService.DisconnectFromBleDevice(gatewayIpAddress, macAddress, 0);
+                    responses.Add(response);
+                }
+                return Ok(responses);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error: {ex.Message}");
+            }
+        }
+
         [HttpGet("Login")]
-        public async Task<IActionResult> Login([FromBody] LoginRequestModel model)
+        public async Task<IActionResult> Login([FromBody] List<LoginRequestModel> models)
         {
             try
             {
                 string gatewayIpAddress = "192.168.0.20";
                 int gatewayPort = 80;
-
-
-                string macAddress = model.MacAddress;
-                string pincode = model.Pincode;
-
-                if (string.IsNullOrEmpty(macAddress))
+                var responses = new List<LoginResponseModel>();
+                foreach (var model in models)
                 {
-                    return BadRequest(new { error = "Bad Request", message = "Missing required parameter {macAddress}" });
-                }
+                    string macAddress = model.MacAddress;
+                    string pincode = model.Pincode;
 
-                var connectResult = await _connectService.ConnectToBleDevice(gatewayIpAddress, gatewayPort, macAddress);
-
-                if (connectResult.Status.ToString() == "OK")
-                {
-                    var loginResult = await _connectService.AttemptLogin(gatewayIpAddress, macAddress);
-
-                    if (loginResult.ResponseBody.PincodeRequired && string.IsNullOrEmpty(pincode))
+                    if (string.IsNullOrEmpty(macAddress))
                     {
-                        var disconnected = await _connectService.DisconnectFromBleDevice(gatewayIpAddress, macAddress, 3);
+                        return BadRequest(new { error = "Bad Request", message = "Missing required parameter {macAddress}" });
+                    }
 
-                        if (disconnected.Status.ToString() == "OK")
+                    var connectResult = await _connectService.ConnectToBleDevice(gatewayIpAddress, gatewayPort, macAddress);
+
+                    if (connectResult.Status.ToString() == "OK")
+                    {
+                        var loginResult = await _connectService.AttemptLogin(gatewayIpAddress, macAddress);
+
+                        if (loginResult.ResponseBody.PincodeRequired && string.IsNullOrEmpty(pincode))
                         {
-                            return StatusCode(Convert.ToInt32(loginResult.ResponseBody.Status), new { loginResult.Status, loginResult.ResponseBody });
+                            var disconnected = await _connectService.DisconnectFromBleDevice(gatewayIpAddress, macAddress, 3);
+
+                            //if (disconnected.Status.ToString() == "OK")
+                            //{
+                            //    return StatusCode(Convert.ToInt32(loginResult.ResponseBody.Status), new { loginResult.Status, loginResult.ResponseBody });
+                            //}
                         }
+
+                        else if (loginResult.ResponseBody.PincodeRequired && !string.IsNullOrEmpty(pincode))
+                        {
+                            var checkPincodeResponse = await _cassiaPinCodeService.CheckPincode(gatewayIpAddress, macAddress, pincode);
+                            loginResult.ResponseBody = checkPincodeResponse.ResponseBody;
+                            if (!checkPincodeResponse.ResponseBody.PinCodeAccepted)
+                            {
+                                var disconnected = await _connectService.DisconnectFromBleDevice(gatewayIpAddress, macAddress, 3);
+                            }
+
+                        }
+
+                        
+                        responses.Add(loginResult);
+                        //return StatusCode(Convert.ToInt32(checkPincodeResponse.ResponseBody.Status), checkPincodeResponse);
                     }
-
-                    var checkPincodeResponse = await _cassiaPinCodeService.CheckPincode(gatewayIpAddress, macAddress, pincode);
-
-                    if (!checkPincodeResponse.ResponseBody.PinCodeAccepted)
+                    else
                     {
-                        var disconnected = await _connectService.DisconnectFromBleDevice(gatewayIpAddress, macAddress, 3);
+                        return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred" });
                     }
 
-                    return StatusCode(Convert.ToInt32(checkPincodeResponse.ResponseBody.Status), checkPincodeResponse);
                 }
-                else
-                {
-                    return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred" });
-                }
+                return Ok(responses);
             }
             catch (Exception ex)
             {
