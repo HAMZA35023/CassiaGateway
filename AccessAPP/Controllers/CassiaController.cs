@@ -38,7 +38,7 @@ namespace AccessAPP.Controllers
                 return StatusCode(500, $"Error starting scan: {ex.Message}");
             }
         }
-        [HttpGet("nearbydevices")]
+        [HttpGet("scannearbydevices")]
         public async Task<IActionResult> FetchNearbyDevices([FromQuery] int minRssi = -100)
         {
             try
