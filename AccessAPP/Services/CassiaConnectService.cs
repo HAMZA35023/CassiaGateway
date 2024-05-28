@@ -1,7 +1,9 @@
 ﻿using AccessAPP.Models;
 using AccessAPP.Services.HelperClasses;
 using Microsoft.AspNetCore.Mvc;
+using Newtonsoft.Json;
 using System;
+using System.Net;
 using System.Net.Http;
 using System.Net.Mail;
 using System.Text;
@@ -45,6 +47,33 @@ namespace AccessAPP.Services
                 throw new Exception($"Error: {ex.Message}");
             }
         }
+        public async Task<ConnectedDevicesView> GetConnectedBleDevices(string gatewayIpAddress, int gatewayPort)
+        {
+            try
+            {
+                // Endpoint to get connected BLE devices
+                string getConnectedDevicesEndpoint = $"http://{gatewayIpAddress}:{gatewayPort}/gap/nodes?connection_state=connected";
+
+                // Send GET request to get the list of connected BLE devices
+                HttpResponseMessage getResponse = await _httpClient.GetAsync(getConnectedDevicesEndpoint);
+
+                if (getResponse.IsSuccessStatusCode)
+                {
+                    string responseBody = await getResponse.Content.ReadAsStringAsync();
+                    var connectedDevices = JsonConvert.DeserializeObject<ConnectedDevicesView>(responseBody);
+                    return connectedDevices;
+                }
+                else
+                {
+                    throw new Exception($"Failed to get connected devices: {getResponse.ReasonPhrase}");
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Error: {ex.Message}");
+            }
+        }
+
         public async Task<ResponseModel> DisconnectFromBleDevice(string gatewayIpAddress, string macAddress, int retries)
         {
             try
@@ -60,12 +89,72 @@ namespace AccessAPP.Services
                 // Check if the request was successful
                 if (response.IsSuccessStatusCode)
                 {
-                    return  Helper.CreateResponse(macAddress, response);
+                    return Helper.CreateResponse(macAddress, response);
                 }
                 else
                 {
                     // Handle unsuccessful response
-                    return  Helper.CreateResponse(macAddress, response);
+                    return Helper.CreateResponse(macAddress, response);
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Error: {ex.Message}");
+            }
+        }
+        public async Task<DataResponseModel> GetDataFromBleDevice(string gatewayIpAddress, int gatewayPort, string macAddress, string value)
+        {
+            try
+            {
+                // Write BLE message
+                CassiaReadWriteService cassiaReadWrite = new CassiaReadWriteService();
+                var result = await cassiaReadWrite.WriteBleMessage(gatewayIpAddress, macAddress, 19, value, "?noresponse=1");
+
+                using (var cassiaListener = new CassiaNotificationService())
+                {
+                    var responseTask = new TaskCompletionSource<DataResponseModel>();
+
+                    cassiaListener.Subscribe(macAddress, (sender, data) =>
+                    {
+                        // Process the notification data
+                        var response = new GenericTelegramReply(data); 
+
+                        var responseResult = response.DataResult;
+                        DataResponseModel responseBody = new DataResponseModel
+                        {
+                            MacAddress = macAddress,
+                            Data = responseResult,
+                            Time = DateTimeOffset.Now.ToUnixTimeMilliseconds(),
+                            Status = result.StatusCode,
+                        };
+
+                        responseTask.TrySetResult(responseBody);
+
+                    });
+
+                    // Wait for the response or timeout
+                    var completedTask = await Task.WhenAny(responseTask.Task, Task.Delay(TimeSpan.FromSeconds(120)));
+
+                    // Unsubscribe from notifications
+                    // cassiaListener.Unsubscribe(macAddress);
+
+                    // Check if the response task completed
+                    if (completedTask == responseTask.Task)
+                    {
+                        return await responseTask.Task;
+                    }
+                    else
+                    {
+                        // Handle timeout
+                        return new DataResponseModel
+                        {
+                            MacAddress = macAddress,
+                            Data = "Timeout",
+                            Time = DateTimeOffset.Now.ToUnixTimeMilliseconds(),
+                            Status = HttpStatusCode.RequestTimeout,
+                            
+                        };
+                    }
                 }
             }
             catch (Exception ex)
@@ -92,7 +181,7 @@ namespace AccessAPP.Services
                             var loginReplyResult = loginReply.GetResult();
                             ResponseModel responseBody = new ResponseModel();
                             responseBody = Helper.CreateResponseWithMessage(macAddress, result, loginReplyResult.Msg, loginReplyResult.PincodeRequired);
-                            
+
                             var attemptLoginResult = new LoginResponseModel
                             {
                                 Status = result.StatusCode.ToString(),

@@ -30,15 +30,30 @@ namespace AccessAPP.Controllers
             {
                 string gatewayIpAddress = "192.168.0.20";
                 int gatewayPort = 80;
-                await _scanService.ScanForBleDevices(gatewayIpAddress, gatewayPort);
-                return Ok("Scan started successfully.");
+                var scannedDevices = await _scanService.ScanForBleDevices(gatewayIpAddress, gatewayPort);
+                return Ok(scannedDevices);
             }
             catch (Exception ex)
             {
                 return StatusCode(500, $"Error starting scan: {ex.Message}");
             }
         }
+        [HttpGet("nearbydevices")]
+        public async Task<IActionResult> FetchNearbyDevices([FromQuery] int minRssi = -100)
+        {
+            try
+            {
+                string gatewayIpAddress = "192.168.0.20";
+                int gatewayPort = 80;
 
+                var nearbyDevices = await _scanService.FetchNearbyDevices(gatewayIpAddress, gatewayPort, minRssi);
+                return Ok(nearbyDevices);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error: {ex.Message}");
+            }
+        }
 
         [HttpPost("connect")]
         public async Task<IActionResult> ConnectToBleDevice()
@@ -52,6 +67,22 @@ namespace AccessAPP.Controllers
                 //before connecting to the device, try logging in to the device
                 var isConnected = await _connectService.ConnectToBleDevice(gatewayIpAddress, gatewayPort, macAddress);
                 return Ok($"Device {macAddress} connected: {isConnected.Status}");
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error: {ex.Message}");
+            }
+        }
+        [HttpGet("getconnecteddevices")]
+        public async Task<IActionResult> GetConnectedDevices()
+        {
+            try
+            {
+                string gatewayIpAddress = "192.168.0.20";
+                int gatewayPort = 80;
+
+                var connectedDevicesResponse = await _connectService.GetConnectedBleDevices(gatewayIpAddress, gatewayPort);
+                return Ok(connectedDevicesResponse);
             }
             catch (Exception ex)
             {
@@ -146,6 +177,29 @@ namespace AccessAPP.Controllers
                 return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred" });
             }
         }
+
+        [HttpPost("getdata")]
+        public async Task<IActionResult> GetDataFromBleDevices([FromBody] List<DeviceRequest> deviceRequests)
+        {
+            try
+            {
+                string gatewayIpAddress = "192.168.0.20";
+                int gatewayPort = 80;
+                var tasks = deviceRequests.Select(async request =>
+                {
+                    return await _connectService.GetDataFromBleDevice(gatewayIpAddress, gatewayPort, request.MacAddress, request.Value);
+                });
+
+                var results = await Task.WhenAll(tasks);
+
+                return Ok(results);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error: {ex.Message}");
+            }
+        }
+
 
     }
 }

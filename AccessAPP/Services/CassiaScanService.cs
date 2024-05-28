@@ -1,5 +1,10 @@
-﻿using AccessAPP.Models;
-using System.Text.Json;
+﻿using System;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
+using AccessAPP.Models;
+using Newtonsoft.Json;
 
 namespace AccessAPP.Services
 {
@@ -16,36 +21,40 @@ namespace AccessAPP.Services
             _cassiaConnectService = new CassiaConnectService(httpClient);
         }
 
-        public async Task ScanForBleDevices(string gatewayIpAddress, int gatewayPort)
+        public async Task<List<ScannedDevicesView>> ScanForBleDevices(string gatewayIpAddress, int gatewayPort)
         {
             try
             {
                 // Define the duration of each scan in milliseconds
                 int scanDuration = 5000; // 5 seconds
+                var nearbyDevices = new List<ScannedDevicesView>();
 
-                while (true)
+                // Step 1: Subscribe to the Server-Sent Events (SSE) endpoint
+                string sseEndpoint = $"http://{gatewayIpAddress}:{gatewayPort}/gap/nodes?event=1";
+                var request = new HttpRequestMessage(HttpMethod.Get, sseEndpoint);
+                request.Headers.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("text/event-stream"));
+
+                using (var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead))
                 {
-                    // Step 1: Subscribe to the Server-Sent Events (SSE) endpoint
-                    string sseEndpoint = $"http://{gatewayIpAddress}:{gatewayPort}/gap/nodes?event=1";
-                    var request = new HttpRequestMessage(HttpMethod.Get, sseEndpoint);
-                    request.Headers.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("text/event-stream"));
+                    response.EnsureSuccessStatusCode();
 
-                    using (var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead))
+                    // Start a task to wait for 5 seconds
+                    var cancellationTokenSource = new CancellationTokenSource(scanDuration);
+                    var delayTask = Task.Delay(scanDuration, cancellationTokenSource.Token);
+
+                    // Step 2: Process SSE events
+                    await ProcessSSEEvents(response, eventData =>
                     {
-                        response.EnsureSuccessStatusCode();
+                        // Parse each eventData as a ScannedDevicesView and add it to the list
+                        var device = eventData;
+                        nearbyDevices.Add(device);
+                    }, cancellationTokenSource.Token);
 
-                        // Step 2: Process SSE events
-                        await ProcessSSEEvents(response, eventData =>
-                        {
-                            // Process each eventData as it comes
-                            _eventDataList.Add(eventData);
-                        });
-                    }
-                    // Pause execution for the scan duration
-                    await Task.Delay(scanDuration);
-
-                    
+                    // Wait for the scan duration or until cancellation is requested
+                    await delayTask;
                 }
+
+                return nearbyDevices;
             }
             catch (Exception ex)
             {
@@ -53,7 +62,54 @@ namespace AccessAPP.Services
             }
         }
 
-        private async Task ProcessSSEEvents(HttpResponseMessage response, Action<ScannedDevicesView> callback)
+        public async Task<List<ScannedDevicesView>> FetchNearbyDevices(string gatewayIpAddress, int gatewayPort, int minRssi)
+        {
+            try
+            {
+                // Define the duration of each scan in milliseconds
+                int scanDuration = 5000; // 5 seconds
+                var nearbyDevices = new List<ScannedDevicesView>();
+
+                // Step 1: Subscribe to the Server-Sent Events (SSE) endpoint
+                string sseEndpoint = $"http://{gatewayIpAddress}:{gatewayPort}/gap/nodes?event=1";
+                var request = new HttpRequestMessage(HttpMethod.Get, sseEndpoint);
+                request.Headers.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("text/event-stream"));
+
+                using (var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead))
+                {
+                    response.EnsureSuccessStatusCode();
+
+                    // Start a task to wait for 5 seconds
+                    var cancellationTokenSource = new CancellationTokenSource(scanDuration);
+                    var delayTask = Task.Delay(scanDuration, cancellationTokenSource.Token);
+
+                    // Step 2: Process SSE events
+                    await ProcessSSEEvents(response, eventData =>
+                    {
+                        // Parse each eventData as a ScannedDevicesView and add it to the list
+                        var device = eventData;
+                        nearbyDevices.Add(device);
+                    }, cancellationTokenSource.Token);
+
+                    // Wait for the scan duration or until cancellation is requested
+                    await delayTask;
+                }
+
+                var filteredDevices = nearbyDevices.Where(device => device.rssi < minRssi).ToList();
+                return filteredDevices;
+            }
+            catch (OperationCanceledException)
+            {
+                // Handle cancellation due to timeout
+                return new List<ScannedDevicesView>();
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Error: {ex.Message}");
+            }
+        }
+
+        private async Task ProcessSSEEvents(HttpResponseMessage response, Action<ScannedDevicesView> callback, CancellationToken cancellationToken)
         {
             try
             {
@@ -62,6 +118,9 @@ namespace AccessAPP.Services
                 {
                     while (!reader.EndOfStream)
                     {
+                        // Check for cancellation before reading the next line
+                        cancellationToken.ThrowIfCancellationRequested();
+
                         string line = await reader.ReadLineAsync();
                         // Process the SSE event
                         Console.WriteLine(line);
@@ -73,11 +132,16 @@ namespace AccessAPP.Services
                                 line = line.Substring("data:".Length).Trim();
                             }
                             // Parse the JSON data from the SSE event
-                            var eventData = JsonSerializer.Deserialize<ScannedDevicesView>(line);
+                            var eventData = JsonConvert.DeserializeObject<ScannedDevicesView>(line);
                             callback(eventData); // Call the callback with the parsed data
                         }
                     }
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                // Handle cancellation due to timeout
+                Console.WriteLine("SSE event processing canceled due to timeout.");
             }
             catch (Exception ex)
             {
