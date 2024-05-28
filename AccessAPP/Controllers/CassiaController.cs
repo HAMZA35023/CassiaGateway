@@ -56,13 +56,12 @@ namespace AccessAPP.Controllers
         }
 
         [HttpPost("connect")]
-        public async Task<IActionResult> ConnectToBleDevice()
+        public async Task<IActionResult> ConnectToBleDevice([FromBody] string macAddress)
         {
             try
             {
                 string gatewayIpAddress = "192.168.0.20";
                 int gatewayPort = 80;
-                string macAddress = "10:B9:F7:0F:83:39";
 
                 //before connecting to the device, try logging in to the device
                 var isConnected = await _connectService.ConnectToBleDevice(gatewayIpAddress, gatewayPort, macAddress);
