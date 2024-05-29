@@ -1,9 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Net.Http;
-using System.Threading;
-using System.Threading.Tasks;
-using AccessAPP.Models;
+﻿using AccessAPP.Models;
 using Newtonsoft.Json;
 
 namespace AccessAPP.Services

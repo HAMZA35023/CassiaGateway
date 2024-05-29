@@ -1,7 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-
-namespace AccessAPP.Services.HelperClasses
+﻿namespace AccessAPP.Services.HelperClasses
 {
     public class CheckPincodeReply
     {

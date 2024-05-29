@@ -1,9 +1,4 @@
 ﻿using AccessAPP.Models;
-using AccessAPP.Services.Helper_Classes;
-using System;
-using System.Linq;
-using System.Text;
-using System.Text.RegularExpressions;
 
 namespace AccessAPP.Services.HelperClasses
 {
@@ -32,16 +27,16 @@ namespace AccessAPP.Services.HelperClasses
             int payloadInt = int.Parse(Payload);
 
             // Convert the integer to a hexadecimal string, padded to 4 characters
-            string hexPayload = payloadInt.ToString("X4"); 
+            string hexPayload = payloadInt.ToString("X4");
 
             // Convert the reversed hexadecimal string to a byte array
             telegramModel.Payload = StringToByteArray(hexPayload);
 
             // Create the telegram string
-            return ReplaceSubstring(telegramHelper.CreateTelegram(telegramModel), "CC21", "E331"); 
+            return ReplaceSubstring(telegramHelper.CreateTelegram(telegramModel), "CC21", "E331");
         }
 
-      
+
         private byte[] StringToByteArray(string hex)
         {
             int length = hex.Length / 2;

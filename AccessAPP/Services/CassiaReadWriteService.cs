@@ -1,6 +1,4 @@
-﻿using System.Net.Http;
-
-namespace AccessAPP.Services
+﻿namespace AccessAPP.Services
 {
     public class CassiaReadWriteService
     {
@@ -25,8 +23,8 @@ namespace AccessAPP.Services
                     // You can add additional processing logic here if needed
                     return response;
                 }
-                
-                
+
+
             }
             catch (Exception ex)
             {

@@ -1,6 +1,4 @@
-﻿using System.Xml.Linq;
-
-namespace AccessAPP.Models
+﻿namespace AccessAPP.Models
 {
     public class ConnectedDevicesView
     {

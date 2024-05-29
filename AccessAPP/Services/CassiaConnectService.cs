@@ -2,12 +2,8 @@
 using AccessAPP.Services.HelperClasses;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
-using System;
 using System.Net;
-using System.Net.Http;
-using System.Net.Mail;
 using System.Text;
-using System.Threading.Tasks;
 
 namespace AccessAPP.Services
 {
@@ -117,7 +113,7 @@ namespace AccessAPP.Services
                     cassiaListener.Subscribe(macAddress, (sender, data) =>
                     {
                         // Process the notification data
-                        var response = new GenericTelegramReply(data); 
+                        var response = new GenericTelegramReply(data);
 
                         var responseResult = response.DataResult;
                         DataResponseModel responseBody = new DataResponseModel
@@ -152,7 +148,7 @@ namespace AccessAPP.Services
                             Data = "Timeout",
                             Time = DateTimeOffset.Now.ToUnixTimeMilliseconds(),
                             Status = HttpStatusCode.RequestTimeout,
-                            
+
                         };
                     }
                 }
@@ -219,6 +215,56 @@ namespace AccessAPP.Services
             catch (Exception ex)
             {
                 throw new Exception($"Error: {ex.Message}");
+            }
+        }
+        public async Task<PairResponse> PairDevice(string gatewayIpAddress, int gatewayPort, string macAddress, PairRequest pairRequest)
+        {
+            try
+            {
+                var requestUrl = $"http://{gatewayIpAddress}:{gatewayPort}/management/nodes/{macAddress}/pair";
+                var jsonContent = JsonConvert.SerializeObject(pairRequest);
+                var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
+
+                var response = await _httpClient.PostAsync(requestUrl, content);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    var responseContent = await response.Content.ReadAsStringAsync();
+                    return JsonConvert.DeserializeObject<PairResponse>(responseContent);
+                }
+                else
+                {
+                    throw new Exception($"Pairing failed with status code: {response.StatusCode}");
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Error pairing device {macAddress}: {ex.Message}");
+            }
+        }
+        public async Task<UnpairResponse> UnpairDevice(string gatewayIpAddress, int gatewayPort, string macAddress)
+        {
+            try
+            {
+                var requestUrl = $"http://{gatewayIpAddress}:{gatewayPort}/management/nodes/{macAddress}/bond";
+                var response = await _httpClient.DeleteAsync(requestUrl);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    return new UnpairResponse
+                    {
+                        MacAddress = macAddress,
+                        Status = "Unpairing successful"
+                    };
+                }
+                else
+                {
+                    throw new Exception($"Unpairing failed with status code: {response.StatusCode}");
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Error unpairing device {macAddress}: {ex.Message}");
             }
         }
 

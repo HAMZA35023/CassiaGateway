@@ -1,6 +1,4 @@
-﻿using System;
-
-namespace AccessAPP.Services.HelperClasses
+﻿namespace AccessAPP.Services.HelperClasses
 {
     public class GenericTelegramReply
     {

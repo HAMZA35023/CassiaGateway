@@ -1,8 +1,5 @@
-﻿using System;
-using System.Net.Http;
-using System.Threading.Tasks;
+﻿using System.Collections.Concurrent;
 using System.Text.Json;
-using System.Collections.Concurrent;
 
 public class CassiaNotificationService : IDisposable
 {
@@ -45,7 +42,7 @@ public class CassiaNotificationService : IDisposable
                         line = line.Substring("data:".Length).Trim();
                         Task.Run(() => InvokeHandlers(line));
                     }
-                    
+
                 }
             }
         }

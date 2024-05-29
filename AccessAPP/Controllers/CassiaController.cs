@@ -1,10 +1,6 @@
 using AccessAPP.Models;
 using AccessAPP.Services;
 using Microsoft.AspNetCore.Mvc;
-using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
-using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace AccessAPP.Controllers
 {
@@ -158,7 +154,7 @@ namespace AccessAPP.Controllers
 
                         }
 
-                        
+
                         responses.Add(loginResult);
                         //return StatusCode(Convert.ToInt32(checkPincodeResponse.ResponseBody.Status), checkPincodeResponse);
                     }
@@ -198,7 +194,58 @@ namespace AccessAPP.Controllers
                 return StatusCode(500, $"Error: {ex.Message}");
             }
         }
+        [HttpPost("pairdevices")]
+        public async Task<IActionResult> PairDevices([FromBody] PairDevicesRequest pairDevicesRequest)
+        {
+            try
+            {
+                string gatewayIpAddress = "192.168.0.20";
+                int gatewayPort = 80;
+                var tasks = pairDevicesRequest.macAddresses.Select(async macAddress =>
+                {
+                    var pairRequest = new PairRequest
+                    {
+                        IoCapability = pairDevicesRequest.IoCapability,
+                        Oob = pairDevicesRequest.Oob,
+                        Timeout = pairDevicesRequest.Timeout,
+                        Type = pairDevicesRequest.Type,
+                        Bond = pairDevicesRequest.Bond
+                    };
 
+                    return await _connectService.PairDevice(gatewayIpAddress, gatewayPort, macAddress, pairRequest);
+                });
+
+                var results = await Task.WhenAll(tasks);
+
+                return Ok(results);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error: {ex.Message}");
+            }
+        }
+
+        [HttpDelete("unpairdevices")]
+        public async Task<IActionResult> UnpairDevices([FromBody] UnpairDevicesRequest unpairDevicesRequest)
+        {
+            try
+            {
+                string gatewayIpAddress = "192.168.0.20";
+                int gatewayPort = 80;
+                var tasks = unpairDevicesRequest.MacAddresses.Select(async macAddress =>
+                {
+                    return await _connectService.UnpairDevice(gatewayIpAddress, gatewayPort, macAddress);
+                });
+
+                var results = await Task.WhenAll(tasks);
+
+                return Ok(results);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error: {ex.Message}");
+            }
+        }
 
     }
 }

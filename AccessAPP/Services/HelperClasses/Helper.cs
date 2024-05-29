@@ -5,7 +5,7 @@ namespace AccessAPP.Services
 {
     public static class Helper
     {
-        
+
         public static ResponseModel CreateResponse(string macAddress, dynamic result)
         {
             return new ResponseModel
