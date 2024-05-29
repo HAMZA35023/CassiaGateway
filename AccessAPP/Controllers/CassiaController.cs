@@ -195,29 +195,15 @@ namespace AccessAPP.Controllers
             }
         }
         [HttpPost("pairdevices")]
-        public async Task<IActionResult> PairDevices([FromBody] PairDevicesRequest pairDevicesRequest)
+        public IActionResult PairDevices([FromBody] PairDevicesRequest pairDevicesRequest)
         {
             try
             {
                 string gatewayIpAddress = "192.168.0.20";
                 int gatewayPort = 80;
-                var tasks = pairDevicesRequest.macAddresses.Select(async macAddress =>
-                {
-                    var pairRequest = new PairRequest
-                    {
-                        IoCapability = pairDevicesRequest.IoCapability,
-                        Oob = pairDevicesRequest.Oob,
-                        Timeout = pairDevicesRequest.Timeout,
-                        Type = pairDevicesRequest.Type,
-                        Bond = pairDevicesRequest.Bond
-                    };
-
-                    return await _connectService.PairDevice(gatewayIpAddress, gatewayPort, macAddress, pairRequest);
-                });
-
-                var results = await Task.WhenAll(tasks);
-
-                return Ok(results);
+                var result =_connectService.PairDevice(gatewayIpAddress, gatewayPort, pairDevicesRequest);
+               
+                return Ok(result);
             }
             catch (Exception ex)
             {
@@ -226,20 +212,34 @@ namespace AccessAPP.Controllers
         }
 
         [HttpDelete("unpairdevices")]
-        public async Task<IActionResult> UnpairDevices([FromBody] UnpairDevicesRequest unpairDevicesRequest)
+        public IActionResult UnpairDevices([FromBody] UnpairDevicesRequest unpairDevicesRequest)
         {
             try
             {
                 string gatewayIpAddress = "192.168.0.20";
                 int gatewayPort = 80;
-                var tasks = unpairDevicesRequest.MacAddresses.Select(async macAddress =>
-                {
-                    return await _connectService.UnpairDevice(gatewayIpAddress, gatewayPort, macAddress);
-                });
+                var result =  _connectService.UnpairDevice(gatewayIpAddress, gatewayPort, unpairDevicesRequest);
+                
 
-                var results = await Task.WhenAll(tasks);
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error: {ex.Message}");
+            }
+        }
 
-                return Ok(results);
+        [HttpGet("getpaireddevices")]
+        public IActionResult GetPairedDevices()
+        {
+            try
+            {
+                string gatewayIpAddress = "192.168.0.20";
+                int gatewayPort = 80;
+                var result = _connectService.GetPairedDevices();
+
+
+                return Ok(result);
             }
             catch (Exception ex)
             {

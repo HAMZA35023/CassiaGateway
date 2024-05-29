@@ -217,56 +217,96 @@ namespace AccessAPP.Services
                 throw new Exception($"Error: {ex.Message}");
             }
         }
-        public async Task<PairResponse> PairDevice(string gatewayIpAddress, int gatewayPort, string macAddress, PairRequest pairRequest)
+        public PairResponse PairDevice(string gatewayIpAddress, int gatewayPort, PairDevicesRequest pairDevicesRequest)
         {
             try
             {
-                var requestUrl = $"http://{gatewayIpAddress}:{gatewayPort}/management/nodes/{macAddress}/pair";
-                var jsonContent = JsonConvert.SerializeObject(pairRequest);
-                var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
+                // Specify the directory path
+                string directoryPath = "PairRequests";
 
-                var response = await _httpClient.PostAsync(requestUrl, content);
+                // Check if the directory exists, create it if necessary
+                if (!Directory.Exists(directoryPath))
+                {
+                    Directory.CreateDirectory(directoryPath);
+                }
 
-                if (response.IsSuccessStatusCode)
+                // Generate the file path
+                string filePath = Path.Combine(directoryPath, "pairRequest.txt");
+
+                // Join the mac addresses into a single string separated by commas
+                // Append the mac addresses to the text file
+                foreach (var macAddress in pairDevicesRequest.macAddresses)
                 {
-                    var responseContent = await response.Content.ReadAsStringAsync();
-                    return JsonConvert.DeserializeObject<PairResponse>(responseContent);
+                    File.AppendAllText(filePath, macAddress + Environment.NewLine);
                 }
-                else
-                {
-                    throw new Exception($"Pairing failed with status code: {response.StatusCode}");
-                }
+
+                return new PairResponse { PairingStatus = "Success", Message = $"Devices paired: {string.Join(",", pairDevicesRequest.macAddresses)}" };
             }
             catch (Exception ex)
             {
-                throw new Exception($"Error pairing device {macAddress}: {ex.Message}");
+                throw new Exception($"Error pairing devices: {ex.Message}");
             }
         }
-        public async Task<UnpairResponse> UnpairDevice(string gatewayIpAddress, int gatewayPort, string macAddress)
+
+        public UnpairResponse UnpairDevice(string gatewayIpAddress, int gatewayPort, UnpairDevicesRequest unpairDevicesRequest)
         {
             try
             {
-                var requestUrl = $"http://{gatewayIpAddress}:{gatewayPort}/management/nodes/{macAddress}/bond";
-                var response = await _httpClient.DeleteAsync(requestUrl);
+                // Specify the directory path
+                string directoryPath = "PairRequests";
 
-                if (response.IsSuccessStatusCode)
+                // Generate the file path
+                string filePath = Path.Combine(directoryPath, "pairRequest.txt");
+
+                // Read all lines from the file
+                string[] lines = File.ReadAllLines(filePath);
+
+                // Remove the specified mac addresses from the list
+                var updatedLines = lines.Where(line => !unpairDevicesRequest.MacAddresses.Contains(line.Trim())).ToList();
+
+                // Write the updated content back to the file
+                File.WriteAllLines(filePath, updatedLines);
+
+                return new UnpairResponse
                 {
-                    return new UnpairResponse
-                    {
-                        MacAddress = macAddress,
-                        Status = "Unpairing successful"
-                    };
-                }
-                else
-                {
-                    throw new Exception($"Unpairing failed with status code: {response.StatusCode}");
-                }
+                    MacAddress = string.Join(",", unpairDevicesRequest.MacAddresses),
+                    Status = "Unpairing successful"
+                };
             }
             catch (Exception ex)
             {
-                throw new Exception($"Error unpairing device {macAddress}: {ex.Message}");
+                throw new Exception($"Error unpairing devices: {ex.Message}");
             }
         }
+
+        public List<string> GetPairedDevices()
+        {
+            try
+            {
+                // Specify the directory path
+                string directoryPath = "PairRequests";
+
+                // Generate the file path
+                string filePath = Path.Combine(directoryPath, "pairRequest.txt");
+
+                // Check if the file exists
+                if (!File.Exists(filePath))
+                {
+                    // If the file doesn't exist, return an empty list
+                    return new List<string>();
+                }
+
+                // Read all lines from the file and return them as a list
+                return File.ReadAllLines(filePath).ToList();
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Error getting paired devices: {ex.Message}");
+            }
+        }
+
+
+
 
     }
 }

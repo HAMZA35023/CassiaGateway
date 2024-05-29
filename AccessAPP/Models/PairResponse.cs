@@ -6,6 +6,6 @@ namespace AccessAPP.Models
     {
         public int PairingStatusCode { get; set; }
         public string PairingStatus { get; set; }
-        public string Display { get; set; }
+        public string Message { get; set; }
     }
 }
