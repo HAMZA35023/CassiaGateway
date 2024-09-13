@@ -40,7 +40,7 @@ namespace AccessAPP.Services
             }
             catch (Exception ex)
             {
-                throw new Exception($"Error: {ex.Message}");
+                throw new Exception($"Error: {ex.Message + ex.StackTrace}");
             }
         }
         public async Task<ConnectedDevicesView> GetConnectedBleDevices(string gatewayIpAddress, int gatewayPort)
@@ -66,7 +66,7 @@ namespace AccessAPP.Services
             }
             catch (Exception ex)
             {
-                throw new Exception($"Error: {ex.Message}");
+                throw new Exception($"Error: {ex.Message + ex.StackTrace}");
             }
         }
 
@@ -95,7 +95,7 @@ namespace AccessAPP.Services
             }
             catch (Exception ex)
             {
-                throw new Exception($"Error: {ex.Message}");
+                throw new Exception($"Error: {ex.Message + ex.StackTrace}");
             }
         }
         public async Task<DataResponseModel> GetDataFromBleDevice(string gatewayIpAddress, int gatewayPort, string macAddress, string value)
@@ -155,7 +155,7 @@ namespace AccessAPP.Services
             }
             catch (Exception ex)
             {
-                throw new Exception($"Error: {ex.Message}");
+                throw new Exception($"Error: {ex.Message + ex.StackTrace}");
             }
         }
         public async Task<LoginResponseModel> AttemptLogin(string gatewayIpAddress, string macAddress)
@@ -214,7 +214,7 @@ namespace AccessAPP.Services
             }
             catch (Exception ex)
             {
-                throw new Exception($"Error: {ex.Message}");
+                throw new Exception($"Error: {ex.Message + ex.StackTrace}");
             }
         }
         public PairResponse PairDevice(string gatewayIpAddress, int gatewayPort, PairDevicesRequest pairDevicesRequest)
@@ -244,7 +244,7 @@ namespace AccessAPP.Services
             }
             catch (Exception ex)
             {
-                throw new Exception($"Error pairing devices: {ex.Message}");
+                throw new Exception($"Error pairing devices: {ex.Message + ex.StackTrace}");
             }
         }
 
@@ -275,7 +275,7 @@ namespace AccessAPP.Services
             }
             catch (Exception ex)
             {
-                throw new Exception($"Error unpairing devices: {ex.Message}");
+                throw new Exception($"Error unpairing devices: {ex.Message + ex.StackTrace}");
             }
         }
 
@@ -301,7 +301,7 @@ namespace AccessAPP.Services
             }
             catch (Exception ex)
             {
-                throw new Exception($"Error getting paired devices: {ex.Message}");
+                throw new Exception($"Error getting paired devices: {ex.Message + ex.StackTrace}");
             }
         }
 

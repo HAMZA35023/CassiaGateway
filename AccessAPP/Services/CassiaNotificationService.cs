@@ -31,6 +31,7 @@ public class CassiaNotificationService : IDisposable
                     string line = await reader.ReadLineAsync();
 
                     // Ignore keep-alive messages and empty lines
+                    
                     if (string.IsNullOrWhiteSpace(line) || line.Equals(":keep-alive"))
                     {
                         continue;
@@ -48,7 +49,7 @@ public class CassiaNotificationService : IDisposable
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error: {ex.Message}");
+            Console.WriteLine($"Error: {ex.Message + ex.StackTrace}");
         }
     }
 
@@ -84,7 +85,7 @@ public class CassiaNotificationService : IDisposable
         }
         catch (JsonException ex)
         {
-            Console.WriteLine($"Error parsing JSON: {ex.Message}");
+            Console.WriteLine($"Error parsing JSON: {ex.Message + ex.StackTrace}");
         }
     }
 

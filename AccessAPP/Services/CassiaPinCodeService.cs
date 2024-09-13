@@ -70,7 +70,7 @@ namespace AccessAPP.Services
             }
             catch (Exception ex)
             {
-                throw new Exception($"Error: {ex.Message}");
+                throw new Exception($"Error: {ex.Message + ex.StackTrace}");
             }
         }
 
