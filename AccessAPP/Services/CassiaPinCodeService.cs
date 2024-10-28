@@ -6,12 +6,14 @@ namespace AccessAPP.Services
     public class CassiaPinCodeService
     {
         private readonly HttpClient _httpClient;
+        private readonly IConfiguration _configuration;
         public int Status { get; set; }
         public object ResponseBody { get; set; }
 
-        public CassiaPinCodeService(HttpClient httpClient)
+        public CassiaPinCodeService(HttpClient httpClient, IConfiguration configuration)
         {
             _httpClient = httpClient;
+            _configuration = configuration;
         }
 
         public async Task<PincodeCheckResponseModel> CheckPincode(string gatewayIpAddress, string macAddress, string pincode)
@@ -25,7 +27,7 @@ namespace AccessAPP.Services
                 CassiaReadWriteService cassiaReadWrite = new CassiaReadWriteService();
                 var result = await cassiaReadWrite.WriteBleMessage(gatewayIpAddress, macAddress, 19, checkPincodeBytes, "?noresponse=1");
 
-                using (var cassiaListener = new CassiaNotificationService())
+                using (var cassiaListener = new CassiaNotificationService(_configuration))
                 {
                     var pincodeCheckResultTask = new TaskCompletionSource<PincodeCheckResponseModel>();
 
