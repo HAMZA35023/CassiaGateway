@@ -1,6 +1,7 @@
 ﻿using AccessAPP.Models;
 using AccessAPP.Services.HelperClasses;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using Newtonsoft.Json;
 using System.Net;
 using System.Net.Http;
@@ -11,12 +12,14 @@ namespace AccessAPP.Services
     public class CassiaConnectService
     {
         private readonly HttpClient _httpClient;
+        private readonly IConfiguration _configuration;
         public int Status { get; set; }
         public object ResponseBody { get; set; }
 
-        public CassiaConnectService(HttpClient httpClient)
+        public CassiaConnectService(HttpClient httpClient, IConfiguration configuration)
         {
             _httpClient = httpClient;
+            _configuration = configuration;
         }
 
         public async Task<ResponseModel> ConnectToBleDevice(string gatewayIpAddress, int gatewayPort, string macAddress)
@@ -165,7 +168,7 @@ namespace AccessAPP.Services
                 CassiaReadWriteService cassiaReadWrite = new CassiaReadWriteService();
                 var result = await cassiaReadWrite.WriteBleMessage(gatewayIpAddress, macAddress, 19, value, "?noresponse=1");
 
-                using (var cassiaListener = new CassiaNotificationService())
+                using (var cassiaListener = new CassiaNotificationService(_configuration))
                 {
                     var responseTask = new TaskCompletionSource<DataResponseModel>();
 
@@ -224,7 +227,7 @@ namespace AccessAPP.Services
                 string hexLoginValue = new LoginTelegram().Create();
                 CassiaReadWriteService cassiaReadWrite = new CassiaReadWriteService();
                 var result = await cassiaReadWrite.WriteBleMessage(gatewayIpAddress, macAddress, 19, hexLoginValue, "?noresponse=1");
-                using (var cassiaListener = new CassiaNotificationService())
+                using (var cassiaListener = new CassiaNotificationService(_configuration))
                 {
                     var loginResultTask = new TaskCompletionSource<LoginResponseModel>();
 
