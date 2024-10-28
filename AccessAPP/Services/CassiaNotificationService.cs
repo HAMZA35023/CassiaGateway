@@ -17,7 +17,7 @@ public class CassiaNotificationService : IDisposable
 
     private async Task StartListening()
     {
-        string eventSourceUrl = "http://192.168.0.20/gatt/nodes?event=1";
+        string eventSourceUrl = "http://192.168.0.24/gatt/nodes?event=1";
 
         try
         {

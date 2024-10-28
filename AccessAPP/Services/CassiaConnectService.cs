@@ -3,6 +3,7 @@ using AccessAPP.Services.HelperClasses;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
 using System.Net;
+using System.Net.Http;
 using System.Text;
 
 namespace AccessAPP.Services
@@ -43,6 +44,64 @@ namespace AccessAPP.Services
                 throw new Exception($"Error: {ex.Message + ex.StackTrace}");
             }
         }
+
+        public async Task<ResponseModel> BatchConnectDevices(string gatewayIpAddress, List<string> macAddresses)
+        {
+            try
+            {
+                // Prepare the payload for the batch connect request
+                var list = macAddresses.Select(mac => new { type = "public", addr = mac }).ToList();
+                var payload = new
+                {
+                    list = list,
+                    timeout = 5000, // Optional: Timeout per device
+                    per_dev_timeout = 10000 // Optional: Total timeout per device
+                };
+
+                // Batch connect endpoint
+                string batchConnectEndpoint = $"http://{gatewayIpAddress}/gap/batch-connect";
+
+                // Serialize the payload and create the request
+                var jsonPayload = JsonConvert.SerializeObject(payload); // Serialize the object into JSON
+
+                // Corrected to use a valid MediaTypeHeaderValue instead of string
+                var request = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+
+                // Send POST request to batch connect the BLE devices
+                HttpResponseMessage batchConnectResponse = await _httpClient.PostAsync(batchConnectEndpoint, request);
+
+                // Return the response formatted as ResponseModel
+                return Helper.CreateResponse("BatchConnect", batchConnectResponse);
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Error during batch connect: {ex.Message + ex.StackTrace}");
+            }
+        }
+
+
+
+        public async Task<ResponseModel> SendControlToLight(string gatewayIpAddress, string macAddress, string hexControlValue)
+        {
+            try
+            {
+                // Define the write BLE message endpoint
+                string writeEndpoint = $"http://{gatewayIpAddress}/gatt/nodes/{macAddress}/handle/19/value/{hexControlValue}?noresponse=1";
+
+                // Send the write BLE message request
+                HttpResponseMessage writeResponse = await _httpClient.GetAsync(writeEndpoint);
+
+                // Return the response as ResponseModel
+                return Helper.CreateResponse(macAddress, writeResponse);
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Error while sending control to light: {ex.Message + ex.StackTrace}");
+            }
+        }
+
+
+
         public async Task<ConnectedDevicesView> GetConnectedBleDevices(string gatewayIpAddress, int gatewayPort)
         {
             try
@@ -196,6 +255,7 @@ namespace AccessAPP.Services
                     //cassiaListener.Unsubscribe(macAddress);
 
                     // Check if the login task completed
+                    
                     if (completedTask == loginTask)
                     {
                         return await loginTask;

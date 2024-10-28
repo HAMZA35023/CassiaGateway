@@ -1,6 +1,8 @@
 using AccessAPP.Models;
 using AccessAPP.Services;
+using Amazon.Runtime.Internal;
 using Microsoft.AspNetCore.Mvc;
+using Newtonsoft.Json.Linq;
 using System.Net;
 using System.Net.Mail;
 
@@ -14,14 +16,16 @@ namespace AccessAPP.Controllers
         private readonly CassiaConnectService _connectService;
         private readonly CassiaPinCodeService _cassiaPinCodeService;
         private readonly DeviceStorageService _deviceStorageService;
+        private readonly CassiaFirmwareUpgradeService _firmwareUpgradeService;
 
 
-        public CassiaController(CassiaScanService scanService, CassiaConnectService connectService, CassiaPinCodeService cassiaPinCodeService, DeviceStorageService deviceStorageService)
+        public CassiaController(CassiaScanService scanService, CassiaConnectService connectService, CassiaPinCodeService cassiaPinCodeService, DeviceStorageService deviceStorageService, CassiaFirmwareUpgradeService firmwareUpgradeService)
         {
             _scanService = scanService;
             _connectService = connectService;
             _cassiaPinCodeService = cassiaPinCodeService;
             _deviceStorageService = deviceStorageService;
+            _firmwareUpgradeService = firmwareUpgradeService;
         }
 
         [HttpGet("scan")]
@@ -29,7 +33,7 @@ namespace AccessAPP.Controllers
         {
             try
             {
-                string gatewayIpAddress = "192.168.0.20";
+                string gatewayIpAddress = "192.168.0.24";
                 int gatewayPort = 80;
                 var scannedDevices = await _scanService.ScanForBleDevices(gatewayIpAddress, gatewayPort);
                 return Ok(scannedDevices);
@@ -47,7 +51,7 @@ namespace AccessAPP.Controllers
         //{
         //    try
         //    {
-        //        string gatewayIpAddress = "192.168.0.20";
+        //        string gatewayIpAddress = "192.168.0.24";
         //        int gatewayPort = 80;
 
         //        var nearbyDevices = await _scanService.FetchNearbyDevices(gatewayIpAddress, gatewayPort, minRssi);
@@ -64,7 +68,7 @@ namespace AccessAPP.Controllers
         {
             try
             {
-                string gatewayIpAddress = "192.168.0.20";
+                string gatewayIpAddress = "192.168.0.24";
                 int gatewayPort = 80;
 
                 // Start SSE processing in the background
@@ -105,7 +109,7 @@ namespace AccessAPP.Controllers
         {
             try
             {
-                string gatewayIpAddress = "192.168.0.20";
+                string gatewayIpAddress = "192.168.0.24";
                 int gatewayPort = 80;
                 var responses = new List<ResponseModel>();
 
@@ -128,7 +132,7 @@ namespace AccessAPP.Controllers
         {
             try
             {
-                string gatewayIpAddress = "192.168.0.20";
+                string gatewayIpAddress = "192.168.0.24";
                 int gatewayPort = 80;
 
                 var connectedDevicesResponse = await _connectService.GetConnectedBleDevices(gatewayIpAddress, gatewayPort);
@@ -146,7 +150,7 @@ namespace AccessAPP.Controllers
         {
             try
             {
-                string gatewayIpAddress = "192.168.0.20";
+                string gatewayIpAddress = "192.168.0.24";
 
                 var responses = new List<ResponseModel>();
 
@@ -170,7 +174,7 @@ namespace AccessAPP.Controllers
         {
             try
             {
-                string gatewayIpAddress = "192.168.0.20";
+                string gatewayIpAddress = "192.168.0.24";
                 var responses = new List<LoginResponseModel>();
 
                 foreach (var model in models)
@@ -183,7 +187,7 @@ namespace AccessAPP.Controllers
                         return BadRequest(new { error = "Bad Request", message = "Missing required parameter {macAddress}" });
                     }
 
-                    var connectResult = await _connectService.ConnectToBleDevice(gatewayIpAddress,80, macAddress);
+                    var connectResult = await _connectService.ConnectToBleDevice(gatewayIpAddress, 80, macAddress);
 
                     if (connectResult.Status.ToString() == "OK")
                     {
@@ -218,10 +222,10 @@ namespace AccessAPP.Controllers
         [HttpGet("attemptlogin")]
         public async Task<IActionResult> attemptlogin([FromBody] List<LoginRequestModel> models)
         {
-            string gatewayIpAddress = "192.168.0.20";
+            string gatewayIpAddress = "192.168.0.24";
             var responses = new List<LoginResponseModel>();
 
-            foreach(var model in models)
+            foreach (var model in models)
             {
                 string macAddress = model.MacAddress;
                 string pincode = model.Pincode;
@@ -229,14 +233,14 @@ namespace AccessAPP.Controllers
                 responses.Add(loginResult);
             }
             return Ok(responses);
-            
+
         }
-        
+
         //public async Task<IActionResult> Login([FromBody] List<LoginRequestModel> models)
         //{
         //    try
         //    {
-        //        string gatewayIpAddress = "192.168.0.20";
+        //        string gatewayIpAddress = "192.168.0.24";
         //        int gatewayPort = 80;
         //        var responses = new List<LoginResponseModel>();
         //        foreach (var model in models)
@@ -301,7 +305,7 @@ namespace AccessAPP.Controllers
         {
             try
             {
-                string gatewayIpAddress = "192.168.0.20";
+                string gatewayIpAddress = "192.168.0.24";
                 int gatewayPort = 80;
                 var tasks = deviceRequests.Select(async request =>
                 {
@@ -322,10 +326,10 @@ namespace AccessAPP.Controllers
         {
             try
             {
-                string gatewayIpAddress = "192.168.0.20";
+                string gatewayIpAddress = "192.168.0.24";
                 int gatewayPort = 80;
-                var result =_connectService.PairDevice(gatewayIpAddress, gatewayPort, pairDevicesRequest);
-               
+                var result = _connectService.PairDevice(gatewayIpAddress, gatewayPort, pairDevicesRequest);
+
                 return Ok(result);
             }
             catch (Exception ex)
@@ -339,10 +343,10 @@ namespace AccessAPP.Controllers
         {
             try
             {
-                string gatewayIpAddress = "192.168.0.20";
+                string gatewayIpAddress = "192.168.0.24";
                 int gatewayPort = 80;
-                var result =  _connectService.UnpairDevice(gatewayIpAddress, gatewayPort, unpairDevicesRequest);
-                
+                var result = _connectService.UnpairDevice(gatewayIpAddress, gatewayPort, unpairDevicesRequest);
+
 
                 return Ok(result);
             }
@@ -357,7 +361,7 @@ namespace AccessAPP.Controllers
         {
             try
             {
-                string gatewayIpAddress = "192.168.0.20";
+                string gatewayIpAddress = "192.168.0.24";
                 int gatewayPort = 80;
                 var result = _connectService.GetPairedDevices();
 
@@ -370,5 +374,215 @@ namespace AccessAPP.Controllers
             }
         }
 
+        [HttpPost("startSensorUpgrade")]
+        public async Task<IActionResult> StartSensorUpgrade([FromBody] FirmwareUpgradeRequest request)
+        {
+            string gatewayIpAddress = "192.168.0.24";
+            string nodeMac = request.MacAddress;
+            string pincode = request.Pincode;
+
+            try
+            {
+                // Check if an upgrade is already in progress for this device
+                if (false) // we will check if BLE Device already in boot mode here
+                {
+                    return Conflict(new { message = "Firmware upgrade already in progress for this device." });
+                }
+
+                // Step 1: Connect to the device
+                var connectionResult = await _connectService.ConnectToBleDevice(gatewayIpAddress, 80, nodeMac);
+                if (connectionResult.Status != HttpStatusCode.OK)
+                {
+                    return StatusCode((int)connectionResult.Status, new { message = "Failed to connect to device." });
+                }
+
+                Console.WriteLine("Connected to device...");
+
+                bool isAlreadyInBootMode = await _firmwareUpgradeService.CheckIfDeviceInBootMode(gatewayIpAddress, nodeMac);
+                if (false)
+                {
+                    Console.WriteLine("Device is already in boot mode.");
+
+                }
+                else 
+                {
+                    // Step 2: Attempt login if needed
+                    var loginResult = await _connectService.AttemptLogin(gatewayIpAddress, nodeMac);
+                    if (loginResult.ResponseBody.PincodeRequired && !string.IsNullOrEmpty(pincode))
+                    {
+                        var checkPincodeResponse = await _cassiaPinCodeService.CheckPincode(gatewayIpAddress, nodeMac, pincode);
+                        loginResult.ResponseBody = checkPincodeResponse.ResponseBody;
+                    }
+
+                    if (loginResult.ResponseBody.PincodeRequired && !loginResult.ResponseBody.PinCodeAccepted)
+                    {
+                        return Unauthorized(new { message = "Failed to login to the device." });
+                    }
+
+                    Console.WriteLine("Logged into device...");
+
+
+                    // Send Jump to Bootloader telegram
+                    var jumpToBootResponse = await _firmwareUpgradeService.SendJumpToBootloader(gatewayIpAddress, nodeMac, "01");
+                    if (jumpToBootResponse.Status != HttpStatusCode.OK)
+                    {
+                        return StatusCode((int)jumpToBootResponse.Status, new { message = "Failed to enter boot mode." });
+                    }
+
+                    Console.WriteLine(jumpToBootResponse);
+                }
+                
+                //    // Delay and reconnect to ensure the device is in boot mode
+                //    await Task.Delay(3000);
+                //    connectionResult = await _connectService.ConnectToBleDevice(gatewayIpAddress, 80, nodeMac);
+                //    if (connectionResult.Status != HttpStatusCode.OK)
+                //    {
+                //        return StatusCode((int)connectionResult.Status, new { message = "Reconnection failed after entering boot mode." });
+                //    }
+                //    Console.WriteLine("Reconnected...");
+
+                //    // Check again if in boot mode
+                //    isAlreadyInBootMode = await _firmwareUpgradeService.CheckIfDeviceInBootMode(gatewayIpAddress, nodeMac);
+                //    if (!isAlreadyInBootMode)
+                //    {
+                //        return StatusCode(500, new { message = "Device failed to enter boot mode after reconnection." });
+                //    }
+                //}
+
+                //Console.WriteLine("Device is now in boot mode...");
+
+                //// Step 4: Open notifications
+                //bool notificationOpen = await _firmwareUpgradeService.OpenNotification(gatewayIpAddress, nodeMac);
+                //if (!notificationOpen)
+                //{
+                //    return StatusCode(500, new { message = "Failed to open notifications." });
+                //}
+
+                //Console.WriteLine("Notifications opened...");
+
+                //// Step 5: Initiate Firmware Upgrade
+                //var firmwareUpgradeResult = await _firmwareUpgradeService.InitiateFirmwareUpgrade(gatewayIpAddress, nodeMac);
+                //if (firmwareUpgradeResult.Status != "Upgrade successful")
+                //{
+                //    return StatusCode(500, new { message = firmwareUpgradeResult.Message });
+                //}
+
+                return Ok(new { message = "We are here so all good" });
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("Error during firmware upgrade: " + ex.Message + ex.StackTrace);
+                return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
+            }
+        }
+
+
+
+
+
+        // API to connect to a BLE device and send a telegram to control the light
+        [HttpPost("controlLight")]
+        public async Task<IActionResult> ControlLight([FromBody] List<LightControlRequest> lightControlRequests)
+        {
+            try
+            {
+                string gatewayIpAddress = "192.168.0.24";
+                int gatewayPort = 80;
+                var responses = new List<string>();
+
+                // Loop through each device (MAC address) and send the telegram
+                foreach (var lightControlRequest in lightControlRequests)
+                {
+                    string macAddress = lightControlRequest.MacAddress;
+                    string hexLoginValue = lightControlRequest.HexLoginValue; // telegram in hex format
+
+                    // Step 1: Connect to the BLE device
+                    var connectResponse = await _connectService.ConnectToBleDevice(gatewayIpAddress, gatewayPort, macAddress);
+
+                    if (connectResponse.Status.ToString() != "OK")
+                    {
+                        responses.Add($"Failed to connect to device: {macAddress}");
+                        continue; // Skip to the next device if connection fails
+                    }
+
+                    // Step 2: Send the telegram to the BLE device using WriteBleMessage method
+                    CassiaReadWriteService cassiaReadWrite = new CassiaReadWriteService();
+                    var writeResponse = await cassiaReadWrite.WriteBleMessage(gatewayIpAddress, macAddress, 19, hexLoginValue, "?noresponse=1");
+
+                    if (writeResponse.IsSuccessStatusCode)
+                    {
+                        responses.Add($"Light control telegram sent successfully to device: {macAddress}");
+                    }
+                    else
+                    {
+                        responses.Add($"Failed to send telegram to device: {macAddress}, Reason: {writeResponse.ReasonPhrase}");
+                    }
+
+                    //await Task.Delay(1500);
+                }
+
+                // Return all responses as a result
+                return Ok(responses);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error: {ex.Message + ex.StackTrace}");
+            }
+        }
+
+
+        //[HttpPost("batchlightcontrol")]
+        //public async Task<IActionResult> BatchLightControl([FromBody] List<LightControlRequest> lightControlRequests)
+        //{
+        //    try
+        //    {
+        //        string gatewayIpAddress = "192.168.0.24";
+        //        // Fetch the list of MacAddresses
+        //        List<string> macAddresses = lightControlRequests.Select(r => r.MacAddress).ToList();
+        //        // Step 1: Call the batch connect method
+        //        var batchConnectResponse = await _connectService.BatchConnectDevices(gatewayIpAddress, macAddresses);
+
+        //        if (batchConnectResponse.Status.ToString() != "OK")
+        //        {
+        //            return StatusCode(500, "Failed to batch connect devices.");
+        //        }
+
+        //        // Step 2: Initialize SSE listener and wait for connected devices
+        //        var connectedDevices = new List<string>();
+        //        using (var cassiaNotificationService = new CassiaNotificationService())
+        //        {
+        //            foreach (var macAddress in macAddresses)
+        //            {
+        //                // Subscribe to each MAC address for connection events
+        //                cassiaNotificationService.Subscribe(macAddress, (sender, eventData) =>
+        //                {
+        //                    connectedDevices.Add(macAddress);
+        //                });
+        //            }
+
+        //            // Wait for devices to connect (adjust the delay as necessary)
+        //            await Task.Delay(10000);
+
+        //            // Step 3: Send control command to each connected device
+        //            foreach (var macAddress in connectedDevices)
+        //            {
+        //                var controlResponse = await _connectService.SendControlToLight(gatewayIpAddress, macAddress, hexControlValue);
+
+        //                if (controlResponse.Status.ToString() != "OK")
+        //                {
+        //                    return StatusCode(500, $"Failed to control light for device {macAddress}");
+        //                }
+        //            }
+        //        }
+
+        //        return Ok("Batch light control completed successfully.");
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        return StatusCode(500, $"Error: {ex.Message + ex.StackTrace}");
+        //    }
+        //}
+
     }
+    // Request model for the control light API
 }
