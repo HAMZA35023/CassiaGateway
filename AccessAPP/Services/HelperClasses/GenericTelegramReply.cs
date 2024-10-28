@@ -1,26 +1,25 @@
 ﻿namespace AccessAPP.Services.HelperClasses
 {
-    public class CheckPincodeReply
+    public class GenericTelegramReply
     {
         public string ProtocolVersion { get; }
         public string TelegramType { get; }
         public string TotalLength { get; }
         public string Crc16 { get; }
-        public string Result { get; }
+        public string DataResult { get; }
 
-        private static readonly Dictionary<int, CheckPincodeResult> PincodeResultMap = new Dictionary<int, CheckPincodeResult>
+        public GenericTelegramReply(string value)
         {
-            { 0, new CheckPincodeResult { BleSpecMsg = "OK", Msg = "Pincode is accepted", Ack = true } },
-            { 1, new CheckPincodeResult { BleSpecMsg = "Check pincode failed", Msg = "Pincode is not accepted", Ack = false } }
-        };
+            if (value.Length < 14)
+            {
+                throw new ArgumentException("Invalid telegram response length.");
+            }
 
-        public CheckPincodeReply(string value)
-        {
             ProtocolVersion = value.Substring(0, 2);
             TelegramType = value.Substring(2, 4);
             TotalLength = value.Substring(6, 4);
             Crc16 = value.Substring(10, 4);
-            Result = value.Substring(14, 2);
+            DataResult = value.Length > 14 ? value.Substring(14) : string.Empty;
         }
 
         private int SwapBytes(string bytes)
@@ -48,14 +47,18 @@
             return SwapBytes(Crc16);
         }
 
-        public CheckPincodeResult GetResult()
+        public T GetDataResult<T>(Func<string, T> parseFunction)
         {
-            int key = Convert.ToInt32(Result, 16);
-            return PincodeResultMap.ContainsKey(key) ? PincodeResultMap[key] : null;
+            return parseFunction(DataResult);
+        }
+
+        public override string ToString()
+        {
+            return $"ProtocolVersion: {ProtocolVersion}, TelegramType: {TelegramType}, TotalLength: {TotalLength}, Crc16: {Crc16}, DataResult: {DataResult}";
         }
     }
 
-    public class CheckPincodeResult
+    public class DataInformationView
     {
         public string BleSpecMsg { get; set; }
         public string Msg { get; set; }

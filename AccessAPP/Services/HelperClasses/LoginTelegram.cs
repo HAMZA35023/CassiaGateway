@@ -17,10 +17,10 @@ namespace AccessAPP.Services.HelperClasses
             telegramModel.ProtocolVersion = telegramHelper.CreateProtocolVersion(0x01);
             telegramModel.TelegramType = telegramHelper.CreateTelegramType(0x1000);
             telegramModel.TotalLength = telegramHelper.CreateTotalLength(0x0900);
-            telegramModel.Payload = new byte[] { 0x01, 0x1D};
+            telegramModel.Payload = new byte[] { 0x01, 0x1D };
         }
 
-    public string Create()
+        public string Create()
         {
             return telegramHelper.CreateTelegram(telegramModel);
         }

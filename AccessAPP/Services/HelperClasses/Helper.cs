@@ -5,14 +5,14 @@ namespace AccessAPP.Services
 {
     public static class Helper
     {
-        
+
         public static ResponseModel CreateResponse(string macAddress, dynamic result)
         {
             return new ResponseModel
             {
                 Status = result.StatusCode,
                 MacAddress = macAddress,
-                Data = result.StatusCode.Equals(200) ? "OK" : "Failed",
+                Data = result.StatusCode.ToString(),
                 Time = DateTimeOffset.Now.ToUnixTimeMilliseconds()
             };
         }

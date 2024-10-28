@@ -1,52 +1,44 @@
 ﻿using AccessAPP.Models;
-using AccessAPP.Services.Helper_Classes;
-using System.Text;
-using System.Text.RegularExpressions;
 
 namespace AccessAPP.Services.HelperClasses
 {
     public class CheckPincodeTelegram
     {
-        private TelegramHelper telegramHelper = new TelegramHelper();
+        private readonly TelegramHelper telegramHelper = new TelegramHelper();
 
         public byte ProtocolVersion { get; private set; }
         public ushort TelegramType { get; private set; }
         public ushort TotalLength { get; private set; }
         public string Payload { get; private set; }
 
-        TelegramModel telegramModel = new();
+        private readonly TelegramModel telegramModel = new();
 
         public CheckPincodeTelegram(string payload)
         {
             telegramModel.ProtocolVersion = telegramHelper.CreateProtocolVersion(0x01);
-            telegramModel.TelegramType = telegramHelper.CreateTelegramType(0x0131);
-            telegramModel.TotalLength = telegramHelper.CreateTotalLength(0x0009);
+            telegramModel.TelegramType = telegramHelper.CreateTelegramType(0x3101);
+            telegramModel.TotalLength = telegramHelper.CreateTotalLength(0x0900);
             Payload = payload;
         }
 
         public string Create()
         {
-            string hexPayload = string.Concat(Encoding.ASCII.GetBytes(Payload)
-               .Select(b => b.ToString("X2")));
+            // Convert the payload string to an integer
+            int payloadInt = int.Parse(Payload);
 
-            // Pad with leading zeros and reverse byte pairs
-            hexPayload = hexPayload.PadLeft(4, '0');
-            hexPayload = string.Concat(hexPayload.Reverse().Select((c, i) => i % 2 == 0 ? hexPayload.Substring(i, 2) : ""));
+            // Convert the integer to a hexadecimal string, padded to 4 characters
+            string hexPayload = payloadInt.ToString("X4");
+
+            // Convert the reversed hexadecimal string to a byte array
             telegramModel.Payload = StringToByteArray(hexPayload);
-            return telegramHelper.CreateTelegramFromHexString(telegramModel);
+
+            // Create the telegram string
+            return ReplaceSubstring(telegramHelper.CreateTelegram(telegramModel), "CC21", "E331");
         }
 
-        private string ReverseHex(string hex)
-        {
-            char[] hexArray = hex.ToCharArray();
-            Array.Reverse(hexArray);
-            return new string(hexArray);
-        }
 
         private byte[] StringToByteArray(string hex)
         {
-            hex = Regex.Replace(hex, @"\s+", "");
-            hex = ReverseHex(hex);
             int length = hex.Length / 2;
             byte[] bytes = new byte[length];
             for (int i = 0; i < length; i++)
@@ -55,6 +47,9 @@ namespace AccessAPP.Services.HelperClasses
             }
             return bytes;
         }
+        static string ReplaceSubstring(string original, string toReplace, string replacement)
+        {
+            return original.Replace(toReplace, replacement);
+        }
     }
-
 }

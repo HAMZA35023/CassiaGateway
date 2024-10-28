@@ -1,11 +1,10 @@
 ﻿using AccessAPP.Models;
 using AccessAPP.Services.HelperClasses;
 using Microsoft.AspNetCore.Mvc;
-using System;
+using Newtonsoft.Json;
+using System.Net;
 using System.Net.Http;
-using System.Net.Mail;
 using System.Text;
-using System.Threading.Tasks;
 
 namespace AccessAPP.Services
 {
@@ -42,9 +41,94 @@ namespace AccessAPP.Services
             }
             catch (Exception ex)
             {
-                throw new Exception($"Error: {ex.Message}");
+                throw new Exception($"Error: {ex.Message + ex.StackTrace}");
             }
         }
+
+        public async Task<ResponseModel> BatchConnectDevices(string gatewayIpAddress, List<string> macAddresses)
+        {
+            try
+            {
+                // Prepare the payload for the batch connect request
+                var list = macAddresses.Select(mac => new { type = "public", addr = mac }).ToList();
+                var payload = new
+                {
+                    list = list,
+                    timeout = 5000, // Optional: Timeout per device
+                    per_dev_timeout = 10000 // Optional: Total timeout per device
+                };
+
+                // Batch connect endpoint
+                string batchConnectEndpoint = $"http://{gatewayIpAddress}/gap/batch-connect";
+
+                // Serialize the payload and create the request
+                var jsonPayload = JsonConvert.SerializeObject(payload); // Serialize the object into JSON
+
+                // Corrected to use a valid MediaTypeHeaderValue instead of string
+                var request = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+
+                // Send POST request to batch connect the BLE devices
+                HttpResponseMessage batchConnectResponse = await _httpClient.PostAsync(batchConnectEndpoint, request);
+
+                // Return the response formatted as ResponseModel
+                return Helper.CreateResponse("BatchConnect", batchConnectResponse);
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Error during batch connect: {ex.Message + ex.StackTrace}");
+            }
+        }
+
+
+
+        public async Task<ResponseModel> SendControlToLight(string gatewayIpAddress, string macAddress, string hexControlValue)
+        {
+            try
+            {
+                // Define the write BLE message endpoint
+                string writeEndpoint = $"http://{gatewayIpAddress}/gatt/nodes/{macAddress}/handle/19/value/{hexControlValue}?noresponse=1";
+
+                // Send the write BLE message request
+                HttpResponseMessage writeResponse = await _httpClient.GetAsync(writeEndpoint);
+
+                // Return the response as ResponseModel
+                return Helper.CreateResponse(macAddress, writeResponse);
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Error while sending control to light: {ex.Message + ex.StackTrace}");
+            }
+        }
+
+
+
+        public async Task<ConnectedDevicesView> GetConnectedBleDevices(string gatewayIpAddress, int gatewayPort)
+        {
+            try
+            {
+                // Endpoint to get connected BLE devices
+                string getConnectedDevicesEndpoint = $"http://{gatewayIpAddress}:{gatewayPort}/gap/nodes?connection_state=connected";
+
+                // Send GET request to get the list of connected BLE devices
+                HttpResponseMessage getResponse = await _httpClient.GetAsync(getConnectedDevicesEndpoint);
+
+                if (getResponse.IsSuccessStatusCode)
+                {
+                    string responseBody = await getResponse.Content.ReadAsStringAsync();
+                    var connectedDevices = JsonConvert.DeserializeObject<ConnectedDevicesView>(responseBody);
+                    return connectedDevices;
+                }
+                else
+                {
+                    throw new Exception($"Failed to get connected devices: {getResponse.ReasonPhrase}");
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Error: {ex.Message + ex.StackTrace}");
+            }
+        }
+
         public async Task<ResponseModel> DisconnectFromBleDevice(string gatewayIpAddress, string macAddress, int retries)
         {
             try
@@ -60,17 +144,77 @@ namespace AccessAPP.Services
                 // Check if the request was successful
                 if (response.IsSuccessStatusCode)
                 {
-                    return  Helper.CreateResponse(macAddress, response);
+                    return Helper.CreateResponse(macAddress, response);
                 }
                 else
                 {
                     // Handle unsuccessful response
-                    return  Helper.CreateResponse(macAddress, response);
+                    return Helper.CreateResponse(macAddress, response);
                 }
             }
             catch (Exception ex)
             {
-                throw new Exception($"Error: {ex.Message}");
+                throw new Exception($"Error: {ex.Message + ex.StackTrace}");
+            }
+        }
+        public async Task<DataResponseModel> GetDataFromBleDevice(string gatewayIpAddress, int gatewayPort, string macAddress, string value)
+        {
+            try
+            {
+                // Write BLE message
+                CassiaReadWriteService cassiaReadWrite = new CassiaReadWriteService();
+                var result = await cassiaReadWrite.WriteBleMessage(gatewayIpAddress, macAddress, 19, value, "?noresponse=1");
+
+                using (var cassiaListener = new CassiaNotificationService())
+                {
+                    var responseTask = new TaskCompletionSource<DataResponseModel>();
+
+                    cassiaListener.Subscribe(macAddress, (sender, data) =>
+                    {
+                        // Process the notification data
+                        var response = new GenericTelegramReply(data);
+
+                        var responseResult = response.DataResult;
+                        DataResponseModel responseBody = new DataResponseModel
+                        {
+                            MacAddress = macAddress,
+                            Data = responseResult,
+                            Time = DateTimeOffset.Now.ToUnixTimeMilliseconds(),
+                            Status = result.StatusCode,
+                        };
+
+                        responseTask.TrySetResult(responseBody);
+
+                    });
+
+                    // Wait for the response or timeout
+                    var completedTask = await Task.WhenAny(responseTask.Task, Task.Delay(TimeSpan.FromSeconds(120)));
+
+                    // Unsubscribe from notifications
+                    // cassiaListener.Unsubscribe(macAddress);
+
+                    // Check if the response task completed
+                    if (completedTask == responseTask.Task)
+                    {
+                        return await responseTask.Task;
+                    }
+                    else
+                    {
+                        // Handle timeout
+                        return new DataResponseModel
+                        {
+                            MacAddress = macAddress,
+                            Data = "Timeout",
+                            Time = DateTimeOffset.Now.ToUnixTimeMilliseconds(),
+                            Status = HttpStatusCode.RequestTimeout,
+
+                        };
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Error: {ex.Message + ex.StackTrace}");
             }
         }
         public async Task<LoginResponseModel> AttemptLogin(string gatewayIpAddress, string macAddress)
@@ -92,7 +236,7 @@ namespace AccessAPP.Services
                             var loginReplyResult = loginReply.GetResult();
                             ResponseModel responseBody = new ResponseModel();
                             responseBody = Helper.CreateResponseWithMessage(macAddress, result, loginReplyResult.Msg, loginReplyResult.PincodeRequired);
-                            
+
                             var attemptLoginResult = new LoginResponseModel
                             {
                                 Status = result.StatusCode.ToString(),
@@ -111,6 +255,7 @@ namespace AccessAPP.Services
                     //cassiaListener.Unsubscribe(macAddress);
 
                     // Check if the login task completed
+                    
                     if (completedTask == loginTask)
                     {
                         return await loginTask;
@@ -129,9 +274,99 @@ namespace AccessAPP.Services
             }
             catch (Exception ex)
             {
-                throw new Exception($"Error: {ex.Message}");
+                throw new Exception($"Error: {ex.Message + ex.StackTrace}");
             }
         }
+        public PairResponse PairDevice(string gatewayIpAddress, int gatewayPort, PairDevicesRequest pairDevicesRequest)
+        {
+            try
+            {
+                // Specify the directory path
+                string directoryPath = "PairRequests";
+
+                // Check if the directory exists, create it if necessary
+                if (!Directory.Exists(directoryPath))
+                {
+                    Directory.CreateDirectory(directoryPath);
+                }
+
+                // Generate the file path
+                string filePath = Path.Combine(directoryPath, "pairRequest.txt");
+
+                // Join the mac addresses into a single string separated by commas
+                // Append the mac addresses to the text file
+                foreach (var macAddress in pairDevicesRequest.macAddresses)
+                {
+                    File.AppendAllText(filePath, macAddress + Environment.NewLine);
+                }
+
+                return new PairResponse { PairingStatus = "Success", Message = $"Devices paired: {string.Join(",", pairDevicesRequest.macAddresses)}" };
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Error pairing devices: {ex.Message + ex.StackTrace}");
+            }
+        }
+
+        public UnpairResponse UnpairDevice(string gatewayIpAddress, int gatewayPort, UnpairDevicesRequest unpairDevicesRequest)
+        {
+            try
+            {
+                // Specify the directory path
+                string directoryPath = "PairRequests";
+
+                // Generate the file path
+                string filePath = Path.Combine(directoryPath, "pairRequest.txt");
+
+                // Read all lines from the file
+                string[] lines = File.ReadAllLines(filePath);
+
+                // Remove the specified mac addresses from the list
+                var updatedLines = lines.Where(line => !unpairDevicesRequest.MacAddresses.Contains(line.Trim())).ToList();
+
+                // Write the updated content back to the file
+                File.WriteAllLines(filePath, updatedLines);
+
+                return new UnpairResponse
+                {
+                    MacAddress = string.Join(",", unpairDevicesRequest.MacAddresses),
+                    Status = "Unpairing successful"
+                };
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Error unpairing devices: {ex.Message + ex.StackTrace}");
+            }
+        }
+
+        public List<string> GetPairedDevices()
+        {
+            try
+            {
+                // Specify the directory path
+                string directoryPath = "PairRequests";
+
+                // Generate the file path
+                string filePath = Path.Combine(directoryPath, "pairRequest.txt");
+
+                // Check if the file exists
+                if (!File.Exists(filePath))
+                {
+                    // If the file doesn't exist, return an empty list
+                    return new List<string>();
+                }
+
+                // Read all lines from the file and return them as a list
+                return File.ReadAllLines(filePath).ToList();
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Error getting paired devices: {ex.Message + ex.StackTrace}");
+            }
+        }
+
+
+
 
     }
 }

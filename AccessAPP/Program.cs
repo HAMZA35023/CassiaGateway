@@ -15,6 +15,9 @@ builder.Services.AddHttpClient();
 builder.Services.AddSingleton<CassiaScanService>();
 builder.Services.AddSingleton<CassiaConnectService>();
 builder.Services.AddSingleton<CassiaPinCodeService>();
+builder.Services.AddSingleton<DeviceStorageService>();
+builder.Services.AddSingleton<CassiaFirmwareUpgradeService>();
+
 
 var app = builder.Build();
 

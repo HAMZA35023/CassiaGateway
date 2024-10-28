@@ -1,8 +1,5 @@
-﻿using System;
-using System.Net.Http;
-using System.Threading.Tasks;
+﻿using System.Collections.Concurrent;
 using System.Text.Json;
-using System.Collections.Concurrent;
 
 public class CassiaNotificationService : IDisposable
 {
@@ -20,7 +17,7 @@ public class CassiaNotificationService : IDisposable
 
     private async Task StartListening()
     {
-        string eventSourceUrl = "http://192.168.0.20/gatt/nodes?event=1";
+        string eventSourceUrl = "http://192.168.0.24/gatt/nodes?event=1";
 
         try
         {
@@ -29,11 +26,12 @@ public class CassiaNotificationService : IDisposable
             using (var stream = await response.Content.ReadAsStreamAsync())
             using (var reader = new System.IO.StreamReader(stream))
             {
-                while (!reader.EndOfStream)
+                while (true/*!reader.EndOfStream*/)
                 {
                     string line = await reader.ReadLineAsync();
 
                     // Ignore keep-alive messages and empty lines
+                    
                     if (string.IsNullOrWhiteSpace(line) || line.Equals(":keep-alive"))
                     {
                         continue;
@@ -45,13 +43,13 @@ public class CassiaNotificationService : IDisposable
                         line = line.Substring("data:".Length).Trim();
                         Task.Run(() => InvokeHandlers(line));
                     }
-                    
+
                 }
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error: {ex.Message}");
+            Console.WriteLine($"Error: {ex.Message + ex.StackTrace}");
         }
     }
 
@@ -87,7 +85,7 @@ public class CassiaNotificationService : IDisposable
         }
         catch (JsonException ex)
         {
-            Console.WriteLine($"Error parsing JSON: {ex.Message}");
+            Console.WriteLine($"Error parsing JSON: {ex.Message + ex.StackTrace}");
         }
     }
 

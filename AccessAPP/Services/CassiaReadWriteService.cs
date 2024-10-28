@@ -1,37 +1,34 @@
-﻿using System.Net.Http;
-
-namespace AccessAPP.Services
+﻿public class CassiaReadWriteService : IDisposable
 {
-    public class CassiaReadWriteService
+    private static readonly HttpClient httpClient = new HttpClient();
+    private static SemaphoreSlim semaphore = new SemaphoreSlim(5); // Limit to 5 concurrent connections
+
+    public async Task<HttpResponseMessage> WriteBleMessage(string gatewayIpAddress, string macAddress, int handle, string hexLoginValue, string queryParams)
     {
-        private readonly HttpClient httpClient;
-        public CassiaReadWriteService()
+        await semaphore.WaitAsync(); // Wait until it's safe to proceed
+        try
         {
-            httpClient = new HttpClient();
-        }
-
-        public async Task<HttpResponseMessage> WriteBleMessage(string gatewayIpAddress, string macAddress, int handle, string hexLoginValue, string queryParams)
-        {
-            try
+            string endpoint = $"http://{gatewayIpAddress}/gatt/nodes/{macAddress}/handle/{handle}/value/{hexLoginValue}{queryParams}";
+            var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
+            using (var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead))
             {
-                string endpoint = $"http://{gatewayIpAddress}/gatt/nodes/{macAddress}/handle/{handle}/value/{hexLoginValue}{queryParams}";
-
-                var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
-
-                using (var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead))
-                {
-                    response.EnsureSuccessStatusCode();
-
-                    // You can add additional processing logic here if needed
-                    return response;
-                }
-                
-                
-            }
-            catch (Exception ex)
-            {
-                throw new Exception($"Error: {ex.Message}");
+                response.EnsureSuccessStatusCode();
+                return response;
             }
         }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error: {ex.Message + ex.StackTrace}");
+            throw new Exception($"Error: {ex.Message + ex.StackTrace}");
+        }
+        finally
+        {
+            semaphore.Release(); // Release the semaphore
+        }
+    }
+
+    public void Dispose()
+    {
+        httpClient?.Dispose();
     }
 }
