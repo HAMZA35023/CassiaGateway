@@ -14,13 +14,36 @@ public class CassiaNotificationService : IDisposable
         _eventHandlers = new ConcurrentDictionary<string, EventHandler<string>>();
 
         // Read IP from appsettings.json
-        string gatewayIpAddress = configuration.GetValue<string>("GatewayConfiguration:IpAddress") ?? "192.168.0.24";
+        string gatewayIpAddress = configuration.GetValue<string>("GatewayConfiguration:IpAddress");
         _eventSourceUrl = $"http://{gatewayIpAddress}/gatt/nodes?event=1";
 
         // Start listening for events
         Task.Run(() => StartListening());
     }
 
+    public async Task<bool> EnableNotificationAsync(string gatewayIpAddress, string nodeMac)
+    {
+        try
+        {
+
+            string url = $"http://{gatewayIpAddress}/gatt/nodes/{nodeMac}/handle/15/value/0100";
+            HttpResponseMessage response = await _httpClient.GetAsync(url);
+
+            if (response.IsSuccessStatusCode)
+            {
+                Console.WriteLine("Notification enabled successfully.");
+                return true;
+            }
+
+            Console.WriteLine("Failed to enable notification.", response.StatusCode);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Exception occurred while enabling notification: {ex.Message}");
+            return false;
+        }
+    }
     private async Task StartListening()
     {
         try

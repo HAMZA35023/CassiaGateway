@@ -24,27 +24,79 @@ namespace AccessAPP.Services
 
         public async Task<ResponseModel> ConnectToBleDevice(string gatewayIpAddress, int gatewayPort, string macAddress)
         {
+            //try
+            //{
+            //    // Step 3: Connect selected BLE devices
+            //    string connectEndpoint = $"http://{gatewayIpAddress}:{gatewayPort}/gap/nodes/{macAddress}/connection";
+
+            //    // Create the request body
+            //    var body = new
+            //    {
+            //        timeout = "10000",
+            //        type = "public",
+            //        discovergatt = 0
+            //    };
+
+            //    // Serialize the body to JSON
+            //    string jsonBody = JsonConvert.SerializeObject(body);
+            //    var content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
+
+            //    // Send POST request to connect to the BLE device
+            //    HttpResponseMessage connectResponse = await _httpClient.PostAsync(connectEndpoint, content);
+
+            //    if (connectResponse.IsSuccessStatusCode)
+            //    {
+            //        return Helper.CreateResponse(macAddress, connectResponse);
+            //    }
+            //    else
+            //    {
+            //        return Helper.CreateResponse(macAddress, connectResponse);
+            //    }
+            //}
+            //catch (Exception ex)
+            //{
+            //    throw new Exception($"Error: {ex.Message + ex.StackTrace}");
+            //}
+            var client = new HttpClient();
+
+            // Define the request URL
+            string url = $"http://{gatewayIpAddress}:{gatewayPort}/gap/nodes/{macAddress}/connection";
+
+            // Define the JSON content
+            var jsonContent = new StringContent(
+                "{ \r\n    \"timeout\" : \"10000\",\r\n    \"type\" : \"public\",\r\n    \"discovergatt\" : 0\r\n}\r\n",
+                Encoding.UTF8,
+                "application/json"
+            );
+
+            // Create the HTTP request message
+            var request = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Content = jsonContent
+            };
+
             try
             {
-                // Step 3: Connect selected BLE devices
-                string connectEndpoint = $"http://{gatewayIpAddress}:{gatewayPort}/gap/nodes/{macAddress}/connection";
+                // Send the request
+                var response = await client.SendAsync(request);
 
-                // Send POST request to connect to the BLE device
-                HttpResponseMessage connectResponse = await _httpClient.PostAsync(connectEndpoint, new StringContent("{}", Encoding.UTF8, "application/json"));
+                // Ensure the request succeeded
+                response.EnsureSuccessStatusCode();
 
-                if (connectResponse.IsSuccessStatusCode)
+                // Read and display the response content
+                if (response.IsSuccessStatusCode)
                 {
-                    return Helper.CreateResponse(macAddress, connectResponse);
-
+                    return Helper.CreateResponse(macAddress, response);
                 }
                 else
                 {
-                    return Helper.CreateResponse(macAddress, connectResponse);
+                    return Helper.CreateResponse(macAddress, response);
                 }
             }
-            catch (Exception ex)
+            catch (HttpRequestException e)
             {
-                throw new Exception($"Error: {ex.Message + ex.StackTrace}");
+                Console.WriteLine($"Request error: {e.Message}");
+                throw new Exception($"Error: {e.Message + e.StackTrace}");
             }
         }
 
@@ -255,7 +307,7 @@ namespace AccessAPP.Services
                     var completedTask = await Task.WhenAny(loginTask, timeoutTask);
 
                     // Unsubscribe from notifications
-                    //cassiaListener.Unsubscribe(macAddress);
+                    cassiaListener.Unsubscribe(macAddress);
 
                     // Check if the login task completed
                     
