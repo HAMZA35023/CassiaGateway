@@ -57,7 +57,7 @@ namespace AccessAPP.Services
 
         public async Task<bool> ProgramSensor(string gatewayIpAddress, string nodeMac, CassiaNotificationService cassiaNotificationService,bool bActor)
         {
-            Console.WriteLine($"The Actor is going to be programmed? : {bActor}" );
+            Console.WriteLine($"Actor is going to be programmed? : {bActor}" );
 
             InitializeNotificationSubscription(nodeMac, cassiaNotificationService);
             int lines;
