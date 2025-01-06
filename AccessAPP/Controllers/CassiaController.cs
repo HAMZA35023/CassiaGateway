@@ -323,72 +323,11 @@ namespace AccessAPP.Controllers
                 {
                     return Conflict(new { message = "Firmware upgrade already in progress for this device." });
                 }
+                var result = await _firmwareUpgradeService.UpgradeSensorAsync(nodeMac, pincode, bActor);
 
-                // Step 1: Connect to the device
-                var connectionResult = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
-                if (connectionResult.Status != HttpStatusCode.OK)
-                {
-                    return StatusCode((int)connectionResult.Status, new { message = "Failed to connect to device." });
-                }
-
-                Console.WriteLine("Connected to device...");
-
-                bool isAlreadyInBootMode = _firmwareUpgradeService.CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
-                if (isAlreadyInBootMode)
-                {
-                    Console.WriteLine("Device is already in boot mode.");
-                    await Task.Delay(3000);
-                    var serviceResponse = await _firmwareUpgradeService.ProcessingSensorUpgrade(nodeMac, bActor);
-                    return serviceResponse.Success
-                        ? Ok(new { message = serviceResponse.Message })
-                        : StatusCode(serviceResponse.StatusCode, new { message = serviceResponse.Message });
-                }
-                else
-                {
-                    // Step 2: Attempt login if needed
-                    var loginResult = await _connectService.AttemptLogin(_gatewayIpAddress, nodeMac);
-                    if (loginResult.ResponseBody.PincodeRequired && !string.IsNullOrEmpty(pincode))
-                    {
-                        var checkPincodeResponse = await _cassiaPinCodeService.CheckPincode(_gatewayIpAddress, nodeMac, pincode);
-                        loginResult.ResponseBody = checkPincodeResponse.ResponseBody;
-                    }
-
-                    if (loginResult.ResponseBody.PincodeRequired && !loginResult.ResponseBody.PinCodeAccepted)
-                    {
-                        return Unauthorized(new { message = "Failed to login to the device." });
-                    }
-
-                    Console.WriteLine("Logged into device...");
-
-                    // Send Jump to Bootloader telegram repeatedly until successful
-                    const int maxAttempts = 5;
-                    bool bootModeAchieved = false;
-                    for (int attempt = 0; attempt < maxAttempts; attempt++)
-                    {
-                        bootModeAchieved = await _firmwareUpgradeService.SendJumpToBootloader(_gatewayIpAddress, nodeMac, bActor);
-                        if (bootModeAchieved)
-                        {
-                            Console.WriteLine($"Device entered boot mode after {attempt + 1} attempts.");
-                            break;
-                        }
-                        Console.WriteLine($"Attempt {attempt + 1} to enter boot mode failed. Retrying...");
-                        await Task.Delay(3000); // Delay between attempts
-                    }
-
-                    if (!bootModeAchieved)
-                    {
-                        return StatusCode((int)HttpStatusCode.ExpectationFailed, new { message = "Failed to enter boot mode after multiple attempts." });
-                    }
-
-                    // Disconnect and prepare for the upgrade process
-                    var isDisconnected = await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0);
-                    await Task.Delay(3000);
-
-                    var serviceResponse = await _firmwareUpgradeService.ProcessingSensorUpgrade(nodeMac, bActor);
-                    return serviceResponse.Success
-                        ? Ok(new { message = serviceResponse.Message })
-                        : StatusCode(serviceResponse.StatusCode, new { message = serviceResponse.Message });
-                }
+                return result.Success
+                    ? Ok(new { message = result.Message })
+                    : StatusCode(result.StatusCode, new { message = result.Message });
             }
             catch (Exception ex)
             {
@@ -396,7 +335,6 @@ namespace AccessAPP.Controllers
                 return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
             }
         }
-
 
 
         [HttpPost("ActorUpgrade")]
@@ -416,60 +354,11 @@ namespace AccessAPP.Controllers
                 }
 
                 // Step 1: Connect to the device
-                var connectionResult = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
-                if (connectionResult.Status != HttpStatusCode.OK)
-                {
-                    return StatusCode((int)connectionResult.Status, new { message = "Failed to connect to device." });
-                }
+                var result = await _firmwareUpgradeService.UpgradeActorAsync(nodeMac, pincode, bActor);
 
-                Console.WriteLine("Connected to device...");
-
-                bool isAlreadyInBootMode = _firmwareUpgradeService.CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
-                if (isAlreadyInBootMode)
-                {
-
-                    Console.WriteLine("Sensor is already in boot mode.");
-                    // Delays for 3 seconds (3000 milliseconds) before connecting to device again
-                    
-
-                   return  StatusCode((int)connectionResult.Status, new { message = "Sensor is in boot mode, it needs to be in Application mode." });
-                }
-                else
-                {
-                    //Step 2: Attempt login if needed
-                    var loginResult = await _connectService.AttemptLogin(_gatewayIpAddress, nodeMac);
-                    if (loginResult.ResponseBody.PincodeRequired && !string.IsNullOrEmpty(pincode))
-                    {
-                        var checkPincodeResponse = await _cassiaPinCodeService.CheckPincode(_gatewayIpAddress, nodeMac, pincode);
-                        loginResult.ResponseBody = checkPincodeResponse.ResponseBody;
-                    }
-
-                    if (loginResult.ResponseBody.PincodeRequired && !loginResult.ResponseBody.PinCodeAccepted)
-                    {
-                        return Unauthorized(new { message = "Failed to login to the device." });
-                    }
-
-                    Console.WriteLine("Logged into device...");
-
-
-                    // Send Jump to Bootloader telegram
-                    bool jumpToBootResponse = await _firmwareUpgradeService.SendJumpToBootloader(_gatewayIpAddress, nodeMac, bActor);
-                    if (!jumpToBootResponse)
-                    {
-                        return StatusCode((int)HttpStatusCode.ExpectationFailed, new { message = "Failed to enter boot mode." });
-                    }
-
-                    Console.WriteLine(jumpToBootResponse);
-
-                    // Delays for 3 seconds (3000 milliseconds) before connecting to device again
-                    //var isDisConnected = await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0);
-                    //await Task.Delay(3000);
-                    var serviceResponse = await _firmwareUpgradeService.ProcessingActorUpgrade(nodeMac, bActor);
-                    return serviceResponse.Success
-                        ? Ok(new { message = serviceResponse.Message })
-                        : StatusCode(serviceResponse.StatusCode, new { message = serviceResponse.Message });
-
-                }
+                return result.Success
+                    ? Ok(new { message = result.Message })
+                    : StatusCode(result.StatusCode, new { message = result.Message });
             }
             catch (Exception ex)
             {
@@ -477,7 +366,8 @@ namespace AccessAPP.Controllers
                 return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
             }
         }
-        
+
+
 
         // API to connect to a BLE device and send a telegram to control the light
         [HttpPost("controlLight")]

@@ -27,6 +27,7 @@ namespace AccessAPP.Services
     {
         private readonly HttpClient _httpClient;
         private readonly CassiaConnectService _connectService;
+        private readonly CassiaPinCodeService _cassiaPinCodeService;
         private readonly IConfiguration _configuration;
         private const int MaxPacketSize = 270;
         private const int InterPacketDelay = 0;
@@ -49,17 +50,155 @@ namespace AccessAPP.Services
         private readonly int _gatewayPort;
         private string MacAddress = "";
         private double totalRows = 0;
-        public CassiaFirmwareUpgradeService(HttpClient httpClient, CassiaConnectService connectService,CassiaNotificationService notificationService, IConfiguration configuration)
+        public CassiaFirmwareUpgradeService(HttpClient httpClient, CassiaConnectService connectService, CassiaPinCodeService cassiaPinCodeService, CassiaNotificationService notificationService, IConfiguration configuration)
         {
             _httpClient = httpClient;
             _connectService = connectService;
             _notificationService = notificationService;
+            _cassiaPinCodeService = cassiaPinCodeService;
             _configuration = configuration;
             _gatewayIpAddress = _configuration.GetValue<string>("GatewayConfiguration:IpAddress");
             _gatewayPort = _configuration.GetValue<int>("GatewayConfiguration:Port");
         }
 
+        public async Task<ServiceResponse> UpgradeSensorAsync(string nodeMac, string pincode, bool bActor)
+        {
+            // Step 1: Connect to the device
+            ServiceResponse response = null;
+            var connectionResult = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
+            if (connectionResult.Status != HttpStatusCode.OK)
+            {
+                response.Success = false;
+                response.StatusCode = (int)connectionResult.Status;
+                response.Message = "Failed to connect to device.";
+                return response;
+            }
 
+            Console.WriteLine("Connected to device...");
+
+            bool isAlreadyInBootMode = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
+            if (isAlreadyInBootMode)
+            {
+                Console.WriteLine("Device is already in boot mode.");
+                await Task.Delay(3000);
+                var serviceResponse = await ProcessingSensorUpgrade(nodeMac, bActor);
+                return serviceResponse;
+            }
+            else
+            {
+                // Step 2: Attempt login if needed
+                var loginResult = await _connectService.AttemptLogin(_gatewayIpAddress, nodeMac);
+                if (loginResult.ResponseBody.PincodeRequired && !string.IsNullOrEmpty(pincode))
+                {
+                    var checkPincodeResponse = await _cassiaPinCodeService.CheckPincode(_gatewayIpAddress, nodeMac, pincode);
+                    loginResult.ResponseBody = checkPincodeResponse.ResponseBody;
+                }
+
+                if (loginResult.ResponseBody.PincodeRequired && !loginResult.ResponseBody.PinCodeAccepted)
+                {
+                    response.Success = false;
+                    response.StatusCode = 401; // Unauthorized
+                    response.Message = "Failed to login to the device.";
+                    return response;
+                }
+
+                Console.WriteLine("Logged into device...");
+
+                // Send Jump to Bootloader telegram repeatedly until successful
+                const int maxAttempts = 5;
+                bool bootModeAchieved = false;
+                for (int attempt = 0; attempt < maxAttempts; attempt++)
+                {
+                    bootModeAchieved = await SendJumpToBootloader(_gatewayIpAddress, nodeMac, bActor);
+                    if (bootModeAchieved)
+                    {
+                        Console.WriteLine($"Device entered boot mode after {attempt + 1} attempts.");
+                        break;
+                    }
+                    Console.WriteLine($"Attempt {attempt + 1} to enter boot mode failed. Retrying...");
+                    await Task.Delay(3000); // Delay between attempts
+                }
+
+                if (!bootModeAchieved)
+                {
+                    response.Success = false;
+                    response.StatusCode = 417; // Expectation Failed
+                    response.Message = "Failed to enter boot mode.";
+                    return response;
+                }
+
+                // Disconnect and prepare for the upgrade process
+                var isDisconnected = await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0);
+                await Task.Delay(3000);
+
+                var serviceResponse = await ProcessingSensorUpgrade(nodeMac, bActor);
+                return serviceResponse;
+            }
+        }
+        public async Task<ServiceResponse> UpgradeActorAsync(string nodeMac, string pincode, bool bActor)
+        {
+            ServiceResponse response = null;
+            var connectionResult = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
+            if (connectionResult.Status != HttpStatusCode.OK)
+            {
+                response.Success = false;
+                response.StatusCode = (int)connectionResult.Status;
+                response.Message = "Failed to connect to device.";
+                return response;
+            }
+
+            Console.WriteLine("Connected to device...");
+
+            bool isAlreadyInBootMode = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
+            if (isAlreadyInBootMode)
+            {
+                response.Success = false;
+                response.StatusCode = 409; // Conflict
+                response.Message = "Sensor is already in boot mode. It needs to be in Application mode.";
+                return response;
+            }
+            else
+            {
+                //Step 2: Attempt login if needed
+                var loginResult = await _connectService.AttemptLogin(_gatewayIpAddress, nodeMac);
+                if (loginResult.ResponseBody.PincodeRequired && !string.IsNullOrEmpty(pincode))
+                {
+                    var checkPincodeResponse = await _cassiaPinCodeService.CheckPincode(_gatewayIpAddress, nodeMac, pincode);
+                    loginResult.ResponseBody = checkPincodeResponse.ResponseBody;
+                }
+
+                if (loginResult.ResponseBody.PincodeRequired && !loginResult.ResponseBody.PinCodeAccepted)
+                {
+                    response.Success = false;
+                    response.StatusCode = 401; // Unauthorized
+                    response.Message = "Failed to login to the device.";
+                    return response;
+                }
+
+                Console.WriteLine("Logged into device...");
+
+
+                // Send Jump to Bootloader telegram
+                bool jumpToBootResponse = await SendJumpToBootloader(_gatewayIpAddress, nodeMac, bActor);
+                if (!jumpToBootResponse)
+                {
+                    response.Success = false;
+                    response.StatusCode = 417; // Expectation Failed
+                    response.Message = "Failed to enter boot mode.";
+                    return response;
+                }
+
+                Console.WriteLine(jumpToBootResponse);
+
+                // Delays for 3 seconds (3000 milliseconds) before connecting to device again
+                //var isDisConnected = await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0);
+                //await Task.Delay(3000);
+                var serviceResponse = await ProcessingActorUpgrade(nodeMac, bActor);
+
+                return serviceResponse;
+
+            }
+        }
         public async Task<ServiceResponse> ProcessingSensorUpgrade(string nodeMac, bool bActor) // should be moved to firmware services
         {
             var response = new ServiceResponse();
@@ -121,7 +260,7 @@ namespace AccessAPP.Services
 
         }
 
-
+      
         public async Task<ServiceResponse> ProcessingActorUpgrade(string nodeMac, bool bActor) // should be moved to firmware services
         {
             var response = new ServiceResponse();
@@ -526,13 +665,13 @@ namespace AccessAPP.Services
         public void ProgressUpdate(byte arrayID, ushort rowNum)
         {
             // Calculate progress percentage based on the current row and total rows
-            progressBarProgress = (rowNum / totalRows) * 100.0;
+    progressBarProgress = (rowNum / totalRows) * 100.0;
 
-            // Ensure progress does not exceed 100%
-            progressBarProgress = Math.Min(progressBarProgress, 100);
+    // Ensure progress does not exceed 100%
+    progressBarProgress = Math.Min(progressBarProgress, 100);
 
-            // Log the progress
-            Console.WriteLine($"Progress: {progressBarProgress:F2}% - Array ID: {arrayID}, Row: {rowNum}");
+    // Log the progress
+    Console.WriteLine($"Progress: {progressBarProgress:F2}% - Array ID: {arrayID}, Row: {rowNum}");
 
 
         }
