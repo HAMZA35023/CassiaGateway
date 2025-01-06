@@ -50,24 +50,6 @@ namespace AccessAPP.Controllers
             }
         }
 
-        //this is older version, works fine but we wanted this api to have an effect in backend
-
-        //[HttpGet("scannearbydevices")]   
-        //public async Task<IActionResult> FetchNearbyDevices([FromQuery] int minRssi = -100)
-        //{
-        //    try
-        //    {
-        //        string gatewayIpAddress = "192.168.0.24";
-        //        int gatewayPort = 80;
-
-        //        var nearbyDevices = await _scanService.FetchNearbyDevices(gatewayIpAddress, gatewayPort, minRssi);
-        //        return Ok(nearbyDevices);
-        //    }
-        //    catch (Exception ex)
-        //    {
-        //        return StatusCode(500, $"Error: {ex.Message + ex.StackTrace}");
-        //    }
-        //}
 
         [HttpGet("scannearbydevices")]
         public IActionResult FetchNearbyDevices([FromQuery] int minRssi = -100)
@@ -168,11 +150,7 @@ namespace AccessAPP.Controllers
             }
         }
 
-        /// <summary>
-        /// Login with connect first
-        /// </summary>
-        /// <param name="models"></param>
-        /// <returns></returns>
+        
         [HttpPost("Login")]
         public async Task<IActionResult> Login([FromBody] List<LoginRequestModel> models)
         {
@@ -221,13 +199,9 @@ namespace AccessAPP.Controllers
             }
         }
 
-        /// <summary>
-        /// Login with connect first
-        /// </summary>
-        /// <param name="models"></param>
-        /// <returns></returns>
-        [HttpGet("attemptlogin")]
-        public async Task<IActionResult> attemptlogin([FromBody] List<LoginRequestModel> models)
+        
+        [HttpGet("attemptlogin")] /// This API logs in without the connect functionality
+        public async Task<IActionResult> Attemptlogin([FromBody] List<LoginRequestModel> models)
         {
             var responses = new List<LoginResponseModel>();
 
