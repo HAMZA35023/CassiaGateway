@@ -118,11 +118,6 @@ namespace AccessAPP.Services
 
         }
 
-        public double GetProgress()
-        {
-            return progressBarProgress;
-        }
-
         public void InitializeNotificationSubscription(string macAddress, CassiaNotificationService cassiaNotificationService)
         {
             // Unsubscribe from all previous subscriptions
@@ -531,19 +526,6 @@ namespace AccessAPP.Services
             }
         }
 
-
-
-
-        private bool CheckBootModeFromNotification(byte[] notificationData)
-        {
-            // Implement logic to determine boot mode based on notification data
-            // Example: check specific bytes or values in the notification data
-            if (notificationData.Length > 0 && notificationData[0] == 0x01) // Example condition
-            {
-                return true;
-            }
-            return false;
-        }
 
     }
 }
