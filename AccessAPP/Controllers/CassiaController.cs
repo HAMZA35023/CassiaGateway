@@ -312,7 +312,7 @@ namespace AccessAPP.Controllers
 
 
         [HttpPost("ActorUpgrade")]
-        public async Task<IActionResult> startActorUpgrade([FromBody] FirmwareUpgradeRequest request)
+        public async Task<IActionResult> ActorUpgrade([FromBody] FirmwareUpgradeRequest request)
         {
 
             string nodeMac = request.MacAddress;
@@ -340,6 +340,25 @@ namespace AccessAPP.Controllers
                 return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
             }
         }
+
+        [HttpPost("BulkActorUpgrade")]
+        public async Task<IActionResult> BulkActorUpgrade([FromBody] BulkUpgradeRequest request)
+        {
+            try
+            {
+                var result = await _firmwareUpgradeService.BulkUpgradeActorsAsync(request.MacAddresses, request.Pincode, request.bActor);
+
+                return result.Success
+                    ? Ok(new { message = result.Message })
+                    : StatusCode(result.StatusCode, new { message = result.Message });
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Error during bulk actor upgrade: {ex.Message}");
+                return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
+            }
+        }
+
 
 
 

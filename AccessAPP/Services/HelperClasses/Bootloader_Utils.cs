@@ -73,6 +73,7 @@ namespace AccessAPP.Services.HelperClasses
         /// The bootloader reported an error
         /// </summary>
         CYRET_ERR_BTLDR_MASK = 0x4000,
+        SUCCESS = 0x8000,
     }
     public class Bootloader_Utils
     {

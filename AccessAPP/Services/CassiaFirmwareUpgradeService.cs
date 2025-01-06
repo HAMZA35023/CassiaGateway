@@ -199,6 +199,62 @@ namespace AccessAPP.Services
 
             }
         }
+
+        public async Task<ServiceResponse> BulkUpgradeActorsAsync(List<string> macAddresses, string pincode, bool bActor)
+        {
+            var response = new ServiceResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Message = "Bulk upgrade completed successfully."
+            };
+
+            var taskList = new List<Task<ServiceResponse>>();
+            var upgradeResults = new ConcurrentBag<ServiceResponse>();
+            var semaphore = new SemaphoreSlim(1); // Limit to 3 concurrent upgrades
+
+            foreach (var macAddress in macAddresses)
+            {
+                await semaphore.WaitAsync();
+
+                taskList.Add(Task.Run(async () =>
+                {
+                    try
+                    {
+                        var result = await UpgradeActorAsync(macAddress, pincode, bActor);
+                        upgradeResults.Add(result);
+                        return result;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error upgrading actor {macAddress}: {ex.Message}");
+                        return new ServiceResponse
+                        {
+                            Success = false,
+                            StatusCode = 500,
+                            Message = $"Error upgrading actor {macAddress}: {ex.Message}"
+                        };
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                    }
+                }));
+            }
+
+            await Task.WhenAll(taskList);
+
+            // Aggregate responses to determine overall success
+            var failedUpgrades = upgradeResults.Where(r => !r.Success).ToList();
+            if (failedUpgrades.Any())
+            {
+                response.Success = false;
+                response.StatusCode = 207; // Multi-Status
+                response.Message = $"Bulk upgrade completed with errors. Failed actors: {string.Join(", ", failedUpgrades.Select(r => r.Message))}";
+            }
+
+            return response;
+        }
         public async Task<ServiceResponse> ProcessingSensorUpgrade(string nodeMac, bool bActor) // should be moved to firmware services
         {
             var response = new ServiceResponse();
@@ -241,7 +297,7 @@ namespace AccessAPP.Services
             }
 
             //Step 3: Start Programming the Sensor
-            bool programmingResult = await ProgramDevice(_gatewayIpAddress, nodeMac, notificationService, bActor);
+            bool programmingResult = ProgramDevice(_gatewayIpAddress, nodeMac, notificationService, bActor);
 
             if (programmingResult)
             {
@@ -260,7 +316,6 @@ namespace AccessAPP.Services
 
         }
 
-      
         public async Task<ServiceResponse> ProcessingActorUpgrade(string nodeMac, bool bActor) // should be moved to firmware services
         {
             var response = new ServiceResponse();
@@ -311,7 +366,7 @@ namespace AccessAPP.Services
             Console.WriteLine($"Bootloader mode achieved for {nodeMac}.");
 
             // Step 3: Start programming the actor
-            var programmingResult = await ProgramDevice(_gatewayIpAddress, nodeMac, notificationService, bActor);
+            var programmingResult = ProgramDevice(_gatewayIpAddress, nodeMac, notificationService, bActor);
 
             if (programmingResult)
             {
@@ -328,9 +383,9 @@ namespace AccessAPP.Services
                 return response;
             }
         }
-        public async Task<bool> ProgramDevice(string gatewayIpAddress, string nodeMac, CassiaNotificationService cassiaNotificationService,bool bActor)
+        public bool ProgramDevice(string gatewayIpAddress, string nodeMac, CassiaNotificationService cassiaNotificationService, bool bActor)
         {
-            Console.WriteLine($"Actor is going to be programmed? : {bActor}" );
+            Console.WriteLine($"Actor is going to be programmed? : {bActor}");
 
             InitializeNotificationSubscription(nodeMac, cassiaNotificationService);
             int lines;
@@ -339,10 +394,10 @@ namespace AccessAPP.Services
             Bootloader_Utils.CyBtldr_CommunicationsData m_comm_data = new Bootloader_Utils.CyBtldr_CommunicationsData();
             m_comm_data.OpenConnection = OpenConnection;
             m_comm_data.CloseConnection = CloseConnection;
-            
-            if (bActor) 
+
+            if (bActor)
             {
-                
+
                 lines = File.ReadAllLines(_firmwareActorFilePath).Length - 1; //Don't count header
                 var progressBarStepSize = 100.0 / lines;
                 m_comm_data.WriteData = WriteActorData;
@@ -350,96 +405,21 @@ namespace AccessAPP.Services
                 m_comm_data.MaxTransferSize = 72;
                 var local_status = (ReturnCodes)Bootloader_Utils.CyBtldr_Program(_firmwareActorFilePath, null, _appID, ref m_comm_data, Upd);
             }
-            else 
+            else
             {
-                
+
                 lines = File.ReadAllLines(_firmwareSensorFilePath).Length - 1; //Don't count header
                 var progressBarStepSize = 100.0 / lines;
                 m_comm_data.WriteData = WriteSensorData;
                 m_comm_data.ReadData = ReadData;
                 m_comm_data.MaxTransferSize = 265;
                 var local_status = (ReturnCodes)Bootloader_Utils.CyBtldr_Program(_firmwareSensorFilePath, _securityKey, _appID, ref m_comm_data, Upd);
-            }        
+            }
 
             return true;
         }
 
 
-
-        public bool GetHidDevice()
-        {
-            return (true);
-        }
-
-        /// <summary>
-        /// Checks if the USB device is connected and opens if it is present
-        /// Returns a success or failure
-        /// </summary>
-        public int OpenConnection()
-        {
-            int status = 0;
-            status = GetHidDevice() ? ERR_SUCCESS : ERR_OPEN;
-
-            return status;
-        }
-
-        /// <summary>
-        /// Closes the previously opened USB device and returns the status
-        /// </summary>
-        public int CloseConnection()
-        {
-            int status = 0;
-            return status;
-
-        }
-
-        public void InitializeNotificationSubscription(string macAddress, CassiaNotificationService cassiaNotificationService)
-        {
-            // Unsubscribe from all previous subscriptions
-            foreach (var subscribedMac in _subscribedMacAddresses)
-            {
-                Console.WriteLine($"Unsubscribing from notifications for {subscribedMac}");
-                cassiaNotificationService.Unsubscribe(subscribedMac);
-            }
-
-            // Clear the list of subscribed MAC addresses
-            _subscribedMacAddresses.Clear();
-
-            // Add the new MAC address to the subscribed set
-            _subscribedMacAddresses.Add(macAddress);
-
-            // Subscribe to notifications for the new MAC address
-            cassiaNotificationService.Subscribe(macAddress, (sender, data) =>
-            {
-                Console.WriteLine($"Notification received for {macAddress}: {data}");
-
-                // Parse the notification data into a byte array
-                byte[] parsedData = ParseHexStringToByteArray(data);
-
-                // Enqueue the data into the notification queue
-                _notificationQueue.Enqueue(parsedData);
-
-                // Signal that new data is available
-                _notificationEvent.Set();
-            });
-        }
-
-        private byte[] ParseHexStringToByteArray(string hexString)
-        {
-            int numberOfBytes = hexString.Length / 2;
-            byte[] bytes = new byte[numberOfBytes];
-            for (int i = 0; i < numberOfBytes; i++)
-            {
-                bytes[i] = Convert.ToByte(hexString.Substring(i * 2, 2), 16);
-            }
-            return bytes;
-        }
-        /// <summary>
-        /// Method that performs Read operation from USB Device
-        /// </summary>
-        /// <param name="buffer"> Pointer to an array where data read from USB device is copied to </param>
-        /// <param name="size"> Size of the Buffer </param>
-        /// <returns></returns>
         public int ReadData(IntPtr buffer, int size)
         {
 
@@ -614,7 +594,6 @@ namespace AccessAPP.Services
             }
         }
 
-
         private async Task SendBleMessageAsync(BleMessage message)
         {
             Console.WriteLine($"Sending BLE message of size {message._BleMessageBuffer.Length}");
@@ -650,45 +629,21 @@ namespace AccessAPP.Services
             CassiaReadWriteService cassiaReadWriteService = new CassiaReadWriteService();
             string hexData = BitConverter.ToString(chunk).Replace("-", "");
             Console.WriteLine($"Data Sent: {hexData}");
-           
+
             await cassiaReadWriteService.WriteBleMessage("192.168.40.1", MacAddress, 19, hexData, "?noresponse=1");
-            
-        }
-
-      
-
-        /// <summary>
-        /// Method that updates the progres bar
-        /// </summary>
-        /// <param name="arrayID"></param>
-        /// <param name="rowNum"></param>
-        public void ProgressUpdate(byte arrayID, ushort rowNum)
-        {
-            // Calculate progress percentage based on the current row and total rows
-    progressBarProgress = (rowNum / totalRows) * 100.0;
-
-    // Ensure progress does not exceed 100%
-    progressBarProgress = Math.Min(progressBarProgress, 100);
-
-    // Log the progress
-    Console.WriteLine($"Progress: {progressBarProgress:F2}% - Array ID: {arrayID}, Row: {rowNum}");
-
 
         }
-        public void SetTotalRows(int rows)
-        {
-            totalRows = rows > 0 ? rows : 1; // Avoid division by zero
-        }
 
-        public async Task<bool> SendJumpToBootloader(string gatewayIpAddress, string nodeMac,bool bActor)
+
+        public async Task<bool> SendJumpToBootloader(string gatewayIpAddress, string nodeMac, bool bActor)
         {
             var cassiaReadWrite = new CassiaReadWriteService();
             string value = "0101000800D9CB01";
-            if (bActor) 
+            if (bActor)
             {
                 value = "0101000800D9CB02";
             }
-           
+
             var response = await cassiaReadWrite.WriteBleMessage(gatewayIpAddress, nodeMac, 19, value, "?noresponse=1");
 
             return response.IsSuccessStatusCode;
@@ -720,7 +675,6 @@ namespace AccessAPP.Services
                 return false;
             }
         }
-
 
         public async Task<bool> ActorBootCheck(string gatewayIpAddress, string nodeMac)
         {
@@ -795,6 +749,105 @@ namespace AccessAPP.Services
             }
         }
 
+
+        /// <summary>
+        /// Method that updates the progres bar
+        /// </summary>
+        /// <param name="arrayID"></param>
+        /// <param name="rowNum"></param>
+        public void ProgressUpdate(byte arrayID, ushort rowNum)
+        {
+            // Calculate progress percentage based on the current row and total rows
+            progressBarProgress = (rowNum / totalRows) * 100.0;
+
+            // Ensure progress does not exceed 100%
+            progressBarProgress = Math.Min(progressBarProgress, 100);
+
+            // Log the progress
+            Console.WriteLine($"Progress: {progressBarProgress:F2}% - Array ID: {arrayID}, Row: {rowNum}");
+
+
+        }
+        public void SetTotalRows(int rows)
+        {
+            totalRows = rows > 0 ? rows : 1; // Avoid division by zero
+        }
+
+
+        public bool GetHidDevice()
+        {
+            return (true);
+        }
+
+        /// <summary>
+        /// Checks if the USB device is connected and opens if it is present
+        /// Returns a success or failure
+        /// </summary>
+        public int OpenConnection()
+        {
+            int status = 0;
+            status = GetHidDevice() ? ERR_SUCCESS : ERR_OPEN;
+
+            return status;
+        }
+
+        /// <summary>
+        /// Closes the previously opened USB device and returns the status
+        /// </summary>
+        public int CloseConnection()
+        {
+            int status = 0;
+            return status;
+
+        }
+
+        public void InitializeNotificationSubscription(string macAddress, CassiaNotificationService cassiaNotificationService)
+        {
+            // Unsubscribe from all previous subscriptions
+            foreach (var subscribedMac in _subscribedMacAddresses)
+            {
+                Console.WriteLine($"Unsubscribing from notifications for {subscribedMac}");
+                cassiaNotificationService.Unsubscribe(subscribedMac);
+            }
+
+            // Clear the list of subscribed MAC addresses
+            _subscribedMacAddresses.Clear();
+
+            // Add the new MAC address to the subscribed set
+            _subscribedMacAddresses.Add(macAddress);
+
+            // Subscribe to notifications for the new MAC address
+            cassiaNotificationService.Subscribe(macAddress, (sender, data) =>
+            {
+                Console.WriteLine($"Notification received for {macAddress}: {data}");
+
+                // Parse the notification data into a byte array
+                byte[] parsedData = ParseHexStringToByteArray(data);
+
+                // Enqueue the data into the notification queue
+                _notificationQueue.Enqueue(parsedData);
+
+                // Signal that new data is available
+                _notificationEvent.Set();
+            });
+        }
+
+        private byte[] ParseHexStringToByteArray(string hexString)
+        {
+            int numberOfBytes = hexString.Length / 2;
+            byte[] bytes = new byte[numberOfBytes];
+            for (int i = 0; i < numberOfBytes; i++)
+            {
+                bytes[i] = Convert.ToByte(hexString.Substring(i * 2, 2), 16);
+            }
+            return bytes;
+        }
+        /// <summary>
+        /// Method that performs Read operation from USB Device
+        /// </summary>
+        /// <param name="buffer"> Pointer to an array where data read from USB device is copied to </param>
+        /// <param name="size"> Size of the Buffer </param>
+        /// <returns></returns>
 
     }
 }
