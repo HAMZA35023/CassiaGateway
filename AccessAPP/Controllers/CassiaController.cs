@@ -309,13 +309,14 @@ namespace AccessAPP.Controllers
             }
         }
 
-        [HttpPost("SensorUpgrade")]
+        [HttpPost("startSensorUpgrade")]
         public async Task<IActionResult> StartSensorUpgrade([FromBody] FirmwareUpgradeRequest request)
         {
+
             string nodeMac = request.MacAddress;
             string pincode = request.Pincode;
-            bool bActor = request.bActor; // if bActor=1, programming actor
-            ServiceResponse serviceResponse = new();
+            bool bActor = request.bActor; // if bActor=1 , programming actor
+
             try
             {
                 // Check if an upgrade is already in progress for this device
@@ -336,17 +337,16 @@ namespace AccessAPP.Controllers
                 bool isAlreadyInBootMode = _firmwareUpgradeService.CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
                 if (isAlreadyInBootMode)
                 {
-                    Console.WriteLine("Device is already in boot mode.");
-                    await Task.Delay(3000);
-                    serviceResponse = await _firmwareUpgradeService.ProcessingSensorUpgrade(nodeMac, bActor);
                    
-                    return serviceResponse.Success
-                        ? Ok(new { message = serviceResponse.Message })
-                        : StatusCode(serviceResponse.StatusCode, new { message = serviceResponse.Message });
+                    Console.WriteLine("Device is already in boot mode.");
+                    // Delays for 3 seconds (3000 milliseconds) before connecting to device again
+                    await Task.Delay(3000);
+
+                    return await ProcessingUpgrade(nodeMac, bActor);
                 }
                 else
                 {
-                    // Step 2: Attempt login if needed
+                    //Step 2: Attempt login if needed
                     var loginResult = await _connectService.AttemptLogin(_gatewayIpAddress, nodeMac);
                     if (loginResult.ResponseBody.PincodeRequired && !string.IsNullOrEmpty(pincode))
                     {
@@ -361,35 +361,30 @@ namespace AccessAPP.Controllers
 
                     Console.WriteLine("Logged into device...");
 
-                    // Send Jump to Bootloader telegram repeatedly until successful
-                    const int maxAttempts = 5;
-                    bool bootModeAchieved = false;
-                    for (int attempt = 0; attempt < maxAttempts; attempt++)
+
+                    // Send Jump to Bootloader telegram
+                    bool jumpToBootResponse = await _firmwareUpgradeService.SendJumpToBootloader(_gatewayIpAddress, nodeMac,bActor);
+                    if (!jumpToBootResponse)
                     {
-                        bootModeAchieved = await _firmwareUpgradeService.SendJumpToBootloader(_gatewayIpAddress, nodeMac, bActor);
-                        if (bootModeAchieved)
-                        {
-                            Console.WriteLine($"Device entered boot mode after {attempt + 1} attempts.");
-                            break;
-                        }
-                        Console.WriteLine($"Attempt {attempt + 1} to enter boot mode failed. Retrying...");
-                        await Task.Delay(3000); // Delay between attempts
+                        return StatusCode((int)HttpStatusCode.ExpectationFailed, new { message = "Failed to enter boot mode." });
+                    }
+                    bool jumpToBootResponse1 = await _firmwareUpgradeService.SendJumpToBootloader(_gatewayIpAddress, nodeMac, bActor);
+                    if (!jumpToBootResponse1)
+                    {
+                        return StatusCode((int)HttpStatusCode.ExpectationFailed, new { message = "Failed to enter boot mode." });
+                    }
+                    bool jumpToBootResponse2 = await _firmwareUpgradeService.SendJumpToBootloader(_gatewayIpAddress, nodeMac, bActor);
+                    if (!jumpToBootResponse2)
+                    {
+                        return StatusCode((int)HttpStatusCode.ExpectationFailed, new { message = "Failed to enter boot mode." });
                     }
 
-                    if (!bootModeAchieved)
-                    {
-                        return StatusCode((int)HttpStatusCode.ExpectationFailed, new { message = "Failed to enter boot mode after multiple attempts." });
-                    }
+                    Console.WriteLine(jumpToBootResponse2);
 
-                    // Disconnect and prepare for the upgrade process
-                    var isDisconnected = await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0);
+                    // Delays for 3 seconds (3000 milliseconds) before connecting to device again
+                    var isDisConnected = await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac,0);
                     await Task.Delay(3000);
-
-                    serviceResponse = await _firmwareUpgradeService.ProcessingSensorUpgrade(nodeMac, bActor);
-
-                    return serviceResponse.Success
-                        ? Ok(new { message = serviceResponse.Message })
-                        : StatusCode(serviceResponse.StatusCode, new { message = serviceResponse.Message });
+                    return await ProcessingUpgrade(nodeMac,bActor);
                 }
             }
             catch (Exception ex)
@@ -400,14 +395,14 @@ namespace AccessAPP.Controllers
         }
 
 
-        [HttpPost("ActorUpgrade")]
+        [HttpPost("startActorUpgrade")]
         public async Task<IActionResult> startActorUpgrade([FromBody] FirmwareUpgradeRequest request)
         {
 
             string nodeMac = request.MacAddress;
             string pincode = request.Pincode;
             bool bActor = request.bActor; // if bActor=1 , programming actor
-            ServiceResponse serviceResponse = new();
+
             try
             {
                 // Check if an upgrade is already in progress for this device
@@ -465,11 +460,7 @@ namespace AccessAPP.Controllers
                     // Delays for 3 seconds (3000 milliseconds) before connecting to device again
                     //var isDisConnected = await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0);
                     //await Task.Delay(3000);
-                    serviceResponse = await _firmwareUpgradeService.ProcessingActorUpgrade(nodeMac, bActor);
-
-                    return serviceResponse.Success
-                       ? Ok(new { message = serviceResponse.Message })
-                       : StatusCode(serviceResponse.StatusCode, new { message = serviceResponse.Message });
+                    return await ProcessingActorUpgrade(nodeMac, bActor);
                 }
             }
             catch (Exception ex)
@@ -478,6 +469,203 @@ namespace AccessAPP.Controllers
                 return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
             }
         }
+        //[HttpPost("bulkSensorUpgrade")]
+        //public async Task<IActionResult> BulkSensorUpgrade([FromBody] List<FirmwareUpgradeRequest> upgradeRequests)
+        //{
+        //    try
+        //    {
+        //        if (upgradeRequests == null || !upgradeRequests.Any())
+        //        {
+        //            return BadRequest(new { message = "No sensors provided for upgrade." });
+        //        }
+
+        //        var upgradeResults = new List<object>();
+        //        foreach (var request in upgradeRequests)
+        //        {
+        //            Console.WriteLine($"Starting upgrade for sensor: {request.MacAddress}");
+
+        //            // Connect to the device
+        //            var connectionResult = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, request.MacAddress);
+        //            if (connectionResult.Status != HttpStatusCode.OK)
+        //            {
+        //                upgradeResults.Add(new
+        //                {
+        //                    MacAddress = request.MacAddress,
+        //                    Status = "Failed",
+        //                    Message = "Failed to connect to device."
+        //                });
+        //                continue;
+        //            }
+
+        //            // Check if the device is already in boot mode
+        //            bool isInBootMode = _firmwareUpgradeService.CheckIfDeviceInBootMode(_gatewayIpAddress, request.MacAddress);
+        //            if (!isInBootMode)
+        //            {
+        //                Console.WriteLine($"Sending Jump to Bootloader command for {request.MacAddress}");
+        //                bool jumpToBootResponse = await _firmwareUpgradeService.SendJumpToBootloader(_gatewayIpAddress, request.MacAddress);
+        //                if (!jumpToBootResponse)
+        //                {
+        //                    upgradeResults.Add(new
+        //                    {
+        //                        MacAddress = request.MacAddress,
+        //                        Status = "Failed",
+        //                        Message = "Failed to enter boot mode."
+        //                    });
+        //                    continue;
+        //                }
+
+        //                // Disconnect and delay to ensure the device is ready
+        //                await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, request.MacAddress, 0);
+        //                await Task.Delay(3000); // Delay for 3 seconds
+        //            }
+
+        //            // Start the firmware upgrade
+        //            var notificationService = new CassiaNotificationService(_configuration); // Inject notification service
+        //            double progress = 0.0;
+        //            _firmwareUpgradeService.InitializeNotificationSubscription(request.MacAddress, notificationService);
+
+        //            var progressTask = Task.Run(async () =>
+        //            {
+        //                while (progress < 3.0) // Wait until the progress reaches 3%
+        //                {
+        //                    await Task.Delay(1000);
+        //                    progress = _firmwareUpgradeService.GetProgress();
+        //                    Console.WriteLine($"Progress for {request.MacAddress}: {progress:F2}%");
+        //                }
+        //            });
+
+        //            // Start the programming task
+        //            var programmingTask = _firmwareUpgradeService.ProgramSensor(_gatewayIpAddress, request.MacAddress, notificationService,bActor);
+
+        //            await Task.WhenAny(progressTask, programmingTask);
+
+        //            // Log results
+        //            if (progress >= 3.0)
+        //            {
+        //                Console.WriteLine($"Reached 3% progress for {request.MacAddress}. Moving to next sensor.");
+        //                upgradeResults.Add(new
+        //                {
+        //                    MacAddress = request.MacAddress,
+        //                    Status = "In Progress",
+        //                    Message = "Upgrade started and passed 3% progress."
+        //                });
+        //            }
+        //            else
+        //            {
+        //                upgradeResults.Add(new
+        //                {
+        //                    MacAddress = request.MacAddress,
+        //                    Status = "Failed",
+        //                    Message = "Upgrade failed to reach 3% progress."
+        //                });
+        //            }
+        //        }
+
+        //        return Ok(upgradeResults);
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        Console.Error.WriteLine($"Error during bulk firmware upgrade: {ex.Message} {ex.StackTrace}");
+        //        return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
+        //    }
+        //}
+
+        private async Task<IActionResult> ProcessingUpgrade(string nodeMac,bool bActor)
+        {
+
+            var isConnected = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
+            if (isConnected.Status != HttpStatusCode.OK)
+            {
+                Console.WriteLine("Failed to connect to device.");
+                return StatusCode(500);
+            }
+
+            bool isAlreadyInBootMode = _firmwareUpgradeService.CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
+
+            var notificationService = new CassiaNotificationService(_configuration);
+            if (true)
+            {
+                //await Task.Delay(3000);
+               
+                bool notificationEnabled = await notificationService.EnableNotificationAsync(_gatewayIpAddress, nodeMac,bActor);
+
+                if (!notificationEnabled) { return Ok(new { message = "Error Enabling Notifications" }); }
+
+                Console.WriteLine("bootloader mode achieved and Notification enabled status:", notificationEnabled);
+
+            }
+            else 
+            {
+                Console.WriteLine("bootloader mode not achieved");
+            }
+
+            //Step 3: Start Programming the Sensor
+            _firmwareUpgradeService.ProgramSensor(_gatewayIpAddress, nodeMac, notificationService,bActor);
+
+            return Ok(new { message = "Programming Complete" });
+           
+        }
+
+        
+
+        private async Task<IActionResult> ProcessingActorUpgrade(string nodeMac, bool bActor)
+        {
+            const int maxRetryAttempts = 3; // Maximum number of retries to put the actor into boot mode
+            const int delayBetweenRetries = 5000; // Delay between retries (in milliseconds)
+            int retryCount = 0;
+
+            // Step 1: Check if the actor is in boot mode
+            while (retryCount < maxRetryAttempts)
+            {
+                var isActorInBootMode = await _firmwareUpgradeService.ActorBootCheck(_gatewayIpAddress, nodeMac);
+
+                if (isActorInBootMode)
+                {
+                    Console.WriteLine($"Actor {nodeMac} is in boot mode.");
+                    break; // Exit the loop if the actor is already in boot mode
+                }
+                else
+                {
+                    retryCount++;
+                    Console.WriteLine($"Actor {nodeMac} is not in boot mode. Attempting to put it into boot mode. Retry {retryCount}/{maxRetryAttempts}");
+
+                    // Send a command to put the actor into boot mode
+                    var jumpToBootloaderSuccess = await _firmwareUpgradeService.SendJumpToBootloader(_gatewayIpAddress, nodeMac, bActor);
+
+                    if (!jumpToBootloaderSuccess)
+                    {
+                        Console.WriteLine($"Failed to send jump-to-bootloader command for {nodeMac}. Retrying...");
+                    }
+
+                    // Wait for a while before retrying
+                    await Task.Delay(delayBetweenRetries);
+                }
+            }
+
+            // If after max retries the actor is still not in boot mode, return an error response
+            if (retryCount >= maxRetryAttempts)
+            {
+                Console.WriteLine($"Failed to put actor {nodeMac} into boot mode after {maxRetryAttempts} attempts.");
+                return StatusCode(500, new { message = "Failed to put actor into boot mode." });
+            }
+
+            // Step 2: Enable notifications
+            var notificationService = new CassiaNotificationService(_configuration);
+            Console.WriteLine($"Bootloader mode achieved for {nodeMac}.");
+
+            // Step 3: Start programming the actor
+            var programmingResult = await _firmwareUpgradeService.ProgramSensor(_gatewayIpAddress, nodeMac, notificationService, bActor);
+
+            if (programmingResult)
+            {
+                return Ok(new { message = "Programming Complete" });
+            }
+            else
+            {
+                return StatusCode(500, new { message = "Programming Failed." });
+            }
+        }
+
 
 
         // API to connect to a BLE device and send a telegram to control the light

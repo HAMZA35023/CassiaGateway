@@ -20,8 +20,6 @@ using Windows.Devices.Bluetooth;
 using Windows.Storage.Streams;
 using System.Windows.Markup;
 using Microsoft.Extensions.Configuration;
-using Microsoft.AspNetCore.Mvc;
-
 
 namespace AccessAPP.Services
 {
@@ -57,102 +55,7 @@ namespace AccessAPP.Services
             _configuration = configuration;
         }
 
-        public async Task<ServiceResponse> ProcessingSensorUpgrade(string nodeMac, bool bActor)
-        {
-            var isConnected = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
-            if (isConnected.Status != HttpStatusCode.OK)
-            {
-                Console.WriteLine("Failed to connect to device.");
-                return CreateServiceResponse(false, 500, "Failed to connect to device.");
-            }
-
-            bool isAlreadyInBootMode = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
-            var notificationService = new CassiaNotificationService(_configuration);
-
-            if (isAlreadyInBootMode)
-            {
-                bool notificationEnabled = await notificationService.EnableNotificationAsync(_gatewayIpAddress, nodeMac, bActor);
-                if (!notificationEnabled)
-                {
-                    return CreateServiceResponse(false, 500, "Error Enabling Notifications");
-                }
-
-                Console.WriteLine("Bootloader mode achieved and Notification enabled.");
-            }
-            else
-            {
-                return CreateServiceResponse(false, 500, "Bootloader mode not achieved");
-            }
-
-            // Step 3: Start Programming the Sensor
-            bool programmingResult = await ProgramDevice(_gatewayIpAddress, nodeMac, notificationService, bActor);
-
-            if (programmingResult)
-            {
-                return CreateServiceResponse(true, 200, "Programming Complete");
-            }
-            else
-            {
-                return CreateServiceResponse(false, 500, "Programming Failed");
-            }
-        }
-
-
-        public async Task<ServiceResponse> ProcessingActorUpgrade(string nodeMac, bool bActor)
-        {
-            const int maxRetryAttempts = 3; // Maximum number of retries to put the actor into boot mode
-            const int delayBetweenRetries = 5000; // Delay between retries (in milliseconds)
-            int retryCount = 0;
-
-            // Step 1: Check if the actor is in boot mode
-            while (retryCount < maxRetryAttempts)
-            {
-                var isActorInBootMode = await ActorBootCheck(_gatewayIpAddress, nodeMac);
-
-                if (isActorInBootMode)
-                {
-                    Console.WriteLine($"Actor {nodeMac} is in boot mode.");
-                    break; // Exit the loop if the actor is already in boot mode
-                }
-                else
-                {
-                    retryCount++;
-                    Console.WriteLine($"Actor {nodeMac} is not in boot mode. Attempting to put it into boot mode. Retry {retryCount}/{maxRetryAttempts}");
-
-                    // Send a command to put the actor into boot mode
-                    var jumpToBootloaderSuccess = await SendJumpToBootloader(_gatewayIpAddress, nodeMac, bActor);
-
-                    if (!jumpToBootloaderSuccess)
-                    {
-                        Console.WriteLine($"Failed to send jump-to-bootloader command for {nodeMac}. Retrying...");
-                    }
-
-                    // Wait for a while before retrying
-                    await Task.Delay(delayBetweenRetries);
-                }
-            }
-
-            // If after max retries the actor is still not in boot mode, return an error response
-            if (retryCount >= maxRetryAttempts)
-            {
-                Console.WriteLine($"Failed to put actor {nodeMac} into boot mode after {maxRetryAttempts} attempts.");
-                return CreateServiceResponse(false, 500, "Failed to put actor into boot mode."); 
-            }
-
-            // Step 2: Enable notifications
-            var notificationService = new CassiaNotificationService(_configuration);
-            Console.WriteLine($"Bootloader mode achieved for {nodeMac}.");
-
-            // Step 3: Start programming the actor
-            var programmingResult = await ProgramDevice(_gatewayIpAddress, nodeMac, notificationService, bActor);
-
-
-            return programmingResult
-                ? CreateServiceResponse(true, 200, "Programming Complete")
-                : CreateServiceResponse(false, 500, "Failed to Program"); ;
-           
-        }
-        public async Task<bool> ProgramDevice(string gatewayIpAddress, string nodeMac, CassiaNotificationService cassiaNotificationService,bool bActor)
+        public async Task<bool> ProgramSensor(string gatewayIpAddress, string nodeMac, CassiaNotificationService cassiaNotificationService,bool bActor)
         {
             Console.WriteLine($"The Actor is going to be programmed? : {bActor}" );
 
@@ -640,16 +543,6 @@ namespace AccessAPP.Services
                 return true;
             }
             return false;
-        }
-
-        private ServiceResponse CreateServiceResponse(bool success, int statusCode, string message)
-        {
-            return new ServiceResponse
-            {
-                Success = success,
-                StatusCode = statusCode,
-                Message = message
-            };
         }
 
     }
