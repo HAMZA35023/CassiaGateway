@@ -312,15 +312,14 @@ namespace AccessAPP.Controllers
         [HttpPost("startSensorUpgrade")]
         public async Task<IActionResult> StartSensorUpgrade([FromBody] FirmwareUpgradeRequest request)
         {
-
             string nodeMac = request.MacAddress;
             string pincode = request.Pincode;
-            bool bActor = request.bActor; // if bActor=1 , programming actor
+            bool bActor = request.bActor; // if bActor=1, programming actor
 
             try
             {
                 // Check if an upgrade is already in progress for this device
-                if (false) // we will check if BLE Device already in boot mode here
+                if (false) // Implement a check for ongoing upgrade
                 {
                     return Conflict(new { message = "Firmware upgrade already in progress for this device." });
                 }
@@ -337,16 +336,13 @@ namespace AccessAPP.Controllers
                 bool isAlreadyInBootMode = _firmwareUpgradeService.CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
                 if (isAlreadyInBootMode)
                 {
-                   
                     Console.WriteLine("Device is already in boot mode.");
-                    // Delays for 3 seconds (3000 milliseconds) before connecting to device again
                     await Task.Delay(3000);
-
-                    return await ProcessingUpgrade(nodeMac, bActor);
+                    return await ProcessingSensorUpgrade(nodeMac, bActor);
                 }
                 else
                 {
-                    //Step 2: Attempt login if needed
+                    // Step 2: Attempt login if needed
                     var loginResult = await _connectService.AttemptLogin(_gatewayIpAddress, nodeMac);
                     if (loginResult.ResponseBody.PincodeRequired && !string.IsNullOrEmpty(pincode))
                     {
@@ -361,30 +357,31 @@ namespace AccessAPP.Controllers
 
                     Console.WriteLine("Logged into device...");
 
-
-                    // Send Jump to Bootloader telegram
-                    bool jumpToBootResponse = await _firmwareUpgradeService.SendJumpToBootloader(_gatewayIpAddress, nodeMac,bActor);
-                    if (!jumpToBootResponse)
+                    // Send Jump to Bootloader telegram repeatedly until successful
+                    const int maxAttempts = 5;
+                    bool bootModeAchieved = false;
+                    for (int attempt = 0; attempt < maxAttempts; attempt++)
                     {
-                        return StatusCode((int)HttpStatusCode.ExpectationFailed, new { message = "Failed to enter boot mode." });
-                    }
-                    bool jumpToBootResponse1 = await _firmwareUpgradeService.SendJumpToBootloader(_gatewayIpAddress, nodeMac, bActor);
-                    if (!jumpToBootResponse1)
-                    {
-                        return StatusCode((int)HttpStatusCode.ExpectationFailed, new { message = "Failed to enter boot mode." });
-                    }
-                    bool jumpToBootResponse2 = await _firmwareUpgradeService.SendJumpToBootloader(_gatewayIpAddress, nodeMac, bActor);
-                    if (!jumpToBootResponse2)
-                    {
-                        return StatusCode((int)HttpStatusCode.ExpectationFailed, new { message = "Failed to enter boot mode." });
+                        bootModeAchieved = await _firmwareUpgradeService.SendJumpToBootloader(_gatewayIpAddress, nodeMac, bActor);
+                        if (bootModeAchieved)
+                        {
+                            Console.WriteLine($"Device entered boot mode after {attempt + 1} attempts.");
+                            break;
+                        }
+                        Console.WriteLine($"Attempt {attempt + 1} to enter boot mode failed. Retrying...");
+                        await Task.Delay(3000); // Delay between attempts
                     }
 
-                    Console.WriteLine(jumpToBootResponse2);
+                    if (!bootModeAchieved)
+                    {
+                        return StatusCode((int)HttpStatusCode.ExpectationFailed, new { message = "Failed to enter boot mode after multiple attempts." });
+                    }
 
-                    // Delays for 3 seconds (3000 milliseconds) before connecting to device again
-                    var isDisConnected = await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac,0);
+                    // Disconnect and prepare for the upgrade process
+                    var isDisconnected = await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0);
                     await Task.Delay(3000);
-                    return await ProcessingUpgrade(nodeMac,bActor);
+
+                    return await ProcessingSensorUpgrade(nodeMac, bActor);
                 }
             }
             catch (Exception ex)
@@ -393,6 +390,7 @@ namespace AccessAPP.Controllers
                 return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
             }
         }
+
 
 
         [HttpPost("startActorUpgrade")]
@@ -471,7 +469,7 @@ namespace AccessAPP.Controllers
         }
         
 
-        private async Task<IActionResult> ProcessingUpgrade(string nodeMac,bool bActor) // should be moved to firmware services
+        private async Task<IActionResult> ProcessingSensorUpgrade(string nodeMac,bool bActor) // should be moved to firmware services
         {
 
             var isConnected = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
