@@ -48,6 +48,7 @@ namespace AccessAPP.Services
         private readonly string _gatewayIpAddress;
         private readonly int _gatewayPort;
         private string MacAddress = "";
+        private double totalRows = 0;
         public CassiaFirmwareUpgradeService(HttpClient httpClient, CassiaConnectService connectService,CassiaNotificationService notificationService, IConfiguration configuration)
         {
             _httpClient = httpClient;
@@ -101,7 +102,7 @@ namespace AccessAPP.Services
             }
 
             //Step 3: Start Programming the Sensor
-            bool programmingResult = await ProgramSensor(_gatewayIpAddress, nodeMac, notificationService, bActor);
+            bool programmingResult = await ProgramDevice(_gatewayIpAddress, nodeMac, notificationService, bActor);
 
             if (programmingResult)
             {
@@ -171,7 +172,7 @@ namespace AccessAPP.Services
             Console.WriteLine($"Bootloader mode achieved for {nodeMac}.");
 
             // Step 3: Start programming the actor
-            var programmingResult = await ProgramSensor(_gatewayIpAddress, nodeMac, notificationService, bActor);
+            var programmingResult = await ProgramDevice(_gatewayIpAddress, nodeMac, notificationService, bActor);
 
             if (programmingResult)
             {
@@ -188,16 +189,12 @@ namespace AccessAPP.Services
                 return response;
             }
         }
-        public async Task<bool> ProgramSensor(string gatewayIpAddress, string nodeMac, CassiaNotificationService cassiaNotificationService,bool bActor)
+        public async Task<bool> ProgramDevice(string gatewayIpAddress, string nodeMac, CassiaNotificationService cassiaNotificationService,bool bActor)
         {
             Console.WriteLine($"Actor is going to be programmed? : {bActor}" );
 
             InitializeNotificationSubscription(nodeMac, cassiaNotificationService);
             int lines;
-
-            lines = File.ReadAllLines(_firmwareActorFilePath).Length - 1; //Don't count header
-            var progressBarStepSize = 100.0 / lines;
-
             MacAddress = nodeMac;
             Bootloader_Utils.CyBtldr_ProgressUpdate Upd = new Bootloader_Utils.CyBtldr_ProgressUpdate(ProgressUpdate);
             Bootloader_Utils.CyBtldr_CommunicationsData m_comm_data = new Bootloader_Utils.CyBtldr_CommunicationsData();
@@ -206,6 +203,9 @@ namespace AccessAPP.Services
             
             if (bActor) 
             {
+                
+                lines = File.ReadAllLines(_firmwareActorFilePath).Length - 1; //Don't count header
+                var progressBarStepSize = 100.0 / lines;
                 m_comm_data.WriteData = WriteActorData;
                 m_comm_data.ReadData = ReadActorData;
                 m_comm_data.MaxTransferSize = 72;
@@ -213,6 +213,9 @@ namespace AccessAPP.Services
             }
             else 
             {
+                
+                lines = File.ReadAllLines(_firmwareSensorFilePath).Length - 1; //Don't count header
+                var progressBarStepSize = 100.0 / lines;
                 m_comm_data.WriteData = WriteSensorData;
                 m_comm_data.ReadData = ReadData;
                 m_comm_data.MaxTransferSize = 265;
@@ -513,16 +516,7 @@ namespace AccessAPP.Services
             
         }
 
-        /// <summary>
-        /// Method that returns the maximum transfer size
-        /// </summary>
-        public uint MaxTransferSize
-        {
-            get
-            {
-                return (uint)(MaxPacketSize);
-            }
-        }
+      
 
         /// <summary>
         /// Method that updates the progres bar
@@ -531,8 +525,8 @@ namespace AccessAPP.Services
         /// <param name="rowNum"></param>
         public void ProgressUpdate(byte arrayID, ushort rowNum)
         {
-            // Calculate progress percentage
-            progressBarProgress += progressBarStepSize;
+            // Calculate progress percentage based on the current row and total rows
+            progressBarProgress = (rowNum / totalRows) * 100.0;
 
             // Ensure progress does not exceed 100%
             progressBarProgress = Math.Min(progressBarProgress, 100);
@@ -542,7 +536,10 @@ namespace AccessAPP.Services
 
 
         }
-
+        public void SetTotalRows(int rows)
+        {
+            totalRows = rows > 0 ? rows : 1; // Avoid division by zero
+        }
 
         public async Task<bool> SendJumpToBootloader(string gatewayIpAddress, string nodeMac,bool bActor)
         {
