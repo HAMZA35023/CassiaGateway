@@ -140,7 +140,7 @@ namespace AccessAPP.Services
         }
         public async Task<ServiceResponse> UpgradeActorAsync(string nodeMac, string pincode, bool bActor)
         {
-            ServiceResponse response = null;
+            ServiceResponse response = new();
             var connectionResult = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
             if (connectionResult.Status != HttpStatusCode.OK)
             {
@@ -516,51 +516,58 @@ namespace AccessAPP.Services
         public bool ProgramDevice(string gatewayIpAddress, string nodeMac, CassiaNotificationService cassiaNotificationService, bool bActor)
         {
             Console.WriteLine($"Actor is going to be programmed? : {bActor}");
-
-            InitializeNotificationSubscription(nodeMac, cassiaNotificationService);
-            int lines;
-            MacAddress = nodeMac;
-            Bootloader_Utils.CyBtldr_ProgressUpdate Upd = new Bootloader_Utils.CyBtldr_ProgressUpdate(ProgressUpdate);
-            Bootloader_Utils.CyBtldr_CommunicationsData m_comm_data = new Bootloader_Utils.CyBtldr_CommunicationsData();
-            m_comm_data.OpenConnection = OpenConnection;
-            m_comm_data.CloseConnection = CloseConnection;
-
-            if (bActor)
+            try 
             {
-                Console.WriteLine("Programming Actor");
-                lines = File.ReadAllLines(_firmwareActorFilePath).Length - 1; //Don't count header
-                var progressBarStepSize = 100.0 / lines;
-                m_comm_data.WriteData = WriteActorData;
-                m_comm_data.ReadData = ReadActorData;
-                m_comm_data.MaxTransferSize = 72;
-                var local_status = (ReturnCodes)Bootloader_Utils.CyBtldr_Program(_firmwareActorFilePath, null, _appID, ref m_comm_data, Upd);
-            }
-            else
-            {
-                if(bootloader)
+                InitializeNotificationSubscription(nodeMac, cassiaNotificationService);
+                int lines;
+                MacAddress = nodeMac;
+                Bootloader_Utils.CyBtldr_ProgressUpdate Upd = new Bootloader_Utils.CyBtldr_ProgressUpdate(ProgressUpdate);
+                Bootloader_Utils.CyBtldr_CommunicationsData m_comm_data = new Bootloader_Utils.CyBtldr_CommunicationsData();
+                m_comm_data.OpenConnection = OpenConnection;
+                m_comm_data.CloseConnection = CloseConnection;
+
+                if (bActor)
                 {
-                    Console.WriteLine("Programming Bootloader");
-                    lines = File.ReadAllLines(_firmwareBootLoaderFilePath).Length - 1; //Don't count header
+                    Console.WriteLine("Programming Actor");
+                    lines = File.ReadAllLines(_firmwareActorFilePath).Length - 1; //Don't count header
                     var progressBarStepSize = 100.0 / lines;
-                    m_comm_data.WriteData = WriteSensorData;
-                    m_comm_data.ReadData = ReadData;
-                    m_comm_data.MaxTransferSize = 265;
-                    var local_status = (ReturnCodes)Bootloader_Utils.CyBtldr_Program(_firmwareBootLoaderFilePath, _securityKey, _appID, ref m_comm_data, Upd);
+                    m_comm_data.WriteData = WriteActorData;
+                    m_comm_data.ReadData = ReadActorData;
+                    m_comm_data.MaxTransferSize = 72;
+                    var local_status = (ReturnCodes)Bootloader_Utils.CyBtldr_Program(_firmwareActorFilePath, null, _appID, ref m_comm_data, Upd);
                 }
                 else
                 {
-                    Console.WriteLine("Programming Sensor");
-                    lines = File.ReadAllLines(_firmwareSensorFilePath).Length - 1; //Don't count header
-                    var progressBarStepSize = 100.0 / lines;
-                    m_comm_data.WriteData = WriteSensorData;
-                    m_comm_data.ReadData = ReadData;
-                    m_comm_data.MaxTransferSize = 265;
-                    var local_status = (ReturnCodes)Bootloader_Utils.CyBtldr_Program(_firmwareSensorFilePath, _securityKey, _appID, ref m_comm_data, Upd);
-                }
-                
-            }
+                    if (bootloader)
+                    {
+                        Console.WriteLine("Programming Bootloader");
+                        lines = File.ReadAllLines(_firmwareBootLoaderFilePath).Length - 1; //Don't count header
+                        var progressBarStepSize = 100.0 / lines;
+                        m_comm_data.WriteData = WriteSensorData;
+                        m_comm_data.ReadData = ReadData;
+                        m_comm_data.MaxTransferSize = 265;
+                        var local_status = (ReturnCodes)Bootloader_Utils.CyBtldr_Program(_firmwareBootLoaderFilePath, _securityKey, _appID, ref m_comm_data, Upd);
+                    }
+                    else
+                    {
+                        Console.WriteLine("Programming Sensor");
+                        lines = File.ReadAllLines(_firmwareSensorFilePath).Length - 1; //Don't count header
+                        var progressBarStepSize = 100.0 / lines;
+                        m_comm_data.WriteData = WriteSensorData;
+                        m_comm_data.ReadData = ReadData;
+                        m_comm_data.MaxTransferSize = 265;
+                        var local_status = (ReturnCodes)Bootloader_Utils.CyBtldr_Program(_firmwareSensorFilePath, _securityKey, _appID, ref m_comm_data, Upd);
+                    }
 
-            return true;
+                }
+
+                return true;
+            }
+            finally
+            {
+                UnsubscribeNotification(nodeMac, cassiaNotificationService);
+            }
+            
         }
 
 
@@ -975,6 +982,18 @@ namespace AccessAPP.Services
                 _notificationEvent.Set();
             });
         }
+
+        public void UnsubscribeNotification(string macAddress, CassiaNotificationService cassiaNotificationService)
+        {
+            // Check if the MAC address is subscribed
+            if (_subscribedMacAddresses.Contains(macAddress))
+            {
+                Console.WriteLine($"Unsubscribing from notifications for {macAddress}");
+                cassiaNotificationService.Unsubscribe(macAddress);
+                _subscribedMacAddresses.Remove(macAddress);
+            }
+        }
+
 
         private byte[] ParseHexStringToByteArray(string hexString)
         {
