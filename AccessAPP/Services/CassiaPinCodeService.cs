@@ -54,6 +54,8 @@ namespace AccessAPP.Services
                     var timeoutTask = Task.Delay(TimeSpan.FromSeconds(120));
                     var completedTask = await Task.WhenAny(pincodeCheckTask, timeoutTask);
 
+                    // Unsubscribe from notifications
+                    cassiaListener.Unsubscribe(macAddress);
                     // Check if the pincode check task completed
                     if (completedTask == pincodeCheckTask)
                     {

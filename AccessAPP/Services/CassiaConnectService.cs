@@ -247,7 +247,7 @@ namespace AccessAPP.Services
 
                     // Unsubscribe from notifications
                     // cassiaListener.Unsubscribe(macAddress);
-
+                    
                     // Check if the response task completed
                     if (completedTask == responseTask.Task)
                     {

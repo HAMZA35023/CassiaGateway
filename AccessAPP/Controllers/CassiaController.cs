@@ -50,24 +50,6 @@ namespace AccessAPP.Controllers
             }
         }
 
-        //this is older version, works fine but we wanted this api to have an effect in backend
-
-        //[HttpGet("scannearbydevices")]   
-        //public async Task<IActionResult> FetchNearbyDevices([FromQuery] int minRssi = -100)
-        //{
-        //    try
-        //    {
-        //        string gatewayIpAddress = "192.168.0.24";
-        //        int gatewayPort = 80;
-
-        //        var nearbyDevices = await _scanService.FetchNearbyDevices(gatewayIpAddress, gatewayPort, minRssi);
-        //        return Ok(nearbyDevices);
-        //    }
-        //    catch (Exception ex)
-        //    {
-        //        return StatusCode(500, $"Error: {ex.Message + ex.StackTrace}");
-        //    }
-        //}
 
         [HttpGet("scannearbydevices")]
         public IActionResult FetchNearbyDevices([FromQuery] int minRssi = -100)
@@ -168,11 +150,7 @@ namespace AccessAPP.Controllers
             }
         }
 
-        /// <summary>
-        /// Login with connect first
-        /// </summary>
-        /// <param name="models"></param>
-        /// <returns></returns>
+        
         [HttpPost("Login")]
         public async Task<IActionResult> Login([FromBody] List<LoginRequestModel> models)
         {
@@ -221,13 +199,9 @@ namespace AccessAPP.Controllers
             }
         }
 
-        /// <summary>
-        /// Login with connect first
-        /// </summary>
-        /// <param name="models"></param>
-        /// <returns></returns>
-        [HttpGet("attemptlogin")]
-        public async Task<IActionResult> attemptlogin([FromBody] List<LoginRequestModel> models)
+        
+        [HttpGet("attemptlogin")] /// This API logs in without the connect functionality
+        public async Task<IActionResult> Attemptlogin([FromBody] List<LoginRequestModel> models)
         {
             var responses = new List<LoginResponseModel>();
 
@@ -309,12 +283,41 @@ namespace AccessAPP.Controllers
             }
         }
 
-        [HttpPost("startSensorUpgrade")]
-        public async Task<IActionResult> StartSensorUpgrade([FromBody] FirmwareUpgradeRequest request)
+        [HttpPost("SensorUpgrade")]
+        public async Task<IActionResult> SensorUpgrade([FromBody] FirmwareUpgradeRequest request)
+        {
+            string nodeMac = request.MacAddress;
+            string pincode = request.Pincode;
+            bool bActor = request.bActor; // if bActor=1, programming actor
+
+            try
+            {
+                // Check if an upgrade is already in progress for this device
+                if (false) // Implement a check for ongoing upgrade
+                {
+                    return Conflict(new { message = "Firmware upgrade already in progress for this device." });
+                }
+                var result = await _firmwareUpgradeService.UpgradeSensorAsync(nodeMac, pincode, bActor);
+
+                return result.Success
+                    ? Ok(new { message = result.Message })
+                    : StatusCode(result.StatusCode, new { message = result.Message });
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("Error during firmware upgrade: " + ex.Message + ex.StackTrace);
+                return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
+            }
+        }
+
+
+        [HttpPost("ActorUpgrade")]
+        public async Task<IActionResult> ActorUpgrade([FromBody] FirmwareUpgradeRequest request)
         {
 
             string nodeMac = request.MacAddress;
             string pincode = request.Pincode;
+            bool bActor = request.bActor; // if bActor=1 , programming actor
 
             try
             {
@@ -325,56 +328,11 @@ namespace AccessAPP.Controllers
                 }
 
                 // Step 1: Connect to the device
-                var connectionResult = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
-                if (connectionResult.Status != HttpStatusCode.OK)
-                {
-                    return StatusCode((int)connectionResult.Status, new { message = "Failed to connect to device." });
-                }
+                var result = await _firmwareUpgradeService.UpgradeActorAsync(nodeMac, pincode, bActor);
 
-                Console.WriteLine("Connected to device...");
-
-                bool isAlreadyInBootMode = _firmwareUpgradeService.CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
-                if (isAlreadyInBootMode)
-                {
-                   
-                    Console.WriteLine("Device is already in boot mode.");
-                    // Delays for 3 seconds (3000 milliseconds) before connecting to device again
-                    await Task.Delay(3000);
-
-                    return await ProcessingUpgrade(nodeMac);
-                }
-                else
-                {
-                    //Step 2: Attempt login if needed
-                    var loginResult = await _connectService.AttemptLogin(_gatewayIpAddress, nodeMac);
-                    if (loginResult.ResponseBody.PincodeRequired && !string.IsNullOrEmpty(pincode))
-                    {
-                        var checkPincodeResponse = await _cassiaPinCodeService.CheckPincode(_gatewayIpAddress, nodeMac, pincode);
-                        loginResult.ResponseBody = checkPincodeResponse.ResponseBody;
-                    }
-
-                    if (loginResult.ResponseBody.PincodeRequired && !loginResult.ResponseBody.PinCodeAccepted)
-                    {
-                        return Unauthorized(new { message = "Failed to login to the device." });
-                    }
-
-                    Console.WriteLine("Logged into device...");
-
-
-                    // Send Jump to Bootloader telegram
-                    bool jumpToBootResponse = await _firmwareUpgradeService.SendJumpToBootloader(_gatewayIpAddress, nodeMac);
-                    if (!jumpToBootResponse)
-                    {
-                        return StatusCode((int)HttpStatusCode.ExpectationFailed, new { message = "Failed to enter boot mode." });
-                    }
-
-                    Console.WriteLine(jumpToBootResponse);
-
-                    // Delays for 3 seconds (3000 milliseconds) before connecting to device again
-                    var isDisConnected = await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac,0);
-                    await Task.Delay(3000);
-                    return await ProcessingUpgrade(nodeMac);
-                }
+                return result.Success
+                    ? Ok(new { message = result.Message })
+                    : StatusCode(result.StatusCode, new { message = result.Message });
             }
             catch (Exception ex)
             {
@@ -383,42 +341,59 @@ namespace AccessAPP.Controllers
             }
         }
 
-        private async Task<IActionResult> ProcessingUpgrade(string nodeMac)
+        [HttpPost("BulkActorUpgrade")]
+        public async Task<IActionResult> BulkActorUpgrade([FromBody] List<BulkUpgradeRequest> request)
         {
-
-            var isConnected = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
-            if (isConnected.Status != HttpStatusCode.OK)
+            try
             {
-                Console.WriteLine("Failed to connect to device.");
-                return StatusCode(500);
-            }
+                var result = await _firmwareUpgradeService.BulkUpgradeActorsAsync(request);
 
-            bool isAlreadyInBootMode = _firmwareUpgradeService.CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
-            if (isAlreadyInBootMode)
+                return result.Success
+                    ? Ok(new { message = result.Message })
+                    : StatusCode(result.StatusCode, new { message = result.Message });
+            }
+            catch (Exception ex)
             {
-                //await Task.Delay(3000);
-                var notificationService = new CassiaNotificationService(_configuration);
-                bool notificationEnabled = await notificationService.EnableNotificationAsync(_gatewayIpAddress, nodeMac);
-
-                if (!notificationEnabled) { return Ok(new { message = "Error Enabling Notifications" }); }
-
-                Console.WriteLine("bootloader mode achieved and Notification enabled status:", notificationEnabled);
-
+                Console.Error.WriteLine($"Error during bulk actor upgrade: {ex.Message}");
+                return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
             }
-            else 
-            {
-                Console.WriteLine("bootloader mode not achieved");
-            }
-
-            //Step 3: Start Programming the Sensor
-            await _firmwareUpgradeService.ProgramSensor(_gatewayIpAddress, nodeMac);
-
-            return Ok(new { message = "Programming Complete" });
-            //}
-            //// Enable Notifications
-            //return StatusCode(500);
         }
 
+        [HttpPost("BulkSensorUpgrade")]
+        public async Task<IActionResult> BulkSensorUpgrade([FromBody] List<BulkUpgradeRequest> request)
+        {
+            try
+            {
+                var result = await _firmwareUpgradeService.BulkUpgradeSensorAsync(request);
+
+                return result.Success
+                    ? Ok(new { message = result.Message })
+                    : StatusCode(result.StatusCode, new { message = result.Message });
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Error during bulk actor upgrade: {ex.Message}");
+                return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
+            }
+        }
+
+        [HttpPost("UpgradeDevices")]
+        public async Task<IActionResult> UpgradeDevices([FromBody] FirmwareUpgradeRequest request)
+        {
+            try
+            {
+                var result = await _firmwareUpgradeService.UpgradeDeviceAsync(request.MacAddress,request.Pincode);
+
+                return result.Success
+                    ? Ok(new { message = result.Message })
+                    : StatusCode(result.StatusCode, new { message = result.Message });
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Error during bulk actor upgrade: {ex.Message}");
+                return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
+            }
+        }
 
         // API to connect to a BLE device and send a telegram to control the light
         [HttpPost("controlLight")]
@@ -456,7 +431,7 @@ namespace AccessAPP.Controllers
                         responses.Add($"Failed to send telegram to device: {macAddress}, Reason: {writeResponse.ReasonPhrase}");
                     }
 
-                    //await Task.Delay(1500);
+                    await Task.Delay(500);
                 }
 
                 // Return all responses as a result
@@ -521,6 +496,13 @@ namespace AccessAPP.Controllers
         //    }
         //}
 
+    }
+
+    public class ServiceResponse
+    {
+        public bool Success { get; set; }
+        public int StatusCode { get; set; }
+        public string Message { get; set; }
     }
     // Request model for the control light API
 }
