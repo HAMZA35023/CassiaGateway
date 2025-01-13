@@ -33,6 +33,7 @@ namespace AccessAPP.Services
         private const int InterPacketDelay = 0;
         private readonly string _firmwareActorFilePath = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353AP20227.cyacd";
         private readonly string _firmwareSensorFilePath = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353AP10227.cyacd";
+        private readonly string _firmwareBootLoaderFilePath = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353BL10604.cyacd";
         private readonly CassiaNotificationService _notificationService;
         private readonly ConcurrentQueue<byte[]> _notificationQueue = new ConcurrentQueue<byte[]>();
         private ManualResetEvent _notificationEvent = new ManualResetEvent(false);
@@ -50,6 +51,7 @@ namespace AccessAPP.Services
         private readonly int _gatewayPort;
         private string MacAddress = "";
         private double totalRows = 0;
+        private bool bootloader = false;
         public CassiaFirmwareUpgradeService(HttpClient httpClient, CassiaConnectService connectService, CassiaPinCodeService cassiaPinCodeService, CassiaNotificationService notificationService, IConfiguration configuration)
         {
             _httpClient = httpClient;
@@ -63,6 +65,7 @@ namespace AccessAPP.Services
 
         public async Task<ServiceResponse> UpgradeSensorAsync(string nodeMac, string pincode, bool bActor)
         {
+            //bootloader = true;
             // Step 1: Connect to the device
             ServiceResponse response = null;
             var connectionResult = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
@@ -200,7 +203,7 @@ namespace AccessAPP.Services
             }
         }
 
-        public async Task<ServiceResponse> BulkUpgradeActorsAsync(List<string> macAddresses, string pincode, bool bActor)
+        public async Task<ServiceResponse> BulkUpgradeActorsAsync(List<BulkUpgradeRequest> requests)
         {
             var response = new ServiceResponse
             {
@@ -213,7 +216,7 @@ namespace AccessAPP.Services
             var upgradeResults = new ConcurrentBag<ServiceResponse>();
             var semaphore = new SemaphoreSlim(1); // Limit to 3 concurrent upgrades
 
-            foreach (var macAddress in macAddresses)
+            foreach (var request in requests)
             {
                 await semaphore.WaitAsync();
 
@@ -221,18 +224,18 @@ namespace AccessAPP.Services
                 {
                     try
                     {
-                        var result = await UpgradeActorAsync(macAddress, pincode, bActor);
+                        var result = await UpgradeActorAsync(request.MacAddress, request.Pincode, request.bActor);
                         upgradeResults.Add(result);
                         return result;
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"Error upgrading actor {macAddress}: {ex.Message}");
+                        Console.WriteLine($"Error upgrading actor {request.MacAddress}: {ex.Message}");
                         return new ServiceResponse
                         {
                             Success = false,
                             StatusCode = 500,
-                            Message = $"Error upgrading actor {macAddress}: {ex.Message}"
+                            Message = $"Error upgrading actor {request.MacAddress}: {ex.Message}"
                         };
                     }
                     finally
@@ -255,6 +258,133 @@ namespace AccessAPP.Services
 
             return response;
         }
+
+        public async Task<ServiceResponse> BulkUpgradeSensorAsync(List<BulkUpgradeRequest> requests)
+        {
+            var response = new ServiceResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Message = "Bulk upgrade completed successfully."
+            };
+
+            var taskList = new List<Task<ServiceResponse>>();
+            var upgradeResults = new ConcurrentBag<ServiceResponse>();
+            var semaphore = new SemaphoreSlim(1); // Limit to 3 concurrent upgrades
+
+            foreach (var request in requests)
+            {
+                await semaphore.WaitAsync();
+
+                taskList.Add(Task.Run(async () =>
+                {
+                    try
+                    {
+                        var result = await UpgradeSensorAsync(request.MacAddress, request.Pincode, request.bActor);
+                        upgradeResults.Add(result);
+                        return result;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error upgrading sensor {request.MacAddress}: {ex.Message}");
+                        return new ServiceResponse
+                        {
+                            Success = false,
+                            StatusCode = 500,
+                            Message = $"Error upgrading sensor {request.MacAddress}: {ex.Message}"
+                        };
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                    }
+                }));
+            }
+
+            await Task.WhenAll(taskList);
+
+            // Aggregate responses to determine overall success
+            var failedUpgrades = upgradeResults.Where(r => !r.Success).ToList();
+            if (failedUpgrades.Any())
+            {
+                response.Success = false;
+                response.StatusCode = 207; // Multi-Status
+                response.Message = $"Bulk upgrade completed with errors. Failed actors: {string.Join(", ", failedUpgrades.Select(r => r.Message))}";
+            }
+
+            return response;
+        }
+
+        public async Task<ServiceResponse> UpgradeDeviceAsync(string macAddress, string pincode)
+        {
+            var response = new ServiceResponse();
+
+            try
+            {
+
+                Console.WriteLine($"Starting actor upgrade for {macAddress}");
+                var actorUpgradeResult = await UpgradeActorAsync(macAddress, pincode, true);
+
+                if (!actorUpgradeResult.Success)
+                {
+                    response.Success = false;
+                    response.StatusCode = actorUpgradeResult.StatusCode;
+                    response.Message = $"Actor upgrade failed: {actorUpgradeResult.Message}";
+                    return response; // Stop if actor upgrade fails
+                }
+
+                Console.WriteLine($"Actor upgrade completed for {macAddress}");
+
+                bootloader = true;
+                Console.WriteLine($"Starting bootloader upgrade for {macAddress}");
+
+                // Step 1: Upgrade the sensor
+                var bootladerUpgradeResult = await UpgradeSensorAsync(macAddress, pincode, false);
+
+                if (!bootladerUpgradeResult.Success)
+                {
+                    response.Success = false;
+                    response.StatusCode = bootladerUpgradeResult.StatusCode;
+                    response.Message = $"bootloader upgrade failed: {bootladerUpgradeResult.Message}";
+                    return response; // Stop if sensor upgrade fails
+                }
+
+                Console.WriteLine($"bootloader upgrade completed for {macAddress}");
+
+                bootloader = false;
+                Console.WriteLine($"Starting bootloader upgrade for {macAddress}");
+
+                // Step 1: Upgrade the sensor
+                var sensorUpgradeResult = await UpgradeSensorAsync(macAddress, pincode, false);
+
+                if (!sensorUpgradeResult.Success)
+                {
+                    response.Success = false;
+                    response.StatusCode = sensorUpgradeResult.StatusCode;
+                    response.Message = $"bootloader upgrade failed: {sensorUpgradeResult.Message}";
+                    return response; // Stop if sensor upgrade fails
+                }
+
+                Console.WriteLine($"bootloader upgrade completed for {macAddress}");
+                // Step 2: Upgrade the actor
+
+
+                // Both upgrades successful
+                response.Success = true;
+                response.StatusCode = 200;
+                response.Message = "Sensor and actor upgrades completed successfully.";
+                return response;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Error during sensor and actor upgrade: {ex.Message}");
+                response.Success = false;
+                response.StatusCode = 500; // Internal Server Error
+                response.Message = "An unexpected error occurred during the upgrade process.";
+                return response;
+            }
+        }
+
         public async Task<ServiceResponse> ProcessingSensorUpgrade(string nodeMac, bool bActor) // should be moved to firmware services
         {
             var response = new ServiceResponse();
@@ -397,7 +527,7 @@ namespace AccessAPP.Services
 
             if (bActor)
             {
-
+                Console.WriteLine("Programming Actor");
                 lines = File.ReadAllLines(_firmwareActorFilePath).Length - 1; //Don't count header
                 var progressBarStepSize = 100.0 / lines;
                 m_comm_data.WriteData = WriteActorData;
@@ -407,13 +537,27 @@ namespace AccessAPP.Services
             }
             else
             {
-
-                lines = File.ReadAllLines(_firmwareSensorFilePath).Length - 1; //Don't count header
-                var progressBarStepSize = 100.0 / lines;
-                m_comm_data.WriteData = WriteSensorData;
-                m_comm_data.ReadData = ReadData;
-                m_comm_data.MaxTransferSize = 265;
-                var local_status = (ReturnCodes)Bootloader_Utils.CyBtldr_Program(_firmwareSensorFilePath, _securityKey, _appID, ref m_comm_data, Upd);
+                if(bootloader)
+                {
+                    Console.WriteLine("Programming Bootloader");
+                    lines = File.ReadAllLines(_firmwareBootLoaderFilePath).Length - 1; //Don't count header
+                    var progressBarStepSize = 100.0 / lines;
+                    m_comm_data.WriteData = WriteSensorData;
+                    m_comm_data.ReadData = ReadData;
+                    m_comm_data.MaxTransferSize = 265;
+                    var local_status = (ReturnCodes)Bootloader_Utils.CyBtldr_Program(_firmwareBootLoaderFilePath, _securityKey, _appID, ref m_comm_data, Upd);
+                }
+                else
+                {
+                    Console.WriteLine("Programming Sensor");
+                    lines = File.ReadAllLines(_firmwareSensorFilePath).Length - 1; //Don't count header
+                    var progressBarStepSize = 100.0 / lines;
+                    m_comm_data.WriteData = WriteSensorData;
+                    m_comm_data.ReadData = ReadData;
+                    m_comm_data.MaxTransferSize = 265;
+                    var local_status = (ReturnCodes)Bootloader_Utils.CyBtldr_Program(_firmwareSensorFilePath, _securityKey, _appID, ref m_comm_data, Upd);
+                }
+                
             }
 
             return true;

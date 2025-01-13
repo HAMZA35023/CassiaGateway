@@ -284,7 +284,7 @@ namespace AccessAPP.Controllers
         }
 
         [HttpPost("SensorUpgrade")]
-        public async Task<IActionResult> StartSensorUpgrade([FromBody] FirmwareUpgradeRequest request)
+        public async Task<IActionResult> SensorUpgrade([FromBody] FirmwareUpgradeRequest request)
         {
             string nodeMac = request.MacAddress;
             string pincode = request.Pincode;
@@ -342,11 +342,11 @@ namespace AccessAPP.Controllers
         }
 
         [HttpPost("BulkActorUpgrade")]
-        public async Task<IActionResult> BulkActorUpgrade([FromBody] BulkUpgradeRequest request)
+        public async Task<IActionResult> BulkActorUpgrade([FromBody] List<BulkUpgradeRequest> request)
         {
             try
             {
-                var result = await _firmwareUpgradeService.BulkUpgradeActorsAsync(request.MacAddresses, request.Pincode, request.bActor);
+                var result = await _firmwareUpgradeService.BulkUpgradeActorsAsync(request);
 
                 return result.Success
                     ? Ok(new { message = result.Message })
@@ -359,8 +359,41 @@ namespace AccessAPP.Controllers
             }
         }
 
+        [HttpPost("BulkSensorUpgrade")]
+        public async Task<IActionResult> BulkSensorUpgrade([FromBody] List<BulkUpgradeRequest> request)
+        {
+            try
+            {
+                var result = await _firmwareUpgradeService.BulkUpgradeSensorAsync(request);
 
+                return result.Success
+                    ? Ok(new { message = result.Message })
+                    : StatusCode(result.StatusCode, new { message = result.Message });
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Error during bulk actor upgrade: {ex.Message}");
+                return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
+            }
+        }
 
+        [HttpPost("UpgradeDevices")]
+        public async Task<IActionResult> UpgradeDevices([FromBody] FirmwareUpgradeRequest request)
+        {
+            try
+            {
+                var result = await _firmwareUpgradeService.UpgradeDeviceAsync(request.MacAddress,request.Pincode);
+
+                return result.Success
+                    ? Ok(new { message = result.Message })
+                    : StatusCode(result.StatusCode, new { message = result.Message });
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Error during bulk actor upgrade: {ex.Message}");
+                return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
+            }
+        }
 
         // API to connect to a BLE device and send a telegram to control the light
         [HttpPost("controlLight")]
