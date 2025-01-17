@@ -20,6 +20,7 @@ using Windows.Devices.Bluetooth;
 using Windows.Storage.Streams;
 using System.Windows.Markup;
 using Microsoft.Extensions.Configuration;
+using System.Diagnostics;
 
 namespace AccessAPP.Services
 {
@@ -322,10 +323,12 @@ namespace AccessAPP.Services
             try
             {
                 // Step 2: Upgrade the actor
-
+                Stopwatch stopwatch = new Stopwatch();
                 Console.WriteLine($"Starting actor upgrade for {macAddress}");
+                stopwatch.Start();
                 var actorUpgradeResult = await UpgradeActorAsync(macAddress, pincode, true);
-
+                stopwatch.Stop();
+                Console.WriteLine($"Actor upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds");
                 if (!actorUpgradeResult.Success)
                 {
                     response.Success = false;
@@ -336,13 +339,16 @@ namespace AccessAPP.Services
 
                 Console.WriteLine($"Actor upgrade completed for {macAddress}");
 
+                Task.Delay(5000);
 
 
                 bootloader = true;
                 Console.WriteLine($"Starting bootloader upgrade for {macAddress}");
-
+                stopwatch.Restart();
                 // Step 1: Upgrade the sensor
                 var bootladerUpgradeResult = await UpgradeSensorAsync(macAddress, pincode, false);
+                stopwatch.Stop();
+                Console.WriteLine($"Bootloader upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds");
 
                 if (!bootladerUpgradeResult.Success)
                 {
@@ -354,22 +360,25 @@ namespace AccessAPP.Services
 
                 Console.WriteLine($"bootloader upgrade completed for {macAddress}");
 
+                Task.Delay(2000);
                 bootloader = false;
                 Console.WriteLine($"Starting bootloader upgrade for {macAddress}");
 
                 // Step 1: Upgrade the sensor
+                stopwatch.Restart();
                 var sensorUpgradeResult = await UpgradeSensorAsync(macAddress, pincode, false);
-
+                stopwatch.Stop();
+                Console.WriteLine($"Sensor upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds");
                 if (!sensorUpgradeResult.Success)
                 {
                     response.Success = false;
                     response.StatusCode = sensorUpgradeResult.StatusCode;
-                    response.Message = $"bootloader upgrade failed: {sensorUpgradeResult.Message}";
+                    response.Message = $"Sensor upgrade failed: {sensorUpgradeResult.Message}";
                     return response; // Stop if sensor upgrade fails
                 }
 
-                Console.WriteLine($"bootloader upgrade completed for {macAddress}");
-                
+                Console.WriteLine($"Sensor upgrade completed for {macAddress}");
+
 
                 // Both upgrades successful
                 response.Success = true;
@@ -518,7 +527,7 @@ namespace AccessAPP.Services
         public bool ProgramDevice(string gatewayIpAddress, string nodeMac, CassiaNotificationService cassiaNotificationService, bool bActor)
         {
             Console.WriteLine($"Actor is going to be programmed? : {bActor}");
-            try 
+            try
             {
                 InitializeNotificationSubscription(nodeMac, cassiaNotificationService);
                 int lines;
@@ -569,7 +578,7 @@ namespace AccessAPP.Services
             {
                 UnsubscribeNotification(nodeMac, cassiaNotificationService);
             }
-            
+
         }
 
 
