@@ -32,7 +32,7 @@ namespace AccessAPP.Services
         private const int MaxPacketSize = 270;
         private const int InterPacketDelay = 0;
         private readonly string _firmwareActorFilePath = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353AP20227.cyacd";
-        private readonly string _firmwareSensorFilePath = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353AP10227.cyacd";
+        private readonly string _firmwareSensorFilePath = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353AP40227.cyacd";
         private readonly string _firmwareBootLoaderFilePath = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353BL10604.cyacd";
         private readonly CassiaNotificationService _notificationService;
         private readonly ConcurrentQueue<byte[]> _notificationQueue = new ConcurrentQueue<byte[]>();
@@ -321,6 +321,7 @@ namespace AccessAPP.Services
 
             try
             {
+                // Step 2: Upgrade the actor
 
                 Console.WriteLine($"Starting actor upgrade for {macAddress}");
                 var actorUpgradeResult = await UpgradeActorAsync(macAddress, pincode, true);
@@ -334,6 +335,8 @@ namespace AccessAPP.Services
                 }
 
                 Console.WriteLine($"Actor upgrade completed for {macAddress}");
+
+
 
                 bootloader = true;
                 Console.WriteLine($"Starting bootloader upgrade for {macAddress}");
@@ -366,8 +369,7 @@ namespace AccessAPP.Services
                 }
 
                 Console.WriteLine($"bootloader upgrade completed for {macAddress}");
-                // Step 2: Upgrade the actor
-
+                
 
                 // Both upgrades successful
                 response.Success = true;
