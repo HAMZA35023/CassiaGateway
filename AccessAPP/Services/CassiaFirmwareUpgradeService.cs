@@ -396,6 +396,63 @@ namespace AccessAPP.Services
             }
         }
 
+        public async Task<ServiceResponse> BulkUpgradeDevicesAsync(List<BulkUpgradeRequest> requests)
+        {
+            var response = new ServiceResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Message = "Bulk device upgrade completed successfully."
+            };
+
+            var taskList = new List<Task<ServiceResponse>>();
+            var upgradeResults = new ConcurrentBag<ServiceResponse>();
+            var semaphore = new SemaphoreSlim(1); // Limit to 3 concurrent upgrades
+
+            foreach (var request in requests)
+            {
+                await semaphore.WaitAsync();
+
+                taskList.Add(Task.Run(async () =>
+                {
+                    try
+                    {
+                        var result = await UpgradeDeviceAsync(request.MacAddress, request.Pincode);
+                        upgradeResults.Add(result);
+                        return result;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error upgrading device {request.MacAddress}: {ex.Message}");
+                        return new ServiceResponse
+                        {
+                            Success = false,
+                            StatusCode = 500,
+                            Message = $"Error upgrading device {request.MacAddress}: {ex.Message}"
+                        };
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                    }
+                }));
+            }
+
+            await Task.WhenAll(taskList);
+
+            // Aggregate responses to determine overall success
+            var failedUpgrades = upgradeResults.Where(r => !r.Success).ToList();
+            if (failedUpgrades.Any())
+            {
+                response.Success = false;
+                response.StatusCode = 207; // Multi-Status
+                response.Message = $"Bulk device upgrade completed with errors. Failed devices: {string.Join(", ", failedUpgrades.Select(r => r.Message))}";
+            }
+
+            return response;
+        }
+
+
         public async Task<ServiceResponse> ProcessingSensorUpgrade(string nodeMac, bool bActor) // should be moved to firmware services
         {
             var response = new ServiceResponse();

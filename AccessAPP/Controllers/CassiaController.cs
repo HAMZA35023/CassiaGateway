@@ -341,6 +341,26 @@ namespace AccessAPP.Controllers
             }
         }
 
+
+        [HttpPost("UpgradeDevices")]
+        public async Task<IActionResult> UpgradeDevices([FromBody] FirmwareUpgradeRequest request)
+        {
+            try
+            {
+                var result = await _firmwareUpgradeService.UpgradeDeviceAsync(request.MacAddress, request.Pincode);
+
+                return result.Success
+                    ? Ok(new { message = result.Message })
+                    : StatusCode(result.StatusCode, new { message = result.Message });
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Error during bulk actor upgrade: {ex.Message}");
+                return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
+            }
+        }
+
+
         [HttpPost("BulkActorUpgrade")]
         public async Task<IActionResult> BulkActorUpgrade([FromBody] List<BulkUpgradeRequest> request)
         {
@@ -377,12 +397,12 @@ namespace AccessAPP.Controllers
             }
         }
 
-        [HttpPost("UpgradeDevices")]
-        public async Task<IActionResult> UpgradeDevices([FromBody] FirmwareUpgradeRequest request)
+        [HttpPost("BulkDeviceUpgrade")]
+        public async Task<IActionResult> BulkDeviceUpgrade([FromBody] List<BulkUpgradeRequest> request)
         {
             try
             {
-                var result = await _firmwareUpgradeService.UpgradeDeviceAsync(request.MacAddress,request.Pincode);
+                var result = await _firmwareUpgradeService.BulkUpgradeDevicesAsync(request);
 
                 return result.Success
                     ? Ok(new { message = result.Message })
