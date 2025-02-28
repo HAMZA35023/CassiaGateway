@@ -7,13 +7,15 @@ namespace AccessAPP.Services
     {
         private readonly HttpClient _httpClient;
         private readonly IConfiguration _configuration;
+        private readonly CassiaNotificationService _notificationService;
         public int Status { get; set; }
         public object ResponseBody { get; set; }
 
-        public CassiaPinCodeService(HttpClient httpClient, IConfiguration configuration)
+        public CassiaPinCodeService(HttpClient httpClient, IConfiguration configuration, CassiaNotificationService notificationService)
         {
             _httpClient = httpClient;
             _configuration = configuration;
+            _notificationService = notificationService;
         }
 
         public async Task<PincodeCheckResponseModel> CheckPincode(string gatewayIpAddress, string macAddress, string pincode)
@@ -27,49 +29,45 @@ namespace AccessAPP.Services
                 CassiaReadWriteService cassiaReadWrite = new CassiaReadWriteService();
                 var result = await cassiaReadWrite.WriteBleMessage(gatewayIpAddress, macAddress, 19, checkPincodeBytes, "?noresponse=1");
 
-                using (var cassiaListener = new CassiaNotificationService(_configuration))
+                var pincodeCheckResultTask = new TaskCompletionSource<PincodeCheckResponseModel>();
+
+                // ✅ Subscribe to notifications using the singleton `_notificationService`
+                _notificationService.Subscribe(macAddress, (sender, data) =>
                 {
-                    var pincodeCheckResultTask = new TaskCompletionSource<PincodeCheckResponseModel>();
+                    var checkPincodeReply = new CheckPincodeReply(data);
 
-                    cassiaListener.Subscribe(macAddress, (sender, data) =>
+                    if (checkPincodeReply.TelegramType == "3201")
                     {
-                        var checkPincodeReply = new CheckPincodeReply(data);
+                        var pincodeResult = checkPincodeReply.GetResult();
+                        ResponseModel responseBody = Helper.CreateResponseWithMessage(macAddress, result, pincodeResult.Msg, pincodeResult.Ack);
+                        responseBody.PinCodeAccepted = true;
 
-                        if (checkPincodeReply.TelegramType == "3201")
+                        var pincodeCheckResult = new PincodeCheckResponseModel
                         {
-                            var pincodeResult = checkPincodeReply.GetResult();
-                            ResponseModel responseBody = Helper.CreateResponseWithMessage(macAddress, result, pincodeResult.Msg, pincodeResult.Ack);
-                            responseBody.PinCodeAccepted = true;
-                            var pincodeCheckResult = new PincodeCheckResponseModel
-                            {
-                                Status = result.StatusCode.ToString(),
-                                ResponseBody = responseBody
-                            };
-                            pincodeCheckResultTask.TrySetResult(pincodeCheckResult);
-                        }
-                    });
-
-                    // Wait for pincode check result or timeout
-                    var pincodeCheckTask = pincodeCheckResultTask.Task;
-                    var timeoutTask = Task.Delay(TimeSpan.FromSeconds(120));
-                    var completedTask = await Task.WhenAny(pincodeCheckTask, timeoutTask);
-
-                    // Unsubscribe from notifications
-                    cassiaListener.Unsubscribe(macAddress);
-                    // Check if the pincode check task completed
-                    if (completedTask == pincodeCheckTask)
-                    {
-                        return await pincodeCheckTask;
-                    }
-                    else
-                    {
-                        // Handle timeout
-                        return new PincodeCheckResponseModel
-                        {
-                            Status = "Timeout",
-                            ResponseBody = null
+                            Status = result.StatusCode.ToString(),
+                            ResponseBody = responseBody
                         };
+
+                        pincodeCheckResultTask.TrySetResult(pincodeCheckResult);
                     }
+                });
+
+                // ✅ Wait for pincode check result or timeout
+                var completedTask = await Task.WhenAny(pincodeCheckResultTask.Task, Task.Delay(TimeSpan.FromSeconds(120)));
+
+                if (completedTask == pincodeCheckResultTask.Task)
+                {
+                    return await pincodeCheckResultTask.Task; // ✅ Return successful pincode check
+                }
+                else
+                {
+                    // ✅ Handle timeout and unsubscribe
+                    _notificationService.Unsubscribe(macAddress);
+                    return new PincodeCheckResponseModel
+                    {
+                        Status = "Timeout",
+                        ResponseBody = null
+                    };
                 }
             }
             catch (Exception ex)

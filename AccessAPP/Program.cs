@@ -17,10 +17,17 @@ builder.Services.AddSingleton<CassiaConnectService>();
 builder.Services.AddSingleton<CassiaPinCodeService>();
 builder.Services.AddSingleton<DeviceStorageService>();
 builder.Services.AddSingleton<CassiaNotificationService>();
+
 builder.Services.AddSingleton<CassiaFirmwareUpgradeService>();
 
 
 var app = builder.Build();
+
+using (var scope = app.Services.CreateScope())
+{
+    var serviceProvider = scope.ServiceProvider;
+    var cassiaNotificationService = serviceProvider.GetRequiredService<CassiaNotificationService>();
+}
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())

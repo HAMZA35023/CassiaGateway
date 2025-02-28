@@ -10,13 +10,15 @@ namespace AccessAPP.Services
         private readonly List<ScannedDevicesView> _eventDataList;
         private readonly CassiaConnectService _cassiaConnectService;
         private readonly DeviceStorageService _deviceStorageService;
+        private readonly CassiaNotificationService _notificationService;
         private readonly IConfiguration _configuration;
 
-        public CassiaScanService(HttpClient httpClient, DeviceStorageService deviceStorageService, IConfiguration configuration)
+        public CassiaScanService(HttpClient httpClient, DeviceStorageService deviceStorageService, IConfiguration configuration, CassiaNotificationService notificationService)
         {
             _httpClient = httpClient;
             _eventDataList = new List<ScannedDevicesView>();
-            _cassiaConnectService = new CassiaConnectService(httpClient,configuration);
+            _notificationService = notificationService;
+            _cassiaConnectService = new CassiaConnectService(httpClient,configuration,notificationService);
             _deviceStorageService = deviceStorageService;
             _configuration = configuration;
         }

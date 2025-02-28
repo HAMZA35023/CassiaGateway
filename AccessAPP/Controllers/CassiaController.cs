@@ -310,6 +310,26 @@ namespace AccessAPP.Controllers
             }
         }
 
+        [HttpPost("UpgradeBLSensor")]
+        public async Task<IActionResult> UpgradeBLSensor([FromBody] List<BulkUpgradeRequest> request)
+        {
+            if (request == null || request.Count == 0)
+            {
+                return BadRequest(new { message = "Device list cannot be empty." });
+            }
+
+            try
+            {
+                var upgradeResults = await _firmwareUpgradeService.UpgradeBLSensorsAsync(request);
+                return Ok(upgradeResults);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Error during bootloader & sensor upgrade: {ex.Message} {ex.StackTrace}");
+                return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
+            }
+        }
+
 
         [HttpPost("ActorUpgrade")]
         public async Task<IActionResult> ActorUpgrade([FromBody] FirmwareUpgradeRequest request)
@@ -404,9 +424,7 @@ namespace AccessAPP.Controllers
             {
                 var result = await _firmwareUpgradeService.BulkUpgradeDevicesAsync(request);
 
-                return result.Success
-                    ? Ok(new { message = result.Message })
-                    : StatusCode(result.StatusCode, new { message = result.Message });
+                return Ok(result);
             }
             catch (Exception ex)
             {

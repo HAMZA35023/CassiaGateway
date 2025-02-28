@@ -1,6 +1,7 @@
 ﻿using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 
 public class CassiaNotificationService : IDisposable
 {
@@ -8,10 +9,19 @@ public class CassiaNotificationService : IDisposable
     private readonly ConcurrentDictionary<string, EventHandler<string>> _eventHandlers;
     private readonly ConcurrentDictionary<string, string> _lastEventData;
     private readonly string _eventSourceUrl;
+    private static bool _isListening = false;
+    private static Task _listeningTask;
+    private static readonly object _lock = new();
+    private readonly ILogger<CassiaNotificationService> _logger;
 
-    public CassiaNotificationService(IConfiguration configuration)
+    // Singleton instance managed by DI
+    private static CassiaNotificationService _instance;
+
+    // Constructor with DI dependencies
+    public CassiaNotificationService(HttpClient httpClient, IConfiguration configuration, ILogger<CassiaNotificationService> logger)
     {
-        _httpClient = new HttpClient();
+        _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _eventHandlers = new ConcurrentDictionary<string, EventHandler<string>>();
         _lastEventData = new ConcurrentDictionary<string, string>();
 
@@ -19,36 +29,17 @@ public class CassiaNotificationService : IDisposable
         string gatewayIpAddress = configuration.GetValue<string>("GatewayConfiguration:IpAddress");
         _eventSourceUrl = $"http://{gatewayIpAddress}/gatt/nodes?event=1";
 
-        // Start listening for events
-        Task.Run(() => StartListening());
+        StartSseListener();
     }
 
-    public async Task<bool> EnableNotificationAsync(string gatewayIpAddress, string nodeMac,bool bActor)
+    private void StartSseListener()
     {
-        try
+        lock (_lock)
         {
-            string url = $"http://{gatewayIpAddress}/gatt/nodes/{nodeMac}/handle/15/value/0100";
-            if (bActor)
-            {
-                url = $"http://{gatewayIpAddress}/gatt/nodes/{nodeMac}/handle/16/value/0100";
-            }
-            
-            
-            HttpResponseMessage response = await _httpClient.GetAsync(url);
+            if (_isListening) return;
 
-            if (response.IsSuccessStatusCode)
-            {
-                Console.WriteLine("Notification enabled successfully.");
-                return true;
-            }
-
-            Console.WriteLine($"Failed to enable notification. Status code: {response.StatusCode}");
-            return false;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Exception occurred while enabling notification: {ex.Message}");
-            return false;
+            _isListening = true;
+            _listeningTask = Task.Run(() => StartListening());
         }
     }
 
@@ -58,72 +49,89 @@ public class CassiaNotificationService : IDisposable
         {
             try
             {
+                _logger.LogInformation("SSE event listener started.");
                 HttpResponseMessage response = await _httpClient.GetAsync(_eventSourceUrl, HttpCompletionOption.ResponseHeadersRead);
 
-                using (var stream = await response.Content.ReadAsStreamAsync())
-                using (var reader = new System.IO.StreamReader(stream))
+                using var stream = await response.Content.ReadAsStreamAsync();
+                using var reader = new System.IO.StreamReader(stream);
+
+                while (true)
                 {
-                    while (true)
+                    string line = await reader.ReadLineAsync();
+                    if (string.IsNullOrWhiteSpace(line) || line.Equals(":keep-alive"))
                     {
-                        string line = await reader.ReadLineAsync();
+                        continue;
+                    }
 
-                        // Ignore keep-alive messages and empty lines
-                        if (string.IsNullOrWhiteSpace(line) || line.Equals(":keep-alive"))
-                        {
-                            continue;
-                        }
-
-                        // Invoke handlers for each event asynchronously
-                        if (line.StartsWith("data:"))
-                        {
-                            line = line.Substring("data:".Length).Trim();
-                            Task.Run(() => InvokeHandlers(line));
-                        }
+                    if (line.StartsWith("data:"))
+                    {
+                        line = line.Substring("data:".Length).Trim();
+                        Task.Run(() => InvokeHandlers(line));
                     }
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error in StartListening: {ex.Message}");
-                await Task.Delay(5000); // Wait before retrying to avoid excessive retries
+                _logger.LogError($"Error in StartListening: {ex.Message}");
+                await Task.Delay(5000); // Retry delay
             }
         }
     }
 
     private void InvokeHandlers(string eventData)
     {
-        //Console.WriteLine($"Received event data: {eventData}");
+        _logger.LogInformation($"Raw SSE Event Received: {eventData}");
 
         try
         {
             var eventObject = JsonSerializer.Deserialize<EventData>(eventData);
-
-            if (eventObject != null && eventObject.value != null)
+            if (eventObject != null && !string.IsNullOrEmpty(eventObject.value))
             {
                 string macAddress = eventObject.id;
+                _logger.LogInformation($"Extracted MAC Address: {macAddress}");
 
-                //Console.WriteLine($"Extracted MAC address: {macAddress}");
-
-                // Check if this event is a duplicate
-                //if (_lastEventData.TryGetValue(macAddress, out var lastData) && lastData == eventObject.value)
-                //{
-                //    Console.WriteLine($"Duplicate event detected for {macAddress}, skipping...");
-                //    return;
-                //}
-
-                // Update the last event data
-                _lastEventData[macAddress] = eventObject.value;
-
-                // Invoke the appropriate handler
                 if (_eventHandlers.TryGetValue(macAddress, out var handler))
                 {
+                    _logger.LogInformation($"Invoking handler for MAC {macAddress} with data: {eventObject.value}");
                     handler?.Invoke(this, eventObject.value);
+                }
+                else
+                {
+                    _logger.LogWarning($"No handler found for MAC {macAddress}");
                 }
             }
         }
         catch (JsonException ex)
         {
-            Console.WriteLine($"Error parsing JSON: {ex.Message}");
+            _logger.LogError($"Error parsing JSON in SSE event: {ex.Message}");
+        }
+    }
+
+    public async Task<bool> EnableNotificationAsync(string gatewayIpAddress, string nodeMac, bool bActor)
+    {
+        try
+        {
+            string url = $"http://{gatewayIpAddress}/gatt/nodes/{nodeMac}/handle/15/value/0100";
+            if (bActor)
+            {
+                url = $"http://{gatewayIpAddress}/gatt/nodes/{nodeMac}/handle/16/value/0100";
+            }
+
+            HttpResponseMessage response = await _httpClient.GetAsync(url);
+
+            if (response.IsSuccessStatusCode)
+            {
+                _logger.LogInformation($"Notification enabled successfully for {nodeMac}.");
+                return true;
+            }
+
+            _logger.LogWarning($"Failed to enable notification for {nodeMac}. Status code: {response.StatusCode}");
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError($"Exception occurred while enabling notification for {nodeMac}: {ex.Message}");
+            return false;
         }
     }
 
@@ -131,7 +139,7 @@ public class CassiaNotificationService : IDisposable
     {
         _eventHandlers.AddOrUpdate(macAddress, handler, (key, existingHandler) =>
         {
-            Console.WriteLine($"Replacing existing handler for {macAddress}");
+            _logger.LogInformation($"Replacing existing handler for {macAddress}");
             return handler;
         });
     }
