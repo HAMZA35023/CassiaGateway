@@ -127,7 +127,9 @@ namespace AccessAPP.Services
 
                 // Send POST request to batch connect the BLE devices
                 HttpResponseMessage batchConnectResponse = await _httpClient.PostAsync(batchConnectEndpoint, request);
-
+                
+                string responseContent = await batchConnectResponse.Content.ReadAsStringAsync();
+                Console.WriteLine($"Batch Connect Response: {batchConnectResponse.StatusCode}, Content: {responseContent}");
                 // Return the response formatted as ResponseModel
                 return Helper.CreateResponse("BatchConnect", batchConnectResponse);
             }

@@ -36,6 +36,7 @@ namespace AccessAPP.Services
         private const int InterPacketDelay = 0;
         private readonly string _firmwareActorFilePath = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353AP20227.cyacd";
         private readonly string _firmwareSensorFilePath4 = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353AP40227.cyacd";
+        private readonly string _firmwareSensorFilePath3 = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353AP30227.cyacd";
         private readonly string _firmwareSensorFilePath1 = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353AP10227.cyacd";
         private readonly string _firmwareBootLoaderFilePath = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353BL10604.cyacd";
         
@@ -907,7 +908,7 @@ namespace AccessAPP.Services
                     else
                     {
                         var FP = "";
-                        if(sensorType == 4) { FP = _firmwareSensorFilePath4; } else { FP = _firmwareSensorFilePath1; }
+                        if (sensorType == 4) { FP = _firmwareSensorFilePath4; } else if (sensorType == 3) { FP = _firmwareSensorFilePath3; } else { FP = _firmwareSensorFilePath1; }
                         Console.WriteLine("Programming Sensor");
                         lines = File.ReadAllLines(FP).Length - 1; //Don't count header
                         var progressBarStepSize = 100.0 / lines;
