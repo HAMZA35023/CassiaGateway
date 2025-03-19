@@ -149,6 +149,6 @@ namespace AccessAPP.Services.HelperClasses
         [DllImport("C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\obj\\Debug\\BootloaderUtil.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern int CyBtldr_Program([MarshalAs(UnmanagedType.LPStr)] string file, [MarshalAs(UnmanagedType.LPArray)] byte[] securityKey, byte appId, ref CyBtldr_CommunicationsData comm, CyBtldr_ProgressUpdate update);
 
-        
+
     }
 }

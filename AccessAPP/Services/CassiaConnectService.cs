@@ -1,10 +1,7 @@
 ﻿using AccessAPP.Models;
 using AccessAPP.Services.HelperClasses;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Configuration;
 using Newtonsoft.Json;
 using System.Net;
-using System.Net.Http;
 using System.Text;
 
 namespace AccessAPP.Services
@@ -13,13 +10,16 @@ namespace AccessAPP.Services
     {
         private readonly HttpClient _httpClient;
         private readonly IConfiguration _configuration;
+        private readonly CassiaNotificationService _notificationService; // ✅ Injected singleton
+
         public int Status { get; set; }
         public object ResponseBody { get; set; }
 
-        public CassiaConnectService(HttpClient httpClient, IConfiguration configuration)
+        public CassiaConnectService(HttpClient httpClient, IConfiguration configuration, CassiaNotificationService notificationService)
         {
             _httpClient = httpClient;
             _configuration = configuration;
+            _notificationService = notificationService;
         }
 
         public async Task<ResponseModel> ConnectToBleDevice(string gatewayIpAddress, int gatewayPort, string macAddress)
@@ -125,6 +125,8 @@ namespace AccessAPP.Services
                 // Send POST request to batch connect the BLE devices
                 HttpResponseMessage batchConnectResponse = await _httpClient.PostAsync(batchConnectEndpoint, request);
 
+                string responseContent = await batchConnectResponse.Content.ReadAsStringAsync();
+                Console.WriteLine($"Batch Connect Response: {batchConnectResponse.StatusCode}, Content: {responseContent}");
                 // Return the response formatted as ResponseModel
                 return Helper.CreateResponse("BatchConnect", batchConnectResponse);
             }
@@ -220,51 +222,44 @@ namespace AccessAPP.Services
                 CassiaReadWriteService cassiaReadWrite = new CassiaReadWriteService();
                 var result = await cassiaReadWrite.WriteBleMessage(gatewayIpAddress, macAddress, 19, value, "?noresponse=1");
 
-                using (var cassiaListener = new CassiaNotificationService(_configuration))
+                var responseTask = new TaskCompletionSource<DataResponseModel>();
+
+                // ✅ Subscribe to notifications using the singleton `_notificationService`
+                _notificationService.Subscribe(macAddress, (sender, data) =>
                 {
-                    var responseTask = new TaskCompletionSource<DataResponseModel>();
+                    // Process the notification data
+                    var response = new GenericTelegramReply(data);
+                    var responseResult = response.DataResult;
 
-                    cassiaListener.Subscribe(macAddress, (sender, data) =>
+                    var responseBody = new DataResponseModel
                     {
-                        // Process the notification data
-                        var response = new GenericTelegramReply(data);
+                        MacAddress = macAddress,
+                        Data = responseResult,
+                        Time = DateTimeOffset.Now.ToUnixTimeMilliseconds(),
+                        Status = result.StatusCode,
+                    };
 
-                        var responseResult = response.DataResult;
-                        DataResponseModel responseBody = new DataResponseModel
-                        {
-                            MacAddress = macAddress,
-                            Data = responseResult,
-                            Time = DateTimeOffset.Now.ToUnixTimeMilliseconds(),
-                            Status = result.StatusCode,
-                        };
+                    responseTask.TrySetResult(responseBody);
+                });
 
-                        responseTask.TrySetResult(responseBody);
+                // ✅ Wait for response or timeout
+                var completedTask = await Task.WhenAny(responseTask.Task, Task.Delay(TimeSpan.FromSeconds(120)));
 
-                    });
-
-                    // Wait for the response or timeout
-                    var completedTask = await Task.WhenAny(responseTask.Task, Task.Delay(TimeSpan.FromSeconds(120)));
-
-                    // Unsubscribe from notifications
-                    // cassiaListener.Unsubscribe(macAddress);
-                    
-                    // Check if the response task completed
-                    if (completedTask == responseTask.Task)
+                if (completedTask == responseTask.Task)
+                {
+                    return await responseTask.Task; // ✅ Return received data
+                }
+                else
+                {
+                    // ✅ Handle timeout and unsubscribe
+                    _notificationService.Unsubscribe(macAddress);
+                    return new DataResponseModel
                     {
-                        return await responseTask.Task;
-                    }
-                    else
-                    {
-                        // Handle timeout
-                        return new DataResponseModel
-                        {
-                            MacAddress = macAddress,
-                            Data = "Timeout",
-                            Time = DateTimeOffset.Now.ToUnixTimeMilliseconds(),
-                            Status = HttpStatusCode.RequestTimeout,
-
-                        };
-                    }
+                        MacAddress = macAddress,
+                        Data = "Timeout",
+                        Time = DateTimeOffset.Now.ToUnixTimeMilliseconds(),
+                        Status = HttpStatusCode.RequestTimeout,
+                    };
                 }
             }
             catch (Exception ex)
@@ -279,53 +274,44 @@ namespace AccessAPP.Services
                 string hexLoginValue = new LoginTelegram().Create();
                 CassiaReadWriteService cassiaReadWrite = new CassiaReadWriteService();
                 var result = await cassiaReadWrite.WriteBleMessage(gatewayIpAddress, macAddress, 19, hexLoginValue, "?noresponse=1");
-                using (var cassiaListener = new CassiaNotificationService(_configuration))
+
+                var loginResultTask = new TaskCompletionSource<LoginResponseModel>();
+
+                // ✅ Subscribe to notifications using the singleton `_notificationService`
+                _notificationService.Subscribe(macAddress, (sender, data) =>
                 {
-                    var loginResultTask = new TaskCompletionSource<LoginResponseModel>();
-
-                    cassiaListener.Subscribe(macAddress, (sender, data) =>
+                    var loginReply = new LoginTelegramReply(data);
+                    if (loginReply.TelegramType == "1100")
                     {
-                        var loginReply = new LoginTelegramReply(data);
-                        if (loginReply.TelegramType == "1100")
+                        var loginReplyResult = loginReply.GetResult();
+                        ResponseModel responseBody = Helper.CreateResponseWithMessage(macAddress, result, loginReplyResult.Msg, loginReplyResult.PincodeRequired);
+
+                        var attemptLoginResult = new LoginResponseModel
                         {
-                            var loginReplyResult = loginReply.GetResult();
-                            ResponseModel responseBody = new ResponseModel();
-                            responseBody = Helper.CreateResponseWithMessage(macAddress, result, loginReplyResult.Msg, loginReplyResult.PincodeRequired);
-
-                            var attemptLoginResult = new LoginResponseModel
-                            {
-                                Status = result.StatusCode.ToString(),
-                                ResponseBody = responseBody
-                            };
-                            loginResultTask.TrySetResult(attemptLoginResult);
-                        }
-                    });
-
-                    // Wait for login result or timeout
-                    var loginTask = loginResultTask.Task;
-                    var timeoutTask = Task.Delay(TimeSpan.FromSeconds(120));
-                    var completedTask = await Task.WhenAny(loginTask, timeoutTask);
-
-                    // Unsubscribe from notifications
-                    cassiaListener.Unsubscribe(macAddress);
-
-                    // Check if the login task completed
-                    
-                    if (completedTask == loginTask)
-                    {
-                        return await loginTask;
-                    }
-                    else
-                    {
-                        // Handle timeout
-                        return new LoginResponseModel
-                        {
-                            Status = "Timeout",
-                            ResponseBody = null
+                            Status = result.StatusCode.ToString(),
+                            ResponseBody = responseBody
                         };
+                        loginResultTask.TrySetResult(attemptLoginResult);
                     }
-                }
+                });
 
+                // ✅ Wait for login result or timeout
+                var completedTask = await Task.WhenAny(loginResultTask.Task, Task.Delay(TimeSpan.FromSeconds(120)));
+
+                if (completedTask == loginResultTask.Task)
+                {
+                    return await loginResultTask.Task; // ✅ Return successful login response
+                }
+                else
+                {
+                    // ✅ Handle timeout and unsubscribe
+                    _notificationService.Unsubscribe(macAddress);
+                    return new LoginResponseModel
+                    {
+                        Status = "Timeout",
+                        ResponseBody = null
+                    };
+                }
             }
             catch (Exception ex)
             {

@@ -1,11 +1,8 @@
-using AccessAPP.Models;
+﻿using AccessAPP.Models;
 using AccessAPP.Services;
-using Amazon.Runtime.Internal;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Configuration;
-using Newtonsoft.Json.Linq;
+using Newtonsoft.Json;
 using System.Net;
-using System.Net.Mail;
 
 namespace AccessAPP.Controllers
 {
@@ -21,9 +18,10 @@ namespace AccessAPP.Controllers
         private readonly IConfiguration _configuration;
         private readonly string _gatewayIpAddress;
         private readonly int _gatewayPort;
+        private readonly CassiaNotificationService _notificationService; // ✅ Injected singleton
 
 
-        public CassiaController(IConfiguration configuration, CassiaScanService scanService, CassiaConnectService connectService, CassiaPinCodeService cassiaPinCodeService, DeviceStorageService deviceStorageService, CassiaFirmwareUpgradeService firmwareUpgradeService)
+        public CassiaController(IConfiguration configuration, CassiaScanService scanService, CassiaConnectService connectService, CassiaPinCodeService cassiaPinCodeService, DeviceStorageService deviceStorageService, CassiaFirmwareUpgradeService firmwareUpgradeService, CassiaNotificationService notificationService)
         {
             _configuration = configuration;
             _gatewayIpAddress = _configuration.GetValue<string>("GatewayConfiguration:IpAddress");
@@ -33,6 +31,7 @@ namespace AccessAPP.Controllers
             _cassiaPinCodeService = cassiaPinCodeService;
             _deviceStorageService = deviceStorageService;
             _firmwareUpgradeService = firmwareUpgradeService;
+            _notificationService = notificationService;
         }
 
         [HttpGet("scan")]
@@ -150,7 +149,7 @@ namespace AccessAPP.Controllers
             }
         }
 
-        
+
         [HttpPost("Login")]
         public async Task<IActionResult> Login([FromBody] List<LoginRequestModel> models)
         {
@@ -199,7 +198,7 @@ namespace AccessAPP.Controllers
             }
         }
 
-        
+
         [HttpGet("attemptlogin")] /// This API logs in without the connect functionality
         public async Task<IActionResult> Attemptlogin([FromBody] List<LoginRequestModel> models)
         {
@@ -310,6 +309,26 @@ namespace AccessAPP.Controllers
             }
         }
 
+        [HttpPost("UpgradeBLSensor")]
+        public async Task<IActionResult> UpgradeBLSensor([FromBody] List<BulkUpgradeRequest> request)
+        {
+            if (request == null || request.Count == 0)
+            {
+                return BadRequest(new { message = "Device list cannot be empty." });
+            }
+
+            try
+            {
+                var upgradeResults = await _firmwareUpgradeService.UpgradeBLSensorsAsync(request);
+                return Ok(upgradeResults);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Error during bootloader & sensor upgrade: {ex.Message} {ex.StackTrace}");
+                return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
+            }
+        }
+
 
         [HttpPost("ActorUpgrade")]
         public async Task<IActionResult> ActorUpgrade([FromBody] FirmwareUpgradeRequest request)
@@ -340,6 +359,26 @@ namespace AccessAPP.Controllers
                 return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
             }
         }
+
+
+        [HttpPost("UpgradeDevices")]
+        public async Task<IActionResult> UpgradeDevices([FromBody] FirmwareUpgradeRequest request)
+        {
+            try
+            {
+                var result = await _firmwareUpgradeService.UpgradeDeviceAsync(request.MacAddress, request.Pincode);
+
+                return result.Success
+                    ? Ok(new { message = result.Message })
+                    : StatusCode(result.StatusCode, new { message = result.Message });
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Error during bulk actor upgrade: {ex.Message}");
+                return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
+            }
+        }
+
 
         [HttpPost("BulkActorUpgrade")]
         public async Task<IActionResult> BulkActorUpgrade([FromBody] List<BulkUpgradeRequest> request)
@@ -377,16 +416,14 @@ namespace AccessAPP.Controllers
             }
         }
 
-        [HttpPost("UpgradeDevices")]
-        public async Task<IActionResult> UpgradeDevices([FromBody] FirmwareUpgradeRequest request)
+        [HttpPost("BulkDeviceUpgrade")]
+        public async Task<IActionResult> BulkDeviceUpgrade([FromBody] List<BulkUpgradeRequest> request)
         {
             try
             {
-                var result = await _firmwareUpgradeService.UpgradeDeviceAsync(request.MacAddress,request.Pincode);
+                var result = await _firmwareUpgradeService.BulkUpgradeDevicesAsync(request);
 
-                return result.Success
-                    ? Ok(new { message = result.Message })
-                    : StatusCode(result.StatusCode, new { message = result.Message });
+                return Ok(result);
             }
             catch (Exception ex)
             {
@@ -431,7 +468,7 @@ namespace AccessAPP.Controllers
                         responses.Add($"Failed to send telegram to device: {macAddress}, Reason: {writeResponse.ReasonPhrase}");
                     }
 
-                    await Task.Delay(500);
+                    //await Task.Delay(500);
                 }
 
                 // Return all responses as a result
@@ -444,65 +481,105 @@ namespace AccessAPP.Controllers
         }
 
 
-        //[HttpPost("batchlightcontrol")]
-        //public async Task<IActionResult> BatchLightControl([FromBody] List<LightControlRequest> lightControlRequests)
-        //{
-        //    try
-        //    {
-        //        string gatewayIpAddress = "192.168.0.24";
-        //        // Fetch the list of MacAddresses
-        //        List<string> macAddresses = lightControlRequests.Select(r => r.MacAddress).ToList();
-        //        // Step 1: Call the batch connect method
-        //        var batchConnectResponse = await _connectService.BatchConnectDevices(gatewayIpAddress, macAddresses);
+        [HttpPost("batchlightcontrol")]
+        public async Task<IActionResult> BatchLightControl([FromBody] BatchLightControlRequest request)
+        {
+            try
+            {
+                // Step 1: Batch connect the devices
+                var batchConnectResponse = await _connectService.BatchConnectDevices(_gatewayIpAddress, request.MacAddresses);
 
-        //        if (batchConnectResponse.Status.ToString() != "OK")
-        //        {
-        //            return StatusCode(500, "Failed to batch connect devices.");
-        //        }
+                if (batchConnectResponse.Status.ToString() != "OK")
+                {
+                    return StatusCode(500, "Failed to batch connect devices.");
+                }
 
-        //        // Step 2: Initialize SSE listener and wait for connected devices
-        //        var connectedDevices = new List<string>();
-        //        using (var cassiaNotificationService = new CassiaNotificationService())
-        //        {
-        //            foreach (var macAddress in macAddresses)
-        //            {
-        //                // Subscribe to each MAC address for connection events
-        //                cassiaNotificationService.Subscribe(macAddress, (sender, eventData) =>
-        //                {
-        //                    connectedDevices.Add(macAddress);
-        //                });
-        //            }
+                // Step 2: Listen to SSE stream for connection updates
+                var connectedDevices = await ListenForConnectedDevices(request.MacAddresses);
 
-        //            // Wait for devices to connect (adjust the delay as necessary)
-        //            await Task.Delay(10000);
+                if (connectedDevices.Count == 0)
+                {
+                    return StatusCode(500, "No devices connected successfully.");
+                }
 
-        //            // Step 3: Send control command to each connected device
-        //            foreach (var macAddress in connectedDevices)
-        //            {
-        //                var controlResponse = await _connectService.SendControlToLight(gatewayIpAddress, macAddress, hexControlValue);
+                List<string> failedDevices = new List<string>();
+                int maxAttempts = 3; // Number of retry attempts for failed devices
 
-        //                if (controlResponse.Status.ToString() != "OK")
-        //                {
-        //                    return StatusCode(500, $"Failed to control light for device {macAddress}");
-        //                }
-        //            }
-        //        }
+                // Step 3: Send control command using a **single HEX value** for all connected devices
+                foreach (var macAddress in connectedDevices)
+                {
+                    bool success = false;
 
-        //        return Ok("Batch light control completed successfully.");
-        //    }
-        //    catch (Exception ex)
-        //    {
-        //        return StatusCode(500, $"Error: {ex.Message + ex.StackTrace}");
-        //    }
-        //}
+                    for (int attempt = 1; attempt <= maxAttempts; attempt++)
+                    {
+                        var controlResponse = await _connectService.SendControlToLight(_gatewayIpAddress, macAddress, request.HexLoginValue);
 
+                        if (controlResponse.Status.ToString() == "OK")
+                        {
+                            Console.WriteLine($"Attempt {attempt}: Successfully controlled light for {macAddress}");
+                            success = true;
+                            break; // If successful, exit the retry loop
+                        }
+                        else
+                        {
+                            Console.WriteLine($"Attempt {attempt}: Failed to control light for {macAddress}, will retry...");
+                            await Task.Delay(500); // Small delay before retrying
+                        }
+                    }
+
+                    if (!success)
+                    {
+                        failedDevices.Add(macAddress);
+                    }
+                }
+
+                if (failedDevices.Count > 0)
+                {
+                    return StatusCode(500, $"Some devices failed: {string.Join(", ", failedDevices)}");
+                }
+
+                return Ok("Batch light control completed successfully.");
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error: {ex.Message + ex.StackTrace}");
+            }
+        }
+
+
+        // Central SSE listener for connection state
+        private async Task<List<string>> ListenForConnectedDevices(List<string> macAddresses)
+        {
+            var connectedDevices = new List<string>();
+            var url = $"http://{_gatewayIpAddress}/management/nodes/connection-state";
+
+            using (var client = new HttpClient())
+            {
+                var response = await client.GetStreamAsync(url);
+                using (var reader = new StreamReader(response))
+                {
+                    var timeout = DateTime.UtcNow.AddSeconds(10); // Set fail-safe timeout
+                    while (DateTime.UtcNow < timeout && connectedDevices.Count < macAddresses.Count)
+                    {
+                        if (reader.EndOfStream) continue;
+
+                        string line = await reader.ReadLineAsync();
+                        if (line.StartsWith("data:"))
+                        {
+                            var json = line.Substring(5).Trim();
+                            var connectionEvent = JsonConvert.DeserializeObject<ConnectionEvent>(json);
+
+                            if (connectionEvent.ConnectionState == "connected" && macAddresses.Contains(connectionEvent.Handle))
+                            {
+                                connectedDevices.Add(connectionEvent.Handle);
+                            }
+                        }
+                    }
+                }
+            }
+
+            return connectedDevices;
+        }
     }
 
-    public class ServiceResponse
-    {
-        public bool Success { get; set; }
-        public int StatusCode { get; set; }
-        public string Message { get; set; }
-    }
-    // Request model for the control light API
 }

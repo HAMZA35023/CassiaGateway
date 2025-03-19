@@ -1,6 +1,4 @@
-﻿using Newtonsoft.Json;
-
-namespace AccessAPP.Models
+﻿namespace AccessAPP.Models
 {
     public class UnpairResponse
     {
