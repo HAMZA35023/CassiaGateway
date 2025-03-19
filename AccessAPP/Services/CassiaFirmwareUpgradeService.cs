@@ -1,28 +1,10 @@
-﻿using System;
-using System.IO;
-using System.Linq;
-using System.Net;
-using System.Net.Http;
-using System.Threading.Tasks;
-using System.Collections.Generic;
-using System.Text;
-using Newtonsoft.Json;
-using AccessAPP.Models;
-using System.Net.Mail;
+﻿using AccessAPP.Models;
 using AccessAPP.Services.HelperClasses;
-using System.Runtime.InteropServices;
-using static System.Runtime.InteropServices.JavaScript.JSType;
-using System.Reflection.Metadata;
-using System.Net.Sockets;
+using Newtonsoft.Json;
 using System.Collections.Concurrent;
-using Windows.Devices.Bluetooth.GenericAttributeProfile;
-using Windows.Devices.Bluetooth;
-using Windows.Storage.Streams;
-using System.Windows.Markup;
-using Microsoft.Extensions.Configuration;
 using System.Diagnostics;
-using Windows.Services.Maps;
-using Windows.Devices.Sensors;
+using System.Net;
+using System.Runtime.InteropServices;
 
 namespace AccessAPP.Services
 {
@@ -39,7 +21,7 @@ namespace AccessAPP.Services
         private readonly string _firmwareSensorFilePath3 = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353AP30227.cyacd";
         private readonly string _firmwareSensorFilePath1 = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353AP10227.cyacd";
         private readonly string _firmwareBootLoaderFilePath = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353BL10604.cyacd";
-        
+
         private readonly ConcurrentQueue<byte[]> _notificationQueue = new ConcurrentQueue<byte[]>();
         private ManualResetEvent _notificationEvent = new ManualResetEvent(false);
         private readonly HashSet<string> _subscribedMacAddresses = new HashSet<string>();
@@ -64,7 +46,7 @@ namespace AccessAPP.Services
         {
             _httpClient = httpClient;
             _connectService = connectService;
-            
+
             _cassiaPinCodeService = cassiaPinCodeService;
             _configuration = configuration;
             _gatewayIpAddress = _configuration.GetValue<string>("GatewayConfiguration:IpAddress");
@@ -74,7 +56,7 @@ namespace AccessAPP.Services
 
         public async Task<ServiceResponse> UpgradeSensorAsync(string nodeMac, string pincode, bool bActor)
         {
-           
+
             // Step 1: Connect to the device
             ServiceResponse response = null;
             var connectionResult = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
@@ -335,7 +317,7 @@ namespace AccessAPP.Services
                 Stopwatch stopwatch = new Stopwatch();
 
                 Console.WriteLine($"Starting actor upgrade for {macAddress}");
-   
+
                 stopwatch.Start();
                 var actorUpgradeResult = await UpgradeActorAsync(macAddress, pincode, true);
                 stopwatch.Stop();
@@ -373,7 +355,7 @@ namespace AccessAPP.Services
                 Console.WriteLine($"Starting Sensor upgrade for {macAddress}");
                 Task.Delay(10000);
                 bootloader = false;
-                
+
 
                 // Step 1: Upgrade the sensor
                 stopwatch.Restart();
@@ -392,7 +374,7 @@ namespace AccessAPP.Services
 
                 Console.WriteLine("delay for 1 minute");
 
-               
+
 
                 // Both upgrades successful
                 response.Success = true;
@@ -427,7 +409,7 @@ namespace AccessAPP.Services
                 }
 
                 Console.WriteLine("Next Device will be upgraded after 10 seconds");
-                
+
             }
 
             Console.WriteLine($"Initial upgrade completed. Retrying failed devices: {failedDevices.Count} devices.");
@@ -682,7 +664,7 @@ namespace AccessAPP.Services
 
                     if (!device.BootloaderSuccess)
                     {
-                        var bootloaderResponse = await UpgradeSensorAsync(device.MacAddress, device.Pincode,false);
+                        var bootloaderResponse = await UpgradeSensorAsync(device.MacAddress, device.Pincode, false);
                         if (bootloaderResponse.Success)
                             device.BootloaderSuccess = true;
                         else
@@ -780,7 +762,7 @@ namespace AccessAPP.Services
                     response.Message = "Failed to enter boot mode.";
                     return response;
                 }
-                
+
             }
 
             //Step 3: Start Programming the Sensor
@@ -849,7 +831,7 @@ namespace AccessAPP.Services
             }
 
             // Step 2: Enable notifications
-  
+
             Console.WriteLine($"Bootloader mode achieved for {nodeMac}.");
 
             // Step 3: Start programming the actor
@@ -920,7 +902,7 @@ namespace AccessAPP.Services
 
                 }
 
-                if(local_status == ReturnCodes.CYRET_SUCCESS)
+                if (local_status == ReturnCodes.CYRET_SUCCESS)
                 {
                     return true;
                 }
@@ -1371,34 +1353,34 @@ namespace AccessAPP.Services
             return bytes;
         }
 
-        public async Task<bool> EnableNotificationAsync(string gatewayIpAddress, string nodeMac,bool bActor)
-    {
-        try
+        public async Task<bool> EnableNotificationAsync(string gatewayIpAddress, string nodeMac, bool bActor)
         {
-            string url = $"http://{gatewayIpAddress}/gatt/nodes/{nodeMac}/handle/15/value/0100";
-            if (bActor)
+            try
             {
-                url = $"http://{gatewayIpAddress}/gatt/nodes/{nodeMac}/handle/16/value/0100";
-            }
-            
-            
-            HttpResponseMessage response = await _httpClient.GetAsync(url);
+                string url = $"http://{gatewayIpAddress}/gatt/nodes/{nodeMac}/handle/15/value/0100";
+                if (bActor)
+                {
+                    url = $"http://{gatewayIpAddress}/gatt/nodes/{nodeMac}/handle/16/value/0100";
+                }
 
-            if (response.IsSuccessStatusCode)
+
+                HttpResponseMessage response = await _httpClient.GetAsync(url);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    Console.WriteLine("Notification enabled successfully.");
+                    return true;
+                }
+
+                Console.WriteLine($"Failed to enable notification. Status code: {response.StatusCode}");
+                return false;
+            }
+            catch (Exception ex)
             {
-                Console.WriteLine("Notification enabled successfully.");
-                return true;
+                Console.WriteLine($"Exception occurred while enabling notification: {ex.Message}");
+                return false;
             }
-
-            Console.WriteLine($"Failed to enable notification. Status code: {response.StatusCode}");
-            return false;
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Exception occurred while enabling notification: {ex.Message}");
-            return false;
-        }
-    }
 
         /// <summary>
         /// Method that performs Read operation from USB Device

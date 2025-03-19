@@ -1,6 +1,5 @@
 ﻿using AccessAPP.Models;
 using Newtonsoft.Json;
-using System.Collections.Concurrent;
 
 namespace AccessAPP.Services
 {
@@ -18,7 +17,7 @@ namespace AccessAPP.Services
             _httpClient = httpClient;
             _eventDataList = new List<ScannedDevicesView>();
             _notificationService = notificationService;
-            _cassiaConnectService = new CassiaConnectService(httpClient,configuration,notificationService);
+            _cassiaConnectService = new CassiaConnectService(httpClient, configuration, notificationService);
             _deviceStorageService = deviceStorageService;
             _configuration = configuration;
         }

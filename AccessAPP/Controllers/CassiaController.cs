@@ -1,12 +1,8 @@
 ﻿using AccessAPP.Models;
 using AccessAPP.Services;
-using Amazon.Runtime.Internal;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Configuration;
 using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 using System.Net;
-using System.Net.Mail;
 
 namespace AccessAPP.Controllers
 {
@@ -584,34 +580,6 @@ namespace AccessAPP.Controllers
 
             return connectedDevices;
         }
-
-        // Model for SSE Connection Event
- 
     }
 
-    public class ServiceResponse
-    {
-        public bool Success { get; set; }
-        public int StatusCode { get; set; }
-        public string Message { get; set; }
-    }
-
-    public class ConnectionEvent
-    {
-        [JsonProperty("handle")]
-        public string Handle { get; set; }
-
-        [JsonProperty("chipId")]
-        public int ChipId { get; set; }
-
-        [JsonProperty("connectionState")]
-        public string ConnectionState { get; set; }
-    }
-
-    public class BatchLightControlRequest
-    {
-        public List<string> MacAddresses { get; set; }
-        public string HexLoginValue { get; set; }
-    }
-    // Request model for the control light API
 }

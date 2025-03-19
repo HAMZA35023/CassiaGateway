@@ -1,7 +1,5 @@
 ﻿using System.Collections.Concurrent;
 using System.Text.Json;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging;
 
 public class CassiaNotificationService : IDisposable
 {
