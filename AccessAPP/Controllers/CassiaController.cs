@@ -546,6 +546,96 @@ namespace AccessAPP.Controllers
             }
         }
 
+        [HttpPost("connectiontest/{testCycles}")]
+        public async Task<IActionResult> TestConnectionStability(int testCycles, [FromBody] List<string> macAddresses)
+        {
+            try
+            {
+                if (testCycles <= 0)
+                {
+                    return BadRequest("Test cycle count must be greater than zero.");
+                }
+
+                var results = new Dictionary<string, ConnectionTestResult>();
+
+                foreach (var macAddress in macAddresses)
+                {
+                    var testResult = new ConnectionTestResult();
+
+                    for (int i = 0; i < testCycles; i++)
+                    {
+                        var attemptDetails = new TestAttempt
+                        {
+                            AttemptNumber = i + 1,
+                            ConnectionStatus = "Failed",
+                            RequestedData = "01290107005A5E",
+                            ResponseData = "No response",
+                            DisconnectionStatus = "Not attempted"
+                        };
+
+                        Console.WriteLine($"Test {i + 1}/{testCycles} for {macAddress}...");
+
+                        // Step 1: Connect to the device
+                        var connectResponse = await _connectService.ConnectToBleDevice(_gatewayIpAddress, _gatewayPort, macAddress);
+                        if (connectResponse.Status.ToString() == "OK")
+                        {
+                            attemptDetails.ConnectionStatus = "Success";
+
+                            // Step 2: Login to the device
+                            var loginResponse = await _connectService.AttemptLogin(_gatewayIpAddress, macAddress);
+                            if (loginResponse.Status.ToString() == "OK")
+                            {
+                                // Step 3: Send BLE message (e.g., Read data)
+                                string testMessage = "01290107005A5E"; // Example message
+                                var response = await _connectService.GetDataFromBleDevice(_gatewayIpAddress, _gatewayPort, macAddress, testMessage);
+
+                                attemptDetails.RequestedData = testMessage;
+                                attemptDetails.ResponseData = response.Data ?? "No response";
+
+                                if (response.Status.ToString() == "OK")
+                                {
+                                    testResult.SuccessCount++;
+                                    Console.WriteLine($"Successful test {i + 1}/{testCycles} for {macAddress}");
+                                }
+                                else
+                                {
+                                    testResult.FailedCount++;
+                                    Console.WriteLine($"No response from {macAddress} on attempt {i + 1}");
+                                }
+                            }
+                            else
+                            {
+                                attemptDetails.ConnectionStatus = "Failed (Login Issue)";
+                                testResult.FailedCount++;
+                                Console.WriteLine($"Failed to login to {macAddress} on attempt {i + 1}");
+                            }
+                        }
+                        else
+                        {
+                            testResult.FailedCount++;
+                            Console.WriteLine($"Failed to connect to {macAddress} on attempt {i + 1}");
+                        }
+
+                        // Step 4: Disconnect from the device
+                        var disconnectResponse = await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0);
+                        attemptDetails.DisconnectionStatus = disconnectResponse.Status.ToString() == "OK" ? "Success" : "Failed";
+
+                        testResult.AttemptDetails.Add(attemptDetails);
+
+                        // Small delay to avoid overwhelming the device
+                        await Task.Delay(500);
+                    }
+
+                    results[macAddress] = testResult;
+                }
+
+                return Ok(results);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error: {ex.Message + ex.StackTrace}");
+            }
+        }
 
         // Central SSE listener for connection state
         private async Task<List<string>> ListenForConnectedDevices(List<string> macAddresses)
@@ -580,6 +670,21 @@ namespace AccessAPP.Controllers
 
             return connectedDevices;
         }
+    }
+    public class ConnectionTestResult
+    {
+        public int SuccessCount { get; set; } = 0;
+        public int FailedCount { get; set; } = 0;
+        public List<TestAttempt> AttemptDetails { get; set; } = new List<TestAttempt>();
+    }
+
+    public class TestAttempt
+    {
+        public int AttemptNumber { get; set; }
+        public string ConnectionStatus { get; set; }
+        public string RequestedData { get; set; }
+        public string ResponseData { get; set; }
+        public string DisconnectionStatus { get; set; }
     }
 
 }
