@@ -54,11 +54,13 @@ namespace AccessAPP.Services
             _notificationService = notificationService;
         }
 
-        public async Task<ServiceResponse> UpgradeSensorAsync(string nodeMac, string pincode, bool bActor)
+        public async Task<ServiceResponse> UpgradeSensorAsync(string nodeMac, string pincode, bool bActor, int sType)
         {
 
             // Step 1: Connect to the device
             ServiceResponse response = null;
+            sensorType = sType;
+
             var connectionResult = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
             if (connectionResult.Status != HttpStatusCode.OK)
             {
@@ -272,7 +274,7 @@ namespace AccessAPP.Services
                 {
                     try
                     {
-                        var result = await UpgradeSensorAsync(request.MacAddress, request.Pincode, request.bActor);
+                        var result = await UpgradeSensorAsync(request.MacAddress, request.Pincode, request.bActor, request.sType);
                         upgradeResults.Add(result);
                         return result;
                     }
@@ -307,7 +309,7 @@ namespace AccessAPP.Services
             return response;
         }
 
-        public async Task<ServiceResponse> UpgradeDeviceAsync(string macAddress, string pincode)
+        public async Task<ServiceResponse> UpgradeDeviceAsync(string macAddress, string pincode, int sType)
         {
             var response = new ServiceResponse();
 
@@ -337,7 +339,7 @@ namespace AccessAPP.Services
                 Console.WriteLine($"Starting bootloader upgrade for {macAddress}");
                 stopwatch.Restart();
                 // Step 1: Upgrade the sensor
-                var bootladerUpgradeResult = await UpgradeSensorAsync(macAddress, pincode, false);
+                var bootladerUpgradeResult = await UpgradeSensorAsync(macAddress, pincode, false, sType);
                 stopwatch.Stop();
                 Console.WriteLine($"Bootloader upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds");
 
@@ -359,7 +361,7 @@ namespace AccessAPP.Services
 
                 // Step 1: Upgrade the sensor
                 stopwatch.Restart();
-                var sensorUpgradeResult = await UpgradeSensorAsync(macAddress, pincode, false);
+                var sensorUpgradeResult = await UpgradeSensorAsync(macAddress, pincode, false, sType);
                 stopwatch.Stop();
                 Console.WriteLine($"Sensor upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds");
                 if (!sensorUpgradeResult.Success)
@@ -447,7 +449,7 @@ namespace AccessAPP.Services
                 stopwatch.Restart();
 
                 // Step 1: Bootloader Upgrade
-                var bootloaderUpgradeResult = await UpgradeSensorAsync(device.MacAddress, device.Pincode, false);
+                var bootloaderUpgradeResult = await UpgradeSensorAsync(device.MacAddress, device.Pincode, false, device.sType);
                 stopwatch.Stop();
                 Console.WriteLine($"Bootloader upgrade completed for {device.MacAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds");
 
@@ -468,7 +470,7 @@ namespace AccessAPP.Services
 
                 // Step 2: Sensor Upgrade (Only if Bootloader upgrade succeeded)
                 stopwatch.Restart();
-                var sensorUpgradeResult = await UpgradeSensorAsync(device.MacAddress, device.Pincode, false);
+                var sensorUpgradeResult = await UpgradeSensorAsync(device.MacAddress, device.Pincode, false, device.sType);
                 stopwatch.Stop();
                 Console.WriteLine($"Sensor upgrade completed for {device.MacAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds");
 
@@ -616,7 +618,7 @@ namespace AccessAPP.Services
 
         public async Task<ServiceResponse> BulkUpgradeDevicesAsync(List<BulkUpgradeRequest> requests)
         {
-            var progressList = requests.Select(req => new UpgradeProgress { MacAddress = req.MacAddress, Pincode = req.Pincode }).ToList();
+            var progressList = requests.Select(req => new UpgradeProgress { MacAddress = req.MacAddress, Pincode = req.Pincode , sType = req.sType}).ToList();
 
             // Phase 1: Initial Upgrades
             await UpgradeDevicesSequentially(progressList);
@@ -647,7 +649,7 @@ namespace AccessAPP.Services
                 Console.WriteLine($"Starting upgrade for device {device.MacAddress}");
 
 
-                await UpgradeDeviceAsync(device.MacAddress, device.Pincode);
+                await UpgradeDeviceAsync(device.MacAddress, device.Pincode, device.sType);
             }
         }
 
@@ -664,7 +666,7 @@ namespace AccessAPP.Services
 
                     if (!device.BootloaderSuccess)
                     {
-                        var bootloaderResponse = await UpgradeSensorAsync(device.MacAddress, device.Pincode, false);
+                        var bootloaderResponse = await UpgradeSensorAsync(device.MacAddress, device.Pincode, false, device.sType);
                         if (bootloaderResponse.Success)
                             device.BootloaderSuccess = true;
                         else
@@ -677,7 +679,7 @@ namespace AccessAPP.Services
                     }
                     if (!device.SensorSuccess)
                     {
-                        var sensorResponse = await UpgradeSensorAsync(device.MacAddress, device.Pincode, false);
+                        var sensorResponse = await UpgradeSensorAsync(device.MacAddress, device.Pincode, false, device.sType);
                         if (sensorResponse.Success)
                             device.SensorSuccess = true;
                         else
@@ -1394,6 +1396,8 @@ namespace AccessAPP.Services
     {
         public string MacAddress { get; set; }
         public string Pincode { get; set; }
+
+        public int sType { get; set; }
         public bool BootloaderSuccess { get; set; } = false;
         public bool SensorSuccess { get; set; } = false;
         public bool ActorSuccess { get; set; } = false;

@@ -288,7 +288,7 @@ namespace AccessAPP.Controllers
             string nodeMac = request.MacAddress;
             string pincode = request.Pincode;
             bool bActor = request.bActor; // if bActor=1, programming actor
-
+            int sensorType = request.sType;
             try
             {
                 // Check if an upgrade is already in progress for this device
@@ -296,7 +296,7 @@ namespace AccessAPP.Controllers
                 {
                     return Conflict(new { message = "Firmware upgrade already in progress for this device." });
                 }
-                var result = await _firmwareUpgradeService.UpgradeSensorAsync(nodeMac, pincode, bActor);
+                var result = await _firmwareUpgradeService.UpgradeSensorAsync(nodeMac, pincode, bActor, sensorType);
 
                 return result.Success
                     ? Ok(new { message = result.Message })
@@ -366,7 +366,7 @@ namespace AccessAPP.Controllers
         {
             try
             {
-                var result = await _firmwareUpgradeService.UpgradeDeviceAsync(request.MacAddress, request.Pincode);
+                var result = await _firmwareUpgradeService.UpgradeDeviceAsync(request.MacAddress, request.Pincode, request.sType);
 
                 return result.Success
                     ? Ok(new { message = result.Message })
@@ -405,9 +405,10 @@ namespace AccessAPP.Controllers
             {
                 var result = await _firmwareUpgradeService.BulkUpgradeSensorAsync(request);
 
-                return result.Success
-                    ? Ok(new { message = result.Message })
-                    : StatusCode(result.StatusCode, new { message = result.Message });
+                return Ok(result);
+                    //result.Success
+                    //? Ok(new { message = result.Message })
+                    //: StatusCode(result.StatusCode, new { message = result.Message });
             }
             catch (Exception ex)
             {
