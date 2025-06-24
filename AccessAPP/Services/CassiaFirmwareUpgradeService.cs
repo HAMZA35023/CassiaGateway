@@ -1,10 +1,12 @@
 ﻿using AccessAPP.Models;
 using AccessAPP.Services.HelperClasses;
 using Newtonsoft.Json;
+using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 
 namespace AccessAPP.Services
 {
@@ -40,6 +42,7 @@ namespace AccessAPP.Services
         private double totalRows = 0;
         private bool bootloader = false;
         private int sensorType = 4;
+        string logId = "";
         private readonly CassiaNotificationService _notificationService; // ✅ Injected singleton
 
         public CassiaFirmwareUpgradeService(HttpClient httpClient, CassiaConnectService connectService, CassiaPinCodeService cassiaPinCodeService, CassiaNotificationService notificationService, IConfiguration configuration)
@@ -60,6 +63,9 @@ namespace AccessAPP.Services
             // Step 1: Connect to the device
             ServiceResponse response = null;
             sensorType = sType;
+            logId = $"{nodeMac.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
+           
+            UpgradeLogger.Log(logId, nodeMac, "Process Start","Success", sType.ToString());
 
             var connectionResult = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
             if (connectionResult.Status != HttpStatusCode.OK)
@@ -69,13 +75,14 @@ namespace AccessAPP.Services
                 response.Message = "Failed to connect to device.";
                 return response;
             }
-
+            UpgradeLogger.Log(logId,nodeMac, "Connected", "Success");
             Console.WriteLine("Connected to device...");
 
             bool isAlreadyInBootMode = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
             if (isAlreadyInBootMode)
             {
                 Console.WriteLine("Device is already in boot mode.");
+                UpgradeLogger.Log(logId, nodeMac, "BootMode", "Detected");
                 await Task.Delay(3000);
                 var serviceResponse = await ProcessingSensorUpgrade(nodeMac, bActor);
                 return serviceResponse;
@@ -92,12 +99,13 @@ namespace AccessAPP.Services
 
                 if (loginResult.ResponseBody.PincodeRequired && !loginResult.ResponseBody.PinCodeAccepted)
                 {
+                    UpgradeLogger.Log(logId, nodeMac, "Login", "Failed");
                     response.Success = false;
                     response.StatusCode = 401; // Unauthorized
                     response.Message = "Failed to login to the device.";
                     return response;
                 }
-
+                UpgradeLogger.Log(logId, nodeMac, "LoggedIn", "Success");
                 Console.WriteLine("Logged into device...");
 
                 // Send Jump to Bootloader telegram repeatedly until successful
@@ -108,6 +116,7 @@ namespace AccessAPP.Services
                     bootModeAchieved = await SendJumpToBootloader(_gatewayIpAddress, nodeMac, bActor);
                     if (bootModeAchieved)
                     {
+                        UpgradeLogger.Log(logId, nodeMac, "BootMode", "Achieved");
                         Console.WriteLine($"Device entered boot mode after {attempt + 1} attempts.");
                         break;
                     }
@@ -117,6 +126,7 @@ namespace AccessAPP.Services
 
                 if (!bootModeAchieved)
                 {
+                    UpgradeLogger.Log(logId, nodeMac, "BootMode", "Failed");
                     response.Success = false;
                     response.StatusCode = 417; // Expectation Failed
                     response.Message = "Failed to enter boot mode.";
@@ -126,6 +136,7 @@ namespace AccessAPP.Services
                 // Disconnect and prepare for the upgrade process
                 Console.WriteLine("device disconnected and will reconnect after 3s");
                 var isDisconnected = await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0);
+                UpgradeLogger.Log(logId, nodeMac, "Disconnected", "Success");
                 await Task.Delay(3000);
 
                 var serviceResponse = await ProcessingSensorUpgrade(nodeMac, bActor);
@@ -714,12 +725,14 @@ namespace AccessAPP.Services
             var isConnected = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
             if (isConnected.Status != HttpStatusCode.OK)
             {
+                UpgradeLogger.Log(logId, nodeMac, "ReConnected", "Failed");
                 Console.WriteLine("Failed to connect to device.");
                 response.Success = false;
                 response.StatusCode = 500;
                 response.Message = "Failed to connect to device.";
                 return response;
             }
+            UpgradeLogger.Log(logId,nodeMac, "ReConnected", "Success");
 
             bool isAlreadyInBootMode = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
 
@@ -737,7 +750,7 @@ namespace AccessAPP.Services
                     response.Message = "Error Enabling Notifications";
                     return response;
                 }
-
+                UpgradeLogger.Log(logId, nodeMac, "NotificationEnabled", "Success");
                 Console.WriteLine("bootloader mode achieved and Notification enabled status:", notificationEnabled);
 
             }
@@ -750,6 +763,7 @@ namespace AccessAPP.Services
                     bootModeAchieved = await SendJumpToBootloader(_gatewayIpAddress, nodeMac, bActor);
                     if (bootModeAchieved)
                     {
+                        UpgradeLogger.Log(logId, nodeMac, "BootMode", "Achieved");
                         Console.WriteLine($"Device entered boot mode after {attempt + 1} attempts.");
                         break;
                     }
@@ -759,6 +773,7 @@ namespace AccessAPP.Services
 
                 if (!bootModeAchieved)
                 {
+                    UpgradeLogger.Log(logId, nodeMac, "BootMode", "Failed");
                     response.Success = false;
                     response.StatusCode = 417; // Expectation Failed
                     response.Message = "Failed to enter boot mode.";
@@ -772,6 +787,7 @@ namespace AccessAPP.Services
 
             if (programmingResult)
             {
+                UpgradeLogger.Log(logId, nodeMac, "ProgrammingComplete", "Success");
                 response.Success = true;
                 response.StatusCode = 200;
                 response.Message = "Programming Complete";
@@ -779,6 +795,7 @@ namespace AccessAPP.Services
             }
             else
             {
+                UpgradeLogger.Log(logId, nodeMac, "ProgrammingComplete", "Failed");
                 response.Success = false;
                 response.StatusCode = 500;
                 response.Message = "Programming Failed";

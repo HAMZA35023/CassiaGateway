@@ -28,10 +28,12 @@ namespace AccessAPP.Services
             {
                 // Define the duration of each scan in milliseconds
                 int scanDuration = 5000; // 5 seconds
-                var nearbyDevices = new List<ScannedDevicesView>();
+
+                // Use dictionary to avoid duplicates based on MAC address
+                var uniqueDevices = new Dictionary<string, ScannedDevicesView>();
 
                 // Step 1: Subscribe to the Server-Sent Events (SSE) endpoint
-                string sseEndpoint = $"http://{gatewayIpAddress}:{gatewayPort}/gap/nodes?event=1";
+                string sseEndpoint = $"http://{gatewayIpAddress}:{gatewayPort}/gap/nodes?event=1&filter_mac=10:B9:F7*";
                 var request = new HttpRequestMessage(HttpMethod.Get, sseEndpoint);
                 request.Headers.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("text/event-stream"));
 
@@ -39,29 +41,35 @@ namespace AccessAPP.Services
                 {
                     response.EnsureSuccessStatusCode();
 
-                    // Start a task to wait for 5 seconds
+                    // Start a task to wait for the scan duration
                     var cancellationTokenSource = new CancellationTokenSource(scanDuration);
                     var delayTask = Task.Delay(scanDuration, cancellationTokenSource.Token);
 
-                    // Step 2: Process SSE events
+                    // Step 2: Process SSE events and store only the latest per MAC
                     await ProcessSSEEvents(response, eventData =>
                     {
-                        // Parse each eventData as a ScannedDevicesView and add it to the list
                         var device = eventData;
-                        nearbyDevices.Add(device);
+                        var mac = eventData.bdaddrs.FirstOrDefault()?.Bdaddr;
+
+                        if (!string.IsNullOrWhiteSpace(mac))
+                        {
+                            uniqueDevices[mac] = device; // keep the latest seen device for each MAC
+                        }
+
                     }, cancellationTokenSource.Token);
 
-                    // Wait for the scan duration or until cancellation is requested
+                    // Wait for scan duration to complete
                     await delayTask;
                 }
 
-                return nearbyDevices;
+                return uniqueDevices.Values.ToList(); // Return only unique, latest-scanned devices
             }
             catch (Exception ex)
             {
                 throw new Exception($"Error: {ex.Message + ex.StackTrace}");
             }
         }
+
 
         /// <summary>
         /// / Older Version
