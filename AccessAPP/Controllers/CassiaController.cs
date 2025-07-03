@@ -1,5 +1,6 @@
 ﻿using AccessAPP.Models;
 using AccessAPP.Services;
+using AccessAPP.Services.HelperClasses;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
 using System.Net;
@@ -49,6 +50,19 @@ namespace AccessAPP.Controllers
             }
         }
 
+        [HttpGet("devices")]
+        public IActionResult GetDevices()
+        {
+            try
+            {
+                var devices = _deviceStorageService.GetFilteredDevices();
+                return Ok(devices);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error retrieving devices: {ex.Message}");
+            }
+        }
 
         [HttpGet("scannearbydevices")]
         public IActionResult FetchNearbyDevices([FromQuery] int minRssi = -100)
@@ -160,7 +174,7 @@ namespace AccessAPP.Controllers
                 foreach (var model in models)
                 {
                     string macAddress = model.MacAddress;
-                    string pincode = null;
+                    string pincode = model.Pincode;
 
                     if (string.IsNullOrEmpty(macAddress))
                     {
@@ -172,11 +186,12 @@ namespace AccessAPP.Controllers
                     if (connectResult.Status.ToString() == "OK")
                     {
                         var loginResult = await _connectService.AttemptLogin(_gatewayIpAddress, macAddress);
-
+                        bool pincodereq = loginResult.ResponseBody.PincodeRequired;
                         if (loginResult.ResponseBody.PincodeRequired && !string.IsNullOrEmpty(pincode))
                         {
                             var checkPincodeResponse = await _cassiaPinCodeService.CheckPincode(_gatewayIpAddress, macAddress, pincode);
                             loginResult.ResponseBody = checkPincodeResponse.ResponseBody;
+                            loginResult.ResponseBody.PincodeRequired = pincodereq;
                         }
 
                         responses.Add(loginResult);
@@ -406,9 +421,9 @@ namespace AccessAPP.Controllers
                 var result = await _firmwareUpgradeService.BulkUpgradeSensorAsync(request);
 
                 return Ok(result);
-                    //result.Success
-                    //? Ok(new { message = result.Message })
-                    //: StatusCode(result.StatusCode, new { message = result.Message });
+                //result.Success
+                //? Ok(new { message = result.Message })
+                //: StatusCode(result.StatusCode, new { message = result.Message });
             }
             catch (Exception ex)
             {
@@ -547,6 +562,56 @@ namespace AccessAPP.Controllers
             }
         }
 
+
+        [HttpPost("deviceversions")]
+        public async Task<IActionResult> GetDeviceSoftwareVersions([FromBody] List<string> macAddresses)
+        {
+            if (macAddresses == null || macAddresses.Count == 0)
+                return BadRequest("MAC address list is empty.");
+
+            var results = new Dictionary<string, string>();
+
+            foreach (var macAddress in macAddresses)
+            {
+                string parsedVersion = string.Empty;
+
+                try
+                {
+                    var connectResponse = await _connectService.ConnectToBleDevice(_gatewayIpAddress, _gatewayPort, macAddress);
+                    if (connectResponse.Status.ToString() == "OK")
+                    {
+                        var loginResponse = await _connectService.AttemptLogin(_gatewayIpAddress, macAddress);
+                        if (loginResponse.Status.ToString() == "OK")
+                        {
+                            string testMessage = "01290107005A5E";
+                            var response = await _connectService.GetDataFromBleDevice(_gatewayIpAddress, _gatewayPort, macAddress, testMessage);
+
+                            if (response.Status.ToString() == "OK" && !string.IsNullOrEmpty(response.Data))
+                            {
+                                parsedVersion = ScanDataParser.ParseSoftwareVersionFromResponse(response.Data);
+                            }
+                        }
+
+                        // Attempt disconnect even if data failed
+                        await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[WARN] Error with device {macAddress}: {ex.Message}");
+                    // Leave parsedVersion as empty
+                }
+
+                results[macAddress] = parsedVersion;
+
+                await Task.Delay(500); // Delay between devices
+            }
+
+            return Ok(results);
+        }
+
+
+
         [HttpPost("connectiontest/{testCycles}")]
         public async Task<IActionResult> TestConnectionStability(int testCycles, [FromBody] List<string> macAddresses)
         {
@@ -589,9 +654,9 @@ namespace AccessAPP.Controllers
                                 // Step 3: Send BLE message (e.g., Read data)
                                 string testMessage = "01290107005A5E"; // Example message
                                 var response = await _connectService.GetDataFromBleDevice(_gatewayIpAddress, _gatewayPort, macAddress, testMessage);
-
+                                string parsed = ScanDataParser.ParseSoftwareVersionFromResponse(response.Data);
                                 attemptDetails.RequestedData = testMessage;
-                                attemptDetails.ResponseData = response.Data ?? "No response";
+                                attemptDetails.ResponseData = parsed;
 
                                 if (response.Status.ToString() == "OK")
                                 {
@@ -671,6 +736,32 @@ namespace AccessAPP.Controllers
 
             return connectedDevices;
         }
+
+        [HttpGet("logs")]
+        public IActionResult GetUpgradeLogs()
+        {
+            try
+            {
+                var currentDir = Directory.GetCurrentDirectory();
+                Console.WriteLine("Current Directory: " + currentDir);
+
+                var logPath = Path.Combine(currentDir, "Logs", "upgrade_logs.txt");
+
+                if (!System.IO.File.Exists(logPath))
+                {
+                    return NotFound($"Log file not found at: {logPath}");
+                }
+
+                var logText = System.IO.File.ReadAllText(logPath);
+                return Content(logText, "text/plain");
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error reading log file: {ex.Message}");
+            }
+        }
+
+
     }
     public class ConnectionTestResult
     {

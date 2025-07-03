@@ -1,8 +1,12 @@
 ﻿using AccessAPP.Models;
+using AccessAPP.Services;
+using AccessAPP.Services.HelperClasses;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Xml.Linq;
 
 public class ScanBleDevice : IDisposable
 {
@@ -12,21 +16,23 @@ public class ScanBleDevice : IDisposable
     private static Task _scanningTask;
     private static readonly object _lock = new();
     private readonly ILogger<ScanBleDevice> _logger;
-
-    private readonly string _targetMacAddressPrefix = "E2:15:00";
-    private readonly string _targetMacAddress = "E2:15:00*";
+    private readonly CassiaConnectService _connectService;
+    private readonly DeviceStorageService _deviceStorageService;
+    private readonly string _targetMacAddressPrefix = "10:B9:F7";
+    private readonly string _targetMacAddress = "10:B9:F7*";
     private static bool _buttonPressed = false; // Track if the button has been pressed
 
-    public ScanBleDevice(HttpClient httpClient, IConfiguration configuration, ILogger<ScanBleDevice> logger)
+    public ScanBleDevice(HttpClient httpClient, IConfiguration configuration, ILogger<ScanBleDevice> logger, CassiaConnectService connectService, DeviceStorageService deviceStorageService)
     {
+        _connectService = connectService;
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-
+        _deviceStorageService = deviceStorageService;
         // Read IP and Port from appsettings.json
         string gatewayIpAddress = configuration.GetValue<string>("GatewayConfiguration:IpAddress");
         int gatewayPort = configuration.GetValue<int>("GatewayConfiguration:Port");
 
-        _scanSourceUrl = $"http://{gatewayIpAddress}:{gatewayPort}/gap/nodes?event=1&filter_mac={_targetMacAddress}";
+        _scanSourceUrl = $"http://{gatewayIpAddress}:{gatewayPort}/gap/nodes?event=1&filter_duplicates=1&filter_mac={_targetMacAddress}&active=1";
 
         StartScanListener();
     }
@@ -67,7 +73,7 @@ public class ScanBleDevice : IDisposable
                         line = line.Substring("data:".Length).Trim();
                         Task.Run(() => ProcessScannedDevice(line));
 
-                        Console.WriteLine(line);
+                        //Console.WriteLine(line);
                     }
                 }
             }
@@ -79,178 +85,75 @@ public class ScanBleDevice : IDisposable
         }
     }
 
-    private void ProcessScannedDevice(string scanData)
+    private void ProcessScannedDevice(string line)
     {
         try
         {
-            var scannedDevice = JsonSerializer.Deserialize<ScannedBleDevicesView>(scanData);
-            if (scannedDevice == null || scannedDevice.Bdaddrs == null || scannedDevice.Bdaddrs.Length == 0)
+            var eventData = JsonSerializer.Deserialize<ScannedDevicesView>(line, new JsonSerializerOptions
             {
-                _logger.LogWarning("Invalid BLE scan event data.");
+                PropertyNameCaseInsensitive = true
+            });
+
+            if (eventData?.bdaddrs == null || eventData.bdaddrs.Count == 0)
                 return;
+
+            var mac = eventData.bdaddrs.First().Bdaddr;
+            if (string.IsNullOrWhiteSpace(mac)) return;
+
+            string productNumber = null;
+            string lockedHex = null;
+            bool? isLocked = null;
+            string name = eventData.name;
+            DetectorMeta meta = new(); // Default empty
+
+            if (!string.IsNullOrEmpty(eventData.scanData))
+            {
+                productNumber = ScanDataParser.ExtractProductNumber(eventData.scanData);
+                name = ScanDataParser.GetName(eventData.scanData.Substring(20, 30));
+
+                lockedHex = ScanDataParser.GetLockedInfo(eventData.scanData);
+                isLocked = ScanDataParser.IsLocked(eventData.scanData);
+                meta = ScanDataParser.GetDetectorMeta(eventData.scanData);
             }
 
-            string macAddress = scannedDevice.Bdaddrs[0].Bdaddr;
-            string adData = scannedDevice.AdData;
-            PrintButtonState(macAddress, adData);
-            if (macAddress.StartsWith(_targetMacAddressPrefix))
+            var enrichedDevice = new ScannedDevicesView
             {
-                if (!_buttonPressed)
-                {
-                    // First valid button press detected
-                    _logger.LogInformation($"Processing BLE Button Press for {macAddress}");
-                    _buttonPressed = true; // Lock until timeout expires
-                    HandleDetectedDeviceAsync(macAddress);
+                bdaddrs = eventData.bdaddrs,
+                chipId = eventData.chipId,
+                evtType = eventData.evtType,
+                rssi = eventData.rssi,
+                adData = eventData.adData,
+                scanData = eventData.scanData,
+                name = name,
 
-                    // Reset after 5 seconds to allow next press
-                    Task.Run(async () =>
-                    {
-                        await Task.Delay(5000); // Wait 5 seconds
-                        _buttonPressed = false;
-                        _logger.LogInformation("Button press reset, ready for next press.");
-                    });
-                }
-                else
-                {
-                    _logger.LogInformation($"⏳ Ignoring duplicate event for {macAddress}, button is still locked.");
-                }
-            }
-        }
-        catch (JsonException ex)
-        {
-            _logger.LogError($"Error parsing JSON in BLE scan event: {ex.Message}");
-        }
-    }
+                ProductNumber = productNumber,
+                DetectorFamily = meta.DetectorFamily,
+                DetectorType = meta.DetectorType,
+                DetectorOutputInfo = meta.DetectorOutputInfo,
+                DetectorDescription = meta.DetectorDescription,
+                DetectorShortDescription = meta.DetectorShortDescription,
+                Range = meta.Range,
+                DetectorMountDescription = meta.DetectorMountDescription,
+                LockedHex = lockedHex,
+                IsLocked = isLocked
+            };
 
-    private void PrintButtonState(string macAddress, string adData)
-    {
-        if (adData.Length < 24)
-        {
-            Console.WriteLine($"Invalid BLE advertisement data: {adData}");
-            return;
-        }
 
-        // Extract Switch Status byte (position based on telegram format)
-        string switchStatusHex = adData.Substring(20, 2); // Example offset, adjust if needed
-        int switchStatus = Convert.ToInt32(switchStatusHex, 16);
-
-        // Check bit 0 for press/release event
-        bool isPressed = (switchStatus & 0x01) == 1;
-
-        // Print event type
-        if (isPressed)
-        {
-            Console.WriteLine($"Button Pressed: {macAddress}");
-        }
-        else
-        {
-            Console.WriteLine($"Button Released: {macAddress}");
-        }
-    }
-    private async Task HandleDetectedDeviceAsync(string macAddress)
-    {
-        _logger.LogInformation($"Handling BLE Button Press for device {macAddress}");
-        if (macAddress == "E2:15:00:00:54:A1")
-        {
-            Console.WriteLine("Detected Special BLE Button for Light Control!");
-
-            // **Call the API directly**
-            //await CallBatchLightControlApi();
-        }
-        else if (macAddress == "E2:15:00:00:F8:C3")
-        {
-            PlayPauseMusic();
-        }
-
-    }
-
-    /// <summary>
-    /// Calls the BatchLightControl API endpoint
-    /// </summary>
-    private async Task CallBatchLightControlApi()
-    {
-        try
-        {
-            using (var httpClient = new HttpClient())
+            if (!string.IsNullOrEmpty(eventData.scanData))
             {
-                string apiUrl = "http://localhost:60000/Cassia/batchlightcontrol"; // Change to your actual API URL
-
-                // **Hardcoded request body**
-                var request = new BatchLightControlRequest
-                {
-                    MacAddresses = new List<string> { "10:B9:F7:12:A2:8A", "10:B9:F7:0F:CB:23", "10:B9:F7:0F:CB:40", "10:B9:F7:0F:CB:80", "10:B9:F7:0F:CB:67", "10:B9:F7:0F:CB:72" },
-                    HexLoginValue = "012A0210003206D20400012E02000000"
-                };
-
-                // Serialize the request
-                var jsonContent = new StringContent(JsonSerializer.Serialize(request), Encoding.UTF8, "application/json");
-
-                // Send the HTTP request
-                HttpResponseMessage response = await httpClient.PostAsync(apiUrl, jsonContent);
-
-                if (response.IsSuccessStatusCode)
-                {
-                    Console.WriteLine("Successfully triggered BatchLightControl API!");
-                }
-                else
-                {
-                    Console.WriteLine($"Failed to trigger API. Status Code: {response.StatusCode}");
-                }
+                _deviceStorageService.AddOrUpdateDevice(enrichedDevice, enrichedDevice.rssi);
+                _logger.LogInformation($"Device MAC={mac}, Locked={isLocked}, Product={productNumber}");
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error calling API: {ex.Message}");
+            _logger.LogError($"Error processing scanned device: {ex.Message}");
         }
-    }
-    private void PlayPauseMusic()
-    {
-        _logger.LogInformation("Windows: Simulating Play/Pause Media Key.");
-
-        // Simulate Play/Pause Key on Windows
-        keybd_event(VK_MEDIA_PLAY_PAUSE, 0, 0, 0);
     }
 
     public void Dispose()
     {
         _httpClient?.Dispose();
     }
-
-    // Windows Media Key Simulation
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern void keybd_event(byte virtualKey, byte scanCode, uint flags, IntPtr extraInfo);
-
-    private const byte VK_MEDIA_PLAY_PAUSE = 0xB3;
 }
 
-// Data structure for scanned BLE devices
-public class ScannedBleDevicesView
-{
-    [JsonPropertyName("chipId")]
-    public int ChipId { get; set; }
-
-    [JsonPropertyName("name")]
-    public string Name { get; set; }
-
-    [JsonPropertyName("evtType")]
-    public int EvtType { get; set; }
-
-    [JsonPropertyName("rssi")]
-    public int Rssi { get; set; }
-
-    [JsonPropertyName("adData")]
-    public string AdData { get; set; }
-
-    [JsonPropertyName("bdaddrs")]
-    public BdaddrInfo[] Bdaddrs { get; set; }
-}
-
-// Data structure for MAC addresses in the BLE scan event
-public class BdaddrInfo
-{
-    [JsonPropertyName("bdaddr")]
-    public string Bdaddr { get; set; }
-
-    [JsonPropertyName("bdaddrType")]
-    public string BdaddrType { get; set; }
-}

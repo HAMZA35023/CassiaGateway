@@ -1,5 +1,7 @@
 ﻿using AccessAPP.Models;
+using AccessAPP.Services.HelperClasses;
 using Newtonsoft.Json;
+using System.Net.Http.Headers;
 
 namespace AccessAPP.Services
 {
@@ -26,43 +28,65 @@ namespace AccessAPP.Services
         {
             try
             {
-                // Define the duration of each scan in milliseconds
-                int scanDuration = 5000; // 5 seconds
-
-                // Use dictionary to avoid duplicates based on MAC address
+                int scanDuration = 5000;
                 var uniqueDevices = new Dictionary<string, ScannedDevicesView>();
 
-                // Step 1: Subscribe to the Server-Sent Events (SSE) endpoint
-                string sseEndpoint = $"http://{gatewayIpAddress}:{gatewayPort}/gap/nodes?event=1&filter_mac=10:B9:F7*";
+                string sseEndpoint = $"http://{gatewayIpAddress}:{gatewayPort}/gap/nodes?event=1&filter_duplicates=1&filter_mac=10:B9:F7*&active=1";
                 var request = new HttpRequestMessage(HttpMethod.Get, sseEndpoint);
-                request.Headers.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("text/event-stream"));
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
 
                 using (var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead))
                 {
                     response.EnsureSuccessStatusCode();
 
-                    // Start a task to wait for the scan duration
                     var cancellationTokenSource = new CancellationTokenSource(scanDuration);
                     var delayTask = Task.Delay(scanDuration, cancellationTokenSource.Token);
 
-                    // Step 2: Process SSE events and store only the latest per MAC
                     await ProcessSSEEvents(response, eventData =>
                     {
-                        var device = eventData;
                         var mac = eventData.bdaddrs.FirstOrDefault()?.Bdaddr;
+                        if (string.IsNullOrWhiteSpace(mac)) return;
 
-                        if (!string.IsNullOrWhiteSpace(mac))
+                        // Use scanData if present, fallback to adData
+                        var scanPayload = !string.IsNullOrEmpty(eventData.scanData)
+                                          ? eventData.scanData
+                                          : eventData.adData;
+
+                        var productNumber = ScanDataParser.ExtractProductNumber(scanPayload);
+                        var lockedHex = ScanDataParser.GetLockedInfo(scanPayload);
+                        var isLocked = ScanDataParser.IsLocked(scanPayload);
+                        var meta = ScanDataParser.GetDetectorMeta(scanPayload);
+
+                        var enrichedDevice = new ScannedDevicesView
                         {
-                            uniqueDevices[mac] = device; // keep the latest seen device for each MAC
-                        }
+                            bdaddrs = eventData.bdaddrs,
+                            chipId = eventData.chipId,
+                            evtType = eventData.evtType,
+                            rssi = eventData.rssi,
+                            adData = eventData.adData,
+                            scanData = eventData.scanData,
+                            name = eventData.name,
 
+                            ProductNumber = productNumber,
+                            DetectorFamily = meta.DetectorFamily,
+                            DetectorType = meta.DetectorType,
+                            DetectorOutputInfo = meta.DetectorOutputInfo,
+                            DetectorDescription = meta.DetectorDescription,
+                            DetectorShortDescription = meta.DetectorShortDescription,
+                            Range = meta.Range,
+                            DetectorMountDescription = meta.DetectorMountDescription,
+                            LockedHex = lockedHex,
+                            IsLocked = isLocked
+                        };
+
+                        uniqueDevices[mac] = enrichedDevice;
                     }, cancellationTokenSource.Token);
 
-                    // Wait for scan duration to complete
+
                     await delayTask;
                 }
 
-                return uniqueDevices.Values.ToList(); // Return only unique, latest-scanned devices
+                return uniqueDevices.Values.ToList();
             }
             catch (Exception ex)
             {

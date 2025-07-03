@@ -146,7 +146,7 @@ namespace AccessAPP.Services.HelperClasses
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         public delegate void CyBtldr_ProgressUpdate(byte arrayID, ushort rowNum);
 
-        [DllImport("C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\obj\\Debug\\BootloaderUtil.dll", CallingConvention = CallingConvention.Cdecl)]
+        [DllImport("C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\obj\\Debug\\BootloaderUtilMultiThread.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern int CyBtldr_Program([MarshalAs(UnmanagedType.LPStr)] string file, [MarshalAs(UnmanagedType.LPArray)] byte[] securityKey, byte appId, ref CyBtldr_CommunicationsData comm, CyBtldr_ProgressUpdate update);
 
 
