@@ -1,0 +1,1001 @@
+﻿using Amazon.Runtime.Internal.Transform;
+using System.Xml.Linq;
+
+namespace AccessAPP.Services.HelperClasses
+{
+    public static class DetectorMetaData
+    {
+        public static readonly Dictionary<string, DetectorMeta> ProductNumberToMetadata =
+        new Dictionary<string, DetectorMeta>
+        {
+            { "353-600021", new DetectorMeta {
+                Id= "e5ecc01e-abc1-40fd-a3ac-71ff759b9df9",
+                Name= "353-600021",
+                DetectorFamily= "230V",
+                DetectorType= "Secondary",
+                DetectorOutputInfo= "",
+                DetectorDescription= "Presence detection 360",
+                DetectorShortDescription= "P41-MR",
+                Range= 14,
+                DetectorMountDescription= "Flush mounting"
+            }},
+            { "353-600121", new DetectorMeta{
+                Id= "139398af-887c-4564-aba0-ad9cf4f3829f",
+                Name= "353-600121",
+                DetectorFamily= "230V",
+                DetectorType= "Master",
+                DetectorOutputInfo= "One channel",
+                DetectorDescription= "Presence detection 360",
+                DetectorShortDescription= "P42-MR",
+                Range= 14,
+                DetectorMountDescription= "Flush mounting"
+            } },
+            {"353-601021", new DetectorMeta{
+                Id= "66794d39-7c7d-4694-a9b4-fc653cf98cb1",
+                Name= "353-601021",
+                DetectorFamily= "230V",
+                DetectorType= "Secondary",
+                DetectorOutputInfo= "",
+                DetectorDescription= "Presence detection 360",
+                DetectorShortDescription= "P41-MR",
+                Range= 14,
+                DetectorMountDescription= "Flush mounting"
+            } },
+            { "353-601121", new DetectorMeta{
+                Id= "e7cfce75-31a7-4c55-8bce-f3ac86c0453f",
+                Name= "353-601121",
+                DetectorFamily= "230V",
+                DetectorType= "Master",
+                DetectorOutputInfo= "One channel",
+                DetectorDescription= "Presence detection 360",
+                DetectorShortDescription= "P42-MR",
+                Range= 14,
+                DetectorMountDescription= "Flush mounting"
+            } },
+            { "353-601221", new DetectorMeta {
+                Id= "0bb6b805-a230-4173-abcd-4751edcbd08d",
+                Name= "353-601221",
+                DetectorFamily= "230V",
+                DetectorType= "Master",
+                DetectorOutputInfo= "Two channel",
+                DetectorDescription= "Presence detection 360",
+                DetectorShortDescription= "P42-MR",
+                Range= 14,
+                DetectorMountDescription= "Flush mounting"
+            } },
+            { "353-602021", new DetectorMeta {
+                Id= "b380e2c6-cf23-45d6-b9f8-bc4c56ea9799",
+                Name= "353-602021",
+                DetectorFamily= "230V",
+                DetectorType= "Secondary",
+                DetectorOutputInfo= "",
+                DetectorDescription= "Presence detection 360",
+                DetectorShortDescription= "P41-MR",
+                Range= 14,
+                DetectorMountDescription= "Surface mounting"
+            } },
+            { "353-602121", new DetectorMeta {
+                Id= "c71796bd-b6e6-424a-b3f4-0963f6ff0302",
+                Name= "353-602121",
+                DetectorFamily= "230V",
+                DetectorType= "Master",
+                DetectorOutputInfo= "One channel",
+                DetectorDescription= "Presence detection 360",
+                DetectorShortDescription= "P42-MR",
+                Range= 14,
+                DetectorMountDescription= "Surface mounting"
+            } },
+            { "353-602221", new DetectorMeta {
+                Id= "57fbb2be-e960-4b2d-9197-d492aa1333e5",
+                Name= "353-602221",
+                DetectorFamily= "230V",
+                DetectorType= "Master",
+                DetectorOutputInfo= "Two channel",
+                DetectorDescription= "Presence detection 360",
+                DetectorShortDescription= "P42-MR",
+                Range= 14,
+                DetectorMountDescription= "Surface mounting"
+            } },
+            {"353-650021", new DetectorMeta {
+                Id= "5e44da87-94d3-429f-bb8b-5c323ea66af5",
+                Name= "353-650021",
+                DetectorFamily= "Dali-2",
+                DetectorType= "BMS",
+                DetectorOutputInfo= "",
+                DetectorDescription= "Presence detection 360",
+                DetectorShortDescription= "P46-MR",
+                Range= 14,
+                DetectorMountDescription= "Flush mounting"
+            } },
+            { "353-650321", new DetectorMeta {
+                Id= "4e13c2bb-d6a3-45a8-ba1a-51b16290ebba",
+                Name= "353-650321",
+                DetectorFamily= "Dali-2",
+                DetectorType= "Master",
+                DetectorOutputInfo= "Standard",
+                DetectorDescription= "Presence detection 360",
+                DetectorShortDescription= "P47-MR",
+                Range= 14,
+                DetectorMountDescription= "Flush mounting"
+            } },
+            { "353-651021", new DetectorMeta {
+                Id= "5fd371f5-f6a6-463a-8694-d6bc53e94f6c",
+                Name= "353-651021",
+                DetectorFamily= "Dali-2",
+                DetectorType= "BMS",
+                DetectorOutputInfo= "",
+                DetectorDescription= "Presence detection 360",
+                DetectorShortDescription= "P46-MR",
+                Range= 14,
+                DetectorMountDescription= "Flush mounting"
+            } },
+            { "353-651321", new DetectorMeta {
+                Id= "b5c42413-a1c3-4f41-a7a3-a2ace3a6df5b",
+                Name= "353-651321",
+                DetectorFamily= "Dali-2",
+                DetectorType= "Master",
+                DetectorOutputInfo= "Standard",
+                DetectorDescription= "Presence detection 360",
+                DetectorShortDescription= "P47-MR",
+                Range= 14,
+                DetectorMountDescription= "Flush mounting"
+            } },
+            { "353-651421", new DetectorMeta {
+                Id= "059b7201-da9f-4a16-8781-b4b42c2ebff2",
+                Name= "353-651421",
+                DetectorFamily= "Dali-2",
+                DetectorType= "Master",
+                DetectorOutputInfo= "Comfort",
+                DetectorDescription= "Presence detection 360",
+                DetectorShortDescription= "P48-MR",
+                Range= 14,
+                DetectorMountDescription= "Flush mounting"
+            } },
+            { "353-652021", new DetectorMeta{
+                Id= "990f311c-8c6f-466f-ae10-825ecbb71608",
+                Name= "353-652021",
+                DetectorFamily= "Dali-2",
+                DetectorType= "BMS",
+                DetectorOutputInfo= "",
+                DetectorDescription= "Presence detection 360",
+                DetectorShortDescription= "P46-MR",
+                Range= 14,
+                DetectorMountDescription= "Surface mounting"
+            } },
+            { "353-652321", new DetectorMeta {
+                Id= "d803e945-05c6-4d2a-b14d-02c085b55892",
+                Name= "353-652321",
+                DetectorFamily= "Dali-2",
+                DetectorType= "Master",
+                DetectorOutputInfo= "Standard",
+                DetectorDescription= "Presence detection 360",
+                DetectorShortDescription= "P47-MR",
+                Range= 14,
+                DetectorMountDescription= "Surface mounting"
+            } },
+            { "353-652421", new DetectorMeta {
+                Id= "2ce22ed7-1217-4197-aaa6-ad522e7d0221",
+                Name= "353-652421",
+                DetectorFamily= "Dali-2",
+                DetectorType= "Master",
+                DetectorOutputInfo= "Comfort",
+                DetectorDescription= "Presence detection 360",
+                DetectorShortDescription= "P48-MR",
+                Range= 14,
+                DetectorMountDescription= "Surface mounting"
+            } },
+            { "353-700021", new DetectorMeta {
+                Id= "a0e4055b-dbe1-40ab-a2f1-caadcc45d107",
+                Name= "353-700021",
+                DetectorFamily= "230V",
+                DetectorType= "Secondary",
+                DetectorOutputInfo= "",
+                DetectorDescription= "Presence detection 360",
+                DetectorShortDescription= "P41-LR",
+                Range= 32,
+                DetectorMountDescription= "Flush mounting"
+            } },
+            { "353-700121", new DetectorMeta {
+                Id= "4394eb8e-7092-47d9-979c-33ada900672c",
+                Name= "353-700121",
+                DetectorFamily= "230V",
+                DetectorType= "Master",
+                DetectorOutputInfo= "One channel",
+                DetectorDescription= "Presence detection 360",
+                DetectorShortDescription= "P42-LR",
+                Range= 32,
+                DetectorMountDescription= "Flush mounting"
+            } },
+            { "353-701021", new DetectorMeta {
+                Id= "ef43a417-68dc-4f74-a657-4d97d8a1b032",
+                Name= "353-701021",
+                DetectorFamily= "230V",
+                DetectorType= "Secondary",
+                DetectorOutputInfo= "",
+                DetectorDescription= "Presence detection 360",
+                DetectorShortDescription= "P41-LR",
+                Range= 32,
+                DetectorMountDescription= "Flush mounting"
+            } },
+            { "353-701121", new DetectorMeta {
+                Id= "555cca43-8758-43fa-a753-f98fdd35f1bf",
+                Name= "353-701121",
+                DetectorFamily= "230V",
+                DetectorType= "Master",
+                DetectorOutputInfo= "One channel",
+                DetectorDescription= "Presence detection 360",
+                DetectorShortDescription= "P42-LR",
+                Range= 32,
+                DetectorMountDescription= "Flush mounting"
+            } },
+            { "353-701221", new DetectorMeta {
+                Id= "bf02c1c2-0a75-4d55-85c3-8ccc7819fdbc",
+                Name= "353-701221",
+                DetectorFamily= "230V",
+                DetectorType= "Master",
+                DetectorOutputInfo= "Two channel",
+                DetectorDescription= "Presence detection 360",
+                DetectorShortDescription= "P42-LR",
+                Range= 32,
+                DetectorMountDescription= "Flush mounting"
+            } },
+            { "353-702021", new DetectorMeta {
+                Id = "fe506fad-464c-41e3-8ce3-c3251db94718",
+                Name = "353-702021",
+                DetectorFamily = "230V",
+                DetectorType = "Secondary",
+                DetectorOutputInfo = "One channel",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P41-LR",
+                Range = 32,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { "353-702121", new DetectorMeta {
+                Id = "ebbd8bd5-199c-499b-b15a-220def33380a",
+                Name = "353-702121",
+                DetectorFamily = "230V",
+                DetectorType = "Master",
+                DetectorOutputInfo = "One channel",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P42-LR",
+                Range = 32,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { "353-702221", new DetectorMeta {
+                Id = "87c2b99f-a072-4a38-8a2e-e69c87b13c9b",
+                Name = "353-702221",
+                DetectorFamily = "230V",
+                DetectorType = "Master",
+                DetectorOutputInfo = "Two channel",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P42-LR",
+                Range = 32,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { "353-750021", new DetectorMeta {
+                Id = "d2e8e883-e07e-4fe7-959d-1a1e6cb41929",
+                Name = "353-750021",
+                DetectorFamily = "Dali-2",
+                DetectorType = "BMS",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P46-LR",
+                Range = 32,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { "353-750321", new DetectorMeta {
+                Id = "87818cdd-64aa-4040-aec3-4a68753c3d7a",
+                Name = "353-750321",
+                DetectorFamily = "Dali-2",
+                DetectorType = "Master",
+                DetectorOutputInfo = "Standard",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P47-LR",
+                Range = 32,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { "353-751021", new DetectorMeta {
+                Id = "a929284c-e1ab-4873-bfd2-f062154010a3",
+                Name = "353-751021",
+                DetectorFamily = "Dali-2",
+                DetectorType = "BMS",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P46-LR",
+                Range = 32,
+                DetectorMountDescription = "Flush mounting"
+            } },
+
+               { "353-751321", new DetectorMeta {
+                Id = "43c3fbcf-3d58-477a-be70-c970dc3e5486",
+                Name = "353-751321",
+                DetectorFamily = "Dali-2",
+                DetectorType = "Master",
+                DetectorOutputInfo = "Standard",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P47-LR",
+                Range = 32,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { "353-751421", new DetectorMeta {
+                Id = "d73d381c-ba55-4ec0-98b2-13a7ac5cec35",
+                Name = "353-751421",
+                DetectorFamily = "Dali-2",
+                DetectorType = "Master",
+                DetectorOutputInfo = "Comfort",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P48-LR",
+                Range = 32,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { "353-752021", new DetectorMeta {
+                Id = "83ccc5be-9053-46b8-a6a7-651944a6caaf",
+                Name = "353-752021",
+                DetectorFamily = "Dali-2",
+                DetectorType = "BMS",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P46-LR",
+                Range = 32,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { "353-752321", new DetectorMeta {
+                Id = "326ce55e-dcbc-408c-886c-a8cb019d80de",
+                Name = "353-752321",
+                DetectorFamily = "Dali-2",
+                DetectorType = "Master",
+                DetectorOutputInfo = "Standard",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P47-LR",
+                Range = 32,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { "353-752421", new DetectorMeta {
+                Id = "49d91a4b-a6f6-44f6-afc9-ff8fb6863133",
+                Name = "353-752421",
+                DetectorFamily = "Dali-2",
+                DetectorType = "Master",
+                DetectorOutputInfo = "Comfort",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P48-LR",
+                Range = 32,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { "353-802011", new DetectorMeta {
+                Id = "3c18262c-1d32-4f13-a251-5bf7fb1fd32f",
+                Name = "353-802011",
+                DetectorFamily = "230V",
+                DetectorType = "Secondary",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Motion detection 360",
+                DetectorShortDescription = "M41-HC",
+                Range = 40,
+                DetectorMountDescription = "Surface mounting"
+            } },
+
+               { "353-802111", new DetectorMeta {
+                Id = "173d4496-a4f4-4026-9caf-f23a395d7624",
+                Name = "353-802111",
+                DetectorFamily = "230V",
+                DetectorType = "Master",
+                DetectorOutputInfo = "One channel",
+                DetectorDescription = "Motion detection 360",
+                DetectorShortDescription = "M42HC",
+                Range = 40,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { "353-852011", new DetectorMeta {
+                Id = "7250b615-a237-459e-b0af-bf4c0baf4719",
+                Name = "353-852011",
+                DetectorFamily = "Dali-2",
+                DetectorType = "BMS",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Motion detection 360",
+                DetectorShortDescription = "M46HC",
+                Range = 40,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { "353-852411", new DetectorMeta {
+                Id = "5eae4a84-5c7d-41b7-bb5c-a6850fb7af46",
+                Name = "353-852411",
+                DetectorFamily = "Dali-2",
+                DetectorType = "Master",
+                DetectorOutputInfo = "Comfort",
+                DetectorDescription = "Motion detection 360",
+                DetectorShortDescription = "M48-HC",
+                Range = 40,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { "353-602111", new DetectorMeta {
+                Id = "171796bd-b6e6-424a-b3f4-0963f6ff0302",
+                Name = "353-602111",
+                DetectorFamily = "230V",
+                DetectorType = "Master",
+                DetectorOutputInfo = "One channel",
+                DetectorDescription = "Motion detection 360",
+                DetectorShortDescription = "M42MR",
+                Range = 14,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { "353-702111", new DetectorMeta {
+                Id = "1bbd8bd5-199c-499b-b15a-220def33380a",
+                Name = "353-702111",
+                DetectorFamily = "230V",
+                DetectorType = "Master",
+                DetectorOutputInfo = "One channel",
+                DetectorDescription = "Motion detection 360",
+                DetectorShortDescription = "M42LR",
+                Range = 32,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { "353-600111", new DetectorMeta {
+                Id = "239398af-887c-4564-aba0-ad9cf4f3829f",
+                Name = "353-600111",
+                DetectorFamily = "230V",
+                DetectorType = "Master",
+                DetectorOutputInfo = "One channel",
+                DetectorDescription = "Motion detection 360",
+                DetectorShortDescription = "M42MR",
+                Range = 14,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { "353-601111", new DetectorMeta {
+                Id = "17cfce75-31a7-4c55-8bce-f3ac86c0453f",
+                Name = "353-601111",
+                DetectorFamily = "230V",
+                DetectorType = "Master",
+                DetectorOutputInfo = "One channel",
+                DetectorDescription = "Motion detection 360",
+                DetectorShortDescription = "M42MR",
+                Range = 14,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { "353-700111", new DetectorMeta {
+                Id = "1394eb8e-7092-47d9-979c-33ada900672c",
+                Name = "353-700111",
+                DetectorFamily = "230V",
+                DetectorType = "Master",
+                DetectorOutputInfo = "One channel",
+                DetectorDescription = "Motion detection 360",
+                DetectorShortDescription = "M42LR",
+                Range = 32,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { "353-701111", new DetectorMeta {
+                Id = "155cca43-8758-43fa-a753-f98fdd35f1bf",
+                Name = "353-701111",
+                DetectorFamily = "230V",
+                DetectorType = "Master",
+                DetectorOutputInfo = "One channel",
+                DetectorDescription = "Motion detection 360",
+                DetectorShortDescription = "M42LR",
+                Range = 32,
+                DetectorMountDescription = "Flush mounting"
+            } },
+
+               { "353-650521", new DetectorMeta {
+                Id = "155cca43-8758-43aa-a753-f98fdd35f1bf",
+                Name = "353-650521",
+                DetectorFamily = "Dali-2",
+                DetectorType = "BMS",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P46-MR",
+                Range = 13,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { "353-651521", new DetectorMeta {
+                Id = "155cca43-8758-41aa-a753-f98fdd35f1bf",
+                Name = "353-651521",
+                DetectorFamily = "Dali-2",
+                DetectorType = "BMS",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P46-MR",
+                Range = 13,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { "353-652521", new DetectorMeta {
+                Id = "155cca43-8758-11aa-a753-f98fdd35f1bf",
+                Name = "353-652521",
+                DetectorFamily = "Dali-2",
+                DetectorType = "BMS",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P46-MR",
+                Range = 13,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { "353-750521", new DetectorMeta {
+                Id = "155cca43-8758-21aa-a753-f98fdd35f1bf",
+                Name = "353-750521",
+                DetectorFamily = "Dali-2",
+                DetectorType = "BMS",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P46-LR",
+                Range = 37,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { "353-751521", new DetectorMeta {
+                Id = "155cca43-8758-31aa-a753-f98fdd35f1bf",
+                Name = "353-751521",
+                DetectorFamily = "Dali-2",
+                DetectorType = "BMS",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P46-LR",
+                Range = 37,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { "353-752521", new DetectorMeta {
+                Id = "155cca43-8758-51aa-a753-f98fdd35f1bf",
+                Name = "353-752521",
+                DetectorFamily = "Dali-2",
+                DetectorType = "BMS",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P46-LR",
+                Range = 37,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { "353-852511", new DetectorMeta {
+                Id = "155cca43-8758-61aa-a753-f98fdd35f1bf",
+                Name = "353-852511",
+                DetectorFamily = "Dali-2",
+                DetectorType = "BMS",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Motion detection 360",
+                DetectorShortDescription = "M46HC",
+                Range = 53,
+                DetectorMountDescription = "Surface mounting"
+            } }
+        };
+
+
+        public static readonly Dictionary<byte, DetectorMeta> NumberToMetadata = new()
+    {
+        { 1, new DetectorMeta { Id = "e5ecc01e-abc1-40fd-a3ac-71ff759b9df9", Name = "353-600021", DetectorFamily = "230V", DetectorType = "Secondary", DetectorOutputInfo = "", DetectorDescription = "Presence detection 360", DetectorShortDescription = "P41-MR", Range = 14, DetectorMountDescription = "Flush mounting" } },
+        { 2, new DetectorMeta { Id = "139398af-887c-4564-aba0-ad9cf4f3829f", Name = "353-600121", DetectorFamily = "230V", DetectorType = "Master", DetectorOutputInfo = "One channel", DetectorDescription = "Presence detection 360", DetectorShortDescription = "P42-MR", Range = 14, DetectorMountDescription = "Flush mounting" } },
+        { 3, new DetectorMeta { Id = "66794d39-7c7d-4694-a9b4-fc653cf98cb1", Name = "353-601021", DetectorFamily = "230V", DetectorType = "Secondary", DetectorOutputInfo = "", DetectorDescription = "Presence detection 360", DetectorShortDescription = "P41-MR", Range = 14, DetectorMountDescription = "Flush mounting" } },
+        { 4, new DetectorMeta { Id = "e7cfce75-31a7-4c55-8bce-f3ac86c0453f", Name = "353-601121", DetectorFamily = "230V", DetectorType = "Master", DetectorOutputInfo = "One channel", DetectorDescription = "Presence detection 360", DetectorShortDescription = "P42-MR", Range = 14, DetectorMountDescription = "Flush mounting" } },
+        { 5, new DetectorMeta { Id = "0bb6b805-a230-4173-abcd-4751edcbd08d", Name = "353-601221", DetectorFamily = "230V", DetectorType = "Master", DetectorOutputInfo = "Two channel", DetectorDescription = "Presence detection 360", DetectorShortDescription = "P42-MR", Range = 14, DetectorMountDescription = "Flush mounting" } },
+        { 6, new DetectorMeta { Id = "b380e2c6-cf23-45d6-b9f8-bc4c56ea9799", Name = "353-602021", DetectorFamily = "230V", DetectorType = "Secondary", DetectorOutputInfo = "", DetectorDescription = "Presence detection 360", DetectorShortDescription = "P41-MR", Range = 14, DetectorMountDescription = "Surface mounting" } },
+        { 7, new DetectorMeta { Id = "c71796bd-b6e6-424a-b3f4-0963f6ff0302", Name = "353-602121", DetectorFamily = "230V", DetectorType = "Master", DetectorOutputInfo = "One channel", DetectorDescription = "Presence detection 360", DetectorShortDescription = "P42-MR", Range = 14, DetectorMountDescription = "Surface mounting" } },
+        { 8, new DetectorMeta { Id = "57fbb2be-e960-4b2d-9197-d492aa1333e5", Name = "353-602221", DetectorFamily = "230V", DetectorType = "Master", DetectorOutputInfo = "Two channel", DetectorDescription = "Presence detection 360", DetectorShortDescription = "P42-MR", Range = 14, DetectorMountDescription = "Surface mounting" } },
+        { 9, new DetectorMeta { Id = "5e44da87-94d3-429f-bb8b-5c323ea66af5", Name = "353-650021", DetectorFamily = "Dali-2", DetectorType = "BMS", DetectorOutputInfo = "", DetectorDescription = "Presence detection 360", DetectorShortDescription = "P46-MR", Range = 14, DetectorMountDescription = "Flush mounting" } },
+        { 10, new DetectorMeta { Id = "4e13c2bb-d6a3-45a8-ba1a-51b16290ebba", Name = "353-650321", DetectorFamily = "Dali-2", DetectorType = "Master", DetectorOutputInfo = "Standard", DetectorDescription = "Presence detection 360", DetectorShortDescription = "P47-MR", Range = 14, DetectorMountDescription = "Flush mounting" } },
+        { 11, new DetectorMeta {
+                Id = "5fd371f5-f6a6-463a-8694-d6bc53e94f6c",
+                Name = "353-651021",
+                DetectorFamily = "Dali-2",
+                DetectorType = "BMS",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P46-MR",
+                Range = 14,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { 12, new DetectorMeta {
+                Id = "b5c42413-a1c3-4f41-a7a3-a2ace3a6df5b",
+                Name = "353-651321",
+                DetectorFamily = "Dali-2",
+                DetectorType = "Master",
+                DetectorOutputInfo = "Standard",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P47-MR",
+                Range = 14,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { 13, new DetectorMeta {
+                Id = "059b7201-da9f-4a16-8781-b4b42c2ebff2",
+                Name = "353-651421",
+                DetectorFamily = "Dali-2",
+                DetectorType = "Master",
+                DetectorOutputInfo = "Comfort",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P48-MR",
+                Range = 14,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { 14, new DetectorMeta {
+                Id = "990f311c-8c6f-466f-ae10-825ecbb71608",
+                Name = "353-652021",
+                DetectorFamily = "Dali-2",
+                DetectorType = "BMS",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P46-MR",
+                Range = 14,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { 15, new DetectorMeta {
+                Id = "d803e945-05c6-4d2a-b14d-02c085b55892",
+                Name = "353-652321",
+                DetectorFamily = "Dali-2",
+                DetectorType = "Master",
+                DetectorOutputInfo = "Standard",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P47-MR",
+                Range = 14,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { 16, new DetectorMeta {
+                Id = "2ce22ed7-1217-4197-aaa6-ad522e7d0221",
+                Name = "353-652421",
+                DetectorFamily = "Dali-2",
+                DetectorType = "Master",
+                DetectorOutputInfo = "Comfort",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P48-MR",
+                Range = 14,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { 17, new DetectorMeta {
+                Id = "a0e4055b-dbe1-40ab-a2f1-caadcc45d107",
+                Name = "353-700021",
+                DetectorFamily = "230V",
+                DetectorType = "Secondary",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P41-LR",
+                Range = 32,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { 18, new DetectorMeta {
+                Id = "4394eb8e-7092-47d9-979c-33ada900672c",
+                Name = "353-700121",
+                DetectorFamily = "230V",
+                DetectorType = "Master",
+                DetectorOutputInfo = "One channel",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P42-LR",
+                Range = 32,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { 19, new DetectorMeta {
+                Id = "ef43a417-68dc-4f74-a657-4d97d8a1b032",
+                Name = "353-701021",
+                DetectorFamily = "230V",
+                DetectorType = "Secondary",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P41-LR",
+                Range = 32,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { 20, new DetectorMeta {
+                Id = "555cca43-8758-43fa-a753-f98fdd35f1bf",
+                Name = "353-701121",
+                DetectorFamily = "230V",
+                DetectorType = "Master",
+                DetectorOutputInfo = "One channel",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P42-LR",
+                Range = 32,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { 21, new DetectorMeta {
+                Id = "bf02c1c2-0a75-4d55-85c3-8ccc7819fdbc",
+                Name = "353-701221",
+                DetectorFamily = "230V",
+                DetectorType = "Master",
+                DetectorOutputInfo = "Two channel",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P42-LR",
+                Range = 32,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { 22, new DetectorMeta {
+                Id = "fe506fad-464c-41e3-8ce3-c3251db94718",
+                Name = "353-702021",
+                DetectorFamily = "230V",
+                DetectorType = "Secondary",
+                DetectorOutputInfo = "One channel",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P41-LR",
+                Range = 32,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { 23, new DetectorMeta {
+                Id = "ebbd8bd5-199c-499b-b15a-220def33380a",
+                Name = "353-702121",
+                DetectorFamily = "230V",
+                DetectorType = "Master",
+                DetectorOutputInfo = "One channel",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P42-LR",
+                Range = 32,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { 24, new DetectorMeta {
+                Id = "87c2b99f-a072-4a38-8a2e-e69c87b13c9b",
+                Name = "353-702221",
+                DetectorFamily = "230V",
+                DetectorType = "Master",
+                DetectorOutputInfo = "Two channel",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P42-LR",
+                Range = 32,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { 25, new DetectorMeta {
+                Id = "d2e8e883-e07e-4fe7-959d-1a1e6cb41929",
+                Name = "353-750021",
+                DetectorFamily = "Dali-2",
+                DetectorType = "BMS",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P46-LR",
+                Range = 32,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { 26, new DetectorMeta {
+                Id = "87818cdd-64aa-4040-aec3-4a68753c3d7a",
+                Name = "353-750321",
+                DetectorFamily = "Dali-2",
+                DetectorType = "Master",
+                DetectorOutputInfo = "Standard",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P47-LR",
+                Range = 32,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { 27, new DetectorMeta {
+                Id = "a929284c-e1ab-4873-bfd2-f062154010a3",
+                Name = "353-751021",
+                DetectorFamily = "Dali-2",
+                DetectorType = "BMS",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P46-LR",
+                Range = 32,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { 28, new DetectorMeta {
+                Id = "43c3fbcf-3d58-477a-be70-c970dc3e5486",
+                Name = "353-751321",
+                DetectorFamily = "Dali-2",
+                DetectorType = "Master",
+                DetectorOutputInfo = "Standard",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P47-LR",
+                Range = 32,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { 29, new DetectorMeta {
+                Id = "d73d381c-ba55-4ec0-98b2-13a7ac5cec35",
+                Name = "353-751421",
+                DetectorFamily = "Dali-2",
+                DetectorType = "Master",
+                DetectorOutputInfo = "Comfort",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P48-LR",
+                Range = 32,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { 30, new DetectorMeta {
+                Id = "83ccc5be-9053-46b8-a6a7-651944a6caaf",
+                Name = "353-752021",
+                DetectorFamily = "Dali-2",
+                DetectorType = "BMS",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P46-LR",
+                Range = 32,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { 31, new DetectorMeta {
+                Id = "326ce55e-dcbc-408c-886c-a8cb019d80de",
+                Name = "353-752321",
+                DetectorFamily = "Dali-2",
+                DetectorType = "Master",
+                DetectorOutputInfo = "Standard",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P47-LR",
+                Range = 32,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { 32, new DetectorMeta {
+                Id = "49d91a4b-a6f6-44f6-afc9-ff8fb6863133",
+                Name = "353-752421",
+                DetectorFamily = "Dali-2",
+                DetectorType = "Master",
+                DetectorOutputInfo = "Comfort",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P48-LR",
+                Range = 32,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { 33, new DetectorMeta {
+                Id = "3c18262c-1d32-4f13-a251-5bf7fb1fd32f",
+                Name = "353-802011",
+                DetectorFamily = "230V",
+                DetectorType = "Secondary",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Motion detection 360",
+                DetectorShortDescription = "M41-HC",
+                Range = 40,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { 34, new DetectorMeta {
+                Id = "173d4496-a4f4-4026-9caf-f23a395d7624",
+                Name = "353-802111",
+                DetectorFamily = "230V",
+                DetectorType = "Master",
+                DetectorOutputInfo = "One channel",
+                DetectorDescription = "Motion detection 360",
+                DetectorShortDescription = "M42HC",
+                Range = 40,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { 35, new DetectorMeta {
+                Id = "7250b615-a237-459e-b0af-bf4c0baf4719",
+                Name = "353-852011",
+                DetectorFamily = "Dali-2",
+                DetectorType = "BMS",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Motion detection 360",
+                DetectorShortDescription = "M46HC",
+                Range = 40,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { 36, new DetectorMeta {
+                Id = "5eae4a84-5c7d-41b7-bb5c-a6850fb7af46",
+                Name = "353-852411",
+                DetectorFamily = "Dali-2",
+                DetectorType = "Master",
+                DetectorOutputInfo = "Comfort",
+                DetectorDescription = "Motion detection 360",
+                DetectorShortDescription = "M48-HC",
+                Range = 40,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { 37, new DetectorMeta {
+                Id = "171796bd-b6e6-424a-b3f4-0963f6ff0302",
+                Name = "353-602111",
+                DetectorFamily = "230V",
+                DetectorType = "Master",
+                DetectorOutputInfo = "One channel",
+                DetectorDescription = "Motion detection 360",
+                DetectorShortDescription = "M42MR",
+                Range = 14,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { 38, new DetectorMeta {
+                Id = "1bbd8bd5-199c-499b-b15a-220def33380a",
+                Name = "353-702111",
+                DetectorFamily = "230V",
+                DetectorType = "Master",
+                DetectorOutputInfo = "One channel",
+                DetectorDescription = "Motion detection 360",
+                DetectorShortDescription = "M42LR",
+                Range = 32,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { 39, new DetectorMeta {
+                Id = "239398af-887c-4564-aba0-ad9cf4f3829f",
+                Name = "353-600111",
+                DetectorFamily = "230V",
+                DetectorType = "Master",
+                DetectorOutputInfo = "One channel",
+                DetectorDescription = "Motion detection 360",
+                DetectorShortDescription = "M42MR",
+                Range = 14,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { 40, new DetectorMeta {
+                Id = "17cfce75-31a7-4c55-8bce-f3ac86c0453f",
+                Name = "353-601111",
+                DetectorFamily = "230V",
+                DetectorType = "Master",
+                DetectorOutputInfo = "One channel",
+                DetectorDescription = "Motion detection 360",
+                DetectorShortDescription = "M42MR",
+                Range = 14,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { 41, new DetectorMeta {
+                Id = "1394eb8e-7092-47d9-979c-33ada900672c",
+                Name = "353-700111",
+                DetectorFamily = "230V",
+                DetectorType = "Master",
+                DetectorOutputInfo = "One channel",
+                DetectorDescription = "Motion detection 360",
+                DetectorShortDescription = "M42LR",
+                Range = 32,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { 42, new DetectorMeta {
+                Id = "155cca43-8758-43fa-a753-f98fdd35f1bf",
+                Name = "353-701111",
+                DetectorFamily = "230V",
+                DetectorType = "Master",
+                DetectorOutputInfo = "One channel",
+                DetectorDescription = "Motion detection 360",
+                DetectorShortDescription = "M42LR",
+                Range = 32,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { 43, new DetectorMeta {
+                Id = "155cca43-8758-43aa-a753-f98fdd35f1bf",
+                Name = "353-650521",
+                DetectorFamily = "Dali-2",
+                DetectorType = "BMS",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P46-MR",
+                Range = 13,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { 44, new DetectorMeta {
+                Id = "155cca43-8758-41aa-a753-f98fdd35f1bf",
+                Name = "353-651521",
+                DetectorFamily = "Dali-2",
+                DetectorType = "BMS",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P46-MR",
+                Range = 13,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { 45, new DetectorMeta {
+                Id = "155cca43-8758-11aa-a753-f98fdd35f1bf",
+                Name = "353-652521",
+                DetectorFamily = "Dali-2",
+                DetectorType = "BMS",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P46-MR",
+                Range = 13,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { 46, new DetectorMeta {
+                Id = "155cca43-8758-21aa-a753-f98fdd35f1bf",
+                Name = "353-750521",
+                DetectorFamily = "Dali-2",
+                DetectorType = "BMS",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P46-LR",
+                Range = 37,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { 47, new DetectorMeta {
+                Id = "155cca43-8758-31aa-a753-f98fdd35f1bf",
+                Name = "353-751521",
+                DetectorFamily = "Dali-2",
+                DetectorType = "BMS",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P46-LR",
+                Range = 37,
+                DetectorMountDescription = "Flush mounting"
+            } },
+            { 48, new DetectorMeta {
+                Id = "155cca43-8758-51aa-a753-f98fdd35f1bf",
+                Name = "353-752521",
+                DetectorFamily = "Dali-2",
+                DetectorType = "BMS",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Presence detection 360",
+                DetectorShortDescription = "P46-LR",
+                Range = 37,
+                DetectorMountDescription = "Surface mounting"
+            } },
+            { 49, new DetectorMeta {
+                Id = "155cca43-8758-61aa-a753-f98fdd35f1bf",
+                Name = "353-852511",
+                DetectorFamily = "Dali-2",
+                DetectorType = "BMS",
+                DetectorOutputInfo = "",
+                DetectorDescription = "Motion detection 360",
+                DetectorShortDescription = "M46HC",
+                Range = 53,
+                DetectorMountDescription = "Surface mounting"
+            } }
+
+
+    };
+    }
+}

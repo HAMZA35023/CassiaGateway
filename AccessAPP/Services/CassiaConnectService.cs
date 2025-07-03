@@ -24,39 +24,6 @@ namespace AccessAPP.Services
 
         public async Task<ResponseModel> ConnectToBleDevice(string gatewayIpAddress, int gatewayPort, string macAddress)
         {
-            //try
-            //{
-            //    // Step 3: Connect selected BLE devices
-            //    string connectEndpoint = $"http://{gatewayIpAddress}:{gatewayPort}/gap/nodes/{macAddress}/connection";
-
-            //    // Create the request body
-            //    var body = new
-            //    {
-            //        timeout = "10000",
-            //        type = "public",
-            //        discovergatt = 0
-            //    };
-
-            //    // Serialize the body to JSON
-            //    string jsonBody = JsonConvert.SerializeObject(body);
-            //    var content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
-
-            //    // Send POST request to connect to the BLE device
-            //    HttpResponseMessage connectResponse = await _httpClient.PostAsync(connectEndpoint, content);
-
-            //    if (connectResponse.IsSuccessStatusCode)
-            //    {
-            //        return Helper.CreateResponse(macAddress, connectResponse);
-            //    }
-            //    else
-            //    {
-            //        return Helper.CreateResponse(macAddress, connectResponse);
-            //    }
-            //}
-            //catch (Exception ex)
-            //{
-            //    throw new Exception($"Error: {ex.Message + ex.StackTrace}");
-            //}
             var client = new HttpClient();
 
             // Define the request URL

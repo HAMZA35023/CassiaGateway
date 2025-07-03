@@ -1,4 +1,4 @@
-using AccessAPP.Services;
+﻿using AccessAPP.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -12,12 +12,23 @@ builder.Services.AddHttpClient();
 
 // Register services
 builder.Services.AddSingleton<CassiaScanService>();
-builder.Services.AddSingleton<ScanBleDevice>(); // Register BLE scan service
+builder.Services.AddSingleton<ScanBleDevice>();
 builder.Services.AddSingleton<CassiaConnectService>();
 builder.Services.AddSingleton<CassiaPinCodeService>();
 builder.Services.AddSingleton<DeviceStorageService>();
 builder.Services.AddSingleton<CassiaNotificationService>();
 builder.Services.AddSingleton<CassiaFirmwareUpgradeService>();
+
+// ✅ Add CORS policy
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAngularApp", policy =>
+    {
+        policy.WithOrigins("http://localhost:4200")
+              .AllowAnyHeader()
+              .AllowAnyMethod();
+    });
+});
 
 var app = builder.Build();
 
@@ -26,10 +37,7 @@ using (var scope = app.Services.CreateScope())
 {
     var serviceProvider = scope.ServiceProvider;
 
-    // Start the notification service (already in your code)
     var cassiaNotificationService = serviceProvider.GetRequiredService<CassiaNotificationService>();
-
-    // Start BLE scanning service (new addition)
     var scanBleDevice = serviceProvider.GetRequiredService<ScanBleDevice>();
 }
 
@@ -39,6 +47,9 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
+
+// ✅ Enable CORS
+app.UseCors("AllowAngularApp");
 
 app.UseHttpsRedirection();
 app.UseAuthorization();

@@ -40,7 +40,7 @@ namespace AccessAPP.Services
                     {
                         var pincodeResult = checkPincodeReply.GetResult();
                         ResponseModel responseBody = Helper.CreateResponseWithMessage(macAddress, result, pincodeResult.Msg, pincodeResult.Ack);
-                        responseBody.PinCodeAccepted = true;
+                        responseBody.PinCodeAccepted = responseBody.PinCodeAccepted;
 
                         var pincodeCheckResult = new PincodeCheckResponseModel
                         {

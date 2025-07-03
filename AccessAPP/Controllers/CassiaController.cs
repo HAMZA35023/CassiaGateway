@@ -1,5 +1,6 @@
 ﻿using AccessAPP.Models;
 using AccessAPP.Services;
+using AccessAPP.Services.HelperClasses;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
 using System.Net;
@@ -49,6 +50,19 @@ namespace AccessAPP.Controllers
             }
         }
 
+        [HttpGet("devices")]
+        public IActionResult GetDevices()
+        {
+            try
+            {
+                var devices = _deviceStorageService.GetFilteredDevices();
+                return Ok(devices);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error retrieving devices: {ex.Message}");
+            }
+        }
 
         [HttpGet("scannearbydevices")]
         public IActionResult FetchNearbyDevices([FromQuery] int minRssi = -100)
@@ -160,7 +174,7 @@ namespace AccessAPP.Controllers
                 foreach (var model in models)
                 {
                     string macAddress = model.MacAddress;
-                    string pincode = null;
+                    string pincode = model.Pincode;
 
                     if (string.IsNullOrEmpty(macAddress))
                     {
@@ -172,11 +186,12 @@ namespace AccessAPP.Controllers
                     if (connectResult.Status.ToString() == "OK")
                     {
                         var loginResult = await _connectService.AttemptLogin(_gatewayIpAddress, macAddress);
-
+                        bool pincodereq = loginResult.ResponseBody.PincodeRequired;
                         if (loginResult.ResponseBody.PincodeRequired && !string.IsNullOrEmpty(pincode))
                         {
                             var checkPincodeResponse = await _cassiaPinCodeService.CheckPincode(_gatewayIpAddress, macAddress, pincode);
                             loginResult.ResponseBody = checkPincodeResponse.ResponseBody;
+                            loginResult.ResponseBody.PincodeRequired = pincodereq;
                         }
 
                         responses.Add(loginResult);
@@ -288,7 +303,7 @@ namespace AccessAPP.Controllers
             string nodeMac = request.MacAddress;
             string pincode = request.Pincode;
             bool bActor = request.bActor; // if bActor=1, programming actor
-
+            int sensorType = request.sType;
             try
             {
                 // Check if an upgrade is already in progress for this device
@@ -296,7 +311,7 @@ namespace AccessAPP.Controllers
                 {
                     return Conflict(new { message = "Firmware upgrade already in progress for this device." });
                 }
-                var result = await _firmwareUpgradeService.UpgradeSensorAsync(nodeMac, pincode, bActor);
+                var result = await _firmwareUpgradeService.UpgradeSensorAsync(nodeMac, pincode, bActor, sensorType);
 
                 return result.Success
                     ? Ok(new { message = result.Message })
@@ -366,7 +381,7 @@ namespace AccessAPP.Controllers
         {
             try
             {
-                var result = await _firmwareUpgradeService.UpgradeDeviceAsync(request.MacAddress, request.Pincode);
+                var result = await _firmwareUpgradeService.UpgradeDeviceAsync(request.MacAddress, request.Pincode, request.sType);
 
                 return result.Success
                     ? Ok(new { message = result.Message })
@@ -405,9 +420,10 @@ namespace AccessAPP.Controllers
             {
                 var result = await _firmwareUpgradeService.BulkUpgradeSensorAsync(request);
 
-                return result.Success
-                    ? Ok(new { message = result.Message })
-                    : StatusCode(result.StatusCode, new { message = result.Message });
+                return Ok(result);
+                //result.Success
+                //? Ok(new { message = result.Message })
+                //: StatusCode(result.StatusCode, new { message = result.Message });
             }
             catch (Exception ex)
             {
@@ -547,6 +563,146 @@ namespace AccessAPP.Controllers
         }
 
 
+        [HttpPost("deviceversions")]
+        public async Task<IActionResult> GetDeviceSoftwareVersions([FromBody] List<string> macAddresses)
+        {
+            if (macAddresses == null || macAddresses.Count == 0)
+                return BadRequest("MAC address list is empty.");
+
+            var results = new Dictionary<string, string>();
+
+            foreach (var macAddress in macAddresses)
+            {
+                string parsedVersion = string.Empty;
+
+                try
+                {
+                    var connectResponse = await _connectService.ConnectToBleDevice(_gatewayIpAddress, _gatewayPort, macAddress);
+                    if (connectResponse.Status.ToString() == "OK")
+                    {
+                        var loginResponse = await _connectService.AttemptLogin(_gatewayIpAddress, macAddress);
+                        if (loginResponse.Status.ToString() == "OK")
+                        {
+                            string testMessage = "01290107005A5E";
+                            var response = await _connectService.GetDataFromBleDevice(_gatewayIpAddress, _gatewayPort, macAddress, testMessage);
+
+                            if (response.Status.ToString() == "OK" && !string.IsNullOrEmpty(response.Data))
+                            {
+                                parsedVersion = ScanDataParser.ParseSoftwareVersionFromResponse(response.Data);
+                            }
+                        }
+
+                        // Attempt disconnect even if data failed
+                        await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[WARN] Error with device {macAddress}: {ex.Message}");
+                    // Leave parsedVersion as empty
+                }
+
+                results[macAddress] = parsedVersion;
+
+                await Task.Delay(500); // Delay between devices
+            }
+
+            return Ok(results);
+        }
+
+
+
+        [HttpPost("connectiontest/{testCycles}")]
+        public async Task<IActionResult> TestConnectionStability(int testCycles, [FromBody] List<string> macAddresses)
+        {
+            try
+            {
+                if (testCycles <= 0)
+                {
+                    return BadRequest("Test cycle count must be greater than zero.");
+                }
+
+                var results = new Dictionary<string, ConnectionTestResult>();
+
+                foreach (var macAddress in macAddresses)
+                {
+                    var testResult = new ConnectionTestResult();
+
+                    for (int i = 0; i < testCycles; i++)
+                    {
+                        var attemptDetails = new TestAttempt
+                        {
+                            AttemptNumber = i + 1,
+                            ConnectionStatus = "Failed",
+                            RequestedData = "01290107005A5E",
+                            ResponseData = "No response",
+                            DisconnectionStatus = "Not attempted"
+                        };
+
+                        Console.WriteLine($"Test {i + 1}/{testCycles} for {macAddress}...");
+
+                        // Step 1: Connect to the device
+                        var connectResponse = await _connectService.ConnectToBleDevice(_gatewayIpAddress, _gatewayPort, macAddress);
+                        if (connectResponse.Status.ToString() == "OK")
+                        {
+                            attemptDetails.ConnectionStatus = "Success";
+
+                            // Step 2: Login to the device
+                            var loginResponse = await _connectService.AttemptLogin(_gatewayIpAddress, macAddress);
+                            if (loginResponse.Status.ToString() == "OK")
+                            {
+                                // Step 3: Send BLE message (e.g., Read data)
+                                string testMessage = "01290107005A5E"; // Example message
+                                var response = await _connectService.GetDataFromBleDevice(_gatewayIpAddress, _gatewayPort, macAddress, testMessage);
+                                string parsed = ScanDataParser.ParseSoftwareVersionFromResponse(response.Data);
+                                attemptDetails.RequestedData = testMessage;
+                                attemptDetails.ResponseData = parsed;
+
+                                if (response.Status.ToString() == "OK")
+                                {
+                                    testResult.SuccessCount++;
+                                    Console.WriteLine($"Successful test {i + 1}/{testCycles} for {macAddress}");
+                                }
+                                else
+                                {
+                                    testResult.FailedCount++;
+                                    Console.WriteLine($"No response from {macAddress} on attempt {i + 1}");
+                                }
+                            }
+                            else
+                            {
+                                attemptDetails.ConnectionStatus = "Failed (Login Issue)";
+                                testResult.FailedCount++;
+                                Console.WriteLine($"Failed to login to {macAddress} on attempt {i + 1}");
+                            }
+                        }
+                        else
+                        {
+                            testResult.FailedCount++;
+                            Console.WriteLine($"Failed to connect to {macAddress} on attempt {i + 1}");
+                        }
+
+                        // Step 4: Disconnect from the device
+                        var disconnectResponse = await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0);
+                        attemptDetails.DisconnectionStatus = disconnectResponse.Status.ToString() == "OK" ? "Success" : "Failed";
+
+                        testResult.AttemptDetails.Add(attemptDetails);
+
+                        // Small delay to avoid overwhelming the device
+                        await Task.Delay(500);
+                    }
+
+                    results[macAddress] = testResult;
+                }
+
+                return Ok(results);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error: {ex.Message + ex.StackTrace}");
+            }
+        }
+
         // Central SSE listener for connection state
         private async Task<List<string>> ListenForConnectedDevices(List<string> macAddresses)
         {
@@ -580,6 +736,47 @@ namespace AccessAPP.Controllers
 
             return connectedDevices;
         }
+
+        [HttpGet("logs")]
+        public IActionResult GetUpgradeLogs()
+        {
+            try
+            {
+                var currentDir = Directory.GetCurrentDirectory();
+                Console.WriteLine("Current Directory: " + currentDir);
+
+                var logPath = Path.Combine(currentDir, "Logs", "upgrade_logs.txt");
+
+                if (!System.IO.File.Exists(logPath))
+                {
+                    return NotFound($"Log file not found at: {logPath}");
+                }
+
+                var logText = System.IO.File.ReadAllText(logPath);
+                return Content(logText, "text/plain");
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error reading log file: {ex.Message}");
+            }
+        }
+
+
+    }
+    public class ConnectionTestResult
+    {
+        public int SuccessCount { get; set; } = 0;
+        public int FailedCount { get; set; } = 0;
+        public List<TestAttempt> AttemptDetails { get; set; } = new List<TestAttempt>();
+    }
+
+    public class TestAttempt
+    {
+        public int AttemptNumber { get; set; }
+        public string ConnectionStatus { get; set; }
+        public string RequestedData { get; set; }
+        public string ResponseData { get; set; }
+        public string DisconnectionStatus { get; set; }
     }
 
 }

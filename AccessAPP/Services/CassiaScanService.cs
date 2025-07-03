@@ -1,5 +1,7 @@
 ﻿using AccessAPP.Models;
+using AccessAPP.Services.HelperClasses;
 using Newtonsoft.Json;
+using System.Net.Http.Headers;
 
 namespace AccessAPP.Services
 {
@@ -26,42 +28,72 @@ namespace AccessAPP.Services
         {
             try
             {
-                // Define the duration of each scan in milliseconds
-                int scanDuration = 5000; // 5 seconds
-                var nearbyDevices = new List<ScannedDevicesView>();
+                int scanDuration = 5000;
+                var uniqueDevices = new Dictionary<string, ScannedDevicesView>();
 
-                // Step 1: Subscribe to the Server-Sent Events (SSE) endpoint
-                string sseEndpoint = $"http://{gatewayIpAddress}:{gatewayPort}/gap/nodes?event=1";
+                string sseEndpoint = $"http://{gatewayIpAddress}:{gatewayPort}/gap/nodes?event=1&filter_duplicates=1&filter_mac=10:B9:F7*&active=1";
                 var request = new HttpRequestMessage(HttpMethod.Get, sseEndpoint);
-                request.Headers.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("text/event-stream"));
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
 
                 using (var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead))
                 {
                     response.EnsureSuccessStatusCode();
 
-                    // Start a task to wait for 5 seconds
                     var cancellationTokenSource = new CancellationTokenSource(scanDuration);
                     var delayTask = Task.Delay(scanDuration, cancellationTokenSource.Token);
 
-                    // Step 2: Process SSE events
                     await ProcessSSEEvents(response, eventData =>
                     {
-                        // Parse each eventData as a ScannedDevicesView and add it to the list
-                        var device = eventData;
-                        nearbyDevices.Add(device);
+                        var mac = eventData.bdaddrs.FirstOrDefault()?.Bdaddr;
+                        if (string.IsNullOrWhiteSpace(mac)) return;
+
+                        // Use scanData if present, fallback to adData
+                        var scanPayload = !string.IsNullOrEmpty(eventData.scanData)
+                                          ? eventData.scanData
+                                          : eventData.adData;
+
+                        var productNumber = ScanDataParser.ExtractProductNumber(scanPayload);
+                        var lockedHex = ScanDataParser.GetLockedInfo(scanPayload);
+                        var isLocked = ScanDataParser.IsLocked(scanPayload);
+                        var meta = ScanDataParser.GetDetectorMeta(scanPayload);
+
+                        var enrichedDevice = new ScannedDevicesView
+                        {
+                            bdaddrs = eventData.bdaddrs,
+                            chipId = eventData.chipId,
+                            evtType = eventData.evtType,
+                            rssi = eventData.rssi,
+                            adData = eventData.adData,
+                            scanData = eventData.scanData,
+                            name = eventData.name,
+
+                            ProductNumber = productNumber,
+                            DetectorFamily = meta.DetectorFamily,
+                            DetectorType = meta.DetectorType,
+                            DetectorOutputInfo = meta.DetectorOutputInfo,
+                            DetectorDescription = meta.DetectorDescription,
+                            DetectorShortDescription = meta.DetectorShortDescription,
+                            Range = meta.Range,
+                            DetectorMountDescription = meta.DetectorMountDescription,
+                            LockedHex = lockedHex,
+                            IsLocked = isLocked
+                        };
+
+                        uniqueDevices[mac] = enrichedDevice;
                     }, cancellationTokenSource.Token);
 
-                    // Wait for the scan duration or until cancellation is requested
+
                     await delayTask;
                 }
 
-                return nearbyDevices;
+                return uniqueDevices.Values.ToList();
             }
             catch (Exception ex)
             {
                 throw new Exception($"Error: {ex.Message + ex.StackTrace}");
             }
         }
+
 
         /// <summary>
         /// / Older Version
