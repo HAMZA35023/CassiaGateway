@@ -1,5 +1,6 @@
 ﻿using AccessAPP.Models;
 using AccessAPP.Services.HelperClasses;
+using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Concurrent;
@@ -43,6 +44,10 @@ namespace AccessAPP.Services
         private bool bootloader = false;
         private int sensorType = 4;
         string logId = "";
+        private HashSet<string> allRows = new();
+        private HashSet<string> completedRows = new();
+
+
         private readonly CassiaNotificationService _notificationService; // ✅ Injected singleton
 
         public CassiaFirmwareUpgradeService(HttpClient httpClient, CassiaConnectService connectService, CassiaPinCodeService cassiaPinCodeService, CassiaNotificationService notificationService, IConfiguration configuration)
@@ -91,10 +96,12 @@ namespace AccessAPP.Services
             {
                 // Step 2: Attempt login if needed
                 var loginResult = await _connectService.AttemptLogin(_gatewayIpAddress, nodeMac);
+                bool pincodereq = loginResult.ResponseBody.PincodeRequired;
                 if (loginResult.ResponseBody.PincodeRequired && !string.IsNullOrEmpty(pincode))
                 {
                     var checkPincodeResponse = await _cassiaPinCodeService.CheckPincode(_gatewayIpAddress, nodeMac, pincode);
                     loginResult.ResponseBody = checkPincodeResponse.ResponseBody;
+                    loginResult.ResponseBody.PincodeRequired = pincodereq;
                 }
 
                 if (loginResult.ResponseBody.PincodeRequired && !loginResult.ResponseBody.PinCodeAccepted)
@@ -877,64 +884,71 @@ namespace AccessAPP.Services
             try
             {
                 InitializeNotificationSubscription(nodeMac, cassiaNotificationService);
-                int lines;
                 MacAddress = nodeMac;
+
                 Bootloader_Utils.CyBtldr_ProgressUpdate Upd = new Bootloader_Utils.CyBtldr_ProgressUpdate(ProgressUpdate);
                 Bootloader_Utils.CyBtldr_CommunicationsData m_comm_data = new Bootloader_Utils.CyBtldr_CommunicationsData();
                 m_comm_data.OpenConnection = OpenConnection;
                 m_comm_data.CloseConnection = CloseConnection;
+
                 ReturnCodes local_status = 0x00;
+                string firmwarePath = "";
+
                 if (bActor)
                 {
+                    firmwarePath = _firmwareActorFilePath;
                     Console.WriteLine("Programming Actor");
-                    lines = File.ReadAllLines(_firmwareActorFilePath).Length - 1; //Don't count header
-                    var progressBarStepSize = 100.0 / lines;
                     m_comm_data.WriteData = WriteActorData;
                     m_comm_data.ReadData = ReadActorData;
                     m_comm_data.MaxTransferSize = 72;
-                    local_status = (ReturnCodes)Bootloader_Utils.CyBtldr_Program(_firmwareActorFilePath, null, _appID, ref m_comm_data, Upd);
+                }
+                else if (bootloader)
+                {
+                    firmwarePath = _firmwareBootLoaderFilePath;
+                    Console.WriteLine("Programming Bootloader");
+                    m_comm_data.WriteData = WriteSensorData;
+                    m_comm_data.ReadData = ReadData;
+                    m_comm_data.MaxTransferSize = 265;
                 }
                 else
                 {
-                    if (bootloader)
-                    {
-                        Console.WriteLine("Programming Bootloader");
-                        lines = File.ReadAllLines(_firmwareBootLoaderFilePath).Length - 1; //Don't count header
-                        var progressBarStepSize = 100.0 / lines;
-                        m_comm_data.WriteData = WriteSensorData;
-                        m_comm_data.ReadData = ReadData;
-                        m_comm_data.MaxTransferSize = 265;
-                        local_status = (ReturnCodes)Bootloader_Utils.CyBtldr_Program(_firmwareBootLoaderFilePath, _securityKey, _appID, ref m_comm_data, Upd);
-                    }
-                    else
-                    {
-                        var FP = "";
-                        if (sensorType == 4) { FP = _firmwareSensorFilePath4; } else if (sensorType == 3) { FP = _firmwareSensorFilePath3; } else { FP = _firmwareSensorFilePath1; }
-                        Console.WriteLine("Programming Sensor");
-                        lines = File.ReadAllLines(FP).Length - 1; //Don't count header
-                        var progressBarStepSize = 100.0 / lines;
-                        m_comm_data.WriteData = WriteSensorData;
-                        m_comm_data.ReadData = ReadData;
-                        m_comm_data.MaxTransferSize = 265;
-                        local_status = (ReturnCodes)Bootloader_Utils.CyBtldr_Program(FP, _securityKey, _appID, ref m_comm_data, Upd);
-                    }
+                    if (sensorType == 4) { firmwarePath = _firmwareSensorFilePath4; }
+                    else if (sensorType == 3) { firmwarePath = _firmwareSensorFilePath3; }
+                    else { firmwarePath = _firmwareSensorFilePath1; }
 
+                    Console.WriteLine("Programming Sensor");
+                    m_comm_data.WriteData = WriteSensorData;
+                    m_comm_data.ReadData = ReadData;
+                    m_comm_data.MaxTransferSize = 265;
                 }
 
-                if (local_status == ReturnCodes.CYRET_SUCCESS)
+                // Load all expected rows
+                allRows.Clear();
+                completedRows.Clear();
+                foreach (string line in File.ReadAllLines(firmwarePath).Skip(1)) // skip CYACD header
                 {
-                    return true;
+                    if (line.StartsWith(":"))
+                    {
+                        string arrayId = line.Substring(1, 2);
+                        string rowNumber = line.Substring(3, 4);
+                        string key = $"{arrayId}:{rowNumber}";
+                        allRows.Add(key);
+                    }
                 }
-                else
-                { return false; }
 
+                // Call programming function
+                local_status = bActor
+                    ? (ReturnCodes)Bootloader_Utils.CyBtldr_Program(firmwarePath, null, _appID, ref m_comm_data, Upd)
+                    : (ReturnCodes)Bootloader_Utils.CyBtldr_Program(firmwarePath, _securityKey, _appID, ref m_comm_data, Upd);
+
+                return local_status == ReturnCodes.CYRET_SUCCESS;
             }
             finally
             {
                 //UnsubscribeNotification(nodeMac, cassiaNotificationService);
             }
-
         }
+
 
 
         public int ReadData(IntPtr buffer, int size)
@@ -1274,17 +1288,15 @@ namespace AccessAPP.Services
         /// <param name="rowNum"></param>
         public void ProgressUpdate(byte arrayID, ushort rowNum)
         {
-            // Calculate progress percentage based on the current row and total rows
-            progressBarProgress = (rowNum / totalRows) * 100.0;
-
-            // Ensure progress does not exceed 100%
-            progressBarProgress = Math.Min(progressBarProgress, 100);
-
-            // Log the progress
-            Console.WriteLine($"Progress: {progressBarProgress:F2}% - Array ID: {arrayID}, Row: {rowNum}");
-
-
+            string key = $"{arrayID:X2}:{rowNum:X4}";
+            if (completedRows.Add(key))
+            {
+                double progress = (completedRows.Count / (double)allRows.Count) * 100.0;
+                progress = Math.Min(progress, 100.0);
+                Console.WriteLine($"Progress: {progress:F2}% - Array ID: {arrayID}, Row: {rowNum}");
+            }
         }
+
         public void SetTotalRows(int rows)
         {
             totalRows = rows > 0 ? rows : 1; // Avoid division by zero
