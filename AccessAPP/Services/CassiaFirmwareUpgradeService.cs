@@ -8,6 +8,8 @@ using System.Diagnostics;
 using System.Net;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Windows.Markup;
+using Windows.UI.Xaml.Controls.Primitives;
 
 namespace AccessAPP.Services
 {
@@ -16,6 +18,7 @@ namespace AccessAPP.Services
         private readonly HttpClient _httpClient;
         private readonly CassiaConnectService _connectService;
         private readonly CassiaPinCodeService _cassiaPinCodeService;
+        private readonly DeviceStorageService _deviceStorageService;
         private readonly IConfiguration _configuration;
         private const int MaxPacketSize = 270;
         private const int InterPacketDelay = 0;
@@ -50,11 +53,11 @@ namespace AccessAPP.Services
 
         private readonly CassiaNotificationService _notificationService; // ✅ Injected singleton
 
-        public CassiaFirmwareUpgradeService(HttpClient httpClient, CassiaConnectService connectService, CassiaPinCodeService cassiaPinCodeService, CassiaNotificationService notificationService, IConfiguration configuration)
+        public CassiaFirmwareUpgradeService(HttpClient httpClient, CassiaConnectService connectService, CassiaPinCodeService cassiaPinCodeService, CassiaNotificationService notificationService, DeviceStorageService deviceStorageService, IConfiguration configuration)
         {
             _httpClient = httpClient;
             _connectService = connectService;
-
+            _deviceStorageService = deviceStorageService;
             _cassiaPinCodeService = cassiaPinCodeService;
             _configuration = configuration;
             _gatewayIpAddress = _configuration.GetValue<string>("GatewayConfiguration:IpAddress");
@@ -66,21 +69,22 @@ namespace AccessAPP.Services
         {
 
             // Step 1: Connect to the device
-            ServiceResponse response = null;
+            ServiceResponse response = new ServiceResponse();
             sensorType = sType;
             logId = $"{nodeMac.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
-           
-            UpgradeLogger.Log(logId, nodeMac, "Process Start","Success", sType.ToString());
+
+            UpgradeLogger.Log(logId, nodeMac, "Process Start", "Success", sType.ToString());
 
             var connectionResult = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
             if (connectionResult.Status != HttpStatusCode.OK)
             {
+                UpgradeLogger.Log(logId, nodeMac, "Connected", "Failed");
                 response.Success = false;
                 response.StatusCode = (int)connectionResult.Status;
                 response.Message = "Failed to connect to device.";
                 return response;
             }
-            UpgradeLogger.Log(logId,nodeMac, "Connected", "Success");
+            UpgradeLogger.Log(logId, nodeMac, "Connected", "Success");
             Console.WriteLine("Connected to device...");
 
             bool isAlreadyInBootMode = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
@@ -104,24 +108,39 @@ namespace AccessAPP.Services
                     loginResult.ResponseBody.PincodeRequired = pincodereq;
                 }
 
-                if (loginResult.ResponseBody.PincodeRequired && !loginResult.ResponseBody.PinCodeAccepted)
-                {
-                    UpgradeLogger.Log(logId, nodeMac, "Login", "Failed");
-                    response.Success = false;
-                    response.StatusCode = 401; // Unauthorized
-                    response.Message = "Failed to login to the device.";
-                    return response;
-                }
+                //if (loginResult.ResponseBody.PincodeRequired && !loginResult.ResponseBody.PinCodeAccepted)
+                //{
+                //    UpgradeLogger.Log(logId, nodeMac, "Login", "Failed");
+                //    response.Success = false;
+                //    response.StatusCode = 401; // Unauthorized
+                //    response.Message = "Failed to login to the device.";
+                //    return response;
+                //}
                 UpgradeLogger.Log(logId, nodeMac, "LoggedIn", "Success");
                 Console.WriteLine("Logged into device...");
 
                 // Send Jump to Bootloader telegram repeatedly until successful
                 const int maxAttempts = 5;
                 bool bootModeAchieved = false;
+                bool isBootModeAchieved = false;
                 for (int attempt = 0; attempt < maxAttempts; attempt++)
                 {
                     bootModeAchieved = await SendJumpToBootloader(_gatewayIpAddress, nodeMac, bActor);
-                    if (bootModeAchieved)
+                    await Task.Delay(10000);
+                    var CR = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
+                    if (CR.Status != HttpStatusCode.OK)
+                    {
+                        UpgradeLogger.Log(logId, nodeMac, "Connected", "Failed");
+                        response.Success = false;
+                        response.StatusCode = (int)CR.Status;
+                        response.Message = "Failed to connect to device.";
+                        return response;
+                    }
+                    UpgradeLogger.Log(logId, nodeMac, "Connected", "Success");
+                    Console.WriteLine("Connected to device...");
+
+                    isBootModeAchieved = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
+                    if (isBootModeAchieved)
                     {
                         UpgradeLogger.Log(logId, nodeMac, "BootMode", "Achieved");
                         Console.WriteLine($"Device entered boot mode after {attempt + 1} attempts.");
@@ -131,7 +150,7 @@ namespace AccessAPP.Services
                     await Task.Delay(3000); // Delay between attempts
                 }
 
-                if (!bootModeAchieved)
+                if (!isBootModeAchieved)
                 {
                     UpgradeLogger.Log(logId, nodeMac, "BootMode", "Failed");
                     response.Success = false;
@@ -271,18 +290,11 @@ namespace AccessAPP.Services
             return response;
         }
 
-        public async Task<ServiceResponse> BulkUpgradeSensorAsync(List<BulkUpgradeRequest> requests)
+        public async Task<List<ServiceResponse>> BulkUpgradeSensorAsync(List<BulkUpgradeRequest> requests)
         {
-            var response = new ServiceResponse
-            {
-                Success = true,
-                StatusCode = 200,
-                Message = "Bulk upgrade completed successfully."
-            };
-
             var taskList = new List<Task<ServiceResponse>>();
             var upgradeResults = new ConcurrentBag<ServiceResponse>();
-            var semaphore = new SemaphoreSlim(1); // Limit to 3 concurrent upgrades
+            var semaphore = new SemaphoreSlim(3); // Fix comment to match concurrency limit
 
             foreach (var request in requests)
             {
@@ -293,18 +305,21 @@ namespace AccessAPP.Services
                     try
                     {
                         var result = await UpgradeSensorAsync(request.MacAddress, request.Pincode, request.bActor, request.sType);
+                        result.MacAddress = request.MacAddress;
                         upgradeResults.Add(result);
                         return result;
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"Error upgrading sensor {request.MacAddress}: {ex.Message}");
-                        return new ServiceResponse
+                        var errorResult = new ServiceResponse
                         {
                             Success = false,
                             StatusCode = 500,
-                            Message = $"Error upgrading sensor {request.MacAddress}: {ex.Message}"
+                            Message = $"Error upgrading sensor {request.MacAddress}: {ex.Message}",
+                            MacAddress = request.MacAddress
                         };
+                        upgradeResults.Add(errorResult);
+                        return errorResult;
                     }
                     finally
                     {
@@ -315,16 +330,8 @@ namespace AccessAPP.Services
 
             await Task.WhenAll(taskList);
 
-            // Aggregate responses to determine overall success
-            var failedUpgrades = upgradeResults.Where(r => !r.Success).ToList();
-            if (failedUpgrades.Any())
-            {
-                response.Success = false;
-                response.StatusCode = 207; // Multi-Status
-                response.Message = $"Bulk upgrade completed with errors. Failed actors: {string.Join(", ", failedUpgrades.Select(r => r.Message))}";
-            }
-
-            return response;
+            // Now just return the full list
+            return upgradeResults.ToList();
         }
 
         public async Task<ServiceResponse> UpgradeDeviceAsync(string macAddress, string pincode, int sType)
@@ -878,6 +885,19 @@ namespace AccessAPP.Services
                 return response;
             }
         }
+
+        public static UInt64 MacToInt64(string macAddress)
+        {
+            string hex = macAddress.Replace(":", "");
+            return Convert.ToUInt64(hex, 16);
+        }
+
+        public static string MacToString(UInt64 macAddress)
+        {
+            return string.Join(":",
+                                BitConverter.GetBytes(macAddress).Reverse()
+                                .Select(b => b.ToString("X2"))).Substring(6);
+        }
         public bool ProgramDevice(string gatewayIpAddress, string nodeMac, CassiaNotificationService cassiaNotificationService, bool bActor)
         {
             Console.WriteLine($"Actor is going to be programmed? : {bActor}");
@@ -890,7 +910,7 @@ namespace AccessAPP.Services
                 Bootloader_Utils.CyBtldr_CommunicationsData m_comm_data = new Bootloader_Utils.CyBtldr_CommunicationsData();
                 m_comm_data.OpenConnection = OpenConnection;
                 m_comm_data.CloseConnection = CloseConnection;
-
+                m_comm_data.CustomContext = MacToInt64(nodeMac);
                 ReturnCodes local_status = 0x00;
                 string firmwarePath = "";
 
@@ -941,6 +961,13 @@ namespace AccessAPP.Services
                     ? (ReturnCodes)Bootloader_Utils.CyBtldr_Program(firmwarePath, null, _appID, ref m_comm_data, Upd)
                     : (ReturnCodes)Bootloader_Utils.CyBtldr_Program(firmwarePath, _securityKey, _appID, ref m_comm_data, Upd);
 
+                // Handle failure
+                if (local_status != ReturnCodes.CYRET_SUCCESS)
+                {
+                    Console.WriteLine("❌ Programming failed");
+                    _deviceStorageService.MarkFirmwareFailed(nodeMac);
+                }
+
                 return local_status == ReturnCodes.CYRET_SUCCESS;
             }
             finally
@@ -951,11 +978,10 @@ namespace AccessAPP.Services
 
 
 
-        public int ReadData(IntPtr buffer, int size)
+        public int ReadData(IntPtr buffer, int size, UInt64 customContext)
         {
-
-            Console.WriteLine("ReadData called here for actor and sensor");
-
+            string macContext = MacToString(customContext);
+            Console.WriteLine("ReadData called here for actor and sensor | maccontext: " + macContext);
             try
             {
                 // Wait for notification data to be available
@@ -989,11 +1015,10 @@ namespace AccessAPP.Services
 
         }
 
-        public int ReadActorData(IntPtr buffer, int size)
+        public int ReadActorData(IntPtr buffer, int size, UInt64 customContext)
         {
-
-            Console.WriteLine("ReadData called here for actor and sensor");
-
+            string macContext = MacToString(customContext);
+            Console.WriteLine("ReadData called here for actor and sensor | maccontext: " + macContext);
             try
             {
                 // Wait for notification data to be available
@@ -1048,7 +1073,7 @@ namespace AccessAPP.Services
         /// <returns></returns>
 
         ///Sensor Programming
-        public int WriteSensorData(IntPtr buffer, int size)
+        public int WriteSensorData(IntPtr buffer, int size, UInt64 customContext)
         {
             bool status = false;
             byte[] data = new byte[size];
@@ -1060,10 +1085,13 @@ namespace AccessAPP.Services
                 try
                 {
                     string hexData = BitConverter.ToString(data).Replace("-", "");
+                    
 
-                    Console.WriteLine($"Data Sent: {hexData}");
+                    string macContext = MacToString(customContext);
+                    Console.WriteLine($"Data Sent: {hexData} | macContext: {macContext}");
+                    Console.WriteLine($"size of buffer: {size}");
                     //SendMessage(data);
-                    cassiaReadWriteService.WriteBleMessage("192.168.40.1", MacAddress, 14, hexData, "");
+                    cassiaReadWriteService.WriteBleMessage("192.168.40.1", macContext, 14, hexData, "");
 
                     status = true;
                 }
@@ -1080,7 +1108,7 @@ namespace AccessAPP.Services
         }
 
         ///Actor Programming
-        public int WriteActorData(IntPtr buffer, int size)
+        public int WriteActorData(IntPtr buffer, int size, UInt64 customContext)
         {
             bool status = false;
             byte[] data = new byte[size];
@@ -1105,6 +1133,8 @@ namespace AccessAPP.Services
                     if (!bleMessage.EncodeGetBleTelegram())
                         throw new Exception("Failed to encode BLE telegram.");
 
+                    string macContext = MacToString(customContext);
+                    Console.WriteLine($"macContext: {macContext}");
                     // Send the BLE message asynchronously
                     SendBleMessageAsync(bleMessage).GetAwaiter().GetResult();
 
@@ -1286,7 +1316,7 @@ namespace AccessAPP.Services
         /// </summary>
         /// <param name="arrayID"></param>
         /// <param name="rowNum"></param>
-        public void ProgressUpdate(byte arrayID, ushort rowNum)
+        public void ProgressUpdate(byte arrayID, ushort rowNum, UInt64 customContext)
         {
             string key = $"{arrayID:X2}:{rowNum:X4}";
             if (completedRows.Add(key))
@@ -1294,6 +1324,9 @@ namespace AccessAPP.Services
                 double progress = (completedRows.Count / (double)allRows.Count) * 100.0;
                 progress = Math.Min(progress, 100.0);
                 Console.WriteLine($"Progress: {progress:F2}% - Array ID: {arrayID}, Row: {rowNum}");
+                string macContext = MacToString(customContext);
+               
+                _deviceStorageService.UpdateFirmwareProgress(macContext, progress);
             }
         }
 
@@ -1312,7 +1345,7 @@ namespace AccessAPP.Services
         /// Checks if the USB device is connected and opens if it is present
         /// Returns a success or failure
         /// </summary>
-        public int OpenConnection()
+        public int OpenConnection(UInt64 customContext)
         {
             int status = 0;
             status = GetHidDevice() ? ERR_SUCCESS : ERR_OPEN;
@@ -1323,7 +1356,7 @@ namespace AccessAPP.Services
         /// <summary>
         /// Closes the previously opened USB device and returns the status
         /// </summary>
-        public int CloseConnection()
+        public int CloseConnection(UInt64 customContext)
         {
             int status = 0;
             return status;

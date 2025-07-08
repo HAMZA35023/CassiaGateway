@@ -109,7 +109,16 @@ public class ScanBleDevice : IDisposable
             if (!string.IsNullOrEmpty(eventData.scanData))
             {
                 productNumber = ScanDataParser.ExtractProductNumber(eventData.scanData);
-                name = ScanDataParser.GetName(eventData.scanData.Substring(20, 30));
+                if (eventData.scanData.Length >= 50)
+                {
+                    name = ScanDataParser.GetName(eventData.scanData.Substring(20, 30));
+                }
+                else
+                {
+                    name = "";
+                    _logger.LogWarning($"Scan data too short for name extraction: {eventData.scanData.Length} chars. Data: {eventData.scanData}");
+                }
+
 
                 lockedHex = ScanDataParser.GetLockedInfo(eventData.scanData);
                 isLocked = ScanDataParser.IsLocked(eventData.scanData);

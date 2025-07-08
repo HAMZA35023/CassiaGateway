@@ -7,6 +7,7 @@ namespace AccessAPP.Services
     {
         // Thread-safe dictionary to store devices by their MAC address
         private readonly ConcurrentDictionary<string, ScannedDevicesView> _deviceList = new ConcurrentDictionary<string, ScannedDevicesView>();
+        private readonly ConcurrentDictionary<string, FirmwareProgressStatus> _progressStatus = new ConcurrentDictionary<string, FirmwareProgressStatus>();
 
         // Add or update devices based on MAC address and filter by RSSI
         public void AddOrUpdateDevice(ScannedDevicesView device, int minRssi)
@@ -54,6 +55,49 @@ namespace AccessAPP.Services
                     Console.WriteLine($"Device {macAddress} removed due to low RSSI: {device.rssi}");
                 }
             }
+        }
+
+
+        public void UpdateFirmwareProgress(string mac, double progress, string status= "Programming")
+        {
+            _progressStatus.AddOrUpdate(mac,
+                new FirmwareProgressStatus
+                {
+                    MacAddress = mac,
+                    Progress = progress,
+                    Status = status,
+                    LastUpdated = DateTime.UtcNow
+                },
+                (key, existing) =>
+                {
+                    existing.Progress = Math.Min(progress, 100);
+                    existing.Status = status;
+                    existing.LastUpdated = DateTime.UtcNow;
+                    return existing;
+                });
+        }
+
+        public void MarkFirmwareFailed(string mac)
+        {
+            _progressStatus.AddOrUpdate(mac,
+                new FirmwareProgressStatus
+                {
+                    MacAddress = mac,
+                    Progress = 0, // fallback if not already tracked
+                    Status = "Failed",
+                    LastUpdated = DateTime.UtcNow
+                },
+                (key, existing) =>
+                {
+                    existing.Status = "Failed";
+                    existing.LastUpdated = DateTime.UtcNow;
+                    return existing;
+                });
+        }
+
+        public List<FirmwareProgressStatus> GetAllFirmwareProgress()
+        {
+            return _progressStatus.Values.ToList();
         }
 
         // Get the list of devices
