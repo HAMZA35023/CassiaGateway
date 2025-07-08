@@ -736,7 +736,7 @@ namespace AccessAPP.Controllers
 
             return connectedDevices;
         }
-
+        // These are logs for UI Logs page
         [HttpGet("logs")]
         public IActionResult GetUpgradeLogs()
         {
@@ -760,6 +760,13 @@ namespace AccessAPP.Controllers
                 return StatusCode(500, $"Error reading log file: {ex.Message}");
             }
         }
+
+        [HttpGet("upgrade/progress")]
+        public IActionResult GetAllProgress()
+        {
+            return Ok(_deviceStorageService.GetAllFirmwareProgress());
+        }
+
 
 
     }

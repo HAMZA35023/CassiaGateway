@@ -62,8 +62,16 @@ namespace AccessAPP.Services
             }
             catch (HttpRequestException e)
             {
-                Console.WriteLine($"Request error: {e.Message}");
-                throw new Exception($"Error: {e.Message + e.StackTrace}");
+                return new ResponseModel
+                {
+                    MacAddress = macAddress,
+                    Data = $"Connection failed: {e.Message}",
+                    Time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    Retries = 0,
+                    Status = HttpStatusCode.ExpectationFailed, // or use 0 if unknown
+                    PincodeRequired = false,
+                    PinCodeAccepted = false
+                };
             }
         }
 
@@ -276,13 +284,29 @@ namespace AccessAPP.Services
                     return new LoginResponseModel
                     {
                         Status = "Timeout",
-                        ResponseBody = null
+                        ResponseBody = new ResponseModel
+                        {
+                            MacAddress = macAddress,
+                            Data = "Login response timeout.",
+                            Time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                            Status = HttpStatusCode.RequestTimeout
+                        }
                     };
                 }
             }
             catch (Exception ex)
             {
-                throw new Exception($"Error: {ex.Message + ex.StackTrace}");
+                return new LoginResponseModel
+                {
+                    Status = "Error",
+                    ResponseBody = new ResponseModel
+                    {
+                        MacAddress = macAddress,
+                        Data = $"Exception: {ex.Message}",
+                        Time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                        Status = HttpStatusCode.InternalServerError
+                    }
+                };
             }
         }
         public PairResponse PairDevice(string gatewayIpAddress, int gatewayPort, PairDevicesRequest pairDevicesRequest)

@@ -104,6 +104,10 @@ namespace AccessAPP.Services.HelperClasses
             /// Value used to specify the maximum number of bytes that can be trasfered at a time
             /// </summary>
             public uint MaxTransferSize;
+            /// <summary>
+            /// Custom Context uint64_t used on  OpenConnection CloseConnection ReadData WriteData and ProgressUpdate functions
+            /// </summary>
+            public UInt64 CustomContext;
         };
 
         /// <summary>
@@ -111,14 +115,14 @@ namespace AccessAPP.Services.HelperClasses
         /// </summary>
         /// <returns>Integer representing success == 0 or failure </returns>
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        public delegate int OpenConnection_USB();
+        public delegate int OpenConnection_USB(UInt64 customContext);
 
         /// <summary>
         /// Delegate used as a callback from native code for closing a communications connection
         /// </summary>
         /// <returns>Integer representing success == 0 or failure </returns>
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        public delegate int CloseConnection_USB();
+        public delegate int CloseConnection_USB(UInt64 customContext);
 
         /// <summary>
         /// Delegate used as a callback from native code for reading data from a communications connection
@@ -127,7 +131,7 @@ namespace AccessAPP.Services.HelperClasses
         /// <param name="size">The number of bytes of data to read</param>
         /// <returns>Integer representing success == 0 or failure </returns>
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        public delegate int ReadData_USB(IntPtr buffer, int size);
+        public delegate int ReadData_USB(IntPtr buffer, int size, UInt64 customContext);
 
         /// <summary>
         /// Delegate used as a callback from native code for writing data over a communications connection
@@ -136,7 +140,7 @@ namespace AccessAPP.Services.HelperClasses
         /// <param name="size">The number of bytes to write</param>
         /// <returns>Integer representing success == 0 or failure </returns>
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        public delegate int WriteData_USB(IntPtr buffer, int size);
+        public delegate int WriteData_USB(IntPtr buffer, int size, UInt64 customContext);
 
         /// <summary>
         /// Delegate used as a callback from native code for notifying that a row is complete
@@ -144,7 +148,7 @@ namespace AccessAPP.Services.HelperClasses
         /// <param name="arrayID">The array ID that was accessed</param>
         /// <param name="rowNum">The row number within the array that was accessed</param>
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        public delegate void CyBtldr_ProgressUpdate(byte arrayID, ushort rowNum);
+        public delegate void CyBtldr_ProgressUpdate(byte arrayID, ushort rowNum, UInt64 customContext);
 
         [DllImport("C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\obj\\Debug\\BootloaderUtilMultiThread.dll", CallingConvention = CallingConvention.Cdecl)]
         public static extern int CyBtldr_Program([MarshalAs(UnmanagedType.LPStr)] string file, [MarshalAs(UnmanagedType.LPArray)] byte[] securityKey, byte appId, ref CyBtldr_CommunicationsData comm, CyBtldr_ProgressUpdate update);
