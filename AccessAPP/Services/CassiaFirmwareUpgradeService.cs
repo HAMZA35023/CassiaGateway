@@ -294,7 +294,7 @@ namespace AccessAPP.Services
         {
             var taskList = new List<Task<ServiceResponse>>();
             var upgradeResults = new ConcurrentBag<ServiceResponse>();
-            var semaphore = new SemaphoreSlim(3); // Fix comment to match concurrency limit
+            var semaphore = new SemaphoreSlim(1); // Fix comment to match concurrency limit
 
             foreach (var request in requests)
             {
