@@ -381,7 +381,13 @@ namespace AccessAPP.Controllers
         {
             try
             {
-                var result = await _firmwareUpgradeService.UpgradeDeviceAsync(request.MacAddress, request.Pincode, request.sType);
+
+                UpgradeProgress upProgress = new UpgradeProgress();
+                upProgress.MacAddress = request.MacAddress;
+                upProgress.Pincode = request.Pincode;
+                upProgress.sType = request.sType;
+
+                var result = await _firmwareUpgradeService.UpgradeDeviceAsync(upProgress, request.MacAddress, request.Pincode, request.sType, true, true, true);
 
                 return result.Success
                     ? Ok(new { message = result.Message })

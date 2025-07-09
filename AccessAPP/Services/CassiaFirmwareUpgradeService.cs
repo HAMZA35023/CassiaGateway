@@ -1,5 +1,6 @@
 ﻿using AccessAPP.Models;
 using AccessAPP.Services.HelperClasses;
+using Amib.Threading;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
 using System;
@@ -7,6 +8,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Security.Cryptography;
 using System.Windows.Markup;
 using Windows.UI.Xaml.Controls.Primitives;
@@ -22,15 +24,16 @@ namespace AccessAPP.Services
         private readonly IConfiguration _configuration;
         private const int MaxPacketSize = 270;
         private const int InterPacketDelay = 0;
-        private readonly string _firmwareActorFilePath = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353AP20227.cyacd";
-        private readonly string _firmwareSensorFilePath4 = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353AP40227.cyacd";
-        private readonly string _firmwareSensorFilePath3 = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353AP30227.cyacd";
-        private readonly string _firmwareSensorFilePath1 = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353AP10227.cyacd";
-        private readonly string _firmwareBootLoaderFilePath = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353BL10604.cyacd";
+        private readonly string _firmwareActorFilePath = "d:\\work\\firma_vis\\niko\\app_hamza\\CassiaGateway\\AccessAPP\\FirmwareVersions\\353AP20227.cyacd";
+        private readonly string _firmwareSensorFilePath4 = "d:\\work\\firma_vis\\niko\\app_hamza\\CassiaGateway\\AccessAPP\\FirmwareVersions\\353AP40227.cyacd";
+        private readonly string _firmwareSensorFilePath3 = "d:\\work\\firma_vis\\niko\\app_hamza\\CassiaGateway\\AccessAPP\\FirmwareVersions\\353AP30227.cyacd";
+        private readonly string _firmwareSensorFilePath1 = "d:\\work\\firma_vis\\niko\\app_hamza\\CassiaGateway\\AccessAPP\\FirmwareVersions\\353AP10227.cyacd";
+        private readonly string _firmwareBootLoaderFilePath = "d:\\work\\firma_vis\\niko\\app_hamza\\CassiaGateway\\AccessAPP\\FirmwareVersions\\353BL10604.cyacd";
 
-        private readonly ConcurrentQueue<byte[]> _notificationQueue = new ConcurrentQueue<byte[]>();
-        private ManualResetEvent _notificationEvent = new ManualResetEvent(false);
-        private readonly HashSet<string> _subscribedMacAddresses = new HashSet<string>();
+        private ConcurrentDictionary<string, ConcurrentQueue<byte[]>> _notificationQueues = new ConcurrentDictionary<string, ConcurrentQueue<byte[]>>();
+        private ConcurrentDictionary<string, ManualResetEvent> _notificationEvents = new ConcurrentDictionary<string, ManualResetEvent>();
+        //private ManualResetEvent _notificationEvent = new ManualResetEvent(false);
+        //private readonly HashSet<string> _subscribedMacAddresses = new HashSet<string>();
         internal const int ERR_SUCCESS = 0;
         internal const int ERR_OPEN = 1;
         internal const int ERR_CLOSE = 2;
@@ -85,12 +88,12 @@ namespace AccessAPP.Services
                 return response;
             }
             UpgradeLogger.Log(logId, nodeMac, "Connected", "Success");
-            Console.WriteLine("Connected to device...");
+            Console.WriteLine($"Connected to device...{nodeMac}");
 
             bool isAlreadyInBootMode = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
             if (isAlreadyInBootMode)
             {
-                Console.WriteLine("Device is already in boot mode.");
+                Console.WriteLine($"Device is already in boot mode. -> {nodeMac}");
                 UpgradeLogger.Log(logId, nodeMac, "BootMode", "Detected");
                 await Task.Delay(3000);
                 var serviceResponse = await ProcessingSensorUpgrade(nodeMac, bActor);
@@ -117,7 +120,7 @@ namespace AccessAPP.Services
                 //    return response;
                 //}
                 UpgradeLogger.Log(logId, nodeMac, "LoggedIn", "Success");
-                Console.WriteLine("Logged into device...");
+                Console.WriteLine($"Logged into device...{nodeMac}");
 
                 // Send Jump to Bootloader telegram repeatedly until successful
                 const int maxAttempts = 5;
@@ -137,7 +140,7 @@ namespace AccessAPP.Services
                         return response;
                     }
                     UpgradeLogger.Log(logId, nodeMac, "Connected", "Success");
-                    Console.WriteLine("Connected to device...");
+                    Console.WriteLine($"Connected to device...{nodeMac}");
 
                     isBootModeAchieved = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
                     if (isBootModeAchieved)
@@ -181,7 +184,7 @@ namespace AccessAPP.Services
                 return response;
             }
 
-            Console.WriteLine("Connected to device...");
+            Console.WriteLine($"Connected to device...{nodeMac}");
 
             bool isAlreadyInBootMode = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
             if (isAlreadyInBootMode)
@@ -193,6 +196,7 @@ namespace AccessAPP.Services
             }
             else
             {
+                Console.WriteLine($"Login to device...{nodeMac}");
                 //Step 2: Attempt login if needed
                 var loginResult = await _connectService.AttemptLogin(_gatewayIpAddress, nodeMac);
                 if (loginResult.ResponseBody.PincodeRequired && !string.IsNullOrEmpty(pincode))
@@ -209,7 +213,7 @@ namespace AccessAPP.Services
                     return response;
                 }
 
-                Console.WriteLine("Logged into device...");
+                Console.WriteLine($"Logged into device...{nodeMac}");
 
 
                 // Send Jump to Bootloader telegram
@@ -334,7 +338,7 @@ namespace AccessAPP.Services
             return upgradeResults.ToList();
         }
 
-        public async Task<ServiceResponse> UpgradeDeviceAsync(string macAddress, string pincode, int sType)
+        public async Task<ServiceResponse> UpgradeDeviceAsync(UpgradeProgress dev, string macAddress, string pincode, int sType, bool upgradeActor, bool upgradeBootloader, bool upgradeSensor)
         {
             var response = new ServiceResponse();
 
@@ -343,70 +347,85 @@ namespace AccessAPP.Services
                 // Step 2: Upgrade the actor
                 Stopwatch stopwatch = new Stopwatch();
 
-                Console.WriteLine($"Starting actor upgrade for {macAddress}");
-
-                stopwatch.Start();
-                var actorUpgradeResult = await UpgradeActorAsync(macAddress, pincode, true);
-                stopwatch.Stop();
-                Console.WriteLine($"Actor upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds");
-                if (!actorUpgradeResult.Success)
+                if (upgradeActor)
                 {
-                    response.Success = false;
-                    response.StatusCode = actorUpgradeResult.StatusCode;
-                    response.Message = $"Actor upgrade failed: {actorUpgradeResult.Message}";
-                    return response; // Stop if actor upgrade fails
+                    Console.WriteLine($"Starting actor upgrade for {macAddress}");
+
+                    stopwatch.Start();
+                    var actorUpgradeResult = await UpgradeActorAsync(macAddress, pincode, true);
+                    stopwatch.Stop();
+                    Console.WriteLine($"Actor upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds");
+                    if (!actorUpgradeResult.Success)
+                    {
+                        //vinti: usually upgrade fails if the detector is in bootloader - try to flash first bootloader and sensor
+
+                        //response.Success = false;
+                        //response.StatusCode = actorUpgradeResult.StatusCode;
+                        //response.Message = $"Actor upgrade failed: {actorUpgradeResult.Message}";
+                        //dev.ActorSuccess = false;
+                        //return response; // Stop if actor upgrade fails
+                    }
+
+                    dev.ActorSuccess = true;
+
+                    Console.WriteLine($"Actor upgrade completed for {macAddress}");
+                    Task.Delay(10000);
                 }
 
-                Console.WriteLine($"Actor upgrade completed for {macAddress}");
-
-                Task.Delay(10000);
-                bootloader = true;
-                Console.WriteLine($"Starting bootloader upgrade for {macAddress}");
-                stopwatch.Restart();
-                // Step 1: Upgrade the sensor
-                var bootladerUpgradeResult = await UpgradeSensorAsync(macAddress, pincode, false, sType);
-                stopwatch.Stop();
-                Console.WriteLine($"Bootloader upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds");
-
-                if (!bootladerUpgradeResult.Success)
+                if (upgradeBootloader)
                 {
-                    response.Success = false;
-                    response.StatusCode = bootladerUpgradeResult.StatusCode;
-                    response.Message = $"bootloader upgrade failed: {bootladerUpgradeResult.Message}";
-                    return response; // Stop if sensor upgrade fails
+                    bootloader = true;
+                    Console.WriteLine($"Starting bootloader upgrade for {macAddress}");
+                    stopwatch.Restart();
+                    // Step 1: Upgrade the sensor
+                    var bootladerUpgradeResult = await UpgradeSensorAsync(macAddress, pincode, false, sType);
+                    stopwatch.Stop();
+                    Console.WriteLine($"Bootloader upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds");
+
+                    if (!bootladerUpgradeResult.Success)
+                    {
+                        response.Success = false;
+                        response.StatusCode = bootladerUpgradeResult.StatusCode;
+                        response.Message = $"bootloader upgrade failed: {bootladerUpgradeResult.Message}";
+                        dev.BootloaderSuccess = false;
+                        return response; // Stop if sensor upgrade fails
+                    }
+
+                    dev.BootloaderSuccess = true;
+
+                    Console.WriteLine($"bootloader upgrade completed for {macAddress}");
+                    bootloader = false;
+                    Task.Delay(10000);
                 }
 
-                Console.WriteLine($"bootloader upgrade completed for {macAddress}");
+                //if (upgradeSensor)
+                //{
+                //    Console.WriteLine($"Starting Sensor upgrade for {macAddress}");
 
+                //    // Step 1: Upgrade the sensor
+                //    stopwatch.Restart();
+                //    var sensorUpgradeResult = await UpgradeSensorAsync(macAddress, pincode, false, sType);
+                //    stopwatch.Stop();
+                //    Console.WriteLine($"Sensor upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds");
+                //    if (!sensorUpgradeResult.Success)
+                //    {
+                //        response.Success = false;
+                //        response.StatusCode = sensorUpgradeResult.StatusCode;
+                //        response.Message = $"Sensor upgrade failed: {sensorUpgradeResult.Message}";
+                //        dev.SensorSuccess = false;
+                //        return response; // Stop if sensor upgrade fails
+                //    }
 
-                Console.WriteLine($"Starting Sensor upgrade for {macAddress}");
-                Task.Delay(10000);
-                bootloader = false;
+                //    dev.SensorSuccess = true;
 
-
-                // Step 1: Upgrade the sensor
-                stopwatch.Restart();
-                var sensorUpgradeResult = await UpgradeSensorAsync(macAddress, pincode, false, sType);
-                stopwatch.Stop();
-                Console.WriteLine($"Sensor upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds");
-                if (!sensorUpgradeResult.Success)
-                {
-                    response.Success = false;
-                    response.StatusCode = sensorUpgradeResult.StatusCode;
-                    response.Message = $"Sensor upgrade failed: {sensorUpgradeResult.Message}";
-                    return response; // Stop if sensor upgrade fails
-                }
-
-                Console.WriteLine($"Sensor upgrade completed for {macAddress}");
-
-                Console.WriteLine("delay for 1 minute");
-
-
+                //    Console.WriteLine($"Sensor upgrade completed for {macAddress}");                   
+                //}
 
                 // Both upgrades successful
                 response.Success = true;
                 response.StatusCode = 200;
                 response.Message = "Sensor and actor upgrades completed successfully.";
+
                 return response;
             }
             catch (Exception ex)
@@ -646,12 +665,12 @@ namespace AccessAPP.Services
             var progressList = requests.Select(req => new UpgradeProgress { MacAddress = req.MacAddress, Pincode = req.Pincode , sType = req.sType}).ToList();
 
             // Phase 1: Initial Upgrades
-            await UpgradeDevicesSequentially(progressList);
+            await UpgradeDevicesInParallel(progressList);
 
             // Phase 2: Retry Failed Devices (up to 3 times)
-            Console.WriteLine("wait for 1 minute before retrying");
-            Task.Delay(10000).Wait();
-            await RetryFailedDevices(progressList, 3);
+           // Console.WriteLine("wait for 1 minute before retrying");
+            //Task.Delay(10000).Wait();
+           //await RetryFailedDevices(progressList, 3);
 
             // Prepare Final Report
             var successfulDevices = progressList.Where(d => d.IsFullyUpgraded).Select(d => d.MacAddress).ToList();
@@ -667,15 +686,29 @@ namespace AccessAPP.Services
             };
         }
 
-        private async Task UpgradeDevicesSequentially(List<UpgradeProgress> devices)
+        private async Task UpgradeDevicesInParallel(List<UpgradeProgress> devices)
         {
+            SmartThreadPool smartThreadPool = new SmartThreadPool();
+            smartThreadPool.MaxThreads = 3; //max 3 devices in the same time
+
             foreach (var device in devices)
             {
-                Console.WriteLine($"Starting upgrade for device {device.MacAddress}");
-
-
-                await UpgradeDeviceAsync(device.MacAddress, device.Pincode, device.sType);
+                smartThreadPool.QueueWorkItem(async dev => {
+                    dev.RetryCount = 0;
+                    Console.WriteLine($"Starting upgrade for device {dev.MacAddress}");
+                    await UpgradeDeviceAsync(dev, dev.MacAddress, dev.Pincode, dev.sType, true, true, true);
+                    if (!dev.IsFullyUpgraded && dev.RetryCount < 3)
+                    {
+                        Task.Delay(10000).Wait();
+                        dev.RetryCount++;
+                        Console.WriteLine($"Retry upgrade for device {dev.MacAddress} - Retry {dev.RetryCount}");
+                        await UpgradeDeviceAsync(dev, dev.MacAddress, dev.Pincode, dev.sType, !dev.ActorSuccess, !dev.BootloaderSuccess, !dev.SensorSuccess);
+                    }
+                }, device);
+                
             }
+
+            smartThreadPool.WaitForIdle();
         }
 
         private async Task RetryFailedDevices(List<UpgradeProgress> devices, int maxRetries)
@@ -734,7 +767,7 @@ namespace AccessAPP.Services
 
         public async Task<ServiceResponse> ProcessingSensorUpgrade(string nodeMac, bool bActor) // should be moved to firmware services
         {
-            Console.WriteLine("Processing Sensor Upgrade started");
+            Console.WriteLine($"Processing Sensor Upgrade started->{nodeMac}");
             var response = new ServiceResponse();
             var isConnected = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
             if (isConnected.Status != HttpStatusCode.OK)
@@ -765,7 +798,7 @@ namespace AccessAPP.Services
                     return response;
                 }
                 UpgradeLogger.Log(logId, nodeMac, "NotificationEnabled", "Success");
-                Console.WriteLine("bootloader mode achieved and Notification enabled status:", notificationEnabled);
+                Console.WriteLine($"bootloader mode achieved and Notification enabled status: {notificationEnabled} -> {nodeMac}");
 
             }
             else
@@ -917,7 +950,7 @@ namespace AccessAPP.Services
                 if (bActor)
                 {
                     firmwarePath = _firmwareActorFilePath;
-                    Console.WriteLine("Programming Actor");
+                    Console.WriteLine($"Programming Actor  - {nodeMac}");
                     m_comm_data.WriteData = WriteActorData;
                     m_comm_data.ReadData = ReadActorData;
                     m_comm_data.MaxTransferSize = 72;
@@ -925,7 +958,7 @@ namespace AccessAPP.Services
                 else if (bootloader)
                 {
                     firmwarePath = _firmwareBootLoaderFilePath;
-                    Console.WriteLine("Programming Bootloader");
+                    Console.WriteLine($"Programming Bootloader  - {nodeMac}");
                     m_comm_data.WriteData = WriteSensorData;
                     m_comm_data.ReadData = ReadData;
                     m_comm_data.MaxTransferSize = 265;
@@ -936,7 +969,7 @@ namespace AccessAPP.Services
                     else if (sensorType == 3) { firmwarePath = _firmwareSensorFilePath3; }
                     else { firmwarePath = _firmwareSensorFilePath1; }
 
-                    Console.WriteLine("Programming Sensor");
+                    Console.WriteLine($"Programming Sensor - {nodeMac}");
                     m_comm_data.WriteData = WriteSensorData;
                     m_comm_data.ReadData = ReadData;
                     m_comm_data.MaxTransferSize = 265;
@@ -981,36 +1014,58 @@ namespace AccessAPP.Services
         public int ReadData(IntPtr buffer, int size, UInt64 customContext)
         {
             string macContext = MacToString(customContext);
+            ManualResetEvent _notificationEvent = null;
             Console.WriteLine("ReadData called here for actor and sensor | maccontext: " + macContext);
             try
             {
                 // Wait for notification data to be available
-                if (!_notificationEvent.WaitOne(TimeSpan.FromSeconds(5)))
+                
+                if (_notificationEvents.TryGetValue(macContext, out _notificationEvent) && _notificationEvent != null)
                 {
-                    Console.WriteLine("ReadData timeout waiting for notification");
-                    return ERR_READ; // Timeout or no data available
-                }
-
-                // Dequeue the notification data
-                if (_notificationQueue.TryDequeue(out var notificationData))
-                {
-                    // Copy the notification data into the provided buffer
-                    int bytesToCopy = Math.Min(size, notificationData.Length);
-                    Marshal.Copy(notificationData, 0, buffer, bytesToCopy);
-
-                    Console.WriteLine($"ReadData succeeded, bytes read: {bytesToCopy}");
-                    return ERR_SUCCESS; // Success
+                    if (!_notificationEvent.WaitOne(TimeSpan.FromSeconds(10)))
+                    {
+                        Console.WriteLine("ReadData timeout waiting for notification");
+                        return ERR_READ; // Timeout or no data available
+                    }
                 }
                 else
                 {
-                    Console.WriteLine("ReadData failed: No data available in queue");
+                    return ERR_READ; // Timeout or no data available
+                }
+
+                ConcurrentQueue<byte[]> _notificationQueue = null;
+                if (_notificationQueues.TryGetValue(macContext, out _notificationQueue) && _notificationQueue != null)
+                {
+
+                    // Dequeue the notification data
+                    if (_notificationQueue.TryDequeue(out var notificationData))
+                    {
+                        // Copy the notification data into the provided buffer
+                        int bytesToCopy = Math.Min(size, notificationData.Length);
+                        Marshal.Copy(notificationData, 0, buffer, bytesToCopy);
+
+                        Console.WriteLine($"ReadData succeeded, bytes read: {bytesToCopy}");
+                        return ERR_SUCCESS; // Success
+                    }
+                    else
+                    {
+                        Console.WriteLine("ReadData failed: No data available in queue");
+                        return ERR_READ; // No data available
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("ReadData failed: No notfication queue");
                     return ERR_READ; // No data available
                 }
             }
             finally
             {
                 // Reset the event so it can wait for the next notification
-                _notificationEvent.Reset();
+                if (_notificationEvent != null)
+                {
+                    _notificationEvent.Reset();
+                }
             }
 
         }
@@ -1018,49 +1073,69 @@ namespace AccessAPP.Services
         public int ReadActorData(IntPtr buffer, int size, UInt64 customContext)
         {
             string macContext = MacToString(customContext);
+            ManualResetEvent _notificationEvent = null;
             Console.WriteLine("ReadData called here for actor and sensor | maccontext: " + macContext);
             try
             {
                 // Wait for notification data to be available
-                if (!_notificationEvent.WaitOne(TimeSpan.FromSeconds(5)))
+                if (_notificationEvents.TryGetValue(macContext, out _notificationEvent) && _notificationEvent != null)
                 {
-                    Console.WriteLine("ReadData timeout waiting for notification");
-                    return ERR_READ; // Timeout or no data available
-                }
-
-                // Dequeue the notification data
-                if (_notificationQueue.TryDequeue(out var notificationData))
-                {
-                    // Copy the notification data into the provided buffer
-                    int bytesToSkip = 7;
-                    int bytesToCopy = Math.Min(size, notificationData.Length - bytesToSkip);
-
-                    // Ensure there are enough bytes to skip
-                    if (notificationData.Length > bytesToSkip)
+                    if (!_notificationEvent.WaitOne(TimeSpan.FromSeconds(10)))
                     {
-                        Marshal.Copy(notificationData, bytesToSkip, buffer, bytesToCopy);
-                        Console.WriteLine($"Skipped {bytesToSkip} bytes and copied {bytesToCopy} bytes.");
+                        Console.WriteLine("ReadData timeout waiting for notification");
+                        return ERR_READ; // Timeout or no data available
                     }
-                    else
-                    {
-                        Console.WriteLine($"Not enough data to skip {bytesToSkip} bytes. Copy operation skipped.");
-                        return ERR_READ; // Return an appropriate error code
-                    }
-
-
-                    Console.WriteLine($"ReadData succeeded, bytes read: {bytesToCopy}");
-                    return ERR_SUCCESS; // Success
                 }
                 else
                 {
-                    Console.WriteLine("ReadData failed: No data available in queue");
+                    return ERR_READ; // Timeout or no data available
+                }
+
+                ConcurrentQueue<byte[]> _notificationQueue = null;
+                if (_notificationQueues.TryGetValue(macContext, out _notificationQueue) && _notificationQueue != null)
+                {
+                    // Dequeue the notification data
+                    if (_notificationQueue.TryDequeue(out var notificationData))
+                    {
+                        // Copy the notification data into the provided buffer
+                        int bytesToSkip = 7;
+                        int bytesToCopy = Math.Min(size, notificationData.Length - bytesToSkip);
+
+                        // Ensure there are enough bytes to skip
+                        if (notificationData.Length > bytesToSkip)
+                        {
+                            Marshal.Copy(notificationData, bytesToSkip, buffer, bytesToCopy);
+                            Console.WriteLine($"Skipped {bytesToSkip} bytes and copied {bytesToCopy} bytes.");
+                        }
+                        else
+                        {
+                            Console.WriteLine($"Not enough data to skip {bytesToSkip} bytes. Copy operation skipped.");
+                            return ERR_READ; // Return an appropriate error code
+                        }
+
+
+                        Console.WriteLine($"ReadData succeeded, bytes read: {bytesToCopy}");
+                        return ERR_SUCCESS; // Success
+                    }
+                    else
+                    {
+                        Console.WriteLine("ReadData failed: No data available in queue");
+                        return ERR_READ; // No data available
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("ReadData failed: No notfication queue");
                     return ERR_READ; // No data available
                 }
             }
             finally
             {
                 // Reset the event so it can wait for the next notification
-                _notificationEvent.Reset();
+                if (_notificationEvent != null)
+                {
+                    _notificationEvent.Reset();
+                }
             }
 
         }
@@ -1091,7 +1166,7 @@ namespace AccessAPP.Services
                     Console.WriteLine($"Data Sent: {hexData} | macContext: {macContext}");
                     Console.WriteLine($"size of buffer: {size}");
                     //SendMessage(data);
-                    cassiaReadWriteService.WriteBleMessage("192.168.40.1", macContext, 14, hexData, "");
+                    cassiaReadWriteService.WriteBleMessage("192.168.100.90", macContext, 14, hexData, "");
 
                     status = true;
                 }
@@ -1136,7 +1211,7 @@ namespace AccessAPP.Services
                     string macContext = MacToString(customContext);
                     Console.WriteLine($"macContext: {macContext}");
                     // Send the BLE message asynchronously
-                    SendBleMessageAsync(bleMessage).GetAwaiter().GetResult();
+                    SendBleMessageAsync(bleMessage, macContext).GetAwaiter().GetResult();
 
 
 
@@ -1155,7 +1230,7 @@ namespace AccessAPP.Services
             }
         }
 
-        private async Task SendBleMessageAsync(BleMessage message)
+        private async Task SendBleMessageAsync(BleMessage message, string macAddress)
         {
             //Console.WriteLine($"Sending BLE message of size {message._BleMessageBuffer.Length}");
 
@@ -1170,7 +1245,7 @@ namespace AccessAPP.Services
                     byte[] chunk = new byte[chunkSize];
                     Array.Copy(message._BleMessageBuffer, bytesSent, chunk, 0, chunkSize);
 
-                    await SendChunk(chunk);
+                    await SendChunk(chunk, macAddress);
                     bytesSent += chunkSize;
                     remainingBytes -= chunkSize;
 
@@ -1180,18 +1255,18 @@ namespace AccessAPP.Services
             }
             else
             {
-                await SendChunk(message._BleMessageBuffer);
+                await SendChunk(message._BleMessageBuffer, macAddress);
             }
         }
 
-        private async Task SendChunk(byte[] chunk)
+        private async Task SendChunk(byte[] chunk, string macAddress)
         {
             // Actual sending logic (e.g., via BLE GATT write)
             CassiaReadWriteService cassiaReadWriteService = new CassiaReadWriteService();
             string hexData = BitConverter.ToString(chunk).Replace("-", "");
-            Console.WriteLine($"Data Sent: {hexData}");
+            Console.WriteLine($"Data Sent: {hexData} -> mac: {macAddress}");
 
-            await cassiaReadWriteService.WriteBleMessage("192.168.40.1", MacAddress, 19, hexData, "?noresponse=1");
+            await cassiaReadWriteService.WriteBleMessage("192.168.100.90", macAddress, 19, hexData, "?noresponse=1");
 
         }
 
@@ -1214,10 +1289,11 @@ namespace AccessAPP.Services
         {
             string endpoint = $"http://{gatewayIpAddress}/gatt/nodes/{nodeMac}/characteristics";
 
+            HttpClient _httpClientTmp = new HttpClient();
             try
             {
                 // Use synchronous version of HttpClient with GetAwaiter().GetResult()
-                var response = _httpClient.GetAsync(endpoint).GetAwaiter().GetResult();
+                var response = _httpClientTmp.GetAsync(endpoint).GetAwaiter().GetResult();
 
                 if (response.StatusCode == HttpStatusCode.OK)
                 {
@@ -1323,8 +1399,9 @@ namespace AccessAPP.Services
             {
                 double progress = (completedRows.Count / (double)allRows.Count) * 100.0;
                 progress = Math.Min(progress, 100.0);
-                Console.WriteLine($"Progress: {progress:F2}% - Array ID: {arrayID}, Row: {rowNum}");
                 string macContext = MacToString(customContext);
+
+                Console.WriteLine($"Progress: {progress:F2}% - Array ID: {arrayID}, Row: {rowNum} - {macContext}");
                
                 _deviceStorageService.UpdateFirmwareProgress(macContext, progress);
             }
@@ -1366,17 +1443,30 @@ namespace AccessAPP.Services
         public void InitializeNotificationSubscription(string macAddress, CassiaNotificationService cassiaNotificationService)
         {
             // Unsubscribe from all previous subscriptions
-            foreach (var subscribedMac in _subscribedMacAddresses)
+            //foreach (var subscribedMac in _subscribedMacAddresses)
+            //{
+            //    Console.WriteLine($"Unsubscribing from notifications for {subscribedMac}");
+            //    cassiaNotificationService.Unsubscribe(subscribedMac);
+            //}
+
+            ConcurrentQueue<byte[]> _tmpCheck = null;
+
+            if (_notificationQueues.TryGetValue(macAddress, out _tmpCheck) && _tmpCheck != null)
             {
-                Console.WriteLine($"Unsubscribing from notifications for {subscribedMac}");
-                cassiaNotificationService.Unsubscribe(subscribedMac);
+                return;
             }
 
-            // Clear the list of subscribed MAC addresses
-            _subscribedMacAddresses.Clear();
 
-            // Add the new MAC address to the subscribed set
-            _subscribedMacAddresses.Add(macAddress);
+            _notificationQueues.TryAdd(macAddress, new ConcurrentQueue<byte[]>());
+
+            _notificationEvents.TryAdd(macAddress, new ManualResetEvent(false));
+
+
+            //// Clear the list of subscribed MAC addresses
+            //_subscribedMacAddresses.Clear();
+
+            //// Add the new MAC address to the subscribed set
+            //_subscribedMacAddresses.Add(macAddress);
 
             // Subscribe to notifications for the new MAC address
             cassiaNotificationService.Subscribe(macAddress, (sender, data) =>
@@ -1387,21 +1477,35 @@ namespace AccessAPP.Services
                 byte[] parsedData = ParseHexStringToByteArray(data);
 
                 // Enqueue the data into the notification queue
-                _notificationQueue.Enqueue(parsedData);
+                ConcurrentQueue<byte[]> _notificationQueue = null;
+                if (_notificationQueues.TryGetValue(macAddress, out _notificationQueue) && _notificationQueue != null)
+                {
+                    _notificationQueue.Enqueue(parsedData);
+                }
 
                 // Signal that new data is available
-                _notificationEvent.Set();
+                ManualResetEvent _notificationEvent = null;
+                if (_notificationEvents.TryGetValue(macAddress, out _notificationEvent) && _notificationEvent != null)
+                {
+                    _notificationEvent.Set();
+                }
             });
         }
 
         public void UnsubscribeNotification(string macAddress, CassiaNotificationService cassiaNotificationService)
         {
             // Check if the MAC address is subscribed
-            if (_subscribedMacAddresses.Contains(macAddress))
+            ConcurrentQueue<byte[]> _tmpCheck = null;
+
+            if (_notificationQueues.TryGetValue(macAddress, out _tmpCheck) && _tmpCheck != null)
+            //if (_subscribedMacAddresses.Contains(macAddress))
             {
                 Console.WriteLine($"Unsubscribing from notifications for {macAddress}");
                 cassiaNotificationService.Unsubscribe(macAddress);
-                _subscribedMacAddresses.Remove(macAddress);
+                //_subscribedMacAddresses.Remove(macAddress);
+                _notificationQueues.TryRemove(macAddress, out _tmpCheck);
+                ManualResetEvent evt = null;
+                _notificationEvents.TryRemove(macAddress, out evt);
             }
         }
 
@@ -1419,6 +1523,7 @@ namespace AccessAPP.Services
 
         public async Task<bool> EnableNotificationAsync(string gatewayIpAddress, string nodeMac, bool bActor)
         {
+            HttpClient _httpClientTmp = new HttpClient();
             try
             {
                 string url = $"http://{gatewayIpAddress}/gatt/nodes/{nodeMac}/handle/15/value/0100";
@@ -1428,11 +1533,11 @@ namespace AccessAPP.Services
                 }
 
 
-                HttpResponseMessage response = await _httpClient.GetAsync(url);
+                HttpResponseMessage response = await _httpClientTmp.GetAsync(url);
 
                 if (response.IsSuccessStatusCode)
                 {
-                    Console.WriteLine("Notification enabled successfully.");
+                    Console.WriteLine($"Notification enabled successfully. {nodeMac}");
                     return true;
                 }
 

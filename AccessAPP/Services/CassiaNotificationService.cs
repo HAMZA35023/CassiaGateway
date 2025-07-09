@@ -1,5 +1,7 @@
 ﻿using System.Collections.Concurrent;
 using System.Text.Json;
+using Amazon.Runtime.Internal;
+using Windows.Media.Protection.PlayReady;
 
 public class CassiaNotificationService : IDisposable
 {
@@ -11,6 +13,7 @@ public class CassiaNotificationService : IDisposable
     private static Task _listeningTask;
     private static readonly object _lock = new();
     private readonly ILogger<CassiaNotificationService> _logger;
+    private readonly SemaphoreSlim semaphore = new SemaphoreSlim(1);
 
     // Singleton instance managed by DI
     private static CassiaNotificationService _instance;
@@ -109,15 +112,33 @@ public class CassiaNotificationService : IDisposable
     {
         try
         {
+            HttpClient _httpClientTmp = new HttpClient();
             string url = $"http://{gatewayIpAddress}/gatt/nodes/{nodeMac}/handle/15/value/0100";
             if (bActor)
             {
                 url = $"http://{gatewayIpAddress}/gatt/nodes/{nodeMac}/handle/16/value/0100";
             }
 
-            HttpResponseMessage response = await _httpClient.GetAsync(url);
+            HttpResponseMessage response = null;
 
-            if (response.IsSuccessStatusCode)
+            await semaphore.WaitAsync(); //lock connect requests
+
+            try
+            {
+                // Send the requestDevice is already in boot mode.
+                response = await _httpClientTmp.GetAsync(url);
+            }
+            catch (Exception e)
+            {
+                _logger.LogError($"Vinti {nodeMac}");
+                throw e;
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+
+            if (response != null && response.IsSuccessStatusCode)
             {
                 _logger.LogInformation($"Notification enabled successfully for {nodeMac}.");
                 return true;

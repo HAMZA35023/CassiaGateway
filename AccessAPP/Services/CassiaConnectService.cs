@@ -3,6 +3,7 @@ using AccessAPP.Services.HelperClasses;
 using Newtonsoft.Json;
 using System.Net;
 using System.Text;
+using System.Threading;
 
 namespace AccessAPP.Services
 {
@@ -11,6 +12,7 @@ namespace AccessAPP.Services
         private readonly HttpClient _httpClient;
         private readonly IConfiguration _configuration;
         private readonly CassiaNotificationService _notificationService; // ✅ Injected singleton
+        private readonly SemaphoreSlim semaphore = new SemaphoreSlim(1);
 
         public int Status { get; set; }
         public object ResponseBody { get; set; }
@@ -44,8 +46,24 @@ namespace AccessAPP.Services
 
             try
             {
-                // Send the request
-                var response = await client.SendAsync(request);
+                HttpResponseMessage response = new HttpResponseMessage(HttpStatusCode.InternalServerError);
+
+                await semaphore.WaitAsync(); //lock connect requests
+
+                try
+                {
+                    // Send the request
+                    response = await client.SendAsync(request);
+                    Thread.Sleep(1000);
+                }
+                catch(Exception e)
+                {
+                    throw e;
+                }
+                finally
+                {
+                    semaphore.Release();
+                }
 
                 // Ensure the request succeeded
                 response.EnsureSuccessStatusCode();
