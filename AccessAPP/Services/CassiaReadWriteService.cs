@@ -5,7 +5,7 @@
 
     public async Task<HttpResponseMessage> WriteBleMessage(string gatewayIpAddress, string macAddress, int handle, string hexValue, string queryParams)
     {
-        await semaphore.WaitAsync(); // Wait until it's safe to proceed
+        //await semaphore.WaitAsync(); // Wait until it's safe to proceed
         try
         {
             string endpoint = $"http://{gatewayIpAddress}/gatt/nodes/{macAddress}/handle/{handle}/value/{hexValue}{queryParams}";
@@ -23,7 +23,7 @@
         }
         finally
         {
-            semaphore.Release(); // Release the semaphore
+            //semaphore.Release(); // Release the semaphore
         }
     }
 
