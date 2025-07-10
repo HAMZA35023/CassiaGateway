@@ -21,13 +21,15 @@ public class ScanBleDevice : IDisposable
     private readonly string _targetMacAddressPrefix = "10:B9:F7";
     private readonly string _targetMacAddress = "10:B9:F7*";
     private static bool _buttonPressed = false; // Track if the button has been pressed
+    private CassiaFirmwareUpgradeService _firmUpgradeService;
 
-    public ScanBleDevice(HttpClient httpClient, IConfiguration configuration, ILogger<ScanBleDevice> logger, CassiaConnectService connectService, DeviceStorageService deviceStorageService)
+    public ScanBleDevice(HttpClient httpClient, IConfiguration configuration, ILogger<ScanBleDevice> logger, CassiaConnectService connectService, DeviceStorageService deviceStorageService, CassiaFirmwareUpgradeService firmUpgradeService)
     {
         _connectService = connectService;
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _deviceStorageService = deviceStorageService;
+        _firmUpgradeService = firmUpgradeService;
         // Read IP and Port from appsettings.json
         string gatewayIpAddress = configuration.GetValue<string>("GatewayConfiguration:IpAddress");
         int gatewayPort = configuration.GetValue<int>("GatewayConfiguration:Port");
@@ -52,6 +54,12 @@ public class ScanBleDevice : IDisposable
     {
         while (true)
         {
+            if (_firmUpgradeService.UpgradeDevicesInProgress > 0)
+            {
+                await Task.Delay(10000); // Retry delay
+                continue;
+            }
+
             try
             {
                 _logger.LogInformation("SSE BLE scan listener started.");

@@ -311,7 +311,7 @@ namespace AccessAPP.Controllers
                 {
                     return Conflict(new { message = "Firmware upgrade already in progress for this device." });
                 }
-                var result = await _firmwareUpgradeService.UpgradeSensorAsync(nodeMac, pincode, bActor, sensorType);
+                var result = await _firmwareUpgradeService.UpgradeSensorAsync(nodeMac, pincode, bActor, false, sensorType);
 
                 return result.Success
                     ? Ok(new { message = result.Message })

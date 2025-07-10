@@ -81,7 +81,7 @@ public class CassiaNotificationService : IDisposable
 
     private void InvokeHandlers(string eventData)
     {
-        _logger.LogInformation($"Raw SSE Event Received: {eventData}");
+        //_logger.LogInformation($"Raw SSE Event Received: {eventData}");
 
         try
         {
@@ -89,16 +89,16 @@ public class CassiaNotificationService : IDisposable
             if (eventObject != null && !string.IsNullOrEmpty(eventObject.value))
             {
                 string macAddress = eventObject.id;
-                _logger.LogInformation($"Extracted MAC Address: {macAddress}");
+                //_logger.LogInformation($"Extracted MAC Address: {macAddress}");
 
                 if (_eventHandlers.TryGetValue(macAddress, out var handler))
                 {
-                    _logger.LogInformation($"Invoking handler for MAC {macAddress} with data: {eventObject.value}");
+                    //_logger.LogInformation($"Invoking handler for MAC {macAddress} with data: {eventObject.value}");
                     handler?.Invoke(this, eventObject.value);
                 }
                 else
                 {
-                    _logger.LogWarning($"No handler found for MAC {macAddress}");
+                   // _logger.LogWarning($"No handler found for MAC {macAddress}");
                 }
             }
         }
