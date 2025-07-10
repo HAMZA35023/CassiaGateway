@@ -15,6 +15,7 @@ public class CassiaNotificationService : IDisposable
     private static readonly object _lock = new();
     private readonly ILogger<CassiaNotificationService> _logger;
     public SemaphoreSlim semaphore = null;
+    public bool forcedRestartedSSE = false;
 
     // Singleton instance managed by DI
     private static CassiaNotificationService _instance;
@@ -67,6 +68,7 @@ public class CassiaNotificationService : IDisposable
 
                     if (line.StartsWith("data:"))
                     {
+                        Console.WriteLine("SSE Raw data: " + line);
                         line = line.Substring("data:".Length).Trim();
                         Task.Run(() => InvokeHandlers(line));
                     }
@@ -171,7 +173,7 @@ public class CassiaNotificationService : IDisposable
 
     public void Dispose()
     {
-        _httpClient?.Dispose();
+        //_httpClient?.Dispose();
     }
 
     private class EventData

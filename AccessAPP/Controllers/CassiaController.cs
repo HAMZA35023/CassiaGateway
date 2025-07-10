@@ -479,6 +479,7 @@ namespace AccessAPP.Controllers
 
                     // Step 2: Send the telegram to the BLE device using WriteBleMessage method
                     CassiaReadWriteService cassiaReadWrite = new CassiaReadWriteService();
+                    cassiaReadWrite.semaphore = _connectService.semaphore;
                     var writeResponse = await cassiaReadWrite.WriteBleMessage(_gatewayIpAddress, macAddress, 19, hexLoginValue, "?noresponse=1");
 
                     if (writeResponse.IsSuccessStatusCode)

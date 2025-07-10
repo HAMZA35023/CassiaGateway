@@ -11,6 +11,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Security.Cryptography;
 using System.Windows.Markup;
+using Windows.UI.Notifications;
 using Windows.UI.Xaml.Controls.Primitives;
 
 namespace AccessAPP.Services
@@ -32,6 +33,7 @@ namespace AccessAPP.Services
 
         private ConcurrentDictionary<string, ConcurrentQueue<byte[]>> _notificationQueues = new ConcurrentDictionary<string, ConcurrentQueue<byte[]>>();
         private ConcurrentDictionary<string, ManualResetEvent> _notificationEvents = new ConcurrentDictionary<string, ManualResetEvent>();
+        //private ConcurrentDictionary<string, byte[]> _lastNotificationDataRead = new ConcurrentDictionary<string, byte[]>();
         //private ManualResetEvent _notificationEvent = new ManualResetEvent(false);
         //private readonly HashSet<string> _subscribedMacAddresses = new HashSet<string>();
         internal const int ERR_SUCCESS = 0;
@@ -359,9 +361,9 @@ namespace AccessAPP.Services
                     dev.RetryCountActor++;
 
                     stopwatch.Start();
-                    //var actorUpgradeResult = await UpgradeActorAsync(macAddress, pincode, true);
+                    var actorUpgradeResult = await UpgradeActorAsync(macAddress, pincode, true);
                     stopwatch.Stop();
-                    //Console.WriteLine($"Actor upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds - result: {actorUpgradeResult.Success}");
+                    Console.WriteLine($"Actor upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds - result: {actorUpgradeResult.Success}");
                     //if (!actorUpgradeResult.Success)
                     //{
                         //vinti: usually upgrade fails if the detector is in bootloader - try to flash first bootloader and sensor
@@ -373,7 +375,8 @@ namespace AccessAPP.Services
                         //return response; // Stop if actor upgrade fails
                    // }
 
-                    dev.ActorSuccess = true;
+
+                    dev.ActorSuccess = actorUpgradeResult.Success;
 
                     Console.WriteLine($"Actor upgrade completed for {macAddress}");
                     Task.Delay(10000);
@@ -713,7 +716,7 @@ namespace AccessAPP.Services
                     dev.RetryCountSensor = 0;
                     Console.WriteLine($"Starting upgrade for device {dev.MacAddress}");
                     await UpgradeDeviceAsync(dev, dev.MacAddress, dev.Pincode, dev.sType, true, true, true);
-                    if (!dev.IsFullyUpgraded && (dev.RetryCountActor < 2 * maxRetriesPerComponent
+                    while (!dev.IsFullyUpgraded && (dev.RetryCountActor < 2 * maxRetriesPerComponent
                                                 || dev.RetryCountBootloader < maxRetriesPerComponent
                                                 || dev.RetryCountSensor < maxRetriesPerComponent))
                     {
@@ -722,6 +725,8 @@ namespace AccessAPP.Services
                         Console.WriteLine($"Retry upgrade for device {dev.MacAddress} - Retry {dev.RetryCount}");
                         await UpgradeDeviceAsync(dev, dev.MacAddress, dev.Pincode, dev.sType, !dev.ActorSuccess, !dev.BootloaderSuccess, !dev.SensorSuccess);
                     }
+
+                    Console.WriteLine($">>>> THREAD END - {dev.MacAddress} - actor: {dev.ActorSuccess}:{dev.RetryCountActor} - bootloader: {dev.BootloaderSuccess}:{dev.RetryCountBootloader} - sensor: {dev.SensorSuccess}:{dev.RetryCountSensor}");
 
                     Interlocked.Decrement(ref UpgradeDevicesInProgress);
                 }, device);
@@ -1051,15 +1056,42 @@ namespace AccessAPP.Services
                 
                 if (_notificationEvents.TryGetValue(macContext, out _notificationEvent) && _notificationEvent != null)
                 {
-                    if (!_notificationEvent.WaitOne(TimeSpan.FromSeconds(10)))
-                    {
-                        _ownInstance._notificationService.EnableNotificationAsync("192.168.100.90", macContext, false);
-                    }
+                    //if (!_notificationEvent.WaitOne(TimeSpan.FromSeconds(15)))
+                    //{
+                    //   var resultEnable = _ownInstance._notificationService.EnableNotificationAsync("192.168.100.90", macContext, false);
+                    //   resultEnable.Wait();
+                    //   if (!resultEnable.Result)
+                    //   {
+                    //        Thread.Sleep(10000);
+                    //        resultEnable = _ownInstance._notificationService.EnableNotificationAsync("192.168.100.90", macContext, false);
+                    //        resultEnable.Wait();
+                    //   }
+                    //}
                     
                     if (!_notificationEvent.WaitOne(TimeSpan.FromSeconds(20)))
                     {
                         Console.WriteLine("ReadData timeout waiting for notification");
-                        return ERR_READ; // Timeout or no data available
+
+                        //byte[] lastReadNotif = null;
+                        //if (_ownInstance._lastNotificationDataRead.TryGetValue(macContext, out lastReadNotif) && lastReadNotif != null)
+                        //{
+                        //    Console.WriteLine($"Read data BACKUP {macContext} - " + BitConverter.ToString(lastReadNotif).Replace("-", ""));
+
+                        //    // Copy the notification data into the provided buffer
+                        //    int bytesToCopy = Math.Min(size, lastReadNotif.Length);
+                        //    Marshal.Copy(lastReadNotif, 0, buffer, bytesToCopy);
+
+                        //    _ownInstance._lastNotificationDataRead.TryRemove(macContext, out _);
+
+                        //    Thread.Sleep(5000);
+
+                        //    //Console.WriteLine($"ReadData succeeded, bytes read: {bytesToCopy}");
+                        //    return ERR_SUCCESS; // Success
+                        //}
+                        //else
+                        {
+                            return ERR_READ; // Timeout or no data available
+                        }
                     }
                 }
                 else
@@ -1070,13 +1102,19 @@ namespace AccessAPP.Services
                 ConcurrentQueue<byte[]> _notificationQueue = null;
                 if (_notificationQueues.TryGetValue(macContext, out _notificationQueue) && _notificationQueue != null)
                 {
+                   
 
                     // Dequeue the notification data
                     if (_notificationQueue.TryDequeue(out var notificationData))
                     {
+                        //_ownInstance._lastNotificationDataRead.TryRemove(macContext, out _);
+                        Console.WriteLine($"Read data queue process {macContext} - size: {size} - " + BitConverter.ToString(notificationData).Replace("-", ""));
+
                         // Copy the notification data into the provided buffer
                         int bytesToCopy = Math.Min(size, notificationData.Length);
                         Marshal.Copy(notificationData, 0, buffer, bytesToCopy);
+
+                        //_ownInstance._lastNotificationDataRead.TryAdd(macContext, notificationData);
 
                         //Console.WriteLine($"ReadData succeeded, bytes read: {bytesToCopy}");
                         return ERR_SUCCESS; // Success
@@ -1114,10 +1152,49 @@ namespace AccessAPP.Services
                 // Wait for notification data to be available
                 if (_ownInstance._notificationEvents.TryGetValue(macContext, out _notificationEvent) && _notificationEvent != null)
                 {
+                    //if (!_notificationEvent.WaitOne(TimeSpan.FromSeconds(15)))
+                    //{
+                    //    var resultEnable = _ownInstance._notificationService.EnableNotificationAsync("192.168.100.90", macContext, true);
+                    //    resultEnable.Wait();
+                    //    if (!resultEnable.Result)
+                    //    {
+                    //        Thread.Sleep(10000);
+                    //        resultEnable = _ownInstance._notificationService.EnableNotificationAsync("192.168.100.90", macContext, true);
+                    //        resultEnable.Wait();
+                    //    }
+                    //}
+
                     if (!_notificationEvent.WaitOne(TimeSpan.FromSeconds(20)))
                     {
-                        Console.WriteLine("ReadData timeout waiting for notification");
-                        return ERR_READ; // Timeout or no data available
+                        byte[] lastReadNotif = null;
+                        //if (_ownInstance._lastNotificationDataRead.TryGetValue(macContext, out lastReadNotif) && lastReadNotif != null)
+                        //{
+                        //    Console.WriteLine($"Read ACTOR BACKUP process {macContext} - " + BitConverter.ToString(lastReadNotif).Replace("-", ""));
+
+                        //    int bytesToSkip = 7;
+                        //    int bytesToCopy = Math.Min(size, lastReadNotif.Length - bytesToSkip);
+
+                        //    // Ensure there are enough bytes to skip
+                        //    if (lastReadNotif.Length > bytesToSkip)
+                        //    {
+                        //        Marshal.Copy(lastReadNotif, bytesToSkip, buffer, bytesToCopy);
+                        //        _ownInstance._lastNotificationDataRead.TryRemove(macContext, out _);
+                        //        // Console.WriteLine($"Skipped {bytesToSkip} bytes and copied {bytesToCopy} bytes.");
+
+                        //        Thread.Sleep(5000);
+                        //        return ERR_SUCCESS;
+                        //    }
+                        //    else
+                        //    {
+                        //        Console.WriteLine($"Not enough data to skip {bytesToSkip} bytes. Copy operation skipped.");
+                        //        return ERR_READ; // Return an appropriate error code
+                        //    }
+                        //}
+                        //else
+                        {
+                            Console.WriteLine("ReadData timeout waiting for notification");
+                            return ERR_READ; // Timeout or no data available
+                        }
                     }
                 }
                 else
@@ -1128,9 +1205,12 @@ namespace AccessAPP.Services
                 ConcurrentQueue<byte[]> _notificationQueue = null;
                 if (_ownInstance._notificationQueues.TryGetValue(macContext, out _notificationQueue) && _notificationQueue != null)
                 {
+
                     // Dequeue the notification data
                     if (_notificationQueue.TryDequeue(out var notificationData))
                     {
+                        //_ownInstance._lastNotificationDataRead.TryRemove(macContext, out _);
+                        Console.WriteLine($"Read ACTOR data queue process {macContext} - size {size} - " + BitConverter.ToString(notificationData).Replace("-", ""));
                         // Copy the notification data into the provided buffer
                         int bytesToSkip = 7;
                         int bytesToCopy = Math.Min(size, notificationData.Length - bytesToSkip);
@@ -1139,7 +1219,8 @@ namespace AccessAPP.Services
                         if (notificationData.Length > bytesToSkip)
                         {
                             Marshal.Copy(notificationData, bytesToSkip, buffer, bytesToCopy);
-                           // Console.WriteLine($"Skipped {bytesToSkip} bytes and copied {bytesToCopy} bytes.");
+                            //_ownInstance._lastNotificationDataRead.TryAdd(macContext, notificationData);
+                            // Console.WriteLine($"Skipped {bytesToSkip} bytes and copied {bytesToCopy} bytes.");
                         }
                         else
                         {
@@ -1205,7 +1286,8 @@ namespace AccessAPP.Services
                     //Console.WriteLine($"Data Sent: {hexData} | macContext: {macContext}");
                     //Console.WriteLine($"size of buffer: {size}");
                     //SendMessage(data);
-                    _ownInstance.cassiaReadWriteService.WriteBleMessage("192.168.100.90", macContext, 14, hexData, "");
+                    _ownInstance.cassiaReadWriteService.WriteBleMessage("192.168.200.10", macContext, 14, hexData, "");
+                    Thread.Sleep(100);
 
                     status = true;
                 }
@@ -1216,7 +1298,7 @@ namespace AccessAPP.Services
                 //second try
                 if (!status)
                 {
-                    Thread.Sleep(1000);
+                    Thread.Sleep(2000);
 
                     try
                     {
@@ -1224,7 +1306,8 @@ namespace AccessAPP.Services
                         //Console.WriteLine($"Data Sent: {hexData} | macContext: {macContext}");
                         //Console.WriteLine($"size of buffer: {size}");
                         //SendMessage(data);
-                        _ownInstance.cassiaReadWriteService.WriteBleMessage("192.168.100.90", macContext, 14, hexData, "");
+                        _ownInstance.cassiaReadWriteService.WriteBleMessage("192.168.200.10", macContext, 14, hexData, "");
+                        Thread.Sleep(100);
 
                         status = true;
                     }
@@ -1254,32 +1337,52 @@ namespace AccessAPP.Services
 
             if (GetHidDevice())
             {
+                // Prepare and send BLE message for actor
+                BleMessage bleMessage = new BleMessage
+                {
+                    _BleMessageType = BleMessage.BleMsgId.ActorBootPacket,
+                    _BleMessageDataBuffer = data
+                };
+
+                string macContext = MacToString(customContext);
+
                 try
                 {
-
-                    // Prepare and send BLE message for actor
-                    BleMessage bleMessage = new BleMessage
-                    {
-                        _BleMessageType = BleMessage.BleMsgId.ActorBootPacket,
-                        _BleMessageDataBuffer = data
-                    };
-
                     // Encode the message
                     if (!bleMessage.EncodeGetBleTelegram())
                         throw new Exception("Failed to encode BLE telegram.");
 
-                    string macContext = MacToString(customContext);
+                   
                     //Console.WriteLine($"macContext: {macContext}");
                     // Send the BLE message asynchronously
                     SendBleMessageAsync(bleMessage, macContext).GetAwaiter().GetResult();
-
-
 
                     status = true;
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"Error in WriteData: {ex.Message}");
+                }
+
+                if (!status)
+                {
+                    Thread.Sleep(2000);
+                    try
+                    {
+                        // Encode the message
+                        if (!bleMessage.EncodeGetBleTelegram())
+                            throw new Exception("Failed to encode BLE telegram.");
+
+                        //Console.WriteLine($"macContext: {macContext}");
+                        // Send the BLE message asynchronously
+                        SendBleMessageAsync(bleMessage, macContext).GetAwaiter().GetResult();
+
+                        status = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error in WriteData: {ex.Message}");
+                    }
                 }
 
                 return status ? ERR_SUCCESS : ERR_WRITE;
@@ -1310,12 +1413,22 @@ namespace AccessAPP.Services
                     remainingBytes -= chunkSize;
 
                     //Console.WriteLine($"Sent chunk of size {chunkSize}. Remaining: {remainingBytes}");
-                    await Task.Delay(50); // Adjust delay as needed
+                    if (remainingBytes > 0)
+                    {
+                        Thread.Sleep(1000);
+                    }
+                    else
+                    {
+                        Thread.Sleep(200);
+                    }
+                    
                 }
             }
             else
             {
                 await SendChunk(message._BleMessageBuffer, macAddress);
+                //await Task.Delay(100); // Adjust delay as needed
+                Thread.Sleep(200);
             }
         }
 
@@ -1326,7 +1439,7 @@ namespace AccessAPP.Services
             string hexData = BitConverter.ToString(chunk).Replace("-", "");
             //Console.WriteLine($"Data Sent: {hexData} -> mac: {macAddress}");
 
-            await _ownInstance.cassiaReadWriteService.WriteBleMessage("192.168.100.90", macAddress, 19, hexData, "?noresponse=1");
+            await _ownInstance.cassiaReadWriteService.WriteBleMessage("192.168.200.10", macAddress, 19, hexData, "?noresponse=1");
 
         }
 
@@ -1516,11 +1629,15 @@ namespace AccessAPP.Services
             //    cassiaNotificationService.Unsubscribe(subscribedMac);
             //}
 
+            cassiaNotificationService.Unsubscribe(macAddress);
+
             ConcurrentQueue<byte[]> _tmpCheck = null;
 
-            if (_notificationQueues.TryGetValue(macAddress, out _tmpCheck) && _tmpCheck != null)
+            //if (_notificationQueues.TryGetValue(macAddress, out _tmpCheck) && _tmpCheck != null)
             {
-                return;
+                _notificationEvents.TryRemove(macAddress, out _);
+                _notificationQueues.TryRemove(macAddress, out _);
+                //_lastNotificationDataRead.TryRemove(macAddress, out _);
             }
 
 
@@ -1538,7 +1655,7 @@ namespace AccessAPP.Services
             // Subscribe to notifications for the new MAC address
             cassiaNotificationService.Subscribe(macAddress, (sender, data) =>
             {
-                //Console.WriteLine($"Notification received for {macAddress}: {data}");
+                Console.WriteLine($"Notification received for {macAddress}: {data}");
 
                 // Parse the notification data into a byte array
                 byte[] parsedData = ParseHexStringToByteArray(data);
@@ -1573,6 +1690,7 @@ namespace AccessAPP.Services
                 _notificationQueues.TryRemove(macAddress, out _tmpCheck);
                 ManualResetEvent evt = null;
                 _notificationEvents.TryRemove(macAddress, out evt);
+                //_lastNotificationDataRead.TryRemove(macAddress, out _);
             }
         }
 

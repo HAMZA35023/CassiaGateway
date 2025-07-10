@@ -70,6 +70,11 @@ public class ScanBleDevice : IDisposable
 
                 while (true)
                 {
+                    if (_firmUpgradeService.UpgradeDevicesInProgress > 0)
+                    {
+                        break;
+                    }
+
                     string line = await reader.ReadLineAsync();
                     if (string.IsNullOrWhiteSpace(line) || line.Equals(":keep-alive"))
                     {
@@ -170,7 +175,7 @@ public class ScanBleDevice : IDisposable
 
     public void Dispose()
     {
-        _httpClient?.Dispose();
+        //_httpClient?.Dispose();
     }
 }
 

@@ -12,13 +12,18 @@
             var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
             using (var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead))
             {
+                if (!response.IsSuccessStatusCode)
+                {
+                    Console.WriteLine("Bad Write reason: " + response.Content.ReadAsStringAsync());
+                }
+
                 response.EnsureSuccessStatusCode();
                 return response;
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error: {ex.Message + ex.StackTrace}");
+            Console.WriteLine($"Error {macAddress}: {ex.Message + ex.StackTrace}");
             throw new Exception($"Error: {ex.Message + ex.StackTrace}");
         }
         finally
@@ -29,6 +34,6 @@
 
     public void Dispose()
     {
-        httpClient?.Dispose();
+       // httpClient?.Dispose();
     }
 }
