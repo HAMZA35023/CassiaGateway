@@ -454,8 +454,49 @@ namespace AccessAPP.Services
             var successfulDevices = new List<BulkUpgradeRequest>();
             var failedDevices = new Queue<(BulkUpgradeRequest, int)>(); // (Device, Retry Count)
             var failedActors = new Queue<(BulkUpgradeRequest, int)>(); // (Device, Retry Count)
-
+            // --- PHASE 2: Actor Upgrade ---
             foreach (var device in devices)
+            {
+                var actorResponse = await UpgradeActorWithRetryAsync(device, 0);
+
+                if (!actorResponse.Success)
+                {
+                    failedActors.Enqueue((device, 1));
+                    Console.WriteLine($"Actor upgrade failed for {device.MacAddress}: {actorResponse.Message}");
+                    // You can optionally add this to a new retry queue if needed
+                }
+                else
+                {
+                    successfulDevices.Add(device);
+                    Console.WriteLine("device disconnected and will reconnect after 3s");
+                    var isDisconnected = await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, device.MacAddress, 0);
+                    UpgradeLogger.Log(logId, device.MacAddress, "Disconnected", "Success");
+                    await Task.Delay(3000);
+                    Console.WriteLine($"Actor upgrade successful for {device.MacAddress}");
+                }
+
+                // Optionally update `responses[device.MacAddress]` with new actor status
+            }
+            while (failedActors.Count > 0)
+            {
+                var (device, retryCount) = failedActors.Dequeue();
+                var actorResponse = await UpgradeActorWithRetryAsync(device, 0);
+                //responses[device.MacAddress] = response; // Overwrite previous responses
+
+                if (actorResponse.Success)
+                { 
+                    successfulDevices.Add(device);
+                }
+                if (!actorResponse.Success && retryCount < 2) // Retry up to 2 times
+                {
+                    failedActors.Enqueue((device, retryCount + 1));
+                }
+            }
+
+            Console.WriteLine("Waiting 2 minutes before starting actor upgrade...");
+            await Task.Delay(TimeSpan.FromMinutes(2));
+
+            foreach (var device in successfulDevices)
             {
                 sensorType = device.sType;
                 var response = await UpgradeBLSensorWithRetryAsync(device, 0);
@@ -487,43 +528,7 @@ namespace AccessAPP.Services
                     failedDevices.Enqueue((device, retryCount + 1));
                 }
             }
-            Console.WriteLine($"Bootloader + Sensor upgrade complete for {successfulDevices.Count} successful devices.");
-
-            Console.WriteLine("Waiting 3 minutes before starting actor upgrade...");
-            await Task.Delay(TimeSpan.FromMinutes(3));
-
-            // --- PHASE 2: Actor Upgrade ---
-            foreach (var device in successfulDevices)
-            {
-                var actorResponse = await UpgradeActorWithRetryAsync(device, 0);
-
-                if (!actorResponse.Success)
-                {
-                    failedActors.Enqueue((device, 1));
-                    Console.WriteLine($"Actor upgrade failed for {device.MacAddress}: {actorResponse.Message}");
-                    // You can optionally add this to a new retry queue if needed
-                }
-                else
-                {
-                    Console.WriteLine($"Actor upgrade successful for {device.MacAddress}");
-                }
-
-                // Optionally update `responses[device.MacAddress]` with new actor status
-            }
-            while (failedActors.Count > 0)
-            {
-                var (device, retryCount) = failedActors.Dequeue();
-                var actorResponse = await UpgradeActorWithRetryAsync(device, 0);
-                //responses[device.MacAddress] = response; // Overwrite previous responses
-
-                if (actorResponse.Success)
-                { //successfulDevices.Add(device);
-                 }
-                if (!actorResponse.Success && retryCount < 2) // Retry up to 2 times
-                {
-                    failedActors.Enqueue((device, retryCount + 1));
-                }
-            }
+            Console.WriteLine($"Bootloader + Sensor upgrade complete for {successfulDevices.Count} successful devices."); 
 
             return responses.Values.ToList(); // Return only the latest responses
         }
