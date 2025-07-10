@@ -1,7 +1,7 @@
 ﻿public class CassiaReadWriteService : IDisposable
 {
     private static readonly HttpClient httpClient = new HttpClient();
-    private static SemaphoreSlim semaphore = new SemaphoreSlim(5); // Limit to 5 concurrent connections
+    public SemaphoreSlim semaphore = null;
 
     public async Task<HttpResponseMessage> WriteBleMessage(string gatewayIpAddress, string macAddress, int handle, string hexValue, string queryParams)
     {

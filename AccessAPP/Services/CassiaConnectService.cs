@@ -12,7 +12,7 @@ namespace AccessAPP.Services
         private readonly HttpClient _httpClient;
         private readonly IConfiguration _configuration;
         private readonly CassiaNotificationService _notificationService; // ✅ Injected singleton
-        private readonly SemaphoreSlim semaphore = new SemaphoreSlim(1);
+        public readonly SemaphoreSlim semaphore = new SemaphoreSlim(1); //this will be used as sync point by all services
 
         public int Status { get; set; }
         public object ResponseBody { get; set; }

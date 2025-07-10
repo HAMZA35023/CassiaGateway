@@ -52,13 +52,19 @@ namespace AccessAPP.Services
         private static ConcurrentDictionary<string, HashSet<string>> allRows = new();
         private static ConcurrentDictionary<string, HashSet<string>> completedRows = new();
 
+        CassiaReadWriteService cassiaReadWriteService = new CassiaReadWriteService();
+
 
         private readonly CassiaNotificationService _notificationService; // ✅ Injected singleton
 
+        private static CassiaFirmwareUpgradeService _ownInstance = null;
+
         public CassiaFirmwareUpgradeService(HttpClient httpClient, CassiaConnectService connectService, CassiaPinCodeService cassiaPinCodeService, CassiaNotificationService notificationService, DeviceStorageService deviceStorageService, IConfiguration configuration)
         {
+            _ownInstance = this;
             _httpClient = httpClient;
             _connectService = connectService;
+            cassiaReadWriteService.semaphore = connectService.semaphore;
             _deviceStorageService = deviceStorageService;
             _cassiaPinCodeService = cassiaPinCodeService;
             _configuration = configuration;
@@ -350,10 +356,12 @@ namespace AccessAPP.Services
                 {
                     Console.WriteLine($"Starting actor upgrade for {macAddress}");
 
+                    dev.RetryCountActor++;
+
                     stopwatch.Start();
-                    var actorUpgradeResult = await UpgradeActorAsync(macAddress, pincode, true);
+                    //var actorUpgradeResult = await UpgradeActorAsync(macAddress, pincode, true);
                     stopwatch.Stop();
-                    Console.WriteLine($"Actor upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds - result: {actorUpgradeResult.Success}");
+                    //Console.WriteLine($"Actor upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds - result: {actorUpgradeResult.Success}");
                     //if (!actorUpgradeResult.Success)
                     //{
                         //vinti: usually upgrade fails if the detector is in bootloader - try to flash first bootloader and sensor
@@ -373,6 +381,8 @@ namespace AccessAPP.Services
 
                 if (upgradeBootloader)
                 {
+                    dev.RetryCountBootloader++;
+
                     Console.WriteLine($"Starting bootloader upgrade for {macAddress}");
                     stopwatch.Restart();
                     // Step 1: Upgrade the sensor
@@ -392,12 +402,14 @@ namespace AccessAPP.Services
                     dev.BootloaderSuccess = true;
 
                     Console.WriteLine($"bootloader upgrade completed for {macAddress}");
-                    Task.Delay(10000);
+                    Task.Delay(20000);
                 }
 
                 if (upgradeSensor)
                 {
                     Console.WriteLine($"Starting Sensor upgrade for {macAddress}");
+
+                    dev.RetryCountSensor++;
 
                     // Step 1: Upgrade the sensor
                     stopwatch.Restart();
@@ -688,15 +700,22 @@ namespace AccessAPP.Services
             SmartThreadPool smartThreadPool = new SmartThreadPool();
             smartThreadPool.MaxThreads = 3; //max 3 devices in the same time
 
+            int maxRetriesPerComponent = 3;
+
             Interlocked.Add(ref UpgradeDevicesInProgress, devices.Count);
 
             foreach (var device in devices)
             {
                 smartThreadPool.QueueWorkItem(async dev => {
                     dev.RetryCount = 0;
+                    dev.RetryCountActor = 0;
+                    dev.RetryCountBootloader = 0;
+                    dev.RetryCountSensor = 0;
                     Console.WriteLine($"Starting upgrade for device {dev.MacAddress}");
                     await UpgradeDeviceAsync(dev, dev.MacAddress, dev.Pincode, dev.sType, true, true, true);
-                    if (!dev.IsFullyUpgraded && dev.RetryCount < 3)
+                    if (!dev.IsFullyUpgraded && (dev.RetryCountActor < 2 * maxRetriesPerComponent
+                                                || dev.RetryCountBootloader < maxRetriesPerComponent
+                                                || dev.RetryCountSensor < maxRetriesPerComponent))
                     {
                         Task.Delay(10000).Wait();
                         dev.RetryCount++;
@@ -1032,6 +1051,11 @@ namespace AccessAPP.Services
                 
                 if (_notificationEvents.TryGetValue(macContext, out _notificationEvent) && _notificationEvent != null)
                 {
+                    if (!_notificationEvent.WaitOne(TimeSpan.FromSeconds(10)))
+                    {
+                        _ownInstance._notificationService.EnableNotificationAsync("192.168.100.90", macContext, false);
+                    }
+                    
                     if (!_notificationEvent.WaitOne(TimeSpan.FromSeconds(20)))
                     {
                         Console.WriteLine("ReadData timeout waiting for notification");
@@ -1080,7 +1104,7 @@ namespace AccessAPP.Services
 
         }
 
-        public int ReadActorData(IntPtr buffer, int size, UInt64 customContext)
+        public static int ReadActorData(IntPtr buffer, int size, UInt64 customContext)
         {
             string macContext = MacToString(customContext);
             ManualResetEvent _notificationEvent = null;
@@ -1088,7 +1112,7 @@ namespace AccessAPP.Services
             try
             {
                 // Wait for notification data to be available
-                if (_notificationEvents.TryGetValue(macContext, out _notificationEvent) && _notificationEvent != null)
+                if (_ownInstance._notificationEvents.TryGetValue(macContext, out _notificationEvent) && _notificationEvent != null)
                 {
                     if (!_notificationEvent.WaitOne(TimeSpan.FromSeconds(20)))
                     {
@@ -1102,7 +1126,7 @@ namespace AccessAPP.Services
                 }
 
                 ConcurrentQueue<byte[]> _notificationQueue = null;
-                if (_notificationQueues.TryGetValue(macContext, out _notificationQueue) && _notificationQueue != null)
+                if (_ownInstance._notificationQueues.TryGetValue(macContext, out _notificationQueue) && _notificationQueue != null)
                 {
                     // Dequeue the notification data
                     if (_notificationQueue.TryDequeue(out var notificationData))
@@ -1158,12 +1182,15 @@ namespace AccessAPP.Services
         /// <returns></returns>
 
         ///Sensor Programming
-        public int WriteSensorData(IntPtr buffer, int size, UInt64 customContext)
+
+        
+
+        public static int WriteSensorData(IntPtr buffer, int size, UInt64 customContext)
         {
             bool status = false;
             byte[] data = new byte[size];
             Marshal.Copy(buffer, data, 0, size);
-            CassiaReadWriteService cassiaReadWriteService = new CassiaReadWriteService();
+            
 
             if (GetHidDevice())
             {
@@ -1178,7 +1205,7 @@ namespace AccessAPP.Services
                     //Console.WriteLine($"Data Sent: {hexData} | macContext: {macContext}");
                     //Console.WriteLine($"size of buffer: {size}");
                     //SendMessage(data);
-                    cassiaReadWriteService.WriteBleMessage("192.168.100.90", macContext, 14, hexData, "");
+                    _ownInstance.cassiaReadWriteService.WriteBleMessage("192.168.100.90", macContext, 14, hexData, "");
 
                     status = true;
                 }
@@ -1197,7 +1224,7 @@ namespace AccessAPP.Services
                         //Console.WriteLine($"Data Sent: {hexData} | macContext: {macContext}");
                         //Console.WriteLine($"size of buffer: {size}");
                         //SendMessage(data);
-                        cassiaReadWriteService.WriteBleMessage("192.168.100.90", macContext, 14, hexData, "");
+                        _ownInstance.cassiaReadWriteService.WriteBleMessage("192.168.100.90", macContext, 14, hexData, "");
 
                         status = true;
                     }
@@ -1216,7 +1243,7 @@ namespace AccessAPP.Services
         }
 
         ///Actor Programming
-        public int WriteActorData(IntPtr buffer, int size, UInt64 customContext)
+        public static int WriteActorData(IntPtr buffer, int size, UInt64 customContext)
         {
             bool status = false;
             byte[] data = new byte[size];
@@ -1263,7 +1290,7 @@ namespace AccessAPP.Services
             }
         }
 
-        private async Task SendBleMessageAsync(BleMessage message, string macAddress)
+        private static async Task SendBleMessageAsync(BleMessage message, string macAddress)
         {
             //Console.WriteLine($"Sending BLE message of size {message._BleMessageBuffer.Length}");
 
@@ -1292,28 +1319,28 @@ namespace AccessAPP.Services
             }
         }
 
-        private async Task SendChunk(byte[] chunk, string macAddress)
+        private static async Task SendChunk(byte[] chunk, string macAddress)
         {
             // Actual sending logic (e.g., via BLE GATT write)
-            CassiaReadWriteService cassiaReadWriteService = new CassiaReadWriteService();
+            //CassiaReadWriteService cassiaReadWriteService = new CassiaReadWriteService();
             string hexData = BitConverter.ToString(chunk).Replace("-", "");
             //Console.WriteLine($"Data Sent: {hexData} -> mac: {macAddress}");
 
-            await cassiaReadWriteService.WriteBleMessage("192.168.100.90", macAddress, 19, hexData, "?noresponse=1");
+            await _ownInstance.cassiaReadWriteService.WriteBleMessage("192.168.100.90", macAddress, 19, hexData, "?noresponse=1");
 
         }
 
 
         public async Task<bool> SendJumpToBootloader(string gatewayIpAddress, string nodeMac, bool bActor)
         {
-            var cassiaReadWrite = new CassiaReadWriteService();
+            //var cassiaReadWrite = new CassiaReadWriteService();
             string value = "0101000800D9CB01";
             if (bActor)
             {
                 value = "0101000800D9CB02";
             }
 
-            var response = await cassiaReadWrite.WriteBleMessage(gatewayIpAddress, nodeMac, 19, value, "?noresponse=1");
+            var response = await cassiaReadWriteService.WriteBleMessage(gatewayIpAddress, nodeMac, 19, value, "?noresponse=1");
 
             return response.IsSuccessStatusCode;
         }
@@ -1351,7 +1378,7 @@ namespace AccessAPP.Services
             try
             {
                 string hexData = "0117000700D9E7"; // Command to trigger boot mode check
-                CassiaReadWriteService cassiaReadWriteService = new CassiaReadWriteService();
+                //CassiaReadWriteService cassiaReadWriteService = new CassiaReadWriteService();
 
                 using (var cassiaListener = _notificationService)
                 {
@@ -1453,7 +1480,7 @@ namespace AccessAPP.Services
         }
 
 
-        public bool GetHidDevice()
+        public static bool GetHidDevice()
         {
             return (true);
         }
@@ -1462,7 +1489,7 @@ namespace AccessAPP.Services
         /// Checks if the USB device is connected and opens if it is present
         /// Returns a success or failure
         /// </summary>
-        public int OpenConnection(UInt64 customContext)
+        public static int OpenConnection(UInt64 customContext)
         {
             int status = 0;
             status = GetHidDevice() ? ERR_SUCCESS : ERR_OPEN;
@@ -1473,7 +1500,7 @@ namespace AccessAPP.Services
         /// <summary>
         /// Closes the previously opened USB device and returns the status
         /// </summary>
-        public int CloseConnection(UInt64 customContext)
+        public static int CloseConnection(UInt64 customContext)
         {
             int status = 0;
             return status;
@@ -1609,6 +1636,9 @@ namespace AccessAPP.Services
         public bool SensorSuccess { get; set; } = false;
         public bool ActorSuccess { get; set; } = false;
         public int RetryCount { get; set; } = 0;
+        public int RetryCountActor { get; set; } = 0;
+        public int RetryCountBootloader { get; set; } = 0;
+        public int RetryCountSensor { get; set; } = 0;
         public string LastFailureReason { get; set; } = string.Empty;
 
         public bool IsFullyUpgraded => BootloaderSuccess && SensorSuccess && ActorSuccess;

@@ -1,5 +1,6 @@
 ﻿using System.Collections.Concurrent;
 using System.Text.Json;
+using AccessAPP.Services;
 using Amazon.Runtime.Internal;
 using Windows.Media.Protection.PlayReady;
 
@@ -13,7 +14,7 @@ public class CassiaNotificationService : IDisposable
     private static Task _listeningTask;
     private static readonly object _lock = new();
     private readonly ILogger<CassiaNotificationService> _logger;
-    private readonly SemaphoreSlim semaphore = new SemaphoreSlim(1);
+    public SemaphoreSlim semaphore = null;
 
     // Singleton instance managed by DI
     private static CassiaNotificationService _instance;
