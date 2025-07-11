@@ -311,7 +311,8 @@ namespace AccessAPP.Controllers
                 {
                     return Conflict(new { message = "Firmware upgrade already in progress for this device." });
                 }
-                var result = await _firmwareUpgradeService.UpgradeSensorAsync(nodeMac, pincode, bActor, false, sensorType);
+                var logId = $"{nodeMac.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
+                var result = await _firmwareUpgradeService.UpgradeSensorAsync(nodeMac, pincode, bActor, false, sensorType, logId);
 
                 return result.Success
                     ? Ok(new { message = result.Message })
@@ -360,9 +361,9 @@ namespace AccessAPP.Controllers
                 {
                     return Conflict(new { message = "Firmware upgrade already in progress for this device." });
                 }
-
+                var logId = $"{nodeMac.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
                 // Step 1: Connect to the device
-                var result = await _firmwareUpgradeService.UpgradeActorAsync(nodeMac, pincode, bActor);
+                var result = await _firmwareUpgradeService.UpgradeActorAsync(nodeMac, pincode, bActor, logId);
 
                 return result.Success
                     ? Ok(new { message = result.Message })
@@ -386,8 +387,9 @@ namespace AccessAPP.Controllers
                 upProgress.MacAddress = request.MacAddress;
                 upProgress.Pincode = request.Pincode;
                 upProgress.sType = request.sType;
+                var logId = $"{request.MacAddress.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
 
-                var result = await _firmwareUpgradeService.UpgradeDeviceAsync(upProgress, request.MacAddress, request.Pincode, request.sType, true, true, true);
+                var result = await _firmwareUpgradeService.UpgradeDeviceAsync(upProgress, request.MacAddress, request.Pincode, request.sType, true, true, true,logId);
 
                 return result.Success
                     ? Ok(new { message = result.Message })

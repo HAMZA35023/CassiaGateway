@@ -50,7 +50,6 @@ namespace AccessAPP.Services
         private string MacAddress = "";
         private double totalRows = 0;
         private int sensorType = 4;
-        string logId = "";
         private static ConcurrentDictionary<string, HashSet<string>> allRows = new();
         private static ConcurrentDictionary<string, HashSet<string>> completedRows = new();
 
@@ -75,7 +74,7 @@ namespace AccessAPP.Services
             _notificationService = notificationService;
         }
 
-        public async Task<ServiceResponse> UpgradeSensorAsync(string nodeMac, string pincode, bool bActor, bool isBootloader, int sType)
+        public async Task<ServiceResponse> UpgradeSensorAsync(string nodeMac, string pincode, bool bActor, bool isBootloader, int sType, string logId = null)
         {
 
             // Step 1: Connect to the device
@@ -112,7 +111,7 @@ namespace AccessAPP.Services
                 Console.WriteLine($"Device is already in boot mode. -> {nodeMac}");
                 UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
                 await Task.Delay(3000);
-                var serviceResponse = await ProcessingSensorUpgrade(nodeMac, bActor, isBootloader);
+                var serviceResponse = await ProcessingSensorUpgrade(nodeMac, bActor, isBootloader, logId);
                 return serviceResponse;
             }
             else
@@ -184,11 +183,11 @@ namespace AccessAPP.Services
                 UpgradeLogger.Log(logId, nodeMac, "Disconnected", "Success");
                 await Task.Delay(3000);
 
-                var serviceResponse = await ProcessingSensorUpgrade(nodeMac, bActor, isBootloader);
+                var serviceResponse = await ProcessingSensorUpgrade(nodeMac, bActor, isBootloader, logId);
                 return serviceResponse;
             }
         }
-        public async Task<ServiceResponse> UpgradeActorAsync(string nodeMac, string pincode, bool bActor)
+        public async Task<ServiceResponse> UpgradeActorAsync(string nodeMac, string pincode, bool bActor, string logId)
         {
 
             UpgradeLogger.Log(logId, nodeMac, "Process Start Actor Upgrade", "Success");
@@ -253,7 +252,7 @@ namespace AccessAPP.Services
                 // Delays for 3 seconds (3000 milliseconds) before connecting to device again
                 //var isDisConnected = await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0);
                 //await Task.Delay(3000);
-                var serviceResponse = await ProcessingActorUpgrade(nodeMac, bActor);
+                var serviceResponse = await ProcessingActorUpgrade(nodeMac, bActor, logId);
 
                 return serviceResponse;
 
@@ -275,13 +274,14 @@ namespace AccessAPP.Services
 
             foreach (var request in requests)
             {
+                string logId = $"{request.MacAddress.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
                 await semaphore.WaitAsync();
 
                 taskList.Add(Task.Run(async () =>
                 {
                     try
                     {
-                        var result = await UpgradeActorAsync(request.MacAddress, request.Pincode, request.bActor);
+                        var result = await UpgradeActorAsync(request.MacAddress, request.Pincode, request.bActor, logId);
                         upgradeResults.Add(result);
                         return result;
                     }
@@ -324,13 +324,14 @@ namespace AccessAPP.Services
 
             foreach (var request in requests)
             {
+                string logId = $"{request.MacAddress.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
                 await semaphore.WaitAsync();
 
                 taskList.Add(Task.Run(async () =>
                 {
                     try
                     {
-                        var result = await UpgradeSensorAsync(request.MacAddress, request.Pincode, request.bActor, false, request.sType);
+                        var result = await UpgradeSensorAsync(request.MacAddress, request.Pincode, request.bActor, false, request.sType, logId);
                         result.MacAddress = request.MacAddress;
                         upgradeResults.Add(result);
                         return result;
@@ -360,7 +361,7 @@ namespace AccessAPP.Services
             return upgradeResults.ToList();
         }
 
-        public async Task<ServiceResponse> UpgradeDeviceAsync(UpgradeProgress dev, string macAddress, string pincode, int sType, bool upgradeActor, bool upgradeBootloader, bool upgradeSensor)
+        public async Task<ServiceResponse> UpgradeDeviceAsync(UpgradeProgress dev, string macAddress, string pincode, int sType, bool upgradeActor, bool upgradeBootloader, bool upgradeSensor, string logId= null)
         {
             var response = new ServiceResponse();
 
@@ -377,7 +378,7 @@ namespace AccessAPP.Services
                     dev.RetryCountActor++;
 
                     stopwatch.Start();
-                    var actorUpgradeResult = await UpgradeActorAsync(macAddress, pincode, true);
+                    var actorUpgradeResult = await UpgradeActorAsync(macAddress, pincode, true, logId);
                     stopwatch.Stop();
                     Console.WriteLine($"Actor upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds - result: {actorUpgradeResult.Success}");
                     //if (!actorUpgradeResult.Success)
@@ -405,7 +406,7 @@ namespace AccessAPP.Services
                     Console.WriteLine($"Starting bootloader upgrade for {macAddress}");
                     stopwatch.Restart();
                     // Step 1: Upgrade the sensor
-                    var bootladerUpgradeResult = await UpgradeSensorAsync(macAddress, pincode, false, true, sType);
+                    var bootladerUpgradeResult = await UpgradeSensorAsync(macAddress, pincode, false, true, sType, logId);
                     stopwatch.Stop();
                     Console.WriteLine($"Bootloader upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds - result: {bootladerUpgradeResult.Success}");
 
@@ -432,7 +433,7 @@ namespace AccessAPP.Services
 
                     // Step 1: Upgrade the sensor
                     stopwatch.Restart();
-                    var sensorUpgradeResult = await UpgradeSensorAsync(macAddress, pincode, false, false, sType);
+                    var sensorUpgradeResult = await UpgradeSensorAsync(macAddress, pincode, false, false, sType, logId);
                     stopwatch.Stop();
                     Console.WriteLine($"Sensor upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds - result: {sensorUpgradeResult.Success}");
                     if (!sensorUpgradeResult.Success)
@@ -473,8 +474,9 @@ namespace AccessAPP.Services
 
             foreach (var device in devices)
             {
+                string logId = $"{device.MacAddress.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
                 sensorType = device.sType;
-                var response = await UpgradeBLSensorWithRetryAsync(device, 0);
+                var response = await UpgradeBLSensorWithRetryAsync(device, 0, logId);
                 responses[device.MacAddress] = response; // Always store latest response
 
                 if (!response.Success)
@@ -491,7 +493,8 @@ namespace AccessAPP.Services
             while (failedDevices.Count > 0)
             {
                 var (device, retryCount) = failedDevices.Dequeue();
-                var response = await UpgradeBLSensorWithRetryAsync(device, retryCount);
+                string logId = $"{device.MacAddress.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
+                var response = await UpgradeBLSensorWithRetryAsync(device, retryCount, logId);
                 responses[device.MacAddress] = response; // Overwrite previous responses
 
                 if (!response.Success && retryCount < 2) // Retry up to 2 times
@@ -505,7 +508,7 @@ namespace AccessAPP.Services
 
 
 
-        private async Task<UpgradeResponse> UpgradeBLSensorWithRetryAsync(BulkUpgradeRequest device, int retryCount)
+        private async Task<UpgradeResponse> UpgradeBLSensorWithRetryAsync(BulkUpgradeRequest device, int retryCount, string logId)
         {
             var response = new UpgradeResponse
             {
@@ -520,7 +523,7 @@ namespace AccessAPP.Services
                 stopwatch.Restart();
 
                 // Step 1: Bootloader Upgrade
-                var bootloaderUpgradeResult = await UpgradeSensorAsync(device.MacAddress, device.Pincode, false, true, device.sType);
+                var bootloaderUpgradeResult = await UpgradeSensorAsync(device.MacAddress, device.Pincode, false, true, device.sType, logId);
                 stopwatch.Stop();
                 Console.WriteLine($"Bootloader upgrade completed for {device.MacAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds");
 
@@ -540,7 +543,7 @@ namespace AccessAPP.Services
 
                 // Step 2: Sensor Upgrade (Only if Bootloader upgrade succeeded)
                 stopwatch.Restart();
-                var sensorUpgradeResult = await UpgradeSensorAsync(device.MacAddress, device.Pincode, false, false, device.sType);
+                var sensorUpgradeResult = await UpgradeSensorAsync(device.MacAddress, device.Pincode, false, false, device.sType, logId);
                 stopwatch.Stop();
                 Console.WriteLine($"Sensor upgrade completed for {device.MacAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds");
 
@@ -725,14 +728,14 @@ namespace AccessAPP.Services
 
             foreach (var device in devices)
             {
-                logId = $"{device.MacAddress.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
                 smartThreadPool.QueueWorkItem(async dev => {
+                    string logId = $"{device.MacAddress.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
                     dev.RetryCount = 0;
                     dev.RetryCountActor = 0;
                     dev.RetryCountBootloader = 0;
                     dev.RetryCountSensor = 0;
                     Console.WriteLine($"Starting upgrade for device {dev.MacAddress}");
-                    await UpgradeDeviceAsync(dev, dev.MacAddress, dev.Pincode, dev.sType, true, true, true);
+                    await UpgradeDeviceAsync(dev, dev.MacAddress, dev.Pincode, dev.sType, true, true, true, logId);
                     while (!dev.IsFullyUpgraded && (dev.RetryCountActor < 2 * maxRetriesPerComponent
                                                 || dev.RetryCountBootloader < maxRetriesPerComponent
                                                 || dev.RetryCountSensor < maxRetriesPerComponent))
@@ -740,7 +743,7 @@ namespace AccessAPP.Services
                         Task.Delay(10000).Wait();
                         dev.RetryCount++;
                         Console.WriteLine($"Retry upgrade for device {dev.MacAddress} - Retry {dev.RetryCount}");
-                        await UpgradeDeviceAsync(dev, dev.MacAddress, dev.Pincode, dev.sType, !dev.ActorSuccess, !dev.BootloaderSuccess, !dev.SensorSuccess);
+                        await UpgradeDeviceAsync(dev, dev.MacAddress, dev.Pincode, dev.sType, !dev.ActorSuccess, !dev.BootloaderSuccess, !dev.SensorSuccess, logId);
                     }
 
                     Console.WriteLine($">>>> THREAD END - {dev.MacAddress} - actor: {dev.ActorSuccess}:{dev.RetryCountActor} - bootloader: {dev.BootloaderSuccess}:{dev.RetryCountBootloader} - sensor: {dev.SensorSuccess}:{dev.RetryCountSensor}");
@@ -753,61 +756,61 @@ namespace AccessAPP.Services
             smartThreadPool.WaitForIdle();
         }
 
-        private async Task RetryFailedDevices(List<UpgradeProgress> devices, int maxRetries)
-        {
-            bool retryRequired;
-            do
-            {
-                retryRequired = false;
+        //private async Task RetryFailedDevices(List<UpgradeProgress> devices, int maxRetries)
+        //{
+        //    bool retryRequired;
+        //    do
+        //    {
+        //        retryRequired = false;
 
-                foreach (var device in devices.Where(d => !d.IsFullyUpgraded && d.RetryCount < maxRetries).ToList())
-                {
-                    Console.WriteLine($"Retrying upgrade for {device.MacAddress}, Attempt {device.RetryCount + 1}");
+        //        foreach (var device in devices.Where(d => !d.IsFullyUpgraded && d.RetryCount < maxRetries).ToList())
+        //        {
+        //            Console.WriteLine($"Retrying upgrade for {device.MacAddress}, Attempt {device.RetryCount + 1}");
 
-                    if (!device.BootloaderSuccess)
-                    {
-                        var bootloaderResponse = await UpgradeSensorAsync(device.MacAddress, device.Pincode, false, true, device.sType);
-                        if (bootloaderResponse.Success)
-                            device.BootloaderSuccess = true;
-                        else
-                        {
-                            device.LastFailureReason = $"Bootloader Retry Failed: {bootloaderResponse.Message}";
-                            device.RetryCount++;
-                            retryRequired = true;
-                            continue;
-                        }
-                    }
-                    if (!device.SensorSuccess)
-                    {
-                        var sensorResponse = await UpgradeSensorAsync(device.MacAddress, device.Pincode, false, false, device.sType);
-                        if (sensorResponse.Success)
-                            device.SensorSuccess = true;
-                        else
-                        {
-                            device.LastFailureReason = $"Sensor Retry Failed: {sensorResponse.Message}";
-                            device.RetryCount++;
-                            retryRequired = true;
-                            continue;
-                        }
-                    }
-                    if (!device.ActorSuccess)
-                    {
-                        var actorResponse = await UpgradeActorAsync(device.MacAddress, device.Pincode, true);
-                        if (actorResponse.Success)
-                            device.ActorSuccess = true;
-                        else
-                        {
-                            device.LastFailureReason = $"Actor Retry Failed: {actorResponse.Message}";
-                            device.RetryCount++;
-                            retryRequired = true;
-                            continue;
-                        }
-                    }
-                }
-            } while (retryRequired && devices.Any(d => !d.IsFullyUpgraded && d.RetryCount < maxRetries));
-        }
+        //            if (!device.BootloaderSuccess)
+        //            {
+        //                var bootloaderResponse = await UpgradeSensorAsync(device.MacAddress, device.Pincode, false, true, device.sType);
+        //                if (bootloaderResponse.Success)
+        //                    device.BootloaderSuccess = true;
+        //                else
+        //                {
+        //                    device.LastFailureReason = $"Bootloader Retry Failed: {bootloaderResponse.Message}";
+        //                    device.RetryCount++;
+        //                    retryRequired = true;
+        //                    continue;
+        //                }
+        //            }
+        //            if (!device.SensorSuccess)
+        //            {
+        //                var sensorResponse = await UpgradeSensorAsync(device.MacAddress, device.Pincode, false, false, device.sType);
+        //                if (sensorResponse.Success)
+        //                    device.SensorSuccess = true;
+        //                else
+        //                {
+        //                    device.LastFailureReason = $"Sensor Retry Failed: {sensorResponse.Message}";
+        //                    device.RetryCount++;
+        //                    retryRequired = true;
+        //                    continue;
+        //                }
+        //            }
+        //            if (!device.ActorSuccess)
+        //            {
+        //                var actorResponse = await UpgradeActorAsync(device.MacAddress, device.Pincode, true);
+        //                if (actorResponse.Success)
+        //                    device.ActorSuccess = true;
+        //                else
+        //                {
+        //                    device.LastFailureReason = $"Actor Retry Failed: {actorResponse.Message}";
+        //                    device.RetryCount++;
+        //                    retryRequired = true;
+        //                    continue;
+        //                }
+        //            }
+        //        }
+        //    } while (retryRequired && devices.Any(d => !d.IsFullyUpgraded && d.RetryCount < maxRetries));
+        //}
 
-        public async Task<ServiceResponse> ProcessingSensorUpgrade(string nodeMac, bool bActor, bool isBootloader) // should be moved to firmware services
+        public async Task<ServiceResponse> ProcessingSensorUpgrade(string nodeMac, bool bActor, bool isBootloader, string logId) // should be moved to firmware services
         {
             Console.WriteLine($"Processing Sensor Upgrade started->{nodeMac}");
             var response = new ServiceResponse();
@@ -893,7 +896,7 @@ namespace AccessAPP.Services
 
         }
 
-        public async Task<ServiceResponse> ProcessingActorUpgrade(string nodeMac, bool bActor) // should be moved to firmware services
+        public async Task<ServiceResponse> ProcessingActorUpgrade(string nodeMac, bool bActor, string logId) // should be moved to firmware services
         {
             var response = new ServiceResponse();
             const int maxRetryAttempts = 3; // Maximum number of retries to put the actor into boot mode
