@@ -25,11 +25,11 @@ namespace AccessAPP.Services
         private readonly IConfiguration _configuration;
         private const int MaxPacketSize = 270;
         private const int InterPacketDelay = 0;
-        private readonly string _firmwareActorFilePath = "d:\\work\\firma_vis\\niko\\app_hamza\\CassiaGateway\\AccessAPP\\FirmwareVersions\\353AP20227.cyacd";
-        private readonly string _firmwareSensorFilePath4 = "d:\\work\\firma_vis\\niko\\app_hamza\\CassiaGateway\\AccessAPP\\FirmwareVersions\\353AP40227.cyacd";
-        private readonly string _firmwareSensorFilePath3 = "d:\\work\\firma_vis\\niko\\app_hamza\\CassiaGateway\\AccessAPP\\FirmwareVersions\\353AP30227.cyacd";
-        private readonly string _firmwareSensorFilePath1 = "d:\\work\\firma_vis\\niko\\app_hamza\\CassiaGateway\\AccessAPP\\FirmwareVersions\\353AP10227.cyacd";
-        private readonly string _firmwareBootLoaderFilePath = "d:\\work\\firma_vis\\niko\\app_hamza\\CassiaGateway\\AccessAPP\\FirmwareVersions\\353BL10604.cyacd";
+        private readonly string _firmwareActorFilePath = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353AP20227.cyacd";
+        private readonly string _firmwareSensorFilePath4 = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353AP40227.cyacd";
+        private readonly string _firmwareSensorFilePath3 = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353AP30227.cyacd";
+        private readonly string _firmwareSensorFilePath1 = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353AP10227.cyacd";
+        private readonly string _firmwareBootLoaderFilePath = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353BL10604.cyacd";
 
         private ConcurrentDictionary<string, ConcurrentQueue<byte[]>> _notificationQueues = new ConcurrentDictionary<string, ConcurrentQueue<byte[]>>();
         private ConcurrentDictionary<string, ManualResetEvent> _notificationEvents = new ConcurrentDictionary<string, ManualResetEvent>();
@@ -81,9 +81,18 @@ namespace AccessAPP.Services
             // Step 1: Connect to the device
             ServiceResponse response = new ServiceResponse();
             sensorType = sType;
-            logId = $"{nodeMac.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
+            if(logId == "")
+            {
+                logId = $"{nodeMac.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
+            }
 
-            UpgradeLogger.Log(logId, nodeMac, "Process Start", "Success", sType.ToString());
+            UpgradeLogger.Log(
+                logId,
+                nodeMac,
+                isBootloader ? "Process Start Bootloader Upgrade" : "Process Start Sensor Upgrade",
+                "Success",
+                sType.ToString()
+            );
 
             var connectionResult = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
             if (connectionResult.Status != HttpStatusCode.OK)
@@ -101,7 +110,7 @@ namespace AccessAPP.Services
             if (isAlreadyInBootMode)
             {
                 Console.WriteLine($"Device is already in boot mode. -> {nodeMac}");
-                UpgradeLogger.Log(logId, nodeMac, "BootMode", "Detected");
+                UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
                 await Task.Delay(3000);
                 var serviceResponse = await ProcessingSensorUpgrade(nodeMac, bActor, isBootloader);
                 return serviceResponse;
@@ -152,7 +161,7 @@ namespace AccessAPP.Services
                     isBootModeAchieved = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
                     if (isBootModeAchieved)
                     {
-                        UpgradeLogger.Log(logId, nodeMac, "BootMode", "Achieved");
+                        UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Achieved");
                         Console.WriteLine($"Device entered boot mode after {attempt + 1} attempts.");
                         break;
                     }
@@ -162,7 +171,7 @@ namespace AccessAPP.Services
 
                 if (!isBootModeAchieved)
                 {
-                    UpgradeLogger.Log(logId, nodeMac, "BootMode", "Failed");
+                    UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Failed");
                     response.Success = false;
                     response.StatusCode = 417; // Expectation Failed
                     response.Message = "Failed to enter boot mode.";
@@ -181,21 +190,25 @@ namespace AccessAPP.Services
         }
         public async Task<ServiceResponse> UpgradeActorAsync(string nodeMac, string pincode, bool bActor)
         {
+
+            UpgradeLogger.Log(logId, nodeMac, "Process Start Actor Upgrade", "Success");
             ServiceResponse response = new();
             var connectionResult = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
             if (connectionResult.Status != HttpStatusCode.OK)
             {
+                UpgradeLogger.Log(logId, nodeMac, "Connected", "Failed");
                 response.Success = false;
                 response.StatusCode = (int)connectionResult.Status;
                 response.Message = "Failed to connect to device.";
                 return response;
             }
-
+            UpgradeLogger.Log(logId, nodeMac, "Connected", "Success");
             Console.WriteLine($"Connected to device...{nodeMac}");
 
             bool isAlreadyInBootMode = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
             if (isAlreadyInBootMode)
             {
+                UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
                 response.Success = false;
                 response.StatusCode = 409; // Conflict
                 response.Message = "Sensor is already in boot mode. It needs to be in Application mode.";
@@ -203,6 +216,7 @@ namespace AccessAPP.Services
             }
             else
             {
+                UpgradeLogger.Log(logId, nodeMac, "LoggedIn", "Success");
                 Console.WriteLine($"Login to device...{nodeMac}");
                 //Step 2: Attempt login if needed
                 var loginResult = await _connectService.AttemptLogin(_gatewayIpAddress, nodeMac);
@@ -227,12 +241,13 @@ namespace AccessAPP.Services
                 bool jumpToBootResponse = await SendJumpToBootloader(_gatewayIpAddress, nodeMac, bActor);
                 if (!jumpToBootResponse)
                 {
+                    UpgradeLogger.Log(logId, nodeMac, "Actor BootMode", "Failed");
                     response.Success = false;
                     response.StatusCode = 417; // Expectation Failed
                     response.Message = "Failed to enter boot mode.";
                     return response;
                 }
-
+                UpgradeLogger.Log(logId, nodeMac, "Actor BootMode", "Achieved");
                 Console.WriteLine(jumpToBootResponse);
 
                 // Delays for 3 seconds (3000 milliseconds) before connecting to device again
@@ -351,6 +366,7 @@ namespace AccessAPP.Services
 
             try
             {
+                UpgradeLogger.Log(logId, macAddress, "Process Start Device Async", "Success", sType.ToString());
                 // Step 2: Upgrade the actor
                 Stopwatch stopwatch = new Stopwatch();
 
@@ -709,6 +725,7 @@ namespace AccessAPP.Services
 
             foreach (var device in devices)
             {
+                logId = $"{device.MacAddress.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
                 smartThreadPool.QueueWorkItem(async dev => {
                     dev.RetryCount = 0;
                     dev.RetryCountActor = 0;
@@ -859,7 +876,7 @@ namespace AccessAPP.Services
 
             if (programmingResult)
             {
-                UpgradeLogger.Log(logId, nodeMac, "ProgrammingComplete", "Success");
+                UpgradeLogger.Log(logId, nodeMac, isBootloader ? "BootLoaderProgrammingComplete" : "SensorProgrammingComplete", "Success");
                 response.Success = true;
                 response.StatusCode = 200;
                 response.Message = "Programming Complete";
@@ -867,7 +884,7 @@ namespace AccessAPP.Services
             }
             else
             {
-                UpgradeLogger.Log(logId, nodeMac, "ProgrammingComplete", "Failed");
+                UpgradeLogger.Log(logId, nodeMac, isBootloader ? "BootLoaderProgrammingComplete" : "SensorProgrammingComplete", "Failed");
                 response.Success = false;
                 response.StatusCode = 500;
                 response.Message = "Programming Failed";
@@ -890,6 +907,7 @@ namespace AccessAPP.Services
 
                 if (isActorInBootMode)
                 {
+                    UpgradeLogger.Log(logId, nodeMac, "Actor BootMode", "Achieved");
                     Console.WriteLine($"Actor {nodeMac} is in boot mode.");
                     break; // Exit the loop if the actor is already in boot mode
                 }
@@ -903,6 +921,7 @@ namespace AccessAPP.Services
 
                     if (!jumpToBootloaderSuccess)
                     {
+
                         Console.WriteLine($"Failed to send jump-to-bootloader command for {nodeMac}. Retrying...");
                     }
 
@@ -914,6 +933,7 @@ namespace AccessAPP.Services
             // If after max retries the actor is still not in boot mode, return an error response
             if (retryCount >= maxRetryAttempts)
             {
+                UpgradeLogger.Log(logId, nodeMac, "Actor BootMode", "Failed");
                 Console.WriteLine($"Failed to put actor {nodeMac} into boot mode after {maxRetryAttempts} attempts.");
                 response.Success = false;
                 response.StatusCode = 500;
@@ -930,6 +950,7 @@ namespace AccessAPP.Services
 
             if (programmingResult)
             {
+                UpgradeLogger.Log(logId, nodeMac, "ActorProgrammingComplete", "Success");
                 response.Success = true;
                 response.StatusCode = 200;
                 response.Message = "Programming Complete";
@@ -937,6 +958,7 @@ namespace AccessAPP.Services
             }
             else
             {
+                UpgradeLogger.Log(logId, nodeMac, "ActorProgrammingComplete", "Success");
                 response.Success = false;
                 response.StatusCode = 500;
                 response.Message = "Programming Failed";
@@ -1058,12 +1080,12 @@ namespace AccessAPP.Services
                 {
                     //if (!_notificationEvent.WaitOne(TimeSpan.FromSeconds(15)))
                     //{
-                    //   var resultEnable = _ownInstance._notificationService.EnableNotificationAsync("192.168.100.90", macContext, false);
+                    //   var resultEnable = _ownInstance._notificationService.EnableNotificationAsync("192.168.40.1", macContext, false);
                     //   resultEnable.Wait();
                     //   if (!resultEnable.Result)
                     //   {
                     //        Thread.Sleep(10000);
-                    //        resultEnable = _ownInstance._notificationService.EnableNotificationAsync("192.168.100.90", macContext, false);
+                    //        resultEnable = _ownInstance._notificationService.EnableNotificationAsync("192.168.40.1", macContext, false);
                     //        resultEnable.Wait();
                     //   }
                     //}
@@ -1154,12 +1176,12 @@ namespace AccessAPP.Services
                 {
                     //if (!_notificationEvent.WaitOne(TimeSpan.FromSeconds(15)))
                     //{
-                    //    var resultEnable = _ownInstance._notificationService.EnableNotificationAsync("192.168.100.90", macContext, true);
+                    //    var resultEnable = _ownInstance._notificationService.EnableNotificationAsync("192.168.40.1", macContext, true);
                     //    resultEnable.Wait();
                     //    if (!resultEnable.Result)
                     //    {
                     //        Thread.Sleep(10000);
-                    //        resultEnable = _ownInstance._notificationService.EnableNotificationAsync("192.168.100.90", macContext, true);
+                    //        resultEnable = _ownInstance._notificationService.EnableNotificationAsync("192.168.40.1", macContext, true);
                     //        resultEnable.Wait();
                     //    }
                     //}
@@ -1286,7 +1308,7 @@ namespace AccessAPP.Services
                     //Console.WriteLine($"Data Sent: {hexData} | macContext: {macContext}");
                     //Console.WriteLine($"size of buffer: {size}");
                     //SendMessage(data);
-                    _ownInstance.cassiaReadWriteService.WriteBleMessage("192.168.200.10", macContext, 14, hexData, "");
+                    _ownInstance.cassiaReadWriteService.WriteBleMessage("192.168.40.1", macContext, 14, hexData, "");
                     Thread.Sleep(100);
 
                     status = true;
@@ -1306,7 +1328,7 @@ namespace AccessAPP.Services
                         //Console.WriteLine($"Data Sent: {hexData} | macContext: {macContext}");
                         //Console.WriteLine($"size of buffer: {size}");
                         //SendMessage(data);
-                        _ownInstance.cassiaReadWriteService.WriteBleMessage("192.168.200.10", macContext, 14, hexData, "");
+                        _ownInstance.cassiaReadWriteService.WriteBleMessage("192.168.40.1", macContext, 14, hexData, "");
                         Thread.Sleep(100);
 
                         status = true;
@@ -1439,7 +1461,7 @@ namespace AccessAPP.Services
             string hexData = BitConverter.ToString(chunk).Replace("-", "");
             //Console.WriteLine($"Data Sent: {hexData} -> mac: {macAddress}");
 
-            await _ownInstance.cassiaReadWriteService.WriteBleMessage("192.168.200.10", macAddress, 19, hexData, "?noresponse=1");
+            await _ownInstance.cassiaReadWriteService.WriteBleMessage("192.168.40.1", macAddress, 19, hexData, "?noresponse=1");
 
         }
 
