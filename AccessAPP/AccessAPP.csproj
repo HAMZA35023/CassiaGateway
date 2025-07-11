@@ -18,6 +18,9 @@
   </ItemGroup>
 
 	<ItemGroup>
+		<None Update="BootloaderUtilMultiThread.dll">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
 		<None Update="C:\Users\HRS\source\repos\AccessAPP\AccessAPP\obj\Debug\BootloaderUtil.dll">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</None>
