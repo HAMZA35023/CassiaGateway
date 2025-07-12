@@ -25,11 +25,11 @@ namespace AccessAPP.Services
         private readonly IConfiguration _configuration;
         private const int MaxPacketSize = 270;
         private const int InterPacketDelay = 0;
-        private readonly string _firmwareActorFilePath = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353AP20227.cyacd";
-        private readonly string _firmwareSensorFilePath4 = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353AP40227.cyacd";
-        private readonly string _firmwareSensorFilePath3 = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353AP30227.cyacd";
-        private readonly string _firmwareSensorFilePath1 = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353AP10227.cyacd";
-        private readonly string _firmwareBootLoaderFilePath = "C:\\Users\\HRS\\source\\repos\\AccessAPP\\AccessAPP\\FirmwareVersions\\353BL10604.cyacd";
+        private readonly string _firmwareActorFilePath = "d:\\work\\firma_vis\\niko\\app_hamza\\CassiaGateway\\AccessAPP\\FirmwareVersions\\353AP20227.cyacd";
+        private readonly string _firmwareSensorFilePath4 = "d:\\work\\firma_vis\\niko\\app_hamza\\CassiaGateway\\AccessAPP\\FirmwareVersions\\353AP40227.cyacd";
+        private readonly string _firmwareSensorFilePath3 = "d:\\work\\firma_vis\\niko\\app_hamza\\CassiaGateway\\AccessAPP\\FirmwareVersions\\353AP30227.cyacd";
+        private readonly string _firmwareSensorFilePath1 = "d:\\work\\firma_vis\\niko\\app_hamza\\CassiaGateway\\AccessAPP\\FirmwareVersions\\353AP10227.cyacd";
+        private readonly string _firmwareBootLoaderFilePath = "d:\\work\\firma_vis\\niko\\app_hamza\\CassiaGateway\\AccessAPP\\FirmwareVersions\\353BL10604.cyacd";
 
         private ConcurrentDictionary<string, ConcurrentQueue<byte[]>> _notificationQueues = new ConcurrentDictionary<string, ConcurrentQueue<byte[]>>();
         private ConcurrentDictionary<string, ManualResetEvent> _notificationEvents = new ConcurrentDictionary<string, ManualResetEvent>();
@@ -586,17 +586,51 @@ namespace AccessAPP.Services
 
         private async Task UpgradeDevicesInParallel(List<UpgradeProgress> devices, int numbersOfThreadsInParallel = 2)
         {
-            SmartThreadPool smartThreadPool = new SmartThreadPool();
-            smartThreadPool.MaxThreads = numbersOfThreadsInParallel; //max flash devices in the same time
-
             int maxRetriesPerComponent = 3;
-
             Interlocked.Add(ref UpgradeDevicesInProgress, devices.Count);
 
-            foreach (var device in devices)
+            if (numbersOfThreadsInParallel > 1)
             {
-                smartThreadPool.QueueWorkItem(async dev => {
-                    string logId = $"{device.MacAddress.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
+                Console.WriteLine("Upgrade devices - PRALLEL MODE");
+                SmartThreadPool smartThreadPool = new SmartThreadPool();
+                smartThreadPool.MaxThreads = numbersOfThreadsInParallel; //max flash devices in the same time
+
+                foreach (var device in devices)
+                {
+                    smartThreadPool.QueueWorkItem(async dev =>
+                    {
+                        string logId = $"{dev.MacAddress.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
+                        dev.RetryCount = 0;
+                        dev.RetryCountActor = 0;
+                        dev.RetryCountBootloader = 0;
+                        dev.RetryCountSensor = 0;
+                        Console.WriteLine($"Starting upgrade for device {dev.MacAddress}");
+                        await UpgradeDeviceAsync(dev, dev.MacAddress, dev.Pincode, dev.sType, true, true, true, logId);
+                        while (!dev.IsFullyUpgraded && (dev.RetryCountActor < 2 * maxRetriesPerComponent
+                                                    || dev.RetryCountBootloader < maxRetriesPerComponent
+                                                    || dev.RetryCountSensor < maxRetriesPerComponent))
+                        {
+                            Task.Delay(10000).Wait();
+                            dev.RetryCount++;
+                            Console.WriteLine($"Retry upgrade for device {dev.MacAddress} - Retry {dev.RetryCount}");
+                            await UpgradeDeviceAsync(dev, dev.MacAddress, dev.Pincode, dev.sType, !dev.ActorSuccess, !dev.BootloaderSuccess, !dev.SensorSuccess, logId);
+                        }
+
+                        Console.WriteLine($">>>> THREAD END - {dev.MacAddress} - actor: {dev.ActorSuccess}:{dev.RetryCountActor} - bootloader: {dev.BootloaderSuccess}:{dev.RetryCountBootloader} - sensor: {dev.SensorSuccess}:{dev.RetryCountSensor}");
+
+                        Interlocked.Decrement(ref UpgradeDevicesInProgress);
+                    }, device);
+
+                }
+
+                smartThreadPool.WaitForIdle();
+            }
+            else
+            {
+                Console.WriteLine("Upgrade devices - SEQUENTIAL MODE");
+                foreach (var dev in devices)
+                {
+                    string logId = $"{dev.MacAddress.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
                     dev.RetryCount = 0;
                     dev.RetryCountActor = 0;
                     dev.RetryCountBootloader = 0;
@@ -616,66 +650,9 @@ namespace AccessAPP.Services
                     Console.WriteLine($">>>> THREAD END - {dev.MacAddress} - actor: {dev.ActorSuccess}:{dev.RetryCountActor} - bootloader: {dev.BootloaderSuccess}:{dev.RetryCountBootloader} - sensor: {dev.SensorSuccess}:{dev.RetryCountSensor}");
 
                     Interlocked.Decrement(ref UpgradeDevicesInProgress);
-                }, device);
-                
+                }
             }
-
-            smartThreadPool.WaitForIdle();
         }
-
-        //private async Task RetryFailedDevices(List<UpgradeProgress> devices, int maxRetries)
-        //{
-        //    bool retryRequired;
-        //    do
-        //    {
-        //        retryRequired = false;
-
-        //        foreach (var device in devices.Where(d => !d.IsFullyUpgraded && d.RetryCount < maxRetries).ToList())
-        //        {
-        //            Console.WriteLine($"Retrying upgrade for {device.MacAddress}, Attempt {device.RetryCount + 1}");
-
-        //            if (!device.BootloaderSuccess)
-        //            {
-        //                var bootloaderResponse = await UpgradeSensorAsync(device.MacAddress, device.Pincode, false, true, device.sType);
-        //                if (bootloaderResponse.Success)
-        //                    device.BootloaderSuccess = true;
-        //                else
-        //                {
-        //                    device.LastFailureReason = $"Bootloader Retry Failed: {bootloaderResponse.Message}";
-        //                    device.RetryCount++;
-        //                    retryRequired = true;
-        //                    continue;
-        //                }
-        //            }
-        //            if (!device.SensorSuccess)
-        //            {
-        //                var sensorResponse = await UpgradeSensorAsync(device.MacAddress, device.Pincode, false, false, device.sType);
-        //                if (sensorResponse.Success)
-        //                    device.SensorSuccess = true;
-        //                else
-        //                {
-        //                    device.LastFailureReason = $"Sensor Retry Failed: {sensorResponse.Message}";
-        //                    device.RetryCount++;
-        //                    retryRequired = true;
-        //                    continue;
-        //                }
-        //            }
-        //            if (!device.ActorSuccess)
-        //            {
-        //                var actorResponse = await UpgradeActorAsync(device.MacAddress, device.Pincode, true);
-        //                if (actorResponse.Success)
-        //                    device.ActorSuccess = true;
-        //                else
-        //                {
-        //                    device.LastFailureReason = $"Actor Retry Failed: {actorResponse.Message}";
-        //                    device.RetryCount++;
-        //                    retryRequired = true;
-        //                    continue;
-        //                }
-        //            }
-        //        }
-        //    } while (retryRequired && devices.Any(d => !d.IsFullyUpgraded && d.RetryCount < maxRetries));
-        //}
 
         public async Task<ServiceResponse> ProcessingSensorUpgrade(string nodeMac, bool bActor, bool isBootloader, string logId) // should be moved to firmware services
         {
