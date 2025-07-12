@@ -456,6 +456,23 @@ namespace AccessAPP.Controllers
             }
         }
 
+
+        [HttpPost("BulkDeviceUpgradeSeq")]
+        public async Task<IActionResult> BulkDeviceUpgradeSeq([FromBody] List<BulkUpgradeRequest> request)
+        {
+            try
+            {
+                var result = await _firmwareUpgradeService.BulkUpgradeDevicesAsync(request, 1);
+
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Error during bulk actor upgrade: {ex.Message}");
+                return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
+            }
+        }
+
         // API to connect to a BLE device and send a telegram to control the light
         [HttpPost("controlLight")]
         public async Task<IActionResult> ControlLight([FromBody] List<LightControlRequest> lightControlRequests)

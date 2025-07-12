@@ -50,6 +50,7 @@ namespace AccessAPP.Services
         private string MacAddress = "";
         private double totalRows = 0;
         private int sensorType = 4;
+        string logId = "";
         private static ConcurrentDictionary<string, HashSet<string>> allRows = new();
         private static ConcurrentDictionary<string, HashSet<string>> completedRows = new();
 
@@ -189,8 +190,7 @@ namespace AccessAPP.Services
         }
         public async Task<ServiceResponse> UpgradeActorAsync(string nodeMac, string pincode, bool bActor, string logId)
         {
-
-            UpgradeLogger.Log(logId, nodeMac, "Process Start Actor Upgrade", "Success");
+	    UpgradeLogger.Log(logId, nodeMac, "Process Start Actor Upgrade", "Success");
             ServiceResponse response = new();
             var connectionResult = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
             if (connectionResult.Status != HttpStatusCode.OK)
@@ -381,16 +381,7 @@ namespace AccessAPP.Services
                     var actorUpgradeResult = await UpgradeActorAsync(macAddress, pincode, true, logId);
                     stopwatch.Stop();
                     Console.WriteLine($"Actor upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds - result: {actorUpgradeResult.Success}");
-                    //if (!actorUpgradeResult.Success)
-                    //{
-                        //vinti: usually upgrade fails if the detector is in bootloader - try to flash first bootloader and sensor
 
-                        //response.Success = false;
-                        //response.StatusCode = actorUpgradeResult.StatusCode;
-                        //response.Message = $"Actor upgrade failed: {actorUpgradeResult.Message}";
-                        //dev.ActorSuccess = false;
-                        //return response; // Stop if actor upgrade fails
-                   // }
 
 
                     dev.ActorSuccess = actorUpgradeResult.Success;
@@ -570,136 +561,12 @@ namespace AccessAPP.Services
             }
         }
 
-
-
-        //public async Task<ServiceResponse> BulkUpgradeDevicesAsync(List<BulkUpgradeRequest> requests)
-        //{
-        //    var response = new ServiceResponse
-        //    {
-        //        Success = true,
-        //        StatusCode = 200,
-        //        Message = "Bulk device upgrade completed successfully."
-        //    };
-
-        //    Stopwatch stopwatch = new Stopwatch();
-        //    stopwatch.Restart();
-        //    var upgradeResults = new ConcurrentBag<ServiceResponse>();
-        //    var semaphore = new SemaphoreSlim(1); // Limit to 1 concurrent upgrade (adjust as needed)
-
-        //    // Phase 1: Upgrade Bootloader and Sensor for all devices
-        //    var phase1TaskList = new List<Task<ServiceResponse>>();
-        //    foreach (var request in requests)
-        //    {
-        //        await semaphore.WaitAsync();
-
-        //        phase1TaskList.Add(Task.Run(async () =>
-        //        {
-        //            try
-        //            {
-        //                var result = await UpgradeBLSensorAsync(request.MacAddress, request.Pincode);
-        //                upgradeResults.Add(result);
-        //                return result;
-        //            }
-        //            catch (Exception ex)
-        //            {
-        //                Console.WriteLine($"Error upgrading device {request.MacAddress}: {ex.Message}");
-        //                return new ServiceResponse
-        //                {
-        //                    Success = false,
-        //                    StatusCode = 500,
-        //                    Message = $"Error upgrading device {request.MacAddress}: {ex.Message}"
-        //                };
-        //            }
-        //            finally
-        //            {
-        //                semaphore.Release();
-        //            }
-        //        }));
-
-        //        await Task.Delay(TimeSpan.FromSeconds(5)); // Delay between starting tasks
-        //    }
-
-        //    // Wait for all Phase 1 tasks to complete
-        //    await Task.WhenAll(phase1TaskList);
-
-        //    // Log Phase 1 results
-        //    foreach (var result in phase1TaskList)
-        //    {
-        //        Console.WriteLine($"Phase 1 Result: {result.Result.Message}");
-        //    }
-
-        //    await Task.Delay(TimeSpan.FromSeconds(10));
-
-        //    Console.WriteLine("Delay Introduced before Actor program");
-
-        //    // Phase 2: Upgrade Actors for all devices
-        //    var phase2TaskList = new List<Task<ServiceResponse>>();
-        //    foreach (var request in requests)
-        //    {
-        //        await semaphore.WaitAsync();
-
-        //        phase2TaskList.Add(Task.Run(async () =>
-        //        {
-        //            try
-        //            {
-        //                var result = await UpgradeActorAsync(request.MacAddress, request.Pincode, true);
-        //                upgradeResults.Add(result);
-        //                return result;
-        //            }
-        //            catch (Exception ex)
-        //            {
-        //                Console.WriteLine($"Error upgrading actor for {request.MacAddress}: {ex.Message}");
-        //                return new ServiceResponse
-        //                {
-        //                    Success = false,
-        //                    StatusCode = 500,
-        //                    Message = $"Error upgrading actor for {request.MacAddress}: {ex.Message}"
-        //                };
-        //            }
-        //            finally
-        //            {
-        //                semaphore.Release();
-        //            }
-        //        }));
-
-        //        await Task.Delay(TimeSpan.FromSeconds(5)); // Delay between starting tasks
-        //    }
-
-        //    // Wait for all Phase 2 tasks to complete
-        //    await Task.WhenAll(phase2TaskList);
-
-        //    // Log Phase 2 results
-        //    foreach (var result in phase2TaskList)
-        //    {
-        //        Console.WriteLine($"Phase 2 Result: {result.Result.Message}");
-        //    }
-
-        //    stopwatch.Stop();
-        //    Console.WriteLine($"All devices got upgraded. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds");
-
-        //    // Aggregate responses to determine overall success
-        //    var failedUpgrades = upgradeResults.Where(r => !r.Success).ToList();
-        //    if (failedUpgrades.Any())
-        //    {
-        //        response.Success = false;
-        //        response.StatusCode = 207; // Multi-Status
-        //        response.Message = $"Bulk device upgrade completed with errors. Failed devices: {string.Join(", ", failedUpgrades.Select(r => r.Message))}";
-        //    }
-
-        //    return response;
-        //}
-
-        public async Task<ServiceResponse> BulkUpgradeDevicesAsync(List<BulkUpgradeRequest> requests)
+        public async Task<ServiceResponse> BulkUpgradeDevicesAsync(List<BulkUpgradeRequest> requests, int numberOfParallelThreads = 2)
         {
             var progressList = requests.Select(req => new UpgradeProgress { MacAddress = req.MacAddress, Pincode = req.Pincode , sType = req.sType}).ToList();
 
             // Phase 1: Initial Upgrades
-            await UpgradeDevicesInParallel(progressList);
-
-            // Phase 2: Retry Failed Devices (up to 3 times)
-           // Console.WriteLine("wait for 1 minute before retrying");
-            //Task.Delay(10000).Wait();
-           //await RetryFailedDevices(progressList, 3);
+            await UpgradeDevicesInParallel(progressList, numberOfParallelThreads);
 
             // Prepare Final Report
             var successfulDevices = progressList.Where(d => d.IsFullyUpgraded).Select(d => d.MacAddress).ToList();
@@ -717,10 +584,10 @@ namespace AccessAPP.Services
 
         public int UpgradeDevicesInProgress = 0;
 
-        private async Task UpgradeDevicesInParallel(List<UpgradeProgress> devices)
+        private async Task UpgradeDevicesInParallel(List<UpgradeProgress> devices, int numbersOfThreadsInParallel = 2)
         {
             SmartThreadPool smartThreadPool = new SmartThreadPool();
-            smartThreadPool.MaxThreads = 3; //max 3 devices in the same time
+            smartThreadPool.MaxThreads = numbersOfThreadsInParallel; //max flash devices in the same time
 
             int maxRetriesPerComponent = 3;
 
@@ -879,7 +746,7 @@ namespace AccessAPP.Services
 
             if (programmingResult)
             {
-                UpgradeLogger.Log(logId, nodeMac, isBootloader ? "BootLoaderProgrammingComplete" : "SensorProgrammingComplete", "Success");
+                UpgradeLogger.Log(logId, nodeMac, "ProgrammingComplete", "Success");
                 response.Success = true;
                 response.StatusCode = 200;
                 response.Message = "Programming Complete";
@@ -887,7 +754,7 @@ namespace AccessAPP.Services
             }
             else
             {
-                UpgradeLogger.Log(logId, nodeMac, isBootloader ? "BootLoaderProgrammingComplete" : "SensorProgrammingComplete", "Failed");
+                UpgradeLogger.Log(logId, nodeMac, "ProgrammingComplete", "Failed");
                 response.Success = false;
                 response.StatusCode = 500;
                 response.Message = "Programming Failed";
@@ -910,7 +777,6 @@ namespace AccessAPP.Services
 
                 if (isActorInBootMode)
                 {
-                    UpgradeLogger.Log(logId, nodeMac, "Actor BootMode", "Achieved");
                     Console.WriteLine($"Actor {nodeMac} is in boot mode.");
                     break; // Exit the loop if the actor is already in boot mode
                 }
@@ -924,7 +790,6 @@ namespace AccessAPP.Services
 
                     if (!jumpToBootloaderSuccess)
                     {
-
                         Console.WriteLine($"Failed to send jump-to-bootloader command for {nodeMac}. Retrying...");
                     }
 
@@ -1083,12 +948,12 @@ namespace AccessAPP.Services
                 {
                     //if (!_notificationEvent.WaitOne(TimeSpan.FromSeconds(15)))
                     //{
-                    //   var resultEnable = _ownInstance._notificationService.EnableNotificationAsync("192.168.40.1", macContext, false);
+                    //   var resultEnable = _ownInstance._notificationService.EnableNotificationAsync("192.168.100.90", macContext, false);
                     //   resultEnable.Wait();
                     //   if (!resultEnable.Result)
                     //   {
                     //        Thread.Sleep(10000);
-                    //        resultEnable = _ownInstance._notificationService.EnableNotificationAsync("192.168.40.1", macContext, false);
+                    //        resultEnable = _ownInstance._notificationService.EnableNotificationAsync("192.168.100.90", macContext, false);
                     //        resultEnable.Wait();
                     //   }
                     //}
@@ -1179,12 +1044,12 @@ namespace AccessAPP.Services
                 {
                     //if (!_notificationEvent.WaitOne(TimeSpan.FromSeconds(15)))
                     //{
-                    //    var resultEnable = _ownInstance._notificationService.EnableNotificationAsync("192.168.40.1", macContext, true);
+                    //    var resultEnable = _ownInstance._notificationService.EnableNotificationAsync("192.168.100.90", macContext, true);
                     //    resultEnable.Wait();
                     //    if (!resultEnable.Result)
                     //    {
                     //        Thread.Sleep(10000);
-                    //        resultEnable = _ownInstance._notificationService.EnableNotificationAsync("192.168.40.1", macContext, true);
+                    //        resultEnable = _ownInstance._notificationService.EnableNotificationAsync("192.168.100.90", macContext, true);
                     //        resultEnable.Wait();
                     //    }
                     //}
@@ -1311,7 +1176,7 @@ namespace AccessAPP.Services
                     //Console.WriteLine($"Data Sent: {hexData} | macContext: {macContext}");
                     //Console.WriteLine($"size of buffer: {size}");
                     //SendMessage(data);
-                    _ownInstance.cassiaReadWriteService.WriteBleMessage("192.168.40.1", macContext, 14, hexData, "");
+                    _ownInstance.cassiaReadWriteService.WriteBleMessage(_ownInstance._gatewayIpAddress, macContext, 14, hexData, "");
                     Thread.Sleep(100);
 
                     status = true;
@@ -1331,7 +1196,7 @@ namespace AccessAPP.Services
                         //Console.WriteLine($"Data Sent: {hexData} | macContext: {macContext}");
                         //Console.WriteLine($"size of buffer: {size}");
                         //SendMessage(data);
-                        _ownInstance.cassiaReadWriteService.WriteBleMessage("192.168.40.1", macContext, 14, hexData, "");
+                        _ownInstance.cassiaReadWriteService.WriteBleMessage(_ownInstance._gatewayIpAddress, macContext, 14, hexData, "");
                         Thread.Sleep(100);
 
                         status = true;
@@ -1464,7 +1329,7 @@ namespace AccessAPP.Services
             string hexData = BitConverter.ToString(chunk).Replace("-", "");
             //Console.WriteLine($"Data Sent: {hexData} -> mac: {macAddress}");
 
-            await _ownInstance.cassiaReadWriteService.WriteBleMessage("192.168.40.1", macAddress, 19, hexData, "?noresponse=1");
+            await _ownInstance.cassiaReadWriteService.WriteBleMessage(_ownInstance._gatewayIpAddress, macAddress, 19, hexData, "?noresponse=1");
 
         }
 

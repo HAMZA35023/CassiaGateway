@@ -6,7 +6,7 @@ using Windows.Media.Protection.PlayReady;
 
 public class CassiaNotificationService : IDisposable
 {
-    private readonly HttpClient _httpClient;
+    private static readonly HttpClient _httpClient = new HttpClient();
     private readonly ConcurrentDictionary<string, EventHandler<string>> _eventHandlers;
     private readonly ConcurrentDictionary<string, string> _lastEventData;
     private readonly string _eventSourceUrl;
@@ -23,7 +23,7 @@ public class CassiaNotificationService : IDisposable
     // Constructor with DI dependencies
     public CassiaNotificationService(HttpClient httpClient, IConfiguration configuration, ILogger<CassiaNotificationService> logger)
     {
-        _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+        //_httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _eventHandlers = new ConcurrentDictionary<string, EventHandler<string>>();
         _lastEventData = new ConcurrentDictionary<string, string>();
