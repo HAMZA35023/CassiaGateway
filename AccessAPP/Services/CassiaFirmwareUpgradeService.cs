@@ -366,7 +366,7 @@ namespace AccessAPP.Services
 
             try
             {
-                UpgradeLogger.Log(logId, macAddress, "Process Start Device Async", "Success", DetectorType);
+                UpgradeLogger.Log(logId, macAddress, "Process Start Device Async", "Success", FirmwareVersion);
                 // Step 2: Upgrade the actor
                 Stopwatch stopwatch = new Stopwatch();
 
