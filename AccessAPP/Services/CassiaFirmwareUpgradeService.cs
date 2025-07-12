@@ -721,7 +721,8 @@ namespace AccessAPP.Services
 
             if (programmingResult)
             {
-                UpgradeLogger.Log(logId, nodeMac, "ProgrammingComplete", "Success");
+              
+                UpgradeLogger.Log(logId, nodeMac, isBootloader ? "BootLoaderProgrammingComplete" : "SensorProgrammingComplete", "Success");
                 response.Success = true;
                 response.StatusCode = 200;
                 response.Message = "Programming Complete";
@@ -729,7 +730,7 @@ namespace AccessAPP.Services
             }
             else
             {
-                UpgradeLogger.Log(logId, nodeMac, "ProgrammingComplete", "Failed");
+                UpgradeLogger.Log(logId, nodeMac, isBootloader ? "BootLoaderProgrammingComplete" : "SensorProgrammingComplete", "Failed");
                 response.Success = false;
                 response.StatusCode = 500;
                 response.Message = "Programming Failed";
