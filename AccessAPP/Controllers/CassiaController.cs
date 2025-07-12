@@ -303,7 +303,7 @@ namespace AccessAPP.Controllers
             string nodeMac = request.MacAddress;
             string pincode = request.Pincode;
             bool bActor = request.bActor; // if bActor=1, programming actor
-            int sensorType = request.sType;
+            string sensorType = request.DetectorType;
             try
             {
                 // Check if an upgrade is already in progress for this device
@@ -363,7 +363,7 @@ namespace AccessAPP.Controllers
                 }
                 var logId = $"{nodeMac.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
                 // Step 1: Connect to the device
-                var result = await _firmwareUpgradeService.UpgradeActorAsync(nodeMac, pincode, bActor, logId);
+                var result = await _firmwareUpgradeService.UpgradeActorAsync(nodeMac, pincode, bActor, request.DetectorType,request.FirmwareVersion,logId);
 
                 return result.Success
                     ? Ok(new { message = result.Message })
@@ -386,10 +386,10 @@ namespace AccessAPP.Controllers
                 UpgradeProgress upProgress = new UpgradeProgress();
                 upProgress.MacAddress = request.MacAddress;
                 upProgress.Pincode = request.Pincode;
-                upProgress.sType = request.sType;
+                upProgress.DetectotType = request.DetectorType;
                 var logId = $"{request.MacAddress.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
 
-                var result = await _firmwareUpgradeService.UpgradeDeviceAsync(upProgress, request.MacAddress, request.Pincode, request.sType, true, true, true,logId);
+                var result = await _firmwareUpgradeService.UpgradeDeviceAsync(upProgress, request.MacAddress, request.Pincode, request.DetectorType,request.FirmwareVersion, true, true, true,logId);
 
                 return result.Success
                     ? Ok(new { message = result.Message })
