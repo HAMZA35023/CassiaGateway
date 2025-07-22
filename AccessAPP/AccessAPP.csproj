@@ -1,11 +1,10 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+	<TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <PlatformTarget>x86</PlatformTarget>
-    <Platforms>AnyCPU;x86</Platforms>
+    <PlatformTarget>AnyCPU</PlatformTarget>
   </PropertyGroup>
 
   <ItemGroup>
@@ -23,6 +22,54 @@
 		</None>
 		<None Update="C:\Users\HRS\source\repos\AccessAPP\AccessAPP\obj\Debug\BootloaderUtil.dll">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+		<None Update="FirmwareVersions\0220\353AP10220.cyacd">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+		<None Update="FirmwareVersions\0220\353AP20220.cyacd">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+		<None Update="FirmwareVersions\0220\353AP30220.cyacd">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+		<None Update="FirmwareVersions\0220\353AP40220.cyacd">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+		<None Update="FirmwareVersions\0220\353AP50220.cyacd">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+		<None Update="FirmwareVersions\0220\353AP60220.cyacd">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+		<None Update="FirmwareVersions\0220\353AP70220.cyacd">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+		<None Update="FirmwareVersions\0220\353BL10602.cyacd">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+		<None Update="FirmwareVersions\0221\353AP10221.cyacd">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+		<None Update="FirmwareVersions\0221\353AP20221.cyacd">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+		<None Update="FirmwareVersions\0221\353AP30221.cyacd">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+		<None Update="FirmwareVersions\0221\353AP40221.cyacd">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+		<None Update="FirmwareVersions\0221\353AP50221.cyacd">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+		<None Update="FirmwareVersions\0221\353AP60221.cyacd">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+		<None Update="FirmwareVersions\0221\353AP70221.cyacd">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+		<None Update="FirmwareVersions\0221\353BL10602.cyacd">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</None>
 		<None Update="FirmwareVersions\0225\353AP10225.cyacd">
 		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -234,54 +281,7 @@
 		<None Update="FirmwareVersions\0236\353BL10604.cyacd">
 		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</None>
-		<None Update="FirmwareVersions\353AP10227.cyacd">
-		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="FirmwareVersions\353AP1M222.cyacd">
-		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="FirmwareVersions\353AP20218.cyacd">
-		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="FirmwareVersions\353AP20227.cyacd">
-		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="FirmwareVersions\353AP2M222.cyacd">
-		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="FirmwareVersions\353AP30227.cyacd">
-		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="FirmwareVersions\353AP3M222.cyacd">
-		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="FirmwareVersions\353AP40227.cyacd">
-		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="FirmwareVersions\353AP4M222.cyacd">
-		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="FirmwareVersions\353AP50227.cyacd">
-		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="FirmwareVersions\353AP5M222.cyacd">
-		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="FirmwareVersions\353AP60227.cyacd">
-		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="FirmwareVersions\353AP6M222.cyacd">
-		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="FirmwareVersions\353AP70227.cyacd">
-		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="FirmwareVersions\353AP7M222.cyacd">
-		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Update="FirmwareVersions\353BL10604.cyacd">
-		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
+
 	</ItemGroup>
 
   <ItemGroup>
