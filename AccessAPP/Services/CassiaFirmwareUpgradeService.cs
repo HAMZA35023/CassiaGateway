@@ -10,6 +10,7 @@ using System.Net;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 using System.Windows.Markup;
 using Windows.UI.Notifications;
 using Windows.UI.Xaml.Controls.Primitives;
@@ -562,7 +563,7 @@ namespace AccessAPP.Services
 
         public async Task<ServiceResponse> BulkUpgradeDevicesAsync(List<BulkUpgradeRequest> requests, int numberOfParallelThreads = 2)
         {
-            var progressList = requests.Select(req => new UpgradeProgress { MacAddress = req.MacAddress, Pincode = req.Pincode , DetectotType = req.DetctorType, FirmwareVersion= req.FirmwareVersion}).ToList();
+            var progressList = requests.Select(req => new UpgradeProgress { MacAddress = req.MacAddress, Pincode = req.Pincode , DetectotType = req.DetctorType, FirmwareVersion= req.FirmwareVersion, CurrentFirmwareVersion = req.CurrentFirmwareVersion }).ToList();
 
             // Phase 1: Initial Upgrades
             await UpgradeDevicesInParallel(progressList, numberOfParallelThreads);
@@ -671,8 +672,14 @@ namespace AccessAPP.Services
                     dev.RetryCountSensor = 0;
 
                     Console.WriteLine($"Starting upgrade for device {dev.MacAddress}");
+                    bool upgradeBootloader = FirmwareResolver.ShouldUpgradeBootloader(
+                         dev.DetectotType,
+                         dev.FirmwareVersion,
+                         dev.CurrentFirmwareVersion
+                     );
 
-                    await UpgradeDeviceAsync(dev, dev.MacAddress, dev.Pincode, dev.DetectotType, dev.FirmwareVersion, true, true, true, logId);
+
+                    await UpgradeDeviceAsync(dev, dev.MacAddress, dev.Pincode, dev.DetectotType, dev.FirmwareVersion, true, upgradeBootloader, true, logId);
 
                     while (!dev.IsFullyUpgraded &&
                            (dev.RetryCountActor < 2 * maxRetriesPerComponent ||
@@ -683,7 +690,7 @@ namespace AccessAPP.Services
                         dev.RetryCount++;
                         Console.WriteLine($"Retry upgrade for device {dev.MacAddress} - Retry {dev.RetryCount}");
 
-                        await UpgradeDeviceAsync(dev, dev.MacAddress, dev.Pincode, dev.DetectotType, dev.FirmwareVersion, !dev.ActorSuccess, !dev.BootloaderSuccess, !dev.SensorSuccess, logId);
+                        await UpgradeDeviceAsync(dev, dev.MacAddress, dev.Pincode, dev.DetectotType, dev.FirmwareVersion, !dev.ActorSuccess, upgradeBootloader && !dev.BootloaderSuccess, !dev.SensorSuccess, logId);
                     }
 
                     Console.WriteLine($">>>> THREAD END - {dev.MacAddress} - actor: {dev.ActorSuccess}:{dev.RetryCountActor} - bootloader: {dev.BootloaderSuccess}:{dev.RetryCountBootloader} - sensor: {dev.SensorSuccess}:{dev.RetryCountSensor}");
@@ -953,7 +960,6 @@ namespace AccessAPP.Services
                 //UnsubscribeNotification(nodeMac, cassiaNotificationService);
             }
         }
-
 
 
         public int ReadData(IntPtr buffer, int size, UInt64 customContext)
@@ -1647,6 +1653,8 @@ namespace AccessAPP.Services
             }
         }
 
+       
+
         /// <summary>
         /// Method that performs Read operation from USB Device
         /// </summary>
@@ -1662,6 +1670,7 @@ namespace AccessAPP.Services
 
         public string DetectotType { get; set; }
         public string FirmwareVersion { get; set; }
+        public string CurrentFirmwareVersion { get; set; }
         public bool BootloaderSuccess { get; set; } = false;
         public bool SensorSuccess { get; set; } = false;
         public bool ActorSuccess { get; set; } = false;

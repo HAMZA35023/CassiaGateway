@@ -1,4 +1,6 @@
-﻿namespace AccessAPP.Services.HelperClasses
+﻿using System.Text.RegularExpressions;
+
+namespace AccessAPP.Services.HelperClasses
 {
     public static class FirmwareResolver
     {
@@ -59,6 +61,54 @@
 
             return digits;
         }
+
+        public static bool ShouldUpgradeBootloader(string detectorType, string firmwareVersion, string currentFirmwareVersion)
+        {
+            try
+            {
+                // If no current firmware info, always upgrade bootloader
+                if (string.IsNullOrWhiteSpace(currentFirmwareVersion))
+                    return true;
+
+                // 1. Resolve the bootloader file path for the given version
+                string bootloaderPath = ResolveFirmwareFile(detectorType, firmwareVersion, isActor: false, isBootloader: true);
+
+                // 2. Extract bootloader version from current device string and from filename
+                string currentBootVer = ExtractBootVersionFromString(currentFirmwareVersion);
+                string expectedBootVer = ExtractBootVersionFromFilename(bootloaderPath);
+
+                // 3. If either is missing, default to upgrade
+                if (string.IsNullOrEmpty(currentBootVer) || string.IsNullOrEmpty(expectedBootVer))
+                    return true;
+
+                // 4. Compare versions
+                return currentBootVer != expectedBootVer;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"FirmwareResolver fallback: {ex.Message}");
+                return true; // fallback to upgrade if anything fails
+            }
+        }
+
+
+        private static string ExtractBootVersionFromFilename(string filename)
+        {
+            var match = Regex.Match(filename ?? "", @"BL10(\d)(\d{2})");
+            if (match.Success)
+            {
+                return $"{match.Groups[1].Value}.{match.Groups[2].Value}"; // e.g., "6.04"
+            }
+            return null;
+        }
+
+
+        private static string ExtractBootVersionFromString(string fwString)
+        {
+            var match = Regex.Match(fwString ?? "", @"Boot:\s*([0-9]+)\.([0-9]+)");
+            return match.Success ? $"{match.Groups[1].Value}.{match.Groups[2].Value}" : null;
+        }
+
     }
 
 

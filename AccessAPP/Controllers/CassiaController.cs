@@ -599,7 +599,7 @@ namespace AccessAPP.Controllers
 
             foreach (var macAddress in macAddresses)
             {
-                string parsedVersion = string.Empty;
+                string versionSummary = "";
 
                 try
                 {
@@ -609,32 +609,43 @@ namespace AccessAPP.Controllers
                         var loginResponse = await _connectService.AttemptLogin(_gatewayIpAddress, macAddress);
                         if (loginResponse.Status.ToString() == "OK")
                         {
-                            string testMessage = "01290107005A5E";
-                            var response = await _connectService.GetDataFromBleDevice(_gatewayIpAddress, _gatewayPort, macAddress, testMessage);
+                            string sensorInfo = "";
+                            string actorInfo = "";
 
-                            if (response.Status.ToString() == "OK" && !string.IsNullOrEmpty(response.Data))
+                            // Sensor
+                            string sensorCommand = "01290107005A5E";
+                            var sensorResponse = await _connectService.GetDataFromBleDevice(_gatewayIpAddress, _gatewayPort, macAddress, sensorCommand);
+                            if (sensorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(sensorResponse.Data))
                             {
-                                parsedVersion = ScanDataParser.ParseSoftwareVersionFromResponse(response.Data);
+                                sensorInfo = ScanDataParser.ParseSoftwareVersionFromResponse(sensorResponse.Data);
                             }
+
+                            // Actor
+                            string actorCommand = "012B01070032B3";
+                            var actorResponse = await _connectService.GetDataFromBleDevice(_gatewayIpAddress, _gatewayPort, macAddress, actorCommand);
+                            if (actorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(actorResponse.Data))
+                            {
+                                actorInfo = ScanDataParser.ParseSoftwareVersionFromResponse(actorResponse.Data);
+                            }
+
+                            versionSummary = $"Sensor: {sensorInfo} | Actor: {actorInfo}";
                         }
 
-                        // Attempt disconnect even if data failed
                         await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0);
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[WARN] Error with device {macAddress}: {ex.Message}");
-                    // Leave parsedVersion as empty
+                    Console.WriteLine($"Error with device {macAddress}: {ex.Message}");
                 }
 
-                results[macAddress] = parsedVersion;
-
-                await Task.Delay(500); // Delay between devices
+                results[macAddress] = versionSummary;
+                await Task.Delay(500);
             }
 
             return Ok(results);
         }
+
 
 
 
