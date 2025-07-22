@@ -672,14 +672,15 @@ namespace AccessAPP.Services
                     dev.RetryCountSensor = 0;
 
                     Console.WriteLine($"Starting upgrade for device {dev.MacAddress}");
-                    bool upgradeBootloader = FirmwareResolver.ShouldUpgradeBootloader(
+                    dev.upgradeBootloader = FirmwareResolver.ShouldUpgradeBootloader(
                          dev.DetectotType,
                          dev.FirmwareVersion,
                          dev.CurrentFirmwareVersion
                      );
 
+                    dev.isActorUpgradeNeeded = dev.DetectotType == "P48" || dev.DetectotType == "P47";
 
-                    await UpgradeDeviceAsync(dev, dev.MacAddress, dev.Pincode, dev.DetectotType, dev.FirmwareVersion, true, upgradeBootloader, true, logId);
+                    await UpgradeDeviceAsync(dev, dev.MacAddress, dev.Pincode, dev.DetectotType, dev.FirmwareVersion, dev.isActorUpgradeNeeded, dev.upgradeBootloader, true, logId);
 
                     while (!dev.IsFullyUpgraded &&
                            (dev.RetryCountActor < 2 * maxRetriesPerComponent ||
@@ -690,7 +691,7 @@ namespace AccessAPP.Services
                         dev.RetryCount++;
                         Console.WriteLine($"Retry upgrade for device {dev.MacAddress} - Retry {dev.RetryCount}");
 
-                        await UpgradeDeviceAsync(dev, dev.MacAddress, dev.Pincode, dev.DetectotType, dev.FirmwareVersion, !dev.ActorSuccess, upgradeBootloader && !dev.BootloaderSuccess, !dev.SensorSuccess, logId);
+                        await UpgradeDeviceAsync(dev, dev.MacAddress, dev.Pincode, dev.DetectotType, dev.FirmwareVersion, dev.isActorUpgradeNeeded && !dev.ActorSuccess, dev.upgradeBootloader && !dev.BootloaderSuccess, !dev.SensorSuccess, logId);
                     }
 
                     Console.WriteLine($">>>> THREAD END - {dev.MacAddress} - actor: {dev.ActorSuccess}:{dev.RetryCountActor} - bootloader: {dev.BootloaderSuccess}:{dev.RetryCountBootloader} - sensor: {dev.SensorSuccess}:{dev.RetryCountSensor}");
@@ -1679,8 +1680,11 @@ namespace AccessAPP.Services
         public int RetryCountBootloader { get; set; } = 0;
         public int RetryCountSensor { get; set; } = 0;
         public string LastFailureReason { get; set; } = string.Empty;
+        public bool isActorUpgradeNeeded = true;
 
-        public bool IsFullyUpgraded => BootloaderSuccess && SensorSuccess && ActorSuccess;
+        public bool upgradeBootloader = true;
+
+        public bool IsFullyUpgraded => (!isActorUpgradeNeeded || ActorSuccess) && (!upgradeBootloader || BootloaderSuccess) && (SensorSuccess);
     }
     public class UpgradeResponse
     {

@@ -43,7 +43,8 @@ namespace AccessAPP.Services.HelperClasses
                 ("P47", true) => "AP5",
                 ("P47", false) => "AP6",
                 ("P46", false) or ("P49", false) => "AP3",
-                ("230V", false) => "AP1",
+                ("P41", false) => "AP1",
+                ("P42", false) => "AP1",
                 ("PROD", false) => "AP0",
                 ("PROD", true) => "AP7",
                 _ => null
