@@ -806,6 +806,7 @@ namespace AccessAPP.Controllers
         {
             try
             {
+
                 var resolvedPath = FirmwareResolver.ResolveFirmwareFile(detectorType, firmwareVersion, isActor, isBootloader);
                 return Ok(new
                 {
