@@ -285,7 +285,9 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<Folder Include="FirmwareVersions\" />
+	  <Content Include="FirmwareVersions\**\*.*">
+		<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </Content>
 	</ItemGroup>
 
 </Project>

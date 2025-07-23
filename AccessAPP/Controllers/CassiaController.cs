@@ -797,6 +797,47 @@ namespace AccessAPP.Controllers
                 return StatusCode(500, $"Error reading log file: {ex.Message}");
             }
         }
+        [HttpGet("resolvefirmware")]
+        public IActionResult ResolveFirmware(
+                   [FromQuery] string detectorType,
+                   [FromQuery] string firmwareVersion,
+                   [FromQuery] bool isActor,
+                   [FromQuery] bool isBootloader)
+        {
+            try
+            {
+                var resolvedPath = FirmwareResolver.ResolveFirmwareFile(detectorType, firmwareVersion, isActor, isBootloader);
+                return Ok(new
+                {
+                    success = true,
+                    filePath = resolvedPath
+                });
+            }
+            catch (FileNotFoundException ex)
+            {
+                return NotFound(new
+                {
+                    success = false,
+                    message = ex.Message
+                });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = ex.Message
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message = $"Internal error: {ex.Message}"
+                });
+            }
+        }
 
         [HttpGet("upgrade/progress")]
         public IActionResult GetAllProgress()
