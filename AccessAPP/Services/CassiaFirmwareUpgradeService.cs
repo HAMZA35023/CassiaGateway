@@ -1,19 +1,12 @@
 ﻿using AccessAPP.Models;
 using AccessAPP.Services.HelperClasses;
-using Amib.Threading;
-using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Runtime.InteropServices;
-using System.Runtime.InteropServices.WindowsRuntime;
-using System.Security.Cryptography;
-using System.Text.RegularExpressions;
-using System.Windows.Markup;
-using Windows.UI.Notifications;
-using Windows.UI.Xaml.Controls.Primitives;
+
 
 namespace AccessAPP.Services
 {

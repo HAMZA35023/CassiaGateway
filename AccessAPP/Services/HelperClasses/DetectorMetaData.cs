@@ -1,7 +1,4 @@
-﻿using Amazon.Runtime.Internal.Transform;
-using System.Xml.Linq;
-
-namespace AccessAPP.Services.HelperClasses
+﻿namespace AccessAPP.Services.HelperClasses
 {
     public static class DetectorMetaData
     {

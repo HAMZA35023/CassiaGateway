@@ -1,12 +1,7 @@
 ﻿using AccessAPP.Models;
 using AccessAPP.Services;
 using AccessAPP.Services.HelperClasses;
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
-using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
-using System.Xml.Linq;
 
 public class ScanBleDevice : IDisposable
 {

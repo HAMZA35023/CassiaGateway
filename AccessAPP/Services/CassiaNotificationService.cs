@@ -1,8 +1,6 @@
 ﻿using System.Collections.Concurrent;
 using System.Text.Json;
 using AccessAPP.Services;
-using Amazon.Runtime.Internal;
-using Windows.Media.Protection.PlayReady;
 
 public class CassiaNotificationService : IDisposable
 {
