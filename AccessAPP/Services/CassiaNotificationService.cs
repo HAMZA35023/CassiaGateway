@@ -1,9 +1,12 @@
 ﻿using System.Collections.Concurrent;
 using System.Text.Json;
+using AccessAPP.Services;
+using Amazon.Runtime.Internal;
+using Windows.Media.Protection.PlayReady;
 
 public class CassiaNotificationService : IDisposable
 {
-    private readonly HttpClient _httpClient;
+    private static readonly HttpClient _httpClient = new HttpClient();
     private readonly ConcurrentDictionary<string, EventHandler<string>> _eventHandlers;
     private readonly ConcurrentDictionary<string, string> _lastEventData;
     private readonly string _eventSourceUrl;
@@ -11,6 +14,8 @@ public class CassiaNotificationService : IDisposable
     private static Task _listeningTask;
     private static readonly object _lock = new();
     private readonly ILogger<CassiaNotificationService> _logger;
+    public SemaphoreSlim semaphore = null;
+    public bool forcedRestartedSSE = false;
 
     // Singleton instance managed by DI
     private static CassiaNotificationService _instance;
@@ -18,7 +23,7 @@ public class CassiaNotificationService : IDisposable
     // Constructor with DI dependencies
     public CassiaNotificationService(HttpClient httpClient, IConfiguration configuration, ILogger<CassiaNotificationService> logger)
     {
-        _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+        //_httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _eventHandlers = new ConcurrentDictionary<string, EventHandler<string>>();
         _lastEventData = new ConcurrentDictionary<string, string>();
@@ -63,6 +68,7 @@ public class CassiaNotificationService : IDisposable
 
                     if (line.StartsWith("data:"))
                     {
+                        Console.WriteLine("SSE Raw data: " + line);
                         line = line.Substring("data:".Length).Trim();
                         Task.Run(() => InvokeHandlers(line));
                     }
@@ -78,7 +84,7 @@ public class CassiaNotificationService : IDisposable
 
     private void InvokeHandlers(string eventData)
     {
-        _logger.LogInformation($"Raw SSE Event Received: {eventData}");
+        //_logger.LogInformation($"Raw SSE Event Received: {eventData}");
 
         try
         {
@@ -86,16 +92,16 @@ public class CassiaNotificationService : IDisposable
             if (eventObject != null && !string.IsNullOrEmpty(eventObject.value))
             {
                 string macAddress = eventObject.id;
-                _logger.LogInformation($"Extracted MAC Address: {macAddress}");
+                //_logger.LogInformation($"Extracted MAC Address: {macAddress}");
 
                 if (_eventHandlers.TryGetValue(macAddress, out var handler))
                 {
-                    _logger.LogInformation($"Invoking handler for MAC {macAddress} with data: {eventObject.value}");
+                    //_logger.LogInformation($"Invoking handler for MAC {macAddress} with data: {eventObject.value}");
                     handler?.Invoke(this, eventObject.value);
                 }
                 else
                 {
-                    _logger.LogWarning($"No handler found for MAC {macAddress}");
+                   // _logger.LogWarning($"No handler found for MAC {macAddress}");
                 }
             }
         }
@@ -109,15 +115,33 @@ public class CassiaNotificationService : IDisposable
     {
         try
         {
+            HttpClient _httpClientTmp = new HttpClient();
             string url = $"http://{gatewayIpAddress}/gatt/nodes/{nodeMac}/handle/15/value/0100";
             if (bActor)
             {
                 url = $"http://{gatewayIpAddress}/gatt/nodes/{nodeMac}/handle/16/value/0100";
             }
 
-            HttpResponseMessage response = await _httpClient.GetAsync(url);
+            HttpResponseMessage response = null;
 
-            if (response.IsSuccessStatusCode)
+            await semaphore.WaitAsync(); //lock connect requests
+
+            try
+            {
+                // Send the requestDevice is already in boot mode.
+                response = await _httpClientTmp.GetAsync(url);
+            }
+            catch (Exception e)
+            {
+                _logger.LogError($"Vinti {nodeMac}");
+                throw e;
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+
+            if (response != null && response.IsSuccessStatusCode)
             {
                 _logger.LogInformation($"Notification enabled successfully for {nodeMac}.");
                 return true;
@@ -149,7 +173,7 @@ public class CassiaNotificationService : IDisposable
 
     public void Dispose()
     {
-        _httpClient?.Dispose();
+        //_httpClient?.Dispose();
     }
 
     private class EventData

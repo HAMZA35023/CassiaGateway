@@ -37,7 +37,9 @@ using (var scope = app.Services.CreateScope())
 {
     var serviceProvider = scope.ServiceProvider;
 
+    var cassiaConnectService = serviceProvider.GetRequiredService<CassiaConnectService>(); 
     var cassiaNotificationService = serviceProvider.GetRequiredService<CassiaNotificationService>();
+    cassiaNotificationService.semaphore = cassiaConnectService.semaphore;
     var scanBleDevice = serviceProvider.GetRequiredService<ScanBleDevice>();
 }
 

@@ -3,6 +3,7 @@ using AccessAPP.Services.HelperClasses;
 using Newtonsoft.Json;
 using System.Net;
 using System.Text;
+using System.Threading;
 
 namespace AccessAPP.Services
 {
@@ -11,12 +12,15 @@ namespace AccessAPP.Services
         private readonly HttpClient _httpClient;
         private readonly IConfiguration _configuration;
         private readonly CassiaNotificationService _notificationService; // ✅ Injected singleton
+        public readonly SemaphoreSlim semaphore = new SemaphoreSlim(1); //this will be used as sync point by all services
+        CassiaReadWriteService cassiaReadWrite = new CassiaReadWriteService();
 
         public int Status { get; set; }
         public object ResponseBody { get; set; }
 
         public CassiaConnectService(HttpClient httpClient, IConfiguration configuration, CassiaNotificationService notificationService)
         {
+            cassiaReadWrite.semaphore = semaphore;
             _httpClient = httpClient;
             _configuration = configuration;
             _notificationService = notificationService;
@@ -44,8 +48,24 @@ namespace AccessAPP.Services
 
             try
             {
-                // Send the request
-                var response = await client.SendAsync(request);
+                HttpResponseMessage response = new HttpResponseMessage(HttpStatusCode.InternalServerError);
+
+                await semaphore.WaitAsync(); //lock connect requests
+
+                try
+                {
+                    // Send the request
+                    response = await client.SendAsync(request);
+                    Thread.Sleep(1000);
+                }
+                catch(Exception e)
+                {
+                    throw e;
+                }
+                finally
+                {
+                    semaphore.Release();
+                }
 
                 // Ensure the request succeeded
                 response.EnsureSuccessStatusCode();
@@ -194,7 +214,6 @@ namespace AccessAPP.Services
             try
             {
                 // Write BLE message
-                CassiaReadWriteService cassiaReadWrite = new CassiaReadWriteService();
                 var result = await cassiaReadWrite.WriteBleMessage(gatewayIpAddress, macAddress, 19, value, "?noresponse=1");
 
                 var responseTask = new TaskCompletionSource<DataResponseModel>();
@@ -247,7 +266,7 @@ namespace AccessAPP.Services
             try
             {
                 string hexLoginValue = new LoginTelegram().Create();
-                CassiaReadWriteService cassiaReadWrite = new CassiaReadWriteService();
+                
                 var result = await cassiaReadWrite.WriteBleMessage(gatewayIpAddress, macAddress, 19, hexLoginValue, "?noresponse=1");
 
                 var loginResultTask = new TaskCompletionSource<LoginResponseModel>();
