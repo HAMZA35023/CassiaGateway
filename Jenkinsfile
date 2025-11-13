@@ -7,37 +7,27 @@
     }
 
     stages {
-        stage('Checkout') { steps { checkout scm } }
-
-        stage('Restore')  { steps { sh "dotnet restore AccessAPP.sln" } }
-
-        stage('Build')    { steps { sh "dotnet build AccessAPP.sln -c Release --no-restore -p:UseAppHost=false" } }
-
-        stage('Publish')  { steps { sh "dotnet publish AccessAPP/AccessAPP.csproj -c Release -o publish -p:UseAppHost=false" } }
-
-        stage('Deploy DEV') {
+        stage('Checkout') {
             steps {
-                echo "Deploying to DEV..."
-              
+                checkout scm
             }
         }
 
-        stage('Deploy STAGING') {
+        stage('Restore') {
             steps {
-                input message: 'Deploy to STAGING?', ok: 'Yes'
-                echo "Deploying to STAGING..."
-                
+                sh "dotnet restore AccessAPP.sln"
             }
         }
 
-        stage('Deploy PROD') {
-            when {
-                branch 'master' // or 'main'
-            }
+        stage('Build') {
             steps {
-                input message: 'Deploy to PROD?', ok: 'Yes, go!'
-                echo "Deploying to PROD..."
-                
+                sh "dotnet build AccessAPP.sln --configuration Release --no-restore -p:UseAppHost=false"
+            }
+        }
+
+        stage('Publish') {
+            steps {
+                sh "dotnet publish AccessAPP/AccessAPP.csproj --configuration Release --output publish --no-build -p:UseAppHost=false"
             }
         }
     }
