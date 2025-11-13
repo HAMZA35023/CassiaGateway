@@ -6,69 +6,38 @@
         }
     }
 
-
-    environment {
-        DEV_ENV_NAME      = 'DEV'
-        STAGING_ENV_NAME  = 'STAGING'
-        PROD_ENV_NAME     = 'PRODUCTION'
-    }
-
     stages {
-        stage('Checkout') {
+        stage('Checkout') { steps { checkout scm } }
+
+        stage('Restore')  { steps { sh "dotnet restore AccessAPP.sln" } }
+
+        stage('Build')    { steps { sh "dotnet build AccessAPP.sln -c Release --no-restore -p:UseAppHost=false" } }
+
+        stage('Publish')  { steps { sh "dotnet publish AccessAPP/AccessAPP.csproj -c Release -o publish -p:UseAppHost=false" } }
+
+        stage('Deploy DEV') {
             steps {
-                checkout scm
+                echo "Deploying to DEV..."
+              
             }
         }
 
-        stage('Restore') {
+        stage('Deploy STAGING') {
             steps {
-                sh "dotnet restore AccessAPP.sln"
+                input message: 'Deploy to STAGING?', ok: 'Yes'
+                echo "Deploying to STAGING..."
+                
             }
         }
 
-        stage('Build') {
-            steps {
-                sh "dotnet build AccessAPP.sln --configuration Release --no-restore -p:UseAppHost=false"
-            }
-        }
-
-        stage('Publish') {
-            steps {
-                sh "dotnet publish AccessAPP/AccessAPP.csproj --configuration Release --output publish --no-build -p:UseAppHost=false"
-                echo "Publish output is in: ${pwd()}/publish"
-            }
-        }
-
-        stage('Deploy to DEV') {
-            steps {
-                echo "Deploying to ${DEV_ENV_NAME} environment..."
-                echo "Here we would deploy the contents of ./publish to DEV."
-            }
-        }
-
-        stage('Deploy to STAGING') {
-            steps {
-                script {
-                    input message: "Deploy build #${env.BUILD_NUMBER} to ${STAGING_ENV_NAME}?", ok: 'Deploy'
-                }
-                echo "Deploying to ${STAGING_ENV_NAME} environment..."
-                echo "Here we would deploy the same ./publish output to STAGING."
-            }
-        }
-
-        stage('Deploy to PROD') {
+        stage('Deploy PROD') {
             when {
-                anyOf {
-                    branch 'main'
-                    branch 'master'
-                }
+                branch 'master' // or 'main'
             }
             steps {
-                script {
-                    input message: "Deploy build #${env.BUILD_NUMBER} to ${PROD_ENV_NAME}?", ok: 'Yes, deploy to PROD'
-                }
-                echo "Deploying to ${PROD_ENV_NAME} environment..."
-                echo "Here we would deploy the same ./publish output to PROD."
+                input message: 'Deploy to PROD?', ok: 'Yes, go!'
+                echo "Deploying to PROD..."
+                
             }
         }
     }
