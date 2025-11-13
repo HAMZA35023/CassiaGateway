@@ -22,7 +22,7 @@ namespace AccessAPP.Controllers
         private readonly CassiaNotificationService _notificationService; // ✅ Injected singleton
 
 
-        public CassiaCasontroller(IConfiguration configuration, CassiaScanService scanService, CassiaConnectService connectService, CassiaPinCodeService cassiaPinCodeService, DeviceStorageService deviceStorageService, CassiaFirmwareUpgradeService firmwareUpgradeService, CassiaNotificationService notificationService)
+        public CassiaController(IConfiguration configuration, CassiaScanService scanService, CassiaConnectService connectService, CassiaPinCodeService cassiaPinCodeService, DeviceStorageService deviceStorageService, CassiaFirmwareUpgradeService firmwareUpgradeService, CassiaNotificationService notificationService)
         {
             _configuration = configuration;
             _gatewayIpAddress = _configuration.GetValue<string>("GatewayConfiguration:IpAddress");
@@ -30,7 +30,7 @@ namespace AccessAPP.Controllers
             _scanService = scanService;
             _connectService = connectService;
             _cassiaPinCodeService = cassiaPinCodeService;
-            _deviceStorageService = deviceStorageServicee;
+            _deviceStorageService = deviceStorageService;
             _firmwareUpgradeService = firmwareUpgradeService;
             _notificationService = notificationService;
         }
