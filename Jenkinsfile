@@ -1,5 +1,10 @@
 pipeline {
-    agent any
+    agent {
+        docker {
+            image 'mcr.microsoft.com/dotnet/sdk:8.0'
+            args '-u root:root'
+        }
+    }
 
     stages {
         stage('Checkout') {
@@ -16,13 +21,13 @@ pipeline {
 
         stage('Build') {
             steps {
-                sh "dotnet build AccessAPP.sln --configuration Release --no-restore"
+                sh "dotnet build AccessAPP.sln --configuration Release --no-restore -p:UseAppHost=false"
             }
         }
 
         stage('Publish') {
             steps {
-                sh "dotnet publish AccessAPP/AccessAPP.csproj --configuration Release --output publish"
+                sh "dotnet publish AccessAPP/AccessAPP.csproj --configuration Release --output publish --no-build -p:UseAppHost=false"
             }
         }
     }
