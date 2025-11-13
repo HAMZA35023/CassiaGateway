@@ -1,8 +1,8 @@
 pipeline {
     agent {
         docker {
-            image 'mcr.microsoft.com/dotnet/sdk:8.0'  // or 7.0 if you use that
-            args '-u root:root'                       // lets you install extras if needed
+            image 'mcr.microsoft.com/dotnet/sdk:8.0'
+            args '-u root:root'
         }
     }
 
@@ -21,14 +21,13 @@ pipeline {
 
         stage('Build') {
             steps {
-                sh "dotnet build AccessAPP.sln --configuration Release --no-restore"
+                sh "dotnet build AccessAPP.sln --configuration Release --no-restore -p:UseAppHost=false"
             }
         }
 
         stage('Publish') {
             steps {
-                // adjust csproj name/path if needed
-                sh "dotnet publish AccessAPP/AccessAPP.csproj --configuration Release --output publish --no-build"
+                sh "dotnet publish AccessAPP/AccessAPP.csproj --configuration Release --output publish --no-build -p:UseAppHost=false"
             }
         }
     }
