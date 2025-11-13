@@ -56,12 +56,6 @@ pipeline {
         }
 
         stage('Deploy to PROD') {
-            when {
-                anyOf {
-                    branch 'main'
-                    branch 'master'
-                }
-            }
             steps {
                 script {
                     input message: "Are you sure you want to deploy build #${env.BUILD_NUMBER} to ${PROD_ENV_NAME}?", 
