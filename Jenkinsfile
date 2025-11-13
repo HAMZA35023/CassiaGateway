@@ -1,5 +1,10 @@
 pipeline {
-    agent any
+    agent {
+        docker {
+            image 'mcr.microsoft.com/dotnet/sdk:8.0'  // or 7.0 if you use that
+            args '-u root:root'                       // lets you install extras if needed
+        }
+    }
 
     stages {
         stage('Checkout') {
@@ -22,7 +27,8 @@ pipeline {
 
         stage('Publish') {
             steps {
-                sh "dotnet publish AccessAPP/AccessAPP.csproj --configuration Release --output publish"
+                // adjust csproj name/path if needed
+                sh "dotnet publish AccessAPP/AccessAPP.csproj --configuration Release --output publish --no-build"
             }
         }
     }
