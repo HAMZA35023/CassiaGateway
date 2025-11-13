@@ -12,8 +12,6 @@ namespace AccessAPP.Controllers
 
     //no changes are being made here
     //add new line
-
-    now i make code mistake
     public class CassiaController : ControllerBase
     {
         private readonly CassiaScanService _scanService;
