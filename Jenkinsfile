@@ -38,6 +38,9 @@ pipeline {
         }
 
         stage('Deploy to DEV') {
+            when {
+                not { changeRequest() } 
+            }
             steps {
                 echo "Deploying build #${env.BUILD_NUMBER} to ${DEV_ENV_NAME}..."
                 echo "DEV deployment go."
@@ -46,6 +49,9 @@ pipeline {
         }
 
         stage('Deploy to STAGING') {
+            when {
+                not { changeRequest() } 
+            }
             steps {
                 script {
                     input message: "Deploy build #${env.BUILD_NUMBER} to ${STAGING_ENV_NAME}?", ok: "Deploy to STAGING"
@@ -56,6 +62,9 @@ pipeline {
         }
 
         stage('Deploy to PROD') {
+            when {
+                not { changeRequest() } 
+            }
             steps {
                 script {
                     input message: "Are you sure you want to deploy build #${env.BUILD_NUMBER} to ${PROD_ENV_NAME}?", 
