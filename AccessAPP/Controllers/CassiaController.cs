@@ -303,7 +303,7 @@ namespace AccessAPP.Controllers
             string nodeMac = request.MacAddress;
             string pincode = request.Pincode;
             bool bActor = request.bActor; // if bActor=1, programming actor
-            int sensorType = request.sType;
+            string sensorType = request.DetectorType;
             try
             {
                 // Check if an upgrade is already in progress for this device
@@ -363,7 +363,7 @@ namespace AccessAPP.Controllers
                 }
                 var logId = $"{nodeMac.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
                 // Step 1: Connect to the device
-                var result = await _firmwareUpgradeService.UpgradeActorAsync(nodeMac, pincode, bActor, logId);
+                var result = await _firmwareUpgradeService.UpgradeActorAsync(nodeMac, pincode, bActor, request.DetectorType,request.FirmwareVersion,logId);
 
                 return result.Success
                     ? Ok(new { message = result.Message })
@@ -386,10 +386,10 @@ namespace AccessAPP.Controllers
                 UpgradeProgress upProgress = new UpgradeProgress();
                 upProgress.MacAddress = request.MacAddress;
                 upProgress.Pincode = request.Pincode;
-                upProgress.sType = request.sType;
+                upProgress.DetectotType = request.DetectorType;
                 var logId = $"{request.MacAddress.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
 
-                var result = await _firmwareUpgradeService.UpgradeDeviceAsync(upProgress, request.MacAddress, request.Pincode, request.sType, true, true, true,logId);
+                var result = await _firmwareUpgradeService.UpgradeDeviceAsync(upProgress, request.MacAddress, request.Pincode, request.DetectorType,request.FirmwareVersion, true, true, true,logId);
 
                 return result.Success
                     ? Ok(new { message = result.Message })
@@ -599,7 +599,7 @@ namespace AccessAPP.Controllers
 
             foreach (var macAddress in macAddresses)
             {
-                string parsedVersion = string.Empty;
+                string versionSummary = "";
 
                 try
                 {
@@ -609,32 +609,43 @@ namespace AccessAPP.Controllers
                         var loginResponse = await _connectService.AttemptLogin(_gatewayIpAddress, macAddress);
                         if (loginResponse.Status.ToString() == "OK")
                         {
-                            string testMessage = "01290107005A5E";
-                            var response = await _connectService.GetDataFromBleDevice(_gatewayIpAddress, _gatewayPort, macAddress, testMessage);
+                            string sensorInfo = "";
+                            string actorInfo = "";
 
-                            if (response.Status.ToString() == "OK" && !string.IsNullOrEmpty(response.Data))
+                            // Sensor
+                            string sensorCommand = "01290107005A5E";
+                            var sensorResponse = await _connectService.GetDataFromBleDevice(_gatewayIpAddress, _gatewayPort, macAddress, sensorCommand);
+                            if (sensorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(sensorResponse.Data))
                             {
-                                parsedVersion = ScanDataParser.ParseSoftwareVersionFromResponse(response.Data);
+                                sensorInfo = ScanDataParser.ParseSoftwareVersionFromResponse(sensorResponse.Data);
                             }
+
+                            // Actor
+                            string actorCommand = "012B01070032B3";
+                            var actorResponse = await _connectService.GetDataFromBleDevice(_gatewayIpAddress, _gatewayPort, macAddress, actorCommand);
+                            if (actorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(actorResponse.Data))
+                            {
+                                actorInfo = ScanDataParser.ParseSoftwareVersionFromResponse(actorResponse.Data);
+                            }
+
+                            versionSummary = $"Sensor: {sensorInfo} | Actor: {actorInfo}";
                         }
 
-                        // Attempt disconnect even if data failed
                         await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0);
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[WARN] Error with device {macAddress}: {ex.Message}");
-                    // Leave parsedVersion as empty
+                    Console.WriteLine($"Error with device {macAddress}: {ex.Message}");
                 }
 
-                results[macAddress] = parsedVersion;
-
-                await Task.Delay(500); // Delay between devices
+                results[macAddress] = versionSummary;
+                await Task.Delay(500);
             }
 
             return Ok(results);
         }
+
 
 
 
@@ -784,6 +795,47 @@ namespace AccessAPP.Controllers
             catch (Exception ex)
             {
                 return StatusCode(500, $"Error reading log file: {ex.Message}");
+            }
+        }
+        [HttpGet("resolvefirmware")]
+        public IActionResult ResolveFirmware(
+                   [FromQuery] string detectorType,
+                   [FromQuery] string firmwareVersion,
+                   [FromQuery] bool isActor,
+                   [FromQuery] bool isBootloader)
+        {
+            try
+            {
+                var resolvedPath = FirmwareResolver.ResolveFirmwareFile(detectorType, firmwareVersion, isActor, isBootloader);
+                return Ok(new
+                {
+                    success = true,
+                    filePath = resolvedPath
+                });
+            }
+            catch (FileNotFoundException ex)
+            {
+                return NotFound(new
+                {
+                    success = false,
+                    message = ex.Message
+                });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = ex.Message
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message = $"Internal error: {ex.Message}"
+                });
             }
         }
 
