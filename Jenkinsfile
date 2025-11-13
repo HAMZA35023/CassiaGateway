@@ -40,7 +40,7 @@ pipeline {
         stage('Deploy to DEV') {
             steps {
                 echo "Deploying build #${env.BUILD_NUMBER} to ${DEV_ENV_NAME}..."
-                echo "This is where your Azure DEV deployment command will go later."
+                echo "DEV deployment go."
                
             }
         }
@@ -51,7 +51,7 @@ pipeline {
                     input message: "Deploy build #${env.BUILD_NUMBER} to ${STAGING_ENV_NAME}?", ok: "Deploy to STAGING"
                 }
                 echo "Deploying to ${STAGING_ENV_NAME}..."
-                echo "This is where your Azure STAGING deployment command will go."
+                echo "STAGING deployment go."
             }
         }
 
@@ -68,7 +68,7 @@ pipeline {
                           ok: "Deploy to PROD"
                 }
                 echo "Deploying to ${PROD_ENV_NAME}..."
-                echo "This is where your Azure PROD deployment command will go."
+                echo "PROD deployment go."
             }
         }
 
