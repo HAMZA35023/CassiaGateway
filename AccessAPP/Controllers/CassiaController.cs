@@ -1,9 +1,11 @@
 ﻿using AccessAPP.Models;
 using AccessAPP.Services;
 using AccessAPP.Services.HelperClasses;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
 using System.Net;
+using System.Security.Claims;
 
 namespace AccessAPP.Controllers
 {
@@ -35,7 +37,36 @@ namespace AccessAPP.Controllers
             _notificationService = notificationService;
         }
 
+        [HttpGet("test-admin")]
+        [Authorize(Roles = "Admin")]
+        public IActionResult TestAdmin()
+        {
+            return Ok(new { message = "Admin access works!", timestamp = DateTime.Now });
+        }
+
+        [HttpGet("test-auth")]
+        [Authorize]
+        public IActionResult TestAuth()
+        {
+            var authHeader = Request.Headers["Authorization"].FirstOrDefault();
+            var claims = User.Claims.Select(c => new { c.Type, c.Value }).ToList();
+            return Ok(new
+            {
+                message = "Authentication works!",
+                isAuthenticated = User.Identity?.IsAuthenticated,
+                name = User.Identity?.Name,
+                userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value,
+                email = User.FindFirst(ClaimTypes.Email)?.Value,
+                roles = User.FindAll(ClaimTypes.Role).Select(c => c.Value).ToList(),
+                allClaims = claims,
+                authHeader = authHeader?.Substring(0, Math.Min(50, authHeader.Length)) + "...",
+                claimCount = claims.Count
+            });
+        }
+
+
         [HttpGet("scan")]
+        [Authorize(Roles = "Admin")]
         public async Task<IActionResult> ScanForBleDevices()
         {
             try
@@ -845,7 +876,20 @@ namespace AccessAPP.Controllers
             return Ok(_deviceStorageService.GetAllFirmwareProgress());
         }
 
-
+        [HttpGet("debug-auth")]
+        [AllowAnonymous]
+        public IActionResult DebugAuth()
+        {
+            var authHeader = Request.Headers["Authorization"].FirstOrDefault();
+            Console.WriteLine($"DEBUG - Authorization Header: {authHeader}");
+            
+            return Ok(new 
+            { 
+                hasAuthHeader = !string.IsNullOrEmpty(authHeader),
+                authHeader = authHeader,
+                timestamp = DateTime.Now 
+            });
+        }
 
     }
     public class ConnectionTestResult
