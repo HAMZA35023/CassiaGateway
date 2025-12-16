@@ -11,10 +11,10 @@ CybtldrApi1::CybtldrApi1()
 
 int CybtldrApi1::CyBtldr_TransferData(uint8_t* inBuf, int inSize, uint8_t* outBuf, int outSize)
 {
-    int err = g_comm->WriteData(inBuf, inSize);
+    int err = g_comm->WriteData(inBuf, inSize, g_comm->CustomContext);
 
     if (CYRET_SUCCESS == err)
-        err = g_comm->ReadData(outBuf, outSize);
+        err = g_comm->ReadData(outBuf, outSize, g_comm->CustomContext);
 
     if (CYRET_SUCCESS != err)
         err |= CYRET_ERR_COMM_MASK;
@@ -86,7 +86,7 @@ int CybtldrApi1::CyBtldr_StartBootloadOperation(CyBtldr_CommunicationsData* comm
     for (i = 0; i < MAX_FLASH_ARRAYS; i++)
         g_validRows[i] = NO_FLASH_ARRAY_DATA;
 
-    err = g_comm->OpenConnection();
+    err = g_comm->OpenConnection(g_comm->CustomContext);
     if (CYRET_SUCCESS != err)
         err |= CYRET_ERR_COMM_MASK;
 
@@ -129,7 +129,7 @@ int CybtldrApi1::CyBtldr_StartBootloadOperation_v1(CyBtldr_CommunicationsData* c
     for (i = 0; i < MAX_FLASH_ARRAYS; i++)
         g_validRows[i] = NO_FLASH_ARRAY_DATA;
 
-    err = g_comm->OpenConnection();
+    err = g_comm->OpenConnection(g_comm->CustomContext);
     if (CYRET_SUCCESS != err)
         err |= CYRET_ERR_COMM_MASK;
 
@@ -212,10 +212,10 @@ int CybtldrApi1::CyBtldr_EndBootloadOperation(void)
     int err = CyBtldr_CreateExitBootLoaderCmd(inBuf, &inSize, &outSize);
     if (CYRET_SUCCESS == err)
     {
-        err = g_comm->WriteData(inBuf, inSize);
+        err = g_comm->WriteData(inBuf, inSize, g_comm->CustomContext);
 
         if (CYRET_SUCCESS == err)
-            err = g_comm->CloseConnection();
+            err = g_comm->CloseConnection(g_comm->CustomContext);
 
         if (CYRET_SUCCESS != err)
             err |= CYRET_ERR_COMM_MASK;

@@ -16,7 +16,7 @@
 #define EXTERN extern "C" __declspec(dllexport)
 #define CALL_CON __cdecl
 #else
-#define EXTERN extern
+#define EXTERN extern "C"
 #endif
 
 /******************************************************************************

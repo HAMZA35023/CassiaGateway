@@ -9,7 +9,7 @@ CybtldrApi2::CybtldrApi2()
 {
 }
 
-int CybtldrApi2::ProcessDataRow_v0(CyBtldr_Action action, uint32_t rowSize, uint8_t* rowData, CyBtldr_ProgressUpdate* update)
+int CybtldrApi2::ProcessDataRow_v0(CyBtldr_Action action, uint32_t rowSize, uint8_t* rowData, CyBtldr_ProgressUpdate* update, uint64_t customContext)
 {
     uint8_t buffer[MAX_BUFFER_SIZE];
     uint16_t bufSize;
@@ -39,12 +39,12 @@ int CybtldrApi2::ProcessDataRow_v0(CyBtldr_Action action, uint32_t rowSize, uint
         }
     }
     if (CYRET_SUCCESS == err && NULL != update)
-        update(arrayId, rowNum);
+        update(arrayId, rowNum, customContext);
 
     return err;
 }
 
-int CybtldrApi2::ProcessDataRow_v1(CyBtldr_Action action, uint32_t rowSize, uint8_t* rowData, CyBtldr_ProgressUpdate* update)
+int CybtldrApi2::ProcessDataRow_v1(CyBtldr_Action action, uint32_t rowSize, uint8_t* rowData, CyBtldr_ProgressUpdate* update, uint64_t customContext)
 {
     uint8_t buffer[MAX_BUFFER_SIZE];
     uint16_t bufSize;
@@ -71,7 +71,7 @@ int CybtldrApi2::ProcessDataRow_v1(CyBtldr_Action action, uint32_t rowSize, uint
         }
     }
     if (CYRET_SUCCESS == err && NULL != update)
-        update(0, (uint16_t)(address >> 16));
+        update(0, (uint16_t)(address >> 16), customContext);
 
     return err;
 }
@@ -151,7 +151,7 @@ int CybtldrApi2::RunAction_v0(CyBtldr_Action action, uint32_t lineLen, uint8_t* 
         err = CyBtldr_ReadLine(&lineLen, (char*)line);
         if (CYRET_SUCCESS == err)
         {
-            err = ProcessDataRow_v0(action, lineLen, line, update);
+            err = ProcessDataRow_v0(action, lineLen, line, update, comm != nullptr ? comm->CustomContext : 0);
         }
         else if (CYRET_ERR_EOF == err)
         {
@@ -237,7 +237,7 @@ int CybtldrApi2::RunAction_v1(CyBtldr_Action action, uint32_t lineLen, uint8_t* 
                 err = ProcessMetaRow_v1(lineLen, line);
                 break;
             case ':':
-                err = ProcessDataRow_v1(action, lineLen, line, update);
+                err = ProcessDataRow_v1(action, lineLen, line, update, comm != nullptr ? comm->CustomContext : 0);
                 break;
             }
         }
@@ -305,7 +305,7 @@ int CybtldrApi2::CyBtldr_Program(const char* file, const uint8_t* securityKey, u
     CyBtldr_CommunicationsData* comm, CyBtldr_ProgressUpdate* update)
 {
     if (update != NULL)
-        update(0x00, 0x0000);
+        update(0x00, 0x0000, comm != nullptr ? comm->CustomContext : 0);
     return CyBtldr_RunAction(PROGRAM, file, securityKey, appId, comm, update);
 }
 

@@ -13,15 +13,17 @@
 typedef struct
 {
     /* Function used to open the communications connection */
-    int (*OpenConnection)(void);
+    int (*OpenConnection)(uint64_t);
     /* Function used to close the communications connection */
-    int (*CloseConnection)(void);
+    int (*CloseConnection)(uint64_t);
     /* Function used to read data over the communications connection */
-    int (*ReadData)(uint8_t*, int);
+    int (*ReadData)(uint8_t*, int, uint64_t);
     /* Function used to write data over the communications connection */
-    int (*WriteData)(uint8_t*, int);
+    int (*WriteData)(uint8_t*, int, uint64_t);
     /* Value used to specify the maximum number of bytes that can be transfered at a time */
     unsigned int MaxTransferSize;
+    /* Custom Context uint64_t used on  OpenConnection CloseConnection ReadData WriteData and ProgressUpdate functions */
+    uint64_t CustomContext;
 } CyBtldr_CommunicationsData;
 
 /* The highest number of memory arrays for any device. This includes flash and EEPROM arrays */

@@ -19,7 +19,7 @@ typedef enum
 } CyBtldr_Action;
 
 /* Function used to notify caller that a row was finished */
-typedef void CyBtldr_ProgressUpdate(uint8_t arrayId, uint16_t rowNum);
+typedef void CyBtldr_ProgressUpdate(uint8_t arrayId, uint16_t rowNum, uint64_t customContext);
 
 class CybtldrApi2 : public CybtldrParse
 {
@@ -174,9 +174,9 @@ public:
     *******************************************************************************/
     int CyBtldr_Abort(void);
 
-    int ProcessDataRow_v0(CyBtldr_Action action, uint32_t rowSize, uint8_t* rowData, CyBtldr_ProgressUpdate* update);
+    int ProcessDataRow_v0(CyBtldr_Action action, uint32_t rowSize, uint8_t* rowData, CyBtldr_ProgressUpdate* update, uint64_t customContext);
 
-    int ProcessDataRow_v1(CyBtldr_Action action, uint32_t rowSize, uint8_t* rowData, CyBtldr_ProgressUpdate* update);
+    int ProcessDataRow_v1(CyBtldr_Action action, uint32_t rowSize, uint8_t* rowData, CyBtldr_ProgressUpdate* update, uint64_t customContext);
 
     int ProcessMetaRow_v1(uint32_t rowSize, uint8_t* rowData);
 

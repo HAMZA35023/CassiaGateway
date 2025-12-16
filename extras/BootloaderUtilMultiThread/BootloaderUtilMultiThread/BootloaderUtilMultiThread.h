@@ -1,6 +1,5 @@
 #pragma once
-
-#define EXTERN extern
+#define EXTERN extern "C"
 #define CALL_CON
 #include "CybtldrApi2.h"
 
