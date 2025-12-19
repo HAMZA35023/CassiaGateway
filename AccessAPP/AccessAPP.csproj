@@ -285,7 +285,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-	  <Content Include="FirmwareVersions\**\*.*">
+	  <Content Include="FirmwareVersions\**\*.*" Exclude="FirmwareVersions\FirmwareManifest.json">
 		<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 	  </Content>
 	</ItemGroup>
