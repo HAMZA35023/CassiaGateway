@@ -18,6 +18,7 @@ builder.Services.AddSingleton<CassiaPinCodeService>();
 builder.Services.AddSingleton<DeviceStorageService>();
 builder.Services.AddSingleton<CassiaNotificationService>();
 builder.Services.AddSingleton<CassiaFirmwareUpgradeService>();
+builder.Services.AddScoped<FirmwareUploadService>();
 
 // ✅ Add CORS policy
 builder.Services.AddCors(options =>

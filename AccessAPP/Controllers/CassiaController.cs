@@ -16,13 +16,14 @@ namespace AccessAPP.Controllers
         private readonly CassiaPinCodeService _cassiaPinCodeService;
         private readonly DeviceStorageService _deviceStorageService;
         private readonly CassiaFirmwareUpgradeService _firmwareUpgradeService;
+        private readonly FirmwareUploadService _firmwareUploadService;
         private readonly IConfiguration _configuration;
         private readonly string _gatewayIpAddress;
         private readonly int _gatewayPort;
         private readonly CassiaNotificationService _notificationService; // ✅ Injected singleton
 
 
-        public CassiaController(IConfiguration configuration, CassiaScanService scanService, CassiaConnectService connectService, CassiaPinCodeService cassiaPinCodeService, DeviceStorageService deviceStorageService, CassiaFirmwareUpgradeService firmwareUpgradeService, CassiaNotificationService notificationService)
+        public CassiaController(IConfiguration configuration, CassiaScanService scanService, CassiaConnectService connectService, CassiaPinCodeService cassiaPinCodeService, DeviceStorageService deviceStorageService, CassiaFirmwareUpgradeService firmwareUpgradeService, FirmwareUploadService firmwareUploadService, CassiaNotificationService notificationService)
         {
             _configuration = configuration;
             _gatewayIpAddress = _configuration.GetValue<string>("GatewayConfiguration:IpAddress");
@@ -32,6 +33,7 @@ namespace AccessAPP.Controllers
             _cassiaPinCodeService = cassiaPinCodeService;
             _deviceStorageService = deviceStorageService;
             _firmwareUpgradeService = firmwareUpgradeService;
+            _firmwareUploadService = firmwareUploadService;
             _notificationService = notificationService;
         }
 
@@ -846,7 +848,121 @@ namespace AccessAPP.Controllers
             return Ok(_deviceStorageService.GetAllFirmwareProgress());
         }
 
+        /// <summary>
+        /// Upload a firmware ZIP file with pattern like 353PK2A238A238A2380604A238A238A238.zip
+        /// </summary>
+        [HttpPost("firmware/upload")]
+        public async Task<IActionResult> UploadFirmware([FromForm] IFormFile zipFile)
+        {
+            try
+            {
+                if (zipFile == null)
+                {
+                    return BadRequest(new { success = false, message = "No file provided." });
+                }
 
+                var result = await _firmwareUploadService.ProcessFirmwareUpload(zipFile);
+                
+                if (result.Success)
+                {
+                    return Ok(new
+                    {
+                        success = true,
+                        message = result.Message,
+                        version = result.ExtractedVersion,
+                        targetDirectory = result.TargetDirectory,
+                        extractedFiles = result.ExtractedFiles
+                    });
+                }
+                else
+                {
+                    return BadRequest(new
+                    {
+                        success = false,
+                        message = result.Message
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Error uploading firmware: {ex.Message} {ex.StackTrace}");
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message = "Internal server error occurred during firmware upload."
+                });
+            }
+        }
+
+        /// <summary>
+        /// Get all available firmware versions
+        /// </summary>
+        [HttpGet("firmware/versions")]
+        public IActionResult GetFirmwareVersions()
+        {
+            try
+            {
+                var versions = _firmwareUploadService.GetAvailableFirmwareVersions();
+                return Ok(new
+                {
+                    success = true,
+                    versions = versions,
+                    count = versions.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Error retrieving firmware versions: {ex.Message}");
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message = "Error retrieving firmware versions."
+                });
+            }
+        }
+
+        /// <summary>
+        /// Delete a specific firmware version
+        /// </summary>
+        [HttpDelete("firmware/versions/{version}")]
+        public async Task<IActionResult> DeleteFirmwareVersion(string version)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(version))
+                {
+                    return BadRequest(new { success = false, message = "Version parameter is required." });
+                }
+
+                var result = await _firmwareUploadService.DeleteFirmwareVersion(version);
+                
+                if (result)
+                {
+                    return Ok(new
+                    {
+                        success = true,
+                        message = $"Firmware version {version} deleted successfully."
+                    });
+                }
+                else
+                {
+                    return NotFound(new
+                    {
+                        success = false,
+                        message = $"Firmware version {version} not found."
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Error deleting firmware version {version}: {ex.Message}");
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message = "Error deleting firmware version."
+                });
+            }
+        }
 
     }
     public class ConnectionTestResult
