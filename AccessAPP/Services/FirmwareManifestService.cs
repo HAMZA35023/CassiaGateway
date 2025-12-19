@@ -171,8 +171,8 @@ namespace AccessAPP.Services
         /// <summary>
         /// Formats firmware version to the standard format (v02.XX)
         /// </summary>
-        /// <param name="version">Raw version string (e.g., "G237", "0237", "v02.37", "2.37")</param>
-        /// <returns>Formatted version string (e.g., "v02.37")</returns>
+        /// <param name="version">Raw version string (e.g., "G237", "A238", "0237", "v02.37", "2.37")</param>
+        /// <returns>Formatted version string (e.g., "v02.37", "vA2.38")</returns>
         private string FormatFirmwareVersion(string version)
         {
             if (string.IsNullOrWhiteSpace(version))
@@ -194,6 +194,18 @@ namespace AccessAPP.Services
                     return $"v0{major}.{minor}";
                 }
             }
+            else if (cleanVersion.StartsWith("A"))
+            {
+                // Format: A238 -> vA2.38
+                var numberPart = cleanVersion.Substring(1); // Remove 'A'
+                if (numberPart.Length >= 3)
+                {
+                    // Extract major and minor version
+                    var major = numberPart.Substring(0, 1);
+                    var minor = numberPart.Substring(1);
+                    return $"vA{major}.{minor}";
+                }
+            }
             else if (cleanVersion.Length == 4 && cleanVersion.All(char.IsDigit))
             {
                 // Format: 0237 -> v02.37
@@ -210,6 +222,23 @@ namespace AccessAPP.Services
                     var major = parts[0].PadLeft(2, '0');
                     var minor = parts[1];
                     return $"v{major}.{minor}";
+                }
+                else if (parts.Length == 2)
+                {
+                    // Handle cases like A2.38 -> vA2.38 (already has dot)
+                    return $"v{cleanVersion}";
+                }
+            }
+            else if (cleanVersion.Length >= 3 && char.IsLetter(cleanVersion[0]) && cleanVersion.Substring(1).All(char.IsDigit))
+            {
+                // Handle other letter prefixes like A238, B345, etc.
+                var letterPrefix = cleanVersion.Substring(0, 1);
+                var numberPart = cleanVersion.Substring(1);
+                if (numberPart.Length >= 3)
+                {
+                    var major = numberPart.Substring(0, 1);
+                    var minor = numberPart.Substring(1);
+                    return $"v{letterPrefix}{major}.{minor}";
                 }
             }
 
