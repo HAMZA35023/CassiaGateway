@@ -17,13 +17,14 @@ namespace AccessAPP.Controllers
         private readonly DeviceStorageService _deviceStorageService;
         private readonly CassiaFirmwareUpgradeService _firmwareUpgradeService;
         private readonly FirmwareUploadService _firmwareUploadService;
+        private readonly FirmwareManifestService _firmwareManifestService;
         private readonly IConfiguration _configuration;
         private readonly string _gatewayIpAddress;
         private readonly int _gatewayPort;
         private readonly CassiaNotificationService _notificationService; // ✅ Injected singleton
 
 
-        public CassiaController(IConfiguration configuration, CassiaScanService scanService, CassiaConnectService connectService, CassiaPinCodeService cassiaPinCodeService, DeviceStorageService deviceStorageService, CassiaFirmwareUpgradeService firmwareUpgradeService, FirmwareUploadService firmwareUploadService, CassiaNotificationService notificationService)
+        public CassiaController(IConfiguration configuration, CassiaScanService scanService, CassiaConnectService connectService, CassiaPinCodeService cassiaPinCodeService, DeviceStorageService deviceStorageService, CassiaFirmwareUpgradeService firmwareUpgradeService, FirmwareUploadService firmwareUploadService, FirmwareManifestService firmwareManifestService, CassiaNotificationService notificationService)
         {
             _configuration = configuration;
             _gatewayIpAddress = _configuration.GetValue<string>("GatewayConfiguration:IpAddress");
@@ -34,6 +35,7 @@ namespace AccessAPP.Controllers
             _deviceStorageService = deviceStorageService;
             _firmwareUpgradeService = firmwareUpgradeService;
             _firmwareUploadService = firmwareUploadService;
+            _firmwareManifestService = firmwareManifestService;
             _notificationService = notificationService;
         }
 
@@ -960,6 +962,91 @@ namespace AccessAPP.Controllers
                 {
                     success = false,
                     message = "Error deleting firmware version."
+                });
+            }
+        }
+
+        /// <summary>
+        /// Get the firmware manifest file containing detector types and their supported firmware versions
+        /// </summary>
+        [HttpGet("firmware/manifest")]
+        public IActionResult GetFirmwareManifest()
+        {
+            try
+            {
+                var result = _firmwareManifestService.GetFirmwareManifest();
+                
+                if (result.Success)
+                {
+                    return Ok(new
+                    {
+                        success = true,
+                        message = result.Message,
+                        manifest = result.FirmwareManifest
+                    });
+                }
+                else
+                {
+                    return BadRequest(new
+                    {
+                        success = false,
+                        message = result.Message
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Error retrieving firmware manifest: {ex.Message}");
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message = "Error retrieving firmware manifest."
+                });
+            }
+        }
+
+        /// <summary>
+        /// Add a firmware version to specific detector types in the manifest
+        /// </summary>
+        [HttpPost("firmware/manifest/add")]
+        public IActionResult AddFirmwareToManifest([FromBody] AddFirmwareVersionRequest request)
+        {
+            try
+            {
+                if (request == null)
+                {
+                    return BadRequest(new { success = false, message = "Request body is required." });
+                }
+
+                var result = _firmwareManifestService.AddFirmwareVersion(request);
+                
+                if (result.Success)
+                {
+                    return Ok(new
+                    {
+                        success = true,
+                        message = result.Message,
+                        firmwareVersion = result.FirmwareVersion,
+                        updatedDetectorTypes = result.UpdatedDetectorTypes
+                    });
+                }
+                else
+                {
+                    return BadRequest(new
+                    {
+                        success = false,
+                        message = result.Message,
+                        firmwareVersion = result.FirmwareVersion
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Error adding firmware to manifest: {ex.Message}");
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message = "Error adding firmware to manifest."
                 });
             }
         }
