@@ -2027,8 +2027,6 @@ namespace AccessAPP.Services
             _macLocks.TryRemove(macContext, out _);
         }
 
-        private static string Pad(string value, int width)
-    => value.Length >= width ? value : value.PadRight(width);
 
         /// <summary>
         /// Method that updates the progres bar
@@ -2037,7 +2035,8 @@ namespace AccessAPP.Services
         /// <param name="rowNum"></param>
         public static void ProgressUpdate(byte arrayID, ushort rowNum, UInt64 customContext)
         {
-            static string Pad(string value, int width) => value.Length >= width ? value : value.PadRight(width);
+            static string Pad(string value, int width)
+                => value.Length >= width ? value : value.PadRight(width);
 
             string key = $"{arrayID:X2}:{rowNum:X4}";
             string macContext = MacToString(customContext);
@@ -2058,10 +2057,13 @@ namespace AccessAPP.Services
                 if (!completedRowsH.Add(key))
                     return;
 
-                progress = Math.Min(100.0, (completedRowsH.Count / (double)allRowsH.Count) * 100.0);
+                progress = Math.Min(
+                    100.0,
+                    (completedRowsH.Count / (double)allRowsH.Count) * 100.0
+                );
             }
 
-            // ---- DONE: purge instance so global speed drops immediately ----
+            // ---- DONE: purge instance so global speeds drop immediately ----
             if (progress >= 100.0 - 0.0001)
             {
                 PurgeInstance(macContext);
@@ -2070,13 +2072,19 @@ namespace AccessAPP.Services
                 foreach (var rate in _lastInstanceRate.Values)
                     globalTotalAfterPurge += rate;
 
+                double globalAvgAfterPurge =
+                    _lastInstanceRate.Count > 0
+                        ? globalTotalAfterPurge / _lastInstanceRate.Count
+                        : 0.0;
+
                 Console.WriteLine(
                     $"{Pad($"[{macContext}]", 22)} " +
                     $"{Pad($"Array:{arrayID:X2}", 10)} " +
                     $"{Pad($"Row:{rowNum:X4}", 10)} | " +
                     $"{Pad($"{progress,6:F2}%", 8)} | " +
                     $"{Pad("DONE", 6)} | " +
-                    $"{Pad("Global total:", 14)} {globalTotalAfterPurge,7:F2}%/min (10s avg)"
+                    $"{Pad("Total:", 8)} {globalTotalAfterPurge,7:F2}%/min | " +
+                    $"{Pad("Avg:", 6)} {globalAvgAfterPurge,7:F2}%/min (10s avg)"
                 );
 
                 _deviceStorageService.UpdateFirmwareProgress(macContext, 100.0);
@@ -2087,13 +2095,18 @@ namespace AccessAPP.Services
             var tracker = _macRate10s.GetOrAdd(macContext, _ => new SlidingRate10s());
             var ratePerMinThisMac = tracker.AddAndGetRatePerMinute(progress);
 
-            // Cache latest rate so global total is the sum of active instances
+            // Cache latest rate so global speeds are correct
             _lastInstanceRate[macContext] = ratePerMinThisMac;
 
-            // ---- Global total rate = sum of instance rates (%/min, 10s avg) ----
+            // ---- Global total + average rates ----
             double globalTotalRatePerMin = 0.0;
             foreach (var rate in _lastInstanceRate.Values)
                 globalTotalRatePerMin += rate;
+
+            double globalAvgRatePerMin =
+                _lastInstanceRate.Count > 0
+                    ? globalTotalRatePerMin / _lastInstanceRate.Count
+                    : 0.0;
 
             Console.WriteLine(
                 $"{Pad($"[{macContext}]", 22)} " +
@@ -2101,7 +2114,8 @@ namespace AccessAPP.Services
                 $"{Pad($"Row:{rowNum:X4}", 10)} | " +
                 $"{Pad($"{progress,6:F2}%", 8)} | " +
                 $"{Pad($"{ratePerMinThisMac,7:F2}%/min", 14)} | " +
-                $"{Pad("Global total:", 14)} {globalTotalRatePerMin,7:F2}%/min (10s avg)"
+                $"{Pad("Total:", 8)} {globalTotalRatePerMin,7:F2}%/min | " +
+                $"{Pad("Avg:", 6)} {globalAvgRatePerMin,7:F2}%/min (10s avg)"
             );
 
             _deviceStorageService.UpdateFirmwareProgress(macContext, progress);
