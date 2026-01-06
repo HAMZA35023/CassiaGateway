@@ -12,6 +12,9 @@ namespace AccessAPP.Services
 {
     public class CassiaFirmwareUpgradeService
     {
+        const bool _DEBUG = false;
+        const bool _VERBOSE = false;
+
         private readonly HttpClient _httpClient;
         private readonly CassiaConnectService _connectService;
         private readonly CassiaPinCodeService _cassiaPinCodeService;
@@ -46,6 +49,7 @@ namespace AccessAPP.Services
         private string sensorType = "";
         private static ConcurrentDictionary<string, HashSet<string>> allRows = new();
         private static ConcurrentDictionary<string, HashSet<string>> completedRows = new();
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _macsInProgress = new(StringComparer.OrdinalIgnoreCase);
 
         CassiaReadWriteService cassiaReadWriteService = new CassiaReadWriteService();
 
@@ -130,6 +134,35 @@ namespace AccessAPP.Services
                 //}
                 UpgradeLogger.Log(logId, nodeMac, "LoggedIn", "Success");
                 Console.WriteLine($"Logged into device...{nodeMac}");
+
+                string sensorInfo = "";
+                string actorInfo = "";
+
+                //Lets get the FW version before jumping to bootloader, so we know what to update
+                if (loginResult.Status.ToString() == "OK")
+                {
+
+                    // Sensor
+                    string sensorCommand = "01290107005A5E";
+                    var sensorResponse = await _connectService.GetDataFromBleDevice(_gatewayIpAddress, _gatewayPort, nodeMac, sensorCommand);
+                    if (sensorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(sensorResponse.Data))
+                    {
+                        sensorInfo = ScanDataParser.ParseSoftwareVersionFromResponse(sensorResponse.Data);
+                    }
+
+                    // Actor
+                    string actorCommand = "012B01070032B3";
+                    var actorResponse = await _connectService.GetDataFromBleDevice(_gatewayIpAddress, _gatewayPort, nodeMac, actorCommand);
+                    if (actorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(actorResponse.Data))
+                    {
+                        actorInfo = ScanDataParser.ParseSoftwareVersionFromResponse(actorResponse.Data);
+                    }
+
+                    Console.WriteLine($"Sensor: {sensorInfo} | Actor: {actorInfo}");
+                }
+
+
+
 
                 // Send Jump to Bootloader telegram repeatedly until successful
                 const int maxAttempts = 5;
@@ -647,58 +680,82 @@ namespace AccessAPP.Services
         //    }
         //}
 
-        private async Task UpgradeDevicesInParallel(List<UpgradeProgress> devices, int numbersOfThreadsInParallel = 2)
+        private async Task UpgradeDevicesInParallel(
+      List<UpgradeProgress> devices,
+      int numbersOfThreadsInParallel = 2)
         {
             int maxRetriesPerComponent = 3;
+
             using var semaphore = new SemaphoreSlim(numbersOfThreadsInParallel);
             Interlocked.Add(ref UpgradeDevicesInProgress, devices.Count);
 
             var tasks = devices.Select(async dev =>
             {
-                await semaphore.WaitAsync();
+                // Normalize the MAC so all lookups match
+                var mac = (dev.MacAddress ?? string.Empty).Trim();
+
+                // --- CLAIM MAC (prevents double-upgrade anywhere in the app) ---
+                if (!_macsInProgress.TryAdd(mac, 0))
+                {
+                    Console.WriteLine($"Skipping {mac} - already upgrading this MAC in another thread/task.");
+                    Interlocked.Decrement(ref UpgradeDevicesInProgress);
+                    return;
+                }
+
+                await semaphore.WaitAsync().ConfigureAwait(false);
                 try
                 {
-                    string logId = $"{dev.MacAddress.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
+                    string logId = $"{mac.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
                     dev.RetryCount = 0;
                     dev.RetryCountActor = 0;
                     dev.RetryCountBootloader = 0;
                     dev.RetryCountSensor = 0;
 
-                    Console.WriteLine($"Starting upgrade for device {dev.MacAddress}");
+                    Console.WriteLine($"Starting upgrade for device {mac}");
+
                     dev.upgradeBootloader = FirmwareResolver.ShouldUpgradeBootloader(
-                         dev.DetectotType,
-                         dev.FirmwareVersion,
-                         dev.CurrentFirmwareVersion
-                     );
+                        dev.DetectotType,
+                        dev.FirmwareVersion,
+                        dev.CurrentFirmwareVersion
+                    );
 
                     dev.isActorUpgradeNeeded = dev.DetectotType == "P48" || dev.DetectotType == "P47";
 
-                    await UpgradeDeviceAsync(dev, dev.MacAddress, dev.Pincode, dev.DetectotType, dev.FirmwareVersion, dev.isActorUpgradeNeeded, dev.upgradeBootloader, true, logId);
+                    await UpgradeDeviceAsync(
+                        dev, mac, dev.Pincode, dev.DetectotType, dev.FirmwareVersion,
+                        dev.isActorUpgradeNeeded, dev.upgradeBootloader, true, logId
+                    ).ConfigureAwait(false);
 
                     while (!dev.IsFullyUpgraded &&
                            (dev.RetryCountActor < 2 * maxRetriesPerComponent ||
                             dev.RetryCountBootloader < maxRetriesPerComponent ||
                             dev.RetryCountSensor < maxRetriesPerComponent))
                     {
-                        await Task.Delay(10000); // Proper async delay
+                        await Task.Delay(10000).ConfigureAwait(false);
                         dev.RetryCount++;
-                        Console.WriteLine($"Retry upgrade for device {dev.MacAddress} - Retry {dev.RetryCount}");
+                        Console.WriteLine($"Retry upgrade for device {mac} - Retry {dev.RetryCount}");
 
-                        await UpgradeDeviceAsync(dev, dev.MacAddress, dev.Pincode, dev.DetectotType, dev.FirmwareVersion, dev.isActorUpgradeNeeded && !dev.ActorSuccess, dev.upgradeBootloader && !dev.BootloaderSuccess, !dev.SensorSuccess, logId);
+                        await UpgradeDeviceAsync(
+                            dev, mac, dev.Pincode, dev.DetectotType, dev.FirmwareVersion,
+                            dev.isActorUpgradeNeeded && !dev.ActorSuccess,
+                            dev.upgradeBootloader && !dev.BootloaderSuccess,
+                            !dev.SensorSuccess,
+                            logId
+                        ).ConfigureAwait(false);
                     }
 
-                    Console.WriteLine($">>>> THREAD END - {dev.MacAddress} - actor: {dev.ActorSuccess}:{dev.RetryCountActor} - bootloader: {dev.BootloaderSuccess}:{dev.RetryCountBootloader} - sensor: {dev.SensorSuccess}:{dev.RetryCountSensor}");
+                    Console.WriteLine($">>>> THREAD END - {mac} - actor: {dev.ActorSuccess}:{dev.RetryCountActor} - bootloader: {dev.BootloaderSuccess}:{dev.RetryCountBootloader} - sensor: {dev.SensorSuccess}:{dev.RetryCountSensor}");
                 }
                 finally
                 {
                     semaphore.Release();
+                    _macsInProgress.TryRemove(mac, out _);  // --- RELEASE MAC ---
                     Interlocked.Decrement(ref UpgradeDevicesInProgress);
                 }
             });
 
-            await Task.WhenAll(tasks);
+            await Task.WhenAll(tasks).ConfigureAwait(false);
         }
-
 
         public async Task<ServiceResponse> ProcessingSensorUpgrade(string nodeMac, bool bActor, bool isBootloader, string DetectorType,string FirmwareVersion,string logId) // should be moved to firmware services
         {
@@ -1019,6 +1076,7 @@ namespace AccessAPP.Services
                     if (_notificationQueue.TryDequeue(out var notificationData))
                     {
                         //_ownInstance._lastNotificationDataRead.TryRemove(macContext, out _);
+                        if (_DEBUG)
                         Console.WriteLine($"Read data queue process {macContext} - size: {size} - " + BitConverter.ToString(notificationData).Replace("-", ""));
 
                         // Copy the notification data into the provided buffer
@@ -1566,6 +1624,7 @@ namespace AccessAPP.Services
             // Subscribe to notifications for the new MAC address
             cassiaNotificationService.Subscribe(macAddress, (sender, data) =>
             {
+                if (_VERBOSE)
                 Console.WriteLine($"Notification received for {macAddress}: {data}");
 
                 // Parse the notification data into a byte array
