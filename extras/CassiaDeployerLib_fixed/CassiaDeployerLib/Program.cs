@@ -6,7 +6,13 @@ internal static class Program
     {
         try
         {
-            var options = new DeployOptions(); // values are now embedded
+            var optionsPath = Path.Combine(
+                AppContext.BaseDirectory,
+                "deployoptions.json");
+
+            DeployOptions options = DeployOptions.LoadOrCreate(optionsPath);
+
+            // use options.Host, options.RemoteDir, etc.
             var log = new ConsoleProgress();
 
             log.Info("=== Cassia AccessAPP Deployer ===");

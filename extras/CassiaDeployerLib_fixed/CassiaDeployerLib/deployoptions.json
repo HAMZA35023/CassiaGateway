@@ -1,0 +1,27 @@
+{
+  "Host": "192.168.40.1",
+  "Port": 20022,
+  "User": "cassia",
+  "Password": "cassia-e42b34",
+
+  "ProjectDir": "C:\\Users\\PLO\\source\\repos\\CassiaGateway\\AccessAPP",
+  "ProjectFile": "C:\\Users\\PLO\\source\\repos\\CassiaGateway\\AccessAPP\\AccessAPP.csproj",
+
+  "LocalPublishDir": "C:\\Users\\PLO\\source\\repos\\CassiaGateway\\AccessAPP\\publish",
+
+  "RemoteDir": "/home/cassia/FWUpgrade",
+  "RemoteExeName": "AccessAPP",
+  "ServiceName": "accessapp",
+
+  "SkipUnchanged": true,
+  "ManageService": true,
+  "InstallServiceIfMissing": true,
+  "UnmaskServiceIfMasked": true,
+
+  "ExtraChmod755Path": "/home/cassia/FWUpgrade/libBootloaderUtilMultiThread.so",
+  "RemoteManifestPath": "/home/cassia/FWUpgrade/.deploy_manifest.txt",
+
+  "PublishConfiguration": "Release",
+  "PublishRuntime": "linux-arm",
+  "SelfContained": true
+}

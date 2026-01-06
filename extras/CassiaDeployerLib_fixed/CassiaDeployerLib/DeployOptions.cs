@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace CassiaDeployerLib;
 
 public sealed class DeployOptions
@@ -18,14 +20,57 @@ public sealed class DeployOptions
 
     public bool SkipUnchanged { get; set; } = true;
     public bool ManageService { get; set; } = true;
-
     public bool InstallServiceIfMissing { get; set; } = true;
-
     public bool UnmaskServiceIfMasked { get; set; } = true;
-    public string? ExtraChmod755Path { get; set; } = "/home/cassia/FWUpgrade/libBootloaderUtilMultiThread.so";
-    public string RemoteManifestPath { get; set; } = "/home/cassia/FWUpgrade/.deploy_manifest.txt";
+
+    public string? ExtraChmod755Path { get; set; } =
+        "/home/cassia/FWUpgrade/libBootloaderUtilMultiThread.so";
+
+    public string RemoteManifestPath { get; set; } =
+        "/home/cassia/FWUpgrade/.deploy_manifest.txt";
 
     public string PublishConfiguration { get; set; } = "Release";
     public string PublishRuntime { get; set; } = "linux-arm";
     public bool SelfContained { get; set; } = true;
+
+    // ---------- JSON loading ----------
+
+    public static DeployOptions Load(string path)
+    {
+        var json = File.ReadAllText(path);
+
+        return JsonSerializer.Deserialize<DeployOptions>(
+                   json,
+                   new JsonSerializerOptions
+                   {
+                       PropertyNameCaseInsensitive = true
+                   }
+               )
+               ?? throw new InvalidOperationException(
+                   "Failed to deserialize DeployOptions");
+    }
+
+    public static DeployOptions LoadOrCreate(string path)
+    {
+        if (!File.Exists(path))
+        {
+            var defaults = new DeployOptions();
+            defaults.Save(path);
+            return defaults;
+        }
+
+        return Load(path);
+    }
+
+    public void Save(string path)
+    {
+        var json = JsonSerializer.Serialize(
+            this,
+            new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+        File.WriteAllText(path, json);
+    }
 }
