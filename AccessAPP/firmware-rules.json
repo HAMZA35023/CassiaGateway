@@ -1,0 +1,25 @@
+{
+  "rules": [
+    {
+      "from": 200,
+      "settings": {
+        "UserConfig": { "CfgVersion": 12 },
+        "Dali": { "Version": 3 },
+        "Wired": { "Version": 2 },
+        "Ble": { "Version": 2 }
+      }
+    },
+    {
+      "from": 218,
+      "settings": {
+        "UserConfig": { "CfgVersion": 13 }
+      }
+    },
+    {
+      "from": 234,
+      "settings": {
+        "Dali": { "Version": 4 }
+      }
+    }
+  ]
+}

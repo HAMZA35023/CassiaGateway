@@ -134,82 +134,126 @@ namespace AccessAPP.Services
         {
             try
             {
-                // Remove .zip extension for pattern matching
                 var filenameWithoutExt = Path.GetFileNameWithoutExtension(filename);
-                
-                // Pattern: 353PK2A238A238A2380604A238A238A238
-                // We need to:
-                // 1. Check if it contains "PK" (not "PD")
-                // 2. Extract the repeating version pattern
-                
-                if (!filenameWithoutExt.Contains("PK"))
-                {
-                    return new FirmwareValidationResult 
-                    { 
-                        IsValid = false, 
-                        ErrorMessage = "Invalid firmware type. Only PK firmware packages are supported (found PD or other type)." 
-                    };
-                }
 
-                if (filenameWithoutExt.Contains("PD"))
+                // Must be PK, and must NOT be PD
+                if (filenameWithoutExt.Contains("PD", StringComparison.OrdinalIgnoreCase))
                 {
-                    return new FirmwareValidationResult 
-                    { 
-                        IsValid = false, 
-                        ErrorMessage = "PD firmware type is not supported. Please upload PK firmware packages only." 
-                    };
-                }
-
-                // Extract version using regex pattern
-                // Looking for pattern like: 353PK2{version}{version}{version}0604{version}{version}{version}
-                var match = Regex.Match(filenameWithoutExt, @"353PK\d([A-Z]\d{3})(\1)(\1)\d{4}(\1)(\1)(\1)");
-                
-                if (!match.Success)
-                {
-                    // Try alternative pattern matching for version extraction
-                    var versionMatches = Regex.Matches(filenameWithoutExt, @"[A-Z]\d{3}");
-                    if (versionMatches.Count >= 3)
+                    return new FirmwareValidationResult
                     {
-                        var firstVersion = versionMatches[0].Value;
-                        // Check if the first version appears multiple times
-                        var occurrences = versionMatches.Cast<Match>().Count(m => m.Value == firstVersion);
-                        
-                        if (occurrences >= 3)
-                        {
-                            return new FirmwareValidationResult 
-                            { 
-                                IsValid = true, 
-                                ExtractedVersion = firstVersion,
-                                IsPKType = true
-                            };
-                        }
-                    }
-                    
-                    return new FirmwareValidationResult 
-                    { 
-                        IsValid = false, 
-                        ErrorMessage = $"Invalid firmware filename pattern. Expected pattern like '353PK2A238A238A2380604A238A238A238.zip' but got '{filename}'." 
+                        IsValid = false,
+                        ErrorMessage = "PD firmware type is not supported. Please upload PK firmware packages only."
                     };
                 }
 
-                var extractedVersion = match.Groups[1].Value;
-                
-                return new FirmwareValidationResult 
-                { 
-                    IsValid = true, 
-                    ExtractedVersion = extractedVersion,
-                    IsPKType = true
+                if (!filenameWithoutExt.Contains("PK", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new FirmwareValidationResult
+                    {
+                        IsValid = false,
+                        ErrorMessage = "Invalid firmware type. Only PK firmware packages are supported."
+                    };
+                }
+
+                // ----------------------------
+                // Format B: 353PK2_0234_0604_0105
+                //  - capture: mainVersion=0234, mid=0604, tail=0105
+                // ----------------------------
+                var underscoreMatch = Regex.Match(
+                    filenameWithoutExt,
+                    @"^353PK\d+_(\d{4})_(\d{4})_(\d{4})$",
+                    RegexOptions.IgnoreCase);
+
+                if (underscoreMatch.Success)
+                {
+                    var mainVersion = underscoreMatch.Groups[1].Value;
+
+                    return new FirmwareValidationResult
+                    {
+                        IsValid = true,
+                        ExtractedVersion = mainVersion,
+                        IsPKType = true
+                        // If you later extend FirmwareValidationResult, you could also store:
+                        // MidPart = underscoreMatch.Groups[2].Value,
+                        // TailPart = underscoreMatch.Groups[3].Value,
+                    };
+                }
+
+                // ----------------------------
+                // Format A: 353PK2A238A238A2380604A238A238A238
+                // ----------------------------
+                var repeatingMatch = Regex.Match(
+                    filenameWithoutExt,
+                    @"^353PK\d+([A-Z]\d{3})(\1)(\1)\d{4}(\1)(\1)(\1)$",
+                    RegexOptions.IgnoreCase);
+
+                if (repeatingMatch.Success)
+                {
+                    var extractedVersion = repeatingMatch.Groups[1].Value;
+
+                    return new FirmwareValidationResult
+                    {
+                        IsValid = true,
+                        ExtractedVersion = extractedVersion,
+                        IsPKType = true
+                    };
+                }
+
+                // ----------------------------
+                // Fallback: try to find a plausible version token
+                // - either A238-like tokens or 4-digit tokens
+                // ----------------------------
+                var alphaNumTokens = Regex.Matches(filenameWithoutExt, @"[A-Z]\d{3}", RegexOptions.IgnoreCase)
+                                          .Cast<Match>().Select(m => m.Value).ToList();
+
+                if (alphaNumTokens.Count > 0)
+                {
+                    var first = alphaNumTokens[0];
+                    var occurrences = alphaNumTokens.Count(v => string.Equals(v, first, StringComparison.OrdinalIgnoreCase));
+                    if (occurrences >= 3)
+                    {
+                        return new FirmwareValidationResult
+                        {
+                            IsValid = true,
+                            ExtractedVersion = first,
+                            IsPKType = true
+                        };
+                    }
+                }
+
+                var digitTokens = Regex.Matches(filenameWithoutExt, @"\b\d{4}\b")
+                                       .Cast<Match>().Select(m => m.Value).ToList();
+
+                if (digitTokens.Count >= 1 && filenameWithoutExt.Contains("_"))
+                {
+                    // If it's underscore-ish but doesn't match perfectly, still allow extracting the first 4-digit block
+                    return new FirmwareValidationResult
+                    {
+                        IsValid = true,
+                        ExtractedVersion = digitTokens[0],
+                        IsPKType = true
+                    };
+                }
+
+                return new FirmwareValidationResult
+                {
+                    IsValid = false,
+                    ErrorMessage =
+                        $"Invalid firmware filename pattern. Supported examples: " +
+                        $"'353PK2A238A238A2380604A238A238A238.zip' or '353PK2_0234_0604_0105.zip' " +
+                        $"but got '{filename}'."
                 };
             }
             catch (Exception ex)
             {
-                return new FirmwareValidationResult 
-                { 
-                    IsValid = false, 
-                    ErrorMessage = $"Error validating filename pattern: {ex.Message}" 
+                return new FirmwareValidationResult
+                {
+                    IsValid = false,
+                    ErrorMessage = $"Error validating filename pattern: {ex.Message}"
                 };
             }
         }
+
 
         private async Task<ExtractResult> ExtractAndValidateArchive(ZipArchive archive, string targetDirectory)
         {
