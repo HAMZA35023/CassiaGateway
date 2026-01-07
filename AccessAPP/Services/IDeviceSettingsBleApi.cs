@@ -23,5 +23,6 @@ namespace AccessAPP.Services
         // Optional, you can keep these if you want them in backup service later
         Task<bool> DaliRestore102Database(string nodeMac);
         Task<bool> DaliRestore103Database(string nodeMac);
+        Task<bool> DaliSetDeviceSysFailLevelAsync(string nodeMac, byte sysFailLevel);
     }
 }

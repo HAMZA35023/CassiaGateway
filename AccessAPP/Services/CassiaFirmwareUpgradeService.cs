@@ -4,6 +4,7 @@ using Newtonsoft.Json;
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Numerics;
 using System.Runtime.InteropServices;
@@ -87,6 +88,43 @@ namespace AccessAPP.Services
         // ------------------------------------------------------------
         // Settings helpers (BLE command wrappers)
         // ------------------------------------------------------------
+
+        public async Task<bool> DaliSetDeviceSysFailLevelAsync(
+    string nodeMac,
+    byte sysFailLevel // e.g. 0xFF or 0xFE
+)
+        {
+            // DaliSetDeviceSysFailLevel:
+            // 01-14-04-08-00-FB-B0-<LEVEL>
+            const string prefix = "0114040800FBB0";
+
+            string levelHex = sysFailLevel.ToString("X2", CultureInfo.InvariantCulture);
+            string cmd = prefix + levelHex;
+
+            var sensorResponse = await _connectService.GetDataFromBleDevice(
+                _gatewayIpAddress,
+                _gatewayPort,
+                nodeMac,
+                cmd);
+
+            if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
+            {
+                Console.WriteLine($"[DALI] SysFailLevel set failed: MAC={nodeMac}, Level=0x{levelHex}, Status={sensorResponse.Status}, RAW={sensorResponse.Data}");
+                return false;
+            }
+
+            string reply = sensorResponse.Data.Trim().ToUpperInvariant();
+
+            // Success can be "00" or "0000"
+            bool ok = reply == "00" || reply == "0000";
+
+            Console.WriteLine($"[DALI] SysFailLevel set: MAC={nodeMac}, Level=0x{levelHex}, Cmd={cmd}, Reply={reply}, OK={ok}");
+
+            if (!ok)
+                Console.WriteLine($"[DALI] SysFailLevel set rejected: MAC={nodeMac}, Level=0x{levelHex}, Cmd={cmd}, Reply={reply}");
+
+            return ok;
+        }
 
         public async Task<string> GetBLEPushButtonList(string nodeMac)
         {
@@ -738,7 +776,19 @@ namespace AccessAPP.Services
                             Console.WriteLine($"[WARN] Connect+login failed for {macAddress}: {cl.Message}");
                             // Best-effort backup: do NOT return; continue with upgrade
                         }
-
+                        else
+                        {
+                            if (await DaliSetDeviceSysFailLevelAsync(macAddress, 0xFF))
+                            {
+                                Console.WriteLine($"DALI SysFail Level set to 0xFF for {macAddress}");
+                                UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set to 0xFF", "Success", FirmwareVersion);
+                            }
+                            else
+                            {
+                                Console.WriteLine($"Failed to set DALI SysFail Level for {macAddress}");
+                                UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set failed", "Warn", FirmwareVersion);
+                            }
+                        }
                         var backup = await _settingsBackup
                             .BackupToFileAsync(macAddress, pincode, DetectorType, FirmwareVersion, logId)
                             .ConfigureAwait(false);
@@ -861,6 +911,20 @@ namespace AccessAPP.Services
                     }
                     else
                     {
+
+                        //Lets make sure the luminares stays at the same level.
+
+                        if (await DaliSetDeviceSysFailLevelAsync(macAddress, 0xFE))
+                        {
+                            Console.WriteLine($"DALI SysFail Level set to 0xFE for {macAddress}");
+                            UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set to 0xFE", "Success", FirmwareVersion);
+                        }
+                        else
+                        {
+                            Console.WriteLine($"Failed to set DALI SysFail Level for {macAddress}");
+                            UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set failed", "Warn", FirmwareVersion);
+                        }
+
                         Console.WriteLine($"Starting settings restore for {macAddress} - upload config");
 
                         if (!string.IsNullOrWhiteSpace(settingsBackupPath))
