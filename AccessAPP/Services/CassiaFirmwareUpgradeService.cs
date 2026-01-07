@@ -341,35 +341,6 @@ namespace AccessAPP.Services
                 UpgradeLogger.Log(logId, nodeMac, "LoggedIn", "Success");
                 Console.WriteLine($"Logged into device...{nodeMac}");
 
-                string sensorInfo = "";
-                string actorInfo = "";
-
-                //Lets get the FW version before jumping to bootloader, so we know what to update
-                if (loginResult.Status.ToString() == "OK")
-                {
-
-                    // Sensor
-                    string sensorCommand = "01290107005A5E";
-                    var sensorResponse = await _connectService.GetDataFromBleDevice(_gatewayIpAddress, _gatewayPort, nodeMac, sensorCommand);
-                    if (sensorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(sensorResponse.Data))
-                    {
-                        sensorInfo = ScanDataParser.ParseSoftwareVersionFromResponse(sensorResponse.Data);
-                    }
-
-                    // Actor
-                    string actorCommand = "012B01070032B3";
-                    var actorResponse = await _connectService.GetDataFromBleDevice(_gatewayIpAddress, _gatewayPort, nodeMac, actorCommand);
-                    if (actorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(actorResponse.Data))
-                    {
-                        actorInfo = ScanDataParser.ParseSoftwareVersionFromResponse(actorResponse.Data);
-                    }
-
-                    Console.WriteLine($"Sensor: {sensorInfo} | Actor: {actorInfo}");
-                }
-
-
-
-
                 // Send Jump to Bootloader telegram repeatedly until successful
                 const int maxAttempts = 5;
                 bool bootModeAchieved = false;
@@ -744,53 +715,61 @@ namespace AccessAPP.Services
             {
                 UpgradeLogger.Log(logId, macAddress, "Process Start Device Async", "Success", FirmwareVersion);
 
+
+                //Get FW Version:
+                Console.WriteLine($"Getting current FW Verison if possible {macAddress}");
+
+
                 // --- NEW: Backup settings at start (best-effort) ---
                 if (DetectorType == "P48" || DetectorType == "P47")
                 {
                     Console.WriteLine($"Starting settings backup for {macAddress}");
 
-                    var cl = await ConnectAndLoginWithRetryAsync(
+                    try
+                    {
+                        var cl = await ConnectAndLoginWithRetryAsync(
                         _gatewayIpAddress, 80, macAddress, pincode, logId, FirmwareVersion,
                         maxAttempts: 3,
                         delayBetweenAttemptsMs: 2000).ConfigureAwait(false);
 
-                    if (!cl.Success)
-                    {
-                        UpgradeLogger.Log(logId, macAddress, $"Backup connect+login failed: {cl.Message}", "Warn", FirmwareVersion);
-                        Console.WriteLine($"[WARN] Backup connect+login failed for {macAddress}: {cl.Message}");
-                        // Best-effort backup: do NOT return; continue with upgrade
+                        if (!cl.Success)
+                        {
+                            UpgradeLogger.Log(logId, macAddress, $"Connect+login failed: {cl.Message}", "Warn", FirmwareVersion);
+                            Console.WriteLine($"[WARN] Connect+login failed for {macAddress}: {cl.Message}");
+                            // Best-effort backup: do NOT return; continue with upgrade
+                        }
+
+                        var backup = await _settingsBackup
+                            .BackupToFileAsync(macAddress, pincode, DetectorType, FirmwareVersion, logId)
+                            .ConfigureAwait(false);
+
+                        settingsBackupPath = backup.filePath;
+
+                        UpgradeLogger.Log(logId, macAddress, "Settings backup saved", "Success", FirmwareVersion);
+                        Console.WriteLine($"[INFO] Settings backup saved for {macAddress} to: {settingsBackupPath}");
+
+                        if (_VERBOSE)
+                        {
+                            Console.WriteLine(
+                                $"[VERBOSE] Settings backup snapshot for {macAddress}:\n" +
+                                System.Text.Json.JsonSerializer.Serialize(
+                                    backup.snapshot,
+                                    new System.Text.Json.JsonSerializerOptions { WriteIndented = true }
+                                )
+                            );
+                        }
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        try
-                        {
-                            var backup = await _settingsBackup
-                                .BackupToFileAsync(macAddress, pincode, DetectorType, FirmwareVersion, logId)
-                                .ConfigureAwait(false);
-
-                            settingsBackupPath = backup.filePath;
-
-                            UpgradeLogger.Log(logId, macAddress, "Settings backup saved", "Success", FirmwareVersion);
-                            Console.WriteLine($"[INFO] Settings backup saved for {macAddress} to: {settingsBackupPath}");
-
-                            if (_VERBOSE)
-                            {
-                                Console.WriteLine(
-                                    $"[VERBOSE] Settings backup snapshot for {macAddress}:\n" +
-                                    System.Text.Json.JsonSerializer.Serialize(
-                                        backup.snapshot,
-                                        new System.Text.Json.JsonSerializerOptions { WriteIndented = true }
-                                    )
-                                );
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            UpgradeLogger.Log(logId, macAddress, $"Settings backup failed: {ex.Message}", "Warn", FirmwareVersion);
-                            Console.WriteLine($"[WARN] Settings backup failed for {macAddress}: {ex}");
-                        }
+                        UpgradeLogger.Log(logId, macAddress, $"Settings backup failed: {ex.Message}", "Warn", FirmwareVersion);
+                        Console.WriteLine($"[WARN] Settings backup failed for {macAddress}: {ex}");
                     }
                 }
+                else
+                {
+                    UpgradeLogger.Log(logId, macAddress, "Settings backup skipped (not P47 or P48)", "Info", FirmwareVersion);
+                }
+
 
                 // Step 2: Upgrade the actor / bootloader / sensor
                 var stopwatch = new Stopwatch();
@@ -1156,51 +1135,154 @@ namespace AccessAPP.Services
         //    }
         //}
 
-        private async Task UpgradeDevicesInParallel(
-          List<UpgradeProgress> devices,
-          int numbersOfThreadsInParallel = -1)
+        private sealed class DeviceUpgradeSummary
         {
+            public string Mac { get; init; } = "";
+            public string DetectorType { get; init; } = "";
+            public string TargetFw { get; init; } = "";
+            public string CurrentFw { get; init; } = "";
 
+            public bool ActorNeeded { get; init; }
+            public bool BootloaderNeeded { get; init; }
+
+            public bool ActorSuccess { get; init; }
+            public bool BootloaderSuccess { get; init; }
+            public bool SensorSuccess { get; init; }
+            public bool IsFullyUpgraded { get; init; }
+            public bool ConfigRestored { get; init; }
+
+            public int RetryTotal { get; init; }
+            public int RetryActor { get; init; }
+            public int RetryBootloader { get; init; }
+            public int RetrySensor { get; init; }
+
+            public double Seconds { get; init; }
+            public string Status { get; init; } = "OK"; // OK / SKIPPED / ERROR
+            public string? Error { get; init; }
+        }
+
+        public async Task<string> GetFwVersion(string macAddress, string pincode)
+        {
+            try
+            {
+                var cl = await ConnectAndLoginWithRetryAsync(
+                    _gatewayIpAddress, 80, macAddress, pincode, null, null,
+                    maxAttempts: 3,
+                    delayBetweenAttemptsMs: 2000).ConfigureAwait(false);
+                if (!cl.Success)
+                {
+                    Console.WriteLine($"[WARN] Connect+login failed for {macAddress}: {cl.Message}");
+                    return "";
+                }
+                else
+                {
+
+                    //Get the FW Version
+
+                    string sensorInfo = "";
+                    string actorInfo = "";
+
+                    // Sensor
+                    string sensorCommand = "01290107005A5E";
+                    var sensorResponse = await _connectService.GetDataFromBleDevice(_gatewayIpAddress, _gatewayPort, macAddress, sensorCommand);
+                    if (sensorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(sensorResponse.Data))
+                    {
+                        sensorInfo = ScanDataParser.ParseSoftwareVersionFromResponse(sensorResponse.Data);
+                    }
+
+                    // Actor
+                    string actorCommand = "012B01070032B3";
+                    var actorResponse = await _connectService.GetDataFromBleDevice(_gatewayIpAddress, _gatewayPort, macAddress, actorCommand);
+                    if (actorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(actorResponse.Data))
+                    {
+                        actorInfo = ScanDataParser.ParseSoftwareVersionFromResponse(actorResponse.Data);
+                    }
+
+                    Console.WriteLine($"{macAddress} - Get this Version: Sensor: {sensorInfo} | Actor: {actorInfo}");
+                    return ($"Sensor: {sensorInfo} | Actor: {actorInfo}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ERROR] GetFwVersion exception for {macAddress}: {ex}");
+            }
+            return "";
+        }
+
+private async Task UpgradeDevicesInParallel(
+    List<UpgradeProgress> devices,
+    int numbersOfThreadsInParallel = -1)
+        {
             if (numbersOfThreadsInParallel == -1)
                 numbersOfThreadsInParallel = GlobalnumberOfParallelThreads;
 
             int maxRetriesPerComponent = 3;
 
             using var semaphore = new SemaphoreSlim(numbersOfThreadsInParallel);
-            Interlocked.Add(ref UpgradeDevicesInProgress, devices.Count);
+
+            // ---- GLOBAL TIMING ----
+            var globalSw = Stopwatch.StartNew();
+            int totalDevices = devices.Count;
+
+            // IMPORTANT: use ms (TimeSpan ticks != Stopwatch ticks)
+            long totalDeviceMs = 0;
+
+            var summaries = new ConcurrentBag<DeviceUpgradeSummary>();
+
+            Console.WriteLine(
+                $"[UPGRADE] Starting parallel upgrade of {totalDevices} device(s) " +
+                $"with max {numbersOfThreadsInParallel} parallel thread(s)");
+
+            Interlocked.Add(ref UpgradeDevicesInProgress, totalDevices);
 
             var tasks = devices.Select(async dev =>
             {
+                var deviceSw = Stopwatch.StartNew();
+
                 // Normalize the MAC so all lookups match
                 var mac = (dev.MacAddress ?? string.Empty).Trim();
 
                 // --- CLAIM MAC (prevents double-upgrade anywhere in the app) ---
                 if (!_macsInProgress.TryAdd(mac, 0))
                 {
-                    Console.WriteLine($"Skipping {mac} - already upgrading this MAC in another thread/task.");
+                    Console.WriteLine($"[SKIP] {mac} already upgrading in another task");
+                    deviceSw.Stop();
+
+                    summaries.Add(new DeviceUpgradeSummary
+                    {
+                        Mac = mac,
+                        DetectorType = dev.DetectotType ?? "",
+                        TargetFw = dev.FirmwareVersion ?? "",
+                        CurrentFw = dev.CurrentFirmwareVersion ?? "",
+                        Seconds = deviceSw.Elapsed.TotalSeconds,
+                        Status = "SKIPPED"
+                    });
+
                     Interlocked.Decrement(ref UpgradeDevicesInProgress);
                     return;
                 }
 
                 await semaphore.WaitAsync().ConfigureAwait(false);
+
                 try
                 {
-
                     if (_VERBOSE)
                     {
                         Console.WriteLine(
                             $"[VERBOSE][{DateTime.Now:HH:mm:ss.fff}][T{Environment.CurrentManagedThreadId}] " +
-                            System.Text.Json.JsonSerializer.Serialize(dev)
-                        );
+                            System.Text.Json.JsonSerializer.Serialize(dev));
                     }
 
+                    dev.CurrentFirmwareVersion = await GetFwVersion(mac, dev.Pincode);
+
                     string logId = $"{mac.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
+
                     dev.RetryCount = 0;
                     dev.RetryCountActor = 0;
                     dev.RetryCountBootloader = 0;
                     dev.RetryCountSensor = 0;
 
-                    Console.WriteLine($"Starting upgrade for device {mac}");
+                    Console.WriteLine($"[START] {mac}");
 
                     dev.upgradeBootloader = FirmwareResolver.ShouldUpgradeBootloader(
                         dev.DetectotType,
@@ -1221,8 +1303,9 @@ namespace AccessAPP.Services
                             dev.RetryCountSensor < maxRetriesPerComponent))
                     {
                         await Task.Delay(10000).ConfigureAwait(false);
+
                         dev.RetryCount++;
-                        Console.WriteLine($"Retry upgrade for device {mac} - Retry {dev.RetryCount}");
+                        Console.WriteLine($"[RETRY] {mac} - Retry {dev.RetryCount}");
 
                         await UpgradeDeviceAsync(
                             dev, mac, dev.Pincode, dev.DetectotType, dev.FirmwareVersion,
@@ -1233,18 +1316,135 @@ namespace AccessAPP.Services
                         ).ConfigureAwait(false);
                     }
 
-                    Console.WriteLine($">>>> THREAD END - {mac} - actor: {dev.ActorSuccess}:{dev.RetryCountActor} - bootloader: {dev.BootloaderSuccess}:{dev.RetryCountBootloader} - sensor: {dev.SensorSuccess}:{dev.RetryCountSensor} - recover config : {dev.isConfigRestored}");
+                    deviceSw.Stop();
+                    Interlocked.Add(ref totalDeviceMs, deviceSw.ElapsedMilliseconds);
+
+                    Console.WriteLine(
+                        $">>>> THREAD END - {mac} " +
+                        $"actor:{dev.ActorSuccess}:{dev.RetryCountActor} " +
+                        $"bootloader:{dev.BootloaderSuccess}:{dev.RetryCountBootloader} " +
+                        $"sensor:{dev.SensorSuccess}:{dev.RetryCountSensor} " +
+                        $"restore:{dev.isConfigRestored} " +
+                        $"time:{deviceSw.Elapsed.TotalSeconds:F2}s");
+
+                    summaries.Add(new DeviceUpgradeSummary
+                    {
+                        Mac = mac,
+                        DetectorType = dev.DetectotType ?? "",
+                        TargetFw = dev.FirmwareVersion ?? "",
+                        CurrentFw = dev.CurrentFirmwareVersion ?? "",
+
+                        ActorNeeded = dev.isActorUpgradeNeeded,
+                        BootloaderNeeded = dev.upgradeBootloader,
+
+                        ActorSuccess = dev.ActorSuccess,
+                        BootloaderSuccess = dev.BootloaderSuccess,
+                        SensorSuccess = dev.SensorSuccess,
+                        IsFullyUpgraded = dev.IsFullyUpgraded,
+                        ConfigRestored = dev.isConfigRestored,
+
+                        RetryTotal = dev.RetryCount,
+                        RetryActor = dev.RetryCountActor,
+                        RetryBootloader = dev.RetryCountBootloader,
+                        RetrySensor = dev.RetryCountSensor,
+
+                        Seconds = deviceSw.Elapsed.TotalSeconds,
+                        Status = "OK"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    deviceSw.Stop();
+                    Interlocked.Add(ref totalDeviceMs, deviceSw.ElapsedMilliseconds);
+
+                    Console.WriteLine($"[ERROR] {mac} - {ex.GetType().Name}: {ex.Message}");
+
+                    summaries.Add(new DeviceUpgradeSummary
+                    {
+                        Mac = mac,
+                        DetectorType = dev.DetectotType ?? "",
+                        TargetFw = dev.FirmwareVersion ?? "",
+                        CurrentFw = dev.CurrentFirmwareVersion ?? "",
+
+                        ActorNeeded = dev.isActorUpgradeNeeded,
+                        BootloaderNeeded = dev.upgradeBootloader,
+
+                        ActorSuccess = dev.ActorSuccess,
+                        BootloaderSuccess = dev.BootloaderSuccess,
+                        SensorSuccess = dev.SensorSuccess,
+                        IsFullyUpgraded = dev.IsFullyUpgraded,
+                        ConfigRestored = dev.isConfigRestored,
+
+                        RetryTotal = dev.RetryCount,
+                        RetryActor = dev.RetryCountActor,
+                        RetryBootloader = dev.RetryCountBootloader,
+                        RetrySensor = dev.RetryCountSensor,
+
+                        Seconds = deviceSw.Elapsed.TotalSeconds,
+                        Status = "ERROR",
+                        Error = ex.ToString()
+                    });
                 }
                 finally
                 {
                     semaphore.Release();
-                    _macsInProgress.TryRemove(mac, out _);  // --- RELEASE MAC ---
+                    _macsInProgress.TryRemove(mac, out _);
                     Interlocked.Decrement(ref UpgradeDevicesInProgress);
                 }
             });
 
             await Task.WhenAll(tasks).ConfigureAwait(false);
+
+            globalSw.Stop();
+
+            // ---- PER-DEVICE SUMMARY (END) ----
+            // Sort with ERROR first, then slowest first (most useful when scanning logs)
+            var ordered = summaries
+                .OrderBy(s => s.Status == "ERROR" ? 0 : s.Status == "OK" ? 1 : 2)
+                .ThenByDescending(s => s.Seconds)
+                .ThenBy(s => s.Mac)
+                .ToList();
+
+            Console.WriteLine("[DEVICE SUMMARY]");
+            foreach (var s in ordered)
+            {
+                string a = s.ActorNeeded ? (s.ActorSuccess ? "A:OK" : "A:FAIL") : "A:-";
+                string b = s.BootloaderNeeded ? (s.BootloaderSuccess ? "B:OK" : "B:FAIL") : "B:-";
+                string se = s.SensorSuccess ? "S:OK" : "S:FAIL";
+                string full = s.IsFullyUpgraded ? "FULL:OK" : "FULL:FAIL";
+                string cfg = s.ConfigRestored ? "CFG:OK" : "CFG:-";
+
+                Console.WriteLine(
+                    $"  {s.Mac,-17} {s.DetectorType,-3} " +
+                    $"cur:{s.CurrentFw,-8} -> tgt:{s.TargetFw,-8} " +
+                    $"{a} {b} {se} {cfg} {full} " +
+                    $"retry:{s.RetryTotal} (a:{s.RetryActor},b:{s.RetryBootloader},s:{s.RetrySensor}) " +
+                    $"time:{s.Seconds,8:F2}s " +
+                    $"status:{s.Status}");
+
+                // Optional: show error details on next line
+                // if (s.Status == "ERROR" && !string.IsNullOrWhiteSpace(s.Error))
+                //     Console.WriteLine($"    err: {s.Error}");
+            }
+
+            // ---- GLOBAL SUMMARY (END) ----
+            int okCount = ordered.Count(x => x.Status == "OK");
+            int errCount = ordered.Count(x => x.Status == "ERROR");
+            int skipCount = ordered.Count(x => x.Status == "SKIPPED");
+
+            double avgSecondsPerDevice =
+                totalDevices > 0 ? (totalDeviceMs / 1000.0) / totalDevices : 0.0;
+
+            Console.WriteLine(
+                $"[UPGRADE SUMMARY]\n" +
+                $"  Devices            : {totalDevices}\n" +
+                $"  OK / ERROR / SKIP  : {okCount} / {errCount} / {skipCount}\n" +
+                $"  Parallel threads   : {numbersOfThreadsInParallel}\n" +
+                $"  Total wall time    : {globalSw.Elapsed.TotalSeconds:F2}s\n" +
+                $"  Avg exec / device  : {avgSecondsPerDevice:F2}s"
+            );
         }
+
 
         public async Task<ServiceResponse> ProcessingSensorUpgrade(string nodeMac, bool bActor, bool isBootloader, string DetectorType, string FirmwareVersion, string logId) // should be moved to firmware services
         {
