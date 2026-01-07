@@ -1216,7 +1216,7 @@ private async Task UpgradeDevicesInParallel(
             if (numbersOfThreadsInParallel == -1)
                 numbersOfThreadsInParallel = GlobalnumberOfParallelThreads;
 
-            int maxRetriesPerComponent = 3;
+            int maxRetriesPerComponent = 10;
 
             using var semaphore = new SemaphoreSlim(numbersOfThreadsInParallel);
 
@@ -1298,8 +1298,8 @@ private async Task UpgradeDevicesInParallel(
                     ).ConfigureAwait(false);
 
                     while (!dev.IsFullyUpgraded &&
-                           (dev.RetryCountActor < 2 * maxRetriesPerComponent ||
-                            dev.RetryCountBootloader < maxRetriesPerComponent ||
+                           (dev.RetryCountActor < 2 * maxRetriesPerComponent &&
+                            dev.RetryCountBootloader < maxRetriesPerComponent &&
                             dev.RetryCountSensor < maxRetriesPerComponent))
                     {
                         await Task.Delay(10000).ConfigureAwait(false);
@@ -1435,13 +1435,18 @@ private async Task UpgradeDevicesInParallel(
             double avgSecondsPerDevice =
                 totalDevices > 0 ? (totalDeviceMs / 1000.0) / totalDevices : 0.0;
 
+            double total_divided_by_devices =
+                totalDevices > 0 ? globalSw.Elapsed.TotalSeconds / totalDevices : 0.0;
+
             Console.WriteLine(
                 $"[UPGRADE SUMMARY]\n" +
                 $"  Devices            : {totalDevices}\n" +
                 $"  OK / ERROR / SKIP  : {okCount} / {errCount} / {skipCount}\n" +
                 $"  Parallel threads   : {numbersOfThreadsInParallel}\n" +
                 $"  Total wall time    : {globalSw.Elapsed.TotalSeconds:F2}s\n" +
-                $"  Avg exec / device  : {avgSecondsPerDevice:F2}s"
+                $"  Avg exec / device  : {avgSecondsPerDevice:F2}s\n"+
+                $"  Total exec / device  : {total_divided_by_devices:F2}s"
+
             );
         }
 
