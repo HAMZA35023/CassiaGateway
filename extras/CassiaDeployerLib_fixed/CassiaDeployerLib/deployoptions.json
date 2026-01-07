@@ -2,7 +2,7 @@
   "Host": "192.168.40.1",
   "Port": 20022,
   "User": "cassia",
-  "Password": "cassia-e42b34",
+  "Password": "",
 
   "ProjectDir": "C:\\Users\\PLO\\source\\repos\\CassiaGateway\\AccessAPP",
   "ProjectFile": "C:\\Users\\PLO\\source\\repos\\CassiaGateway\\AccessAPP\\AccessAPP.csproj",

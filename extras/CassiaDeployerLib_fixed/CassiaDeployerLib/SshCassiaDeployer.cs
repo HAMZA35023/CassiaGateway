@@ -18,6 +18,61 @@ public sealed class SshCassiaDeployer
     {
         _opt = opt;
         _log = log;
+
+        if (string.IsNullOrWhiteSpace(_opt.Password))
+        {
+            var ssid = GetConnectedWifiSsidLower();
+
+            if (!string.IsNullOrWhiteSpace(ssid))
+            {
+                _opt.Password = ssid;
+                Console.WriteLine($"[INFO] Using Wi-Fi SSID as password: {ssid}");
+            }
+            else
+            {
+                Console.WriteLine("[WARN] No Wi-Fi SSID detected – password not auto-filled");
+            }
+        }
+    }
+
+    public static string? GetConnectedWifiSsidLower()
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "netsh",
+            Arguments = "wlan show interfaces",
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        using var process = Process.Start(psi);
+        if (process == null)
+            return null;
+
+        string output = process.StandardOutput.ReadToEnd();
+        process.WaitForExit();
+
+        foreach (var line in output.Split('\n'))
+        {
+            var trimmed = line.Trim();
+
+            // Match: SSID : MyWifi
+            if (trimmed.StartsWith("SSID", StringComparison.OrdinalIgnoreCase) &&
+                !trimmed.StartsWith("SSID name", StringComparison.OrdinalIgnoreCase))
+            {
+                var parts = trimmed.Split(':', 2);
+                if (parts.Length == 2)
+                {
+                    var ssid = parts[1].Trim();
+                    return string.IsNullOrWhiteSpace(ssid)
+                        ? null
+                        : ssid.ToLowerInvariant();
+                }
+            }
+        }
+
+        return null;
     }
 
     private enum InitKind { Systemd, OpenRc, SysV, Unknown }

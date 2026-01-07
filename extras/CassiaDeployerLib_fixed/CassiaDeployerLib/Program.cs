@@ -4,6 +4,8 @@ internal static class Program
 {
     private static int Main(string[] args)
     {
+        int exitCode;
+
         try
         {
             var optionsPath = Path.Combine(
@@ -12,7 +14,6 @@ internal static class Program
 
             DeployOptions options = DeployOptions.LoadOrCreate(optionsPath);
 
-            // use options.Host, options.RemoteDir, etc.
             var log = new ConsoleProgress();
 
             log.Info("=== Cassia AccessAPP Deployer ===");
@@ -27,7 +28,8 @@ internal static class Program
 
             log.Info("");
             log.Info("Deployment finished successfully.");
-            return 0;
+
+            exitCode = 0;
         }
         catch (Exception ex)
         {
@@ -35,7 +37,15 @@ internal static class Program
             Console.Error.WriteLine("DEPLOY FAILED:");
             Console.Error.WriteLine(ex);
             Console.ResetColor();
-            return 1;
+
+            exitCode = 1;
         }
+
+        // Auto-close after 5 seconds
+        Console.WriteLine();
+        Console.WriteLine("Window will close in 5 seconds...");
+        Thread.Sleep(TimeSpan.FromSeconds(5));
+
+        return exitCode;
     }
 }
