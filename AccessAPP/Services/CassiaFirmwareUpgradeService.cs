@@ -1341,6 +1341,8 @@ private async Task UpgradeDevicesInParallel(
 
                     string logId = $"{mac.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
 
+                    UpgradeLogger.Log(logId, mac, "Current FW Version:", "Info", dev.CurrentFirmwareVersion);
+
                     dev.RetryCount = 0;
                     dev.RetryCountActor = 0;
                     dev.RetryCountBootloader = 0;

@@ -103,7 +103,9 @@ namespace AccessAPP.Services
         // Get the list of devices
         public List<ScannedDevicesView> GetFilteredDevices()
         {
-            return _deviceList.Values.ToList();
+            return _deviceList.Values
+                .OrderByDescending(d => d.rssi)
+                .ToList();
         }
     }
 
