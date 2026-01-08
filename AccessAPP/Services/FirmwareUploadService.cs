@@ -9,6 +9,9 @@ namespace AccessAPP.Services
         private readonly ILogger<FirmwareUploadService> _logger;
         private readonly string _firmwareBasePath;
 
+        // Toggle: allow branch-prefixed tokens like B238 in underscore format
+        // (keep false for production if you don't want beta/branch builds)
+        const bool allowBranchToken = false;
         public FirmwareUploadService(ILogger<FirmwareUploadService> logger, IConfiguration configuration)
         {
             _logger = logger;
@@ -155,32 +158,80 @@ namespace AccessAPP.Services
                     };
                 }
 
+
+
                 // ----------------------------
                 // Format B: 353PK2_0234_0604_0105
-                //  - capture: mainVersion=0234, mid=0604, tail=0105
+                // Optional: 353PK2_B238_0604_0105 (if allowBranchToken==true)
                 // ----------------------------
-                var underscoreMatch = Regex.Match(
-                    filenameWithoutExt,
-                    @"^353PK\d+_(\d{4})_(\d{4})_(\d{4})$",
-                    RegexOptions.IgnoreCase);
+                // Token rules:
+                //  - numeric: 4 digits (e.g. 0234)
+                //  - branch : B + 3 digits (e.g. B238) [optional]
+                string mainTokenPattern = allowBranchToken ? @"(?:\d{4}|B\d{3})" : @"(?:\d{4})";
+
+                var underscorePattern = $"^353PK\\d+_({mainTokenPattern})_(\\d{{4}})_(\\d{{4}})$";
+                var underscoreMatch = Regex.Match(filenameWithoutExt, underscorePattern, RegexOptions.IgnoreCase);
 
                 if (underscoreMatch.Success)
                 {
                     var mainVersion = underscoreMatch.Groups[1].Value;
+
+                    // If branch tokens are disallowed, provide a precise message
+                    if (!allowBranchToken && mainVersion.Length == 4 && char.IsLetter(mainVersion[0]))
+                    {
+                        return new FirmwareValidationResult
+                        {
+                            IsValid = false,
+                            ErrorMessage =
+                                $"Invalid firmware filename pattern: branch-prefixed versions like '{mainVersion}' are not supported. " +
+                                $"Use numeric versions like '0234' (e.g. '353PK2_0234_0604_0105.zip')."
+                        };
+                    }
 
                     return new FirmwareValidationResult
                     {
                         IsValid = true,
                         ExtractedVersion = mainVersion,
                         IsPKType = true
-                        // If you later extend FirmwareValidationResult, you could also store:
-                        // MidPart = underscoreMatch.Groups[2].Value,
-                        // TailPart = underscoreMatch.Groups[3].Value,
+                    };
+                }
+
+                // Special-case: looks like underscore format but fails because of Bxxx (or other token)
+                // e.g. 353PK2_B238_0604_0105
+                var looksLikeUnderscore = Regex.Match(
+                    filenameWithoutExt,
+                    @"^353PK\d+_([^_]+)_(\d{4})_(\d{4})$",
+                    RegexOptions.IgnoreCase);
+
+                if (looksLikeUnderscore.Success)
+                {
+                    var token = looksLikeUnderscore.Groups[1].Value;
+
+                    if (Regex.IsMatch(token, @"^[A-Za-z]\d{3}$") && !allowBranchToken)
+                    {
+                        return new FirmwareValidationResult
+                        {
+                            IsValid = false,
+                            ErrorMessage =
+                                $"Invalid firmware filename pattern: '{token}' looks like a branch/beta token. " +
+                                $"Branch-prefixed versions (e.g. 'B238') are not supported. " +
+                                $"Supported examples: '353PK2_0234_0604_0105.zip' or '353PK2A238A238A2380604A238A238A238.zip'."
+                        };
+                    }
+
+                    return new FirmwareValidationResult
+                    {
+                        IsValid = false,
+                        ErrorMessage =
+                            $"Invalid firmware filename pattern: expected main version token '{(allowBranchToken ? "NNNN or BNNN" : "NNNN")}', " +
+                            $"but got '{token}'. Supported examples: '353PK2_0234_0604_0105.zip' or '353PK2A238A238A2380604A238A238A238.zip'."
                     };
                 }
 
                 // ----------------------------
                 // Format A: 353PK2A238A238A2380604A238A238A238
+                // - 3x token, then 0604, then 3x token
+                // - token is letter + 3 digits, and must repeat
                 // ----------------------------
                 var repeatingMatch = Regex.Match(
                     filenameWithoutExt,
@@ -199,42 +250,7 @@ namespace AccessAPP.Services
                     };
                 }
 
-                // ----------------------------
-                // Fallback: try to find a plausible version token
-                // - either A238-like tokens or 4-digit tokens
-                // ----------------------------
-                var alphaNumTokens = Regex.Matches(filenameWithoutExt, @"[A-Z]\d{3}", RegexOptions.IgnoreCase)
-                                          .Cast<Match>().Select(m => m.Value).ToList();
-
-                if (alphaNumTokens.Count > 0)
-                {
-                    var first = alphaNumTokens[0];
-                    var occurrences = alphaNumTokens.Count(v => string.Equals(v, first, StringComparison.OrdinalIgnoreCase));
-                    if (occurrences >= 3)
-                    {
-                        return new FirmwareValidationResult
-                        {
-                            IsValid = true,
-                            ExtractedVersion = first,
-                            IsPKType = true
-                        };
-                    }
-                }
-
-                var digitTokens = Regex.Matches(filenameWithoutExt, @"\b\d{4}\b")
-                                       .Cast<Match>().Select(m => m.Value).ToList();
-
-                if (digitTokens.Count >= 1 && filenameWithoutExt.Contains("_"))
-                {
-                    // If it's underscore-ish but doesn't match perfectly, still allow extracting the first 4-digit block
-                    return new FirmwareValidationResult
-                    {
-                        IsValid = true,
-                        ExtractedVersion = digitTokens[0],
-                        IsPKType = true
-                    };
-                }
-
+                // No more "loose fallback" acceptance — fail with a clear message
                 return new FirmwareValidationResult
                 {
                     IsValid = false,
@@ -253,6 +269,7 @@ namespace AccessAPP.Services
                 };
             }
         }
+
 
 
         private async Task<ExtractResult> ExtractAndValidateArchive(ZipArchive archive, string targetDirectory)
