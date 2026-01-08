@@ -1,0 +1,81 @@
+﻿namespace AccessAPP.Services;
+
+public enum MqttCommandType
+{
+    StartUpdate,
+    GetFwVersion
+}
+
+public sealed class StartUpdateCommand
+{
+    // List of sensor MACs (e.g. "10:B9:F7:...")
+    public List<string> Sensors { get; set; } = new();
+
+    // Optional fields you may want later
+    public string? FirmwareVersion { get; set; }
+    public bool? UpgradeActor { get; set; }
+    public bool? UpgradeBootloader { get; set; }
+    public bool? UpgradeSensor { get; set; }
+}
+
+public sealed class GetFwVersionCommand
+{
+    public List<string> Sensors { get; set; } = new();
+}
+
+public sealed class DiscoveredDevicesMessage
+{
+    public string Name { get; set; } = "";
+    public string NetworkId { get; set; } = "";
+    public DateTimeOffset Time { get; set; } = DateTimeOffset.UtcNow;
+
+    // Placeholder structure
+    public List<DiscoveredDevice> Devices { get; set; } = new();
+}
+
+public sealed class DiscoveredDevice
+{
+    public string Mac { get; set; } = "";
+    public int? Rssi { get; set; }
+    public string? DetectorType { get; set; }
+    public string? DetectorFamily { get; set; }
+
+    public string? ProductNumber { get; set; }
+
+    public string? Name { get; set; }
+}
+
+public sealed class UpdateProgressMessage
+{
+    public string Name { get; set; } = "";
+    public string NetworkId { get; set; } = "";
+    public DateTimeOffset Time { get; set; } = DateTimeOffset.UtcNow;
+
+    // Placeholder
+    public string Mac { get; set; } = "";
+    public double ProgressPercent { get; set; }
+    public string? Stage { get; set; }
+    public string? FirmwareTarget { get; set; }
+}
+
+public sealed class LogMessage
+{
+    public string Name { get; set; } = "";
+    public string NetworkId { get; set; } = "";
+    public DateTimeOffset Time { get; set; } = DateTimeOffset.UtcNow;
+
+    public string Level { get; set; } = "info"; // info/warn/error/debug/verbose
+    public string Message { get; set; } = "";
+    public string? Mac { get; set; }
+    public string? LogId { get; set; }
+}
+
+public sealed class StatusMessage
+{
+    public string Name { get; set; } = "";
+    public string NetworkId { get; set; } = "";
+    public DateTimeOffset Time { get; set; } = DateTimeOffset.UtcNow;
+
+    public string State { get; set; } = "online"; // online/offline/etc.
+    public string? Version { get; set; }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "cassia-01",
+  "networkId": "dk-lab",
+  "host": "192.168.0.10",
+  "port": 1883,
+  "useTls": false,
+  "username": "user",
+  "password": "password",
+  "baseTopic": "accessapp",
+  "keepAliveSeconds": 30,
+  "reconnectDelaySeconds": 5,
+  "subscribeToAllTarget": true
+}

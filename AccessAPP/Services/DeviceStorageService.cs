@@ -6,14 +6,27 @@ namespace AccessAPP.Services
     public class DeviceStorageService
     {
         // Thread-safe dictionary to store devices by their MAC address
-        private readonly ConcurrentDictionary<string, ScannedDevicesView> _deviceList = new ConcurrentDictionary<string, ScannedDevicesView>();
-        private readonly ConcurrentDictionary<string, FirmwareProgressStatus> _progressStatus = new ConcurrentDictionary<string, FirmwareProgressStatus>();
+        private readonly ConcurrentDictionary<string, ScannedDevicesView> _deviceList = new();
+        private readonly ConcurrentDictionary<string, FirmwareProgressStatus> _progressStatus = new();
+
+        private readonly IMqttService _mqtt;
+
+        // Per-MAC throttling to avoid MQTT spam
+        private readonly ConcurrentDictionary<string, DateTime> _lastDevicePublishUtc = new();
+        private readonly ConcurrentDictionary<string, DateTime> _lastProgressPublishUtc = new();
+
+        private static readonly TimeSpan DevicePublishInterval = TimeSpan.FromSeconds(1);
+        private static readonly TimeSpan ProgressPublishInterval = TimeSpan.FromMilliseconds(500);
+
+        public DeviceStorageService(IMqttService mqtt)
+        {
+            _mqtt = mqtt;
+        }
 
         // Add or update devices based on MAC address and filter by RSSI
         public void AddOrUpdateDevice(ScannedDevicesView device, int minRssi)
         {
             string macAddress = device.bdaddrs.FirstOrDefault()?.Bdaddr;
-
             if (string.IsNullOrEmpty(macAddress)) return;
 
             if (device.rssi <= minRssi)
@@ -46,6 +59,9 @@ namespace AccessAPP.Services
                 });
 
                 Console.WriteLine($"Device {macAddress} added/updated with RSSI: {device.rssi}");
+
+                // MQTT publish (throttled)
+                PublishDeviceThrottled(macAddress, device);
             }
             else
             {
@@ -53,12 +69,22 @@ namespace AccessAPP.Services
                 {
                     _deviceList.TryRemove(macAddress, out _);
                     Console.WriteLine($"Device {macAddress} removed due to low RSSI: {device.rssi}");
+
+                    // Optional: publish a log about removal
+                    _ = SafeMqtt(async ct =>
+                    {
+                        await _mqtt.PublishLogAsync(new LogMessage
+                        {
+                            Level = "info",
+                            Mac = macAddress,
+                            Message = $"Device removed due to RSSI filter (rssi={device.rssi}, min={minRssi})"
+                        }, ct);
+                    });
                 }
             }
         }
 
-
-        public void UpdateFirmwareProgress(string mac, double progress, string status= "Programming")
+        public void UpdateFirmwareProgress(string mac, double progress, string status = "Programming")
         {
             _progressStatus.AddOrUpdate(mac,
                 new FirmwareProgressStatus
@@ -75,6 +101,9 @@ namespace AccessAPP.Services
                     existing.LastUpdated = DateTime.UtcNow;
                     return existing;
                 });
+
+            // MQTT publish (throttled)
+            PublishProgressThrottled(mac, Math.Min(progress, 100), status);
         }
 
         public void MarkFirmwareFailed(string mac)
@@ -83,7 +112,7 @@ namespace AccessAPP.Services
                 new FirmwareProgressStatus
                 {
                     MacAddress = mac,
-                    Progress = 0, // fallback if not already tracked
+                    Progress = 0,
                     Status = "Failed",
                     LastUpdated = DateTime.UtcNow
                 },
@@ -93,6 +122,24 @@ namespace AccessAPP.Services
                     existing.LastUpdated = DateTime.UtcNow;
                     return existing;
                 });
+
+            // Send progress + log immediately (no throttle on failure)
+            _ = SafeMqtt(async ct =>
+            {
+                await _mqtt.PublishUpdateProgressAsync(new UpdateProgressMessage
+                {
+                    Mac = mac,
+                    ProgressPercent = 0,
+                    Stage = "Failed"
+                }, ct);
+
+                await _mqtt.PublishLogAsync(new LogMessage
+                {
+                    Level = "error",
+                    Mac = mac,
+                    Message = "Firmware update failed"
+                }, ct);
+            });
         }
 
         public List<FirmwareProgressStatus> GetAllFirmwareProgress()
@@ -107,8 +154,69 @@ namespace AccessAPP.Services
                 .OrderByDescending(d => d.rssi)
                 .ToList();
         }
+
+        // ---------------- MQTT helpers ----------------
+
+        private void PublishDeviceThrottled(string mac, ScannedDevicesView device)
+        {
+            var now = DateTime.UtcNow;
+
+            if (_lastDevicePublishUtc.TryGetValue(mac, out var last) && (now - last) < DevicePublishInterval)
+                return;
+
+            _lastDevicePublishUtc[mac] = now;
+
+            _ = SafeMqtt(async ct =>
+            {
+                await _mqtt.PublishDiscoveredDevicesAsync(new DiscoveredDevicesMessage
+                {
+                    Devices =
+                    {
+                        new DiscoveredDevice
+                        {
+                            Mac = mac,
+                            Rssi = device.rssi,
+                            DetectorType = device.DetectorType,
+                            DetectorFamily = device.DetectorFamily,
+                            ProductNumber = device.ProductNumber,
+                            Name = device.name
+                        }
+                    }
+                }, ct);
+            });
+        }
+
+        private void PublishProgressThrottled(string mac, double progress, string status)
+        {
+            var now = DateTime.UtcNow;
+
+            if (_lastProgressPublishUtc.TryGetValue(mac, out var last) && (now - last) < ProgressPublishInterval)
+                return;
+
+            _lastProgressPublishUtc[mac] = now;
+
+            _ = SafeMqtt(async ct =>
+            {
+                await _mqtt.PublishUpdateProgressAsync(new UpdateProgressMessage
+                {
+                    Mac = mac,
+                    ProgressPercent = progress,
+                    Stage = status
+                }, ct);
+            });
+        }
+
+        private static async Task SafeMqtt(Func<CancellationToken, Task> action)
+        {
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await action(cts.Token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[MQTT] publish failed: {ex.Message}");
+            }
+        }
     }
-
-
-
 }
