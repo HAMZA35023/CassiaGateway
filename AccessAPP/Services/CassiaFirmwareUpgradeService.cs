@@ -17,7 +17,7 @@ namespace AccessAPP.Services
         const bool _DEBUG = false;
         const bool _VERBOSE = true;
 
-        const int GlobalnumberOfParallelThreads = 3; // Optimal setting with current Cassia Gateway HW (21:43 Min for 3 P48 with actor and sensor firmware update)
+        const int GlobalnumberOfParallelThreads = 25; // Optimal setting with current Cassia Gateway HW (21:43 Min for 3 P48 with actor and sensor firmware update)
         
         //Only for P47+P48
         const bool RebootDetectorAfterUpgrade = true;
@@ -1288,7 +1288,7 @@ namespace AccessAPP.Services
             {
                 var cl = await ConnectAndLoginWithRetryAsync(
                     _gatewayIpAddress, 80, macAddress, pincode, null, null,
-                    maxAttempts: 3,
+                    maxAttempts: 1,
                     delayBetweenAttemptsMs: 2000).ConfigureAwait(false);
                 if (!cl.Success)
                 {
@@ -1394,7 +1394,8 @@ private async Task UpgradeDevicesInParallel(
                             System.Text.Json.JsonSerializer.Serialize(dev));
                     }
 
-                    dev.CurrentFirmwareVersion = await GetFwVersion(mac, dev.Pincode);
+                    if (!CheckIfDeviceInBootMode(_gatewayIpAddress, mac))
+                        dev.CurrentFirmwareVersion = await GetFwVersion(mac, dev.Pincode);
 
                     string logId = $"{mac.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
 
