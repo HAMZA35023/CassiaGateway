@@ -13,6 +13,8 @@ public sealed class MqttService : IMqttService
     private readonly MqttConfigStore _store;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
+    private static readonly TimeSpan StatusHeartbeatInterval = TimeSpan.FromSeconds(10);
+
     private MQTTnet.IMqttClient? _client;
     private CancellationTokenSource? _runCts;
     private Task? _runLoop;
@@ -175,6 +177,11 @@ public sealed class MqttService : IMqttService
         await PublishJsonAsync(TeleTopic("log"), msg, retain: false, ct).ConfigureAwait(false);
     }
 
+    public async Task PublishRespAsync(string msg, CancellationToken ct = default)
+    {
+        await PublishJsonAsync(TeleTopic("resp"), msg, retain: false, ct).ConfigureAwait(false);
+    }
+
     public async ValueTask DisposeAsync()
     {
         await StopAsync().ConfigureAwait(false);
@@ -218,8 +225,33 @@ public sealed class MqttService : IMqttService
                 await PublishJsonAsync(TeleTopic("status"), online, retain: true, ct).ConfigureAwait(false);
                 Log("Published retained online status");
 
+                var nextHeartbeat = DateTimeOffset.UtcNow + StatusHeartbeatInterval;
+
                 while (!ct.IsCancellationRequested && _client is not null && _client.IsConnected)
+                {
+                    var now = DateTimeOffset.UtcNow;
+
+                    if (now >= nextHeartbeat)
+                    {
+                        var heartbeat = new StatusMessage
+                        {
+                            Name = CurrentOptions.Name,
+                            NetworkId = CurrentOptions.NetworkId,
+                            Time = now,
+                            State = "online"
+                        };
+
+                        await PublishJsonAsync(TeleTopic("status"), heartbeat, retain: false, ct)
+                            .ConfigureAwait(false);
+
+                        //Log("Heartbeat status sent");
+                        nextHeartbeat = now + StatusHeartbeatInterval;
+                    }
+
+                    // short sleep keeps loop responsive to disconnects
                     await Task.Delay(500, ct).ConfigureAwait(false);
+                }
+
             }
             catch (OperationCanceledException)
             {
@@ -249,14 +281,37 @@ public sealed class MqttService : IMqttService
         {
             if (_client is null)
             {
-                Log("Creating MQTT client via MqttClientFactory");
                 _client = new MqttClientFactory().CreateMqttClient();
                 _subscribed = false;
 
-                // Use reflection to hook handlers safely across variants
-                HookHandlersViaReflection(_client);
+                _client.ConnectedAsync += e =>
+                {
+                    Log("ConnectedAsync event");
+                    return Task.CompletedTask;
+                };
 
-                // Some variants expose DisconnectedAsync event with args (we already log in handler hook)
+                _client.DisconnectedAsync += e =>
+                {
+                    Log($"DisconnectedAsync event reason={e.Reason} reasonString='{e.ReasonString}' ex={(e.Exception != null ? e.Exception.Message : "null")}");
+                    _subscribed = false;
+                    return Task.CompletedTask;
+                };
+
+                _client.ApplicationMessageReceivedAsync += e =>
+                {
+                    Log($"RX topic: {e.ApplicationMessage.Topic}");
+
+                    byte[] payload = e.ApplicationMessage.Payload.ToArray();
+
+                    var text = payload.Length == 0
+                        ? string.Empty
+                        : Encoding.UTF8.GetString(payload);
+
+                    Log($"RX payload: {text}");
+
+                    return HandleCommandAsync(e.ApplicationMessage.Topic, text);
+                };
+
             }
 
             if (_client.IsConnected) return;
@@ -275,6 +330,36 @@ public sealed class MqttService : IMqttService
         {
             _gate.Release();
         }
+    }
+
+    private Task HandleCommandAsync(string topic, string payload)
+    {
+        // parse topic: accessapp/{network}/cmd/{target}/{command}
+        var parts = topic.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 5) return Task.CompletedTask;
+
+        var baseTopic = parts[0];
+        var networkId = parts[1];
+        var cmdLiteral = parts[2];
+        var command = parts[4];
+
+        if (!string.Equals(baseTopic, CurrentOptions.BaseTopic, StringComparison.OrdinalIgnoreCase)) return Task.CompletedTask;
+        if (!string.Equals(cmdLiteral, "cmd", StringComparison.OrdinalIgnoreCase)) return Task.CompletedTask;
+        if (!string.Equals(networkId, CurrentOptions.NetworkId, StringComparison.OrdinalIgnoreCase)) return Task.CompletedTask;
+
+        if (string.Equals(command, "start-update", StringComparison.OrdinalIgnoreCase))
+        {
+            var dto = JsonSerializer.Deserialize<StartUpdateCommand>(payload, JsonOptions) ?? new StartUpdateCommand();
+            return StartUpdateRequested?.Invoke(dto) ?? Task.CompletedTask;
+        }
+
+        if (string.Equals(command, "get-fw-version", StringComparison.OrdinalIgnoreCase))
+        {
+            var dto = JsonSerializer.Deserialize<GetFwVersionCommand>(payload, JsonOptions) ?? new GetFwVersionCommand();
+            return GetFwVersionRequested?.Invoke(dto) ?? Task.CompletedTask;
+        }
+
+        return Task.CompletedTask;
     }
 
     private async Task SubscribeTopicsAsync(CancellationToken ct)
@@ -662,16 +747,51 @@ public sealed class MqttService : IMqttService
                 }
             });
 
-        // Hook DisconnectedAsync (optional logging)
+        // Hook DisconnectedAsync (detailed logging)
         TryHookAsyncEvent(
             client,
             "DisconnectedAsync",
-            (_argsObj) =>
+            (argsObj) =>
             {
-                Log("Disconnected");
+                try
+                {
+                    // Dump a few common properties if they exist
+                    var t = argsObj.GetType();
+
+                    string reason =
+                        t.GetProperty("Reason")?.GetValue(argsObj)?.ToString()
+                        ?? t.GetProperty("ReasonCode")?.GetValue(argsObj)?.ToString()
+                        ?? t.GetProperty("DisconnectReason")?.GetValue(argsObj)?.ToString()
+                        ?? "(unknown)";
+
+                    string reasonString =
+                        t.GetProperty("ReasonString")?.GetValue(argsObj)?.ToString()
+                        ?? t.GetProperty("ReasonText")?.GetValue(argsObj)?.ToString()
+                        ?? "";
+
+                    var exObj = t.GetProperty("Exception")?.GetValue(argsObj) as Exception;
+                    var wasConnectedObj = t.GetProperty("ClientWasConnected")?.GetValue(argsObj);
+
+                    Log($"Disconnected: reason={reason} reasonString='{reasonString}' wasConnected={wasConnectedObj} ex={(exObj != null ? exObj.Message : "null")}");
+                }
+                catch (Exception ex)
+                {
+                    Log($"Disconnected (failed to read args): {ex.Message}");
+                }
+
                 _subscribed = false;
                 return Task.CompletedTask;
             });
+
+                TryHookAsyncEvent(
+            client,
+            "ConnectedAsync",
+            (_argsObj) =>
+            {
+                Log("ConnectedAsync event");
+                return Task.CompletedTask;
+            });
+
     }
 
     private void TryHookAsyncEvent(MQTTnet.IMqttClient client, string eventName, Func<object, Task> handler)

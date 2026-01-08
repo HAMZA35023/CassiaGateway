@@ -17,6 +17,7 @@ public interface IMqttService : IAsyncDisposable
     Task PublishDiscoveredDevicesAsync(DiscoveredDevicesMessage msg, CancellationToken ct = default);
     Task PublishUpdateProgressAsync(UpdateProgressMessage msg, CancellationToken ct = default);
     Task PublishLogAsync(LogMessage msg, CancellationToken ct = default);
+    Task PublishRespAsync(string msg, CancellationToken ct = default);
 
     // Events when commands arrive
     event Func<StartUpdateCommand, Task>? StartUpdateRequested;

@@ -79,8 +79,8 @@ using (var scope = app.Services.CreateScope())
     {
         foreach (var mac in cmd.Sensors)
         {
-
-            await mqttService.PublishLogAsync(new LogMessage
+           
+            await mqttService.PublishRespAsync(new LogMessage
             {
                 Level = "info",
                 Mac = mac,
