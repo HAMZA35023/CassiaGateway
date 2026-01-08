@@ -11,7 +11,7 @@ namespace AccessAPP.Services
 
         // Toggle: allow branch-prefixed tokens like B238 in underscore format
         // (keep false for production if you don't want beta/branch builds)
-        const bool allowBranchToken = false;
+        const bool allowBranchToken = true;
         public FirmwareUploadService(ILogger<FirmwareUploadService> logger, IConfiguration configuration)
         {
             _logger = logger;

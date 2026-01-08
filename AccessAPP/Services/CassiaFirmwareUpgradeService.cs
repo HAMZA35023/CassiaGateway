@@ -17,12 +17,14 @@ namespace AccessAPP.Services
         const bool _DEBUG = false;
         const bool _VERBOSE = true;
 
-        const int GlobalnumberOfParallelThreads = 25; // Optimal setting with current Cassia Gateway HW (21:43 Min for 3 P48 with actor and sensor firmware update)
+        const int GlobalnumberOfParallelThreads = 3; // Optimal setting with current Cassia Gateway HW (21:43 Min for 3 P48 with actor and sensor firmware update)
         
+        //TODO: Be moved to app-settings
         //Only for P47+P48
         const bool RebootDetectorAfterUpgrade = true;
         const bool Restore102DBAfterUpgrade = true;
         const bool RestoreSettingsAfterUpgrade = true;
+        const bool AutoSetSysFailLevelUnderUpdate = true;
 
         private readonly HttpClient _httpClient;
         private readonly CassiaConnectService _connectService;
@@ -818,15 +820,18 @@ namespace AccessAPP.Services
                             }
                             else
                             {
-                                if (await DaliSetDeviceSysFailLevelAsync(macAddress, 0xFF))
+                                if (AutoSetSysFailLevelUnderUpdate)
                                 {
-                                    Console.WriteLine($"DALI SysFail Level set to 0xFF for {macAddress}");
-                                    UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set to 0xFF", "Success", FirmwareVersion);
-                                }
-                                else
-                                {
-                                    Console.WriteLine($"Failed to set DALI SysFail Level for {macAddress}");
-                                    UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set failed", "Warn", FirmwareVersion);
+                                    if (await DaliSetDeviceSysFailLevelAsync(macAddress, 0xFF))
+                                    {
+                                        Console.WriteLine($"DALI SysFail Level set to 0xFF for {macAddress}");
+                                        UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set to 0xFF", "Success", FirmwareVersion);
+                                    }
+                                    else
+                                    {
+                                        Console.WriteLine($"Failed to set DALI SysFail Level for {macAddress}");
+                                        UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set failed", "Warn", FirmwareVersion);
+                                    }
                                 }
                             }
                             var backup = await _settingsBackup
@@ -953,16 +958,18 @@ namespace AccessAPP.Services
                     {
 
                         //Lets make sure the luminares stays at the same level.
-
-                        if (await DaliSetDeviceSysFailLevelAsync(macAddress, 0xFE))
+                        if (AutoSetSysFailLevelUnderUpdate)
                         {
-                            Console.WriteLine($"DALI SysFail Level set to 0xFE for {macAddress}");
-                            UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set to 0xFE", "Success", FirmwareVersion);
-                        }
-                        else
-                        {
-                            Console.WriteLine($"Failed to set DALI SysFail Level for {macAddress}");
-                            UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set failed", "Warn", FirmwareVersion);
+                            if (await DaliSetDeviceSysFailLevelAsync(macAddress, 0xFE))
+                            {
+                                Console.WriteLine($"DALI SysFail Level set to 0xFE for {macAddress}");
+                                UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set to 0xFE", "Success", FirmwareVersion);
+                            }
+                            else
+                            {
+                                Console.WriteLine($"Failed to set DALI SysFail Level for {macAddress}");
+                                UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set failed", "Warn", FirmwareVersion);
+                            }
                         }
 
                         if (Restore102DBAfterUpgrade)
@@ -1399,7 +1406,7 @@ private async Task UpgradeDevicesInParallel(
 
                     string logId = $"{mac.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
 
-                    UpgradeLogger.Log(logId, mac, "Current FW Version:", "Info", dev.CurrentFirmwareVersion);
+                    UpgradeLogger.Log(logId, mac, "Current FW Version:", dev.CurrentFirmwareVersion, dev.FirmwareVersion);
 
                     dev.RetryCount = 0;
                     dev.RetryCountActor = 0;
