@@ -70,6 +70,9 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string connectionStatus = "Disconnected";
     [ObservableProperty] private bool isConnected;
 
+    private readonly System.Windows.Threading.DispatcherTimer _gatewayStaleTimer;
+    private static readonly TimeSpan GatewayOfflineAfter = TimeSpan.FromMinutes(5);
+
     public string ConnectButtonText => IsConnected ? "Disconnect" : "Connect";
     public string DevicesSubtitle => $"{_devices.Count} unique device(s) • model: {SensorFilter} • filter: {DeviceFilter}";
 
@@ -134,6 +137,34 @@ public partial class MainViewModel : ObservableObject
         // Put Done items at the bottom, then newest updates on top
         QueueView.SortDescriptions.Add(new SortDescription(nameof(QueueItem.QueueSortKey), ListSortDirection.Ascending));
         QueueView.SortDescriptions.Add(new SortDescription(nameof(QueueItem.LastUpdateUtc), ListSortDirection.Descending));
+
+        _gatewayStaleTimer = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(10) // responsive, but cheap
+        };
+
+        _gatewayStaleTimer.Tick += (_, _) =>
+        {
+            var nowUtc = DateTimeOffset.UtcNow;
+
+            foreach (var gw in CassiaGateways)
+            {
+                // If never seen: you can decide whether to force offline or keep unknown.
+                if (gw.LastSeenUtc == DateTimeOffset.MinValue)
+                    continue;
+
+                var stale = (nowUtc - gw.LastSeenUtc) > GatewayOfflineAfter;
+
+                if (stale)
+                {
+                    if (!string.Equals(gw.State, "offline", StringComparison.OrdinalIgnoreCase))
+                        gw.State = "offline";
+                }
+                // NOTE: do NOT force online here — only force offline when stale.
+            }
+        };
+
+        _gatewayStaleTimer.Start();
     }
 
     partial void OnDeviceFilterChanged(string value)

@@ -81,15 +81,25 @@
                                                        FontWeight="SemiBold"
                                                        FontSize="14"/>
 
-                                            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                                                <TextBlock Text="Last:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
-                                                <TextBlock Text="{Binding LastSeenLocal}" FontSize="12" FontWeight="SemiBold" Margin="0,0,12,0"/>
+                                            <StackPanel Orientation="Vertical" Margin="0,6,0,0">
 
-                                                <TextBlock Text="Devices:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
-                                                <TextBlock Text="{Binding DevicesSeen}" FontSize="12" FontWeight="SemiBold" Margin="0,0,12,0"/>
+                                                <!-- Line 1 -->
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="Last:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
+                                                    <TextBlock Text="{Binding LastSeenLocal}" FontSize="12" FontWeight="SemiBold" Margin="0,0,12,0"/>
 
-                                                <TextBlock Text="In Queue:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
-                                                <TextBlock Text="{Binding Queue}" FontSize="12" FontWeight="SemiBold"/>
+                                                    <TextBlock Text="Devices:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
+                                                    <TextBlock Text="{Binding DevicesSeen}" FontSize="12" FontWeight="SemiBold" Margin="0,0,12,0"/>
+
+                                                    <TextBlock Text="In Queue:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
+                                                    <TextBlock Text="{Binding Queue}" FontSize="12" FontWeight="SemiBold"/>
+                                                </StackPanel>
+
+                                                <!-- Line 2 -->
+                                                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                                    <TextBlock Text="LastSeen:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
+                                                    <TextBlock Text="{Binding LastSeenUtc}" FontSize="12" FontWeight="SemiBold"/>
+                                                </StackPanel>
 
                                             </StackPanel>
                                         </StackPanel>
@@ -196,6 +206,16 @@
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                             <TextBox Width="280" Text="{Binding DeviceFilter}" Margin="18,0,10,0"/>
                             <ComboBox Width="120" ItemsSource="{Binding SensorFilterOptions}" SelectedItem="{Binding SensorFilter}"/>
+                            <CheckBox x:Name="EnableDoubleClickQueueCheckBox"
+                                      Content="Double-click to queue"
+                                      IsChecked="{Binding EnableDoubleClickQueue, Mode=TwoWay}"
+                                      Margin="14,0,10,0"
+                                      VerticalAlignment="Center"/>
+                            <Button Style="{StaticResource GhostButton}"
+                                    Content="Clear"
+                                    Padding="12,6"
+                                    VerticalAlignment="Center"
+                                    Click="ClearDevices_Click"/>
                         </StackPanel>
                     </StackPanel>
 
@@ -204,14 +224,28 @@
                               SelectedItem="{Binding SelectedDevice}"
                               AutoGenerateColumns="False"
                               MouseDoubleClick="DevicesGrid_MouseDoubleClick"
-                              IsReadOnly="True">
+                              IsReadOnly="True"
+                              CanUserSortColumns="True">
                         <DataGrid.Columns>
 
-                            <DataGridCheckBoxColumn Header=""
-                                                    Binding="{Binding IsSelected, Mode=TwoWay}"
-                                                    Width="32"
-                                                    IsReadOnly="False"/>
-
+                            <DataGridTemplateColumn Header="" Width="32" CanUserSort="False">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"
+                                                  Focusable="False"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="Update FW" Width="100" CanUserSort="False">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Button Style="{StaticResource GhostButton}" Content="Update" Padding="10,4"
+                                                Click="UpdateFw_Click"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                             <DataGridTextColumn Header="MAC" Binding="{Binding Mac}" Width="160"/>
                             <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="160"/>
                             <DataGridTextColumn Header="Product" Binding="{Binding ProductNumber}" Width="120"/>
@@ -222,6 +256,15 @@
                             <DataGridTextColumn Header="Status" Binding="{Binding ProcessStatus}" Width="120"/>
                             <DataGridTextColumn Header="%" Binding="{Binding ProcessProgress}" Width="60"/>
                             <DataGridTextColumn Header="FW" Binding="{Binding ProcessFirmware}" Width="90"/>
+                            <DataGridTextColumn Header="Current FW" Binding="{Binding CurrentFw}" Width="90"/>
+                            <DataGridTemplateColumn Header="Get FW" Width="90" CanUserSort="False">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Button Style="{StaticResource GhostButton}" Content="Get FW" Padding="10,4"
+                                                Click="GetFw_Click" IsEnabled="False"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                             <DataGridTextColumn Header="Proc Cassia" Binding="{Binding ProcessCassia}" Width="110"/>
                             <DataGridTextColumn Header="Proc Time" Binding="{Binding ProcessLastUpdateLocal}" Width="150"/>
                         </DataGrid.Columns>
@@ -245,23 +288,50 @@
                                     Content="Clear"
                                     Command="{Binding ClearQueueCommand}"
                                     Margin="0,0,8,0"/>
-                            <Button Style="{StaticResource PrimaryButton}"
-                                    Content="Start"
-                                    Command="{Binding StartQueueCommand}"/>
-                        </StackPanel>
+                            <Button Style="{StaticResource GhostButton}" Content="Default sort" Padding="12,6" Margin="0,0,8,0" Click="QueueDefaultSort_Click"/>
+</StackPanel>
                     </StackPanel>
 
-                    <DataGrid ItemsSource="{Binding QueueView}"
+                    <DataGrid x:Name="QueueGrid"
+                              ItemsSource="{Binding QueueView}"
                               SelectedItem="{Binding SelectedQueueItem}"
                               AutoGenerateColumns="False"
-                              IsReadOnly="True">
+                              IsReadOnly="True"
+                              CanUserSortColumns="True"
+                              Sorting="QueueGrid_Sorting">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="MAC" Binding="{Binding Mac}" Width="160"/>
                             <DataGridTextColumn Header="Cassia" Binding="{Binding Cassia}" Width="110"/>
                             <DataGridTextColumn Header="Model" Binding="{Binding DetectorType}" Width="70"/>
                             <DataGridTextColumn Header="FW" Binding="{Binding FirmwareVersion}" Width="90"/>
                             <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="140"/>
-                            <DataGridTextColumn Header="%" Binding="{Binding Progress}" Width="60"/>
+                                                        <DataGridTemplateColumn Header="%" Width="60">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock>
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="{Binding Progress, StringFormat={}{0}%}"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Status}" Value="">
+                                                            <Setter Property="Text" Value=""/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Status}" Value="{x:Null}">
+                                                            <Setter Property="Text" Value=""/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Status}" Value="queued">
+                                                            <Setter Property="Text" Value=""/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Status}" Value="Queued">
+                                                            <Setter Property="Text" Value=""/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                         </DataGrid.Columns>
                     </DataGrid>
 
