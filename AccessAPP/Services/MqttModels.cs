@@ -1,4 +1,6 @@
-﻿namespace AccessAPP.Services;
+﻿using System.Text.Json.Serialization;
+
+namespace AccessAPP.Services;
 
 public enum MqttCommandType
 {
@@ -8,15 +10,28 @@ public enum MqttCommandType
 
 public sealed class StartUpdateCommand
 {
-    // List of sensor MACs (e.g. "10:B9:F7:...")
-    public List<string> Sensors { get; set; } = new();
+    public List<StartUpdateRequest> Requests { get; set; } = new();
 
-    // Optional fields you may want later
-    public string? FirmwareVersion { get; set; }
-    public bool? UpgradeActor { get; set; }
-    public bool? UpgradeBootloader { get; set; }
-    public bool? UpgradeSensor { get; set; }
+    // Optional: keep for backwards compatibility if older senders used it
+    public List<string> Sensors { get; set; } = new();
 }
+
+
+public sealed class StartUpdateRequest
+{
+    [JsonPropertyName("DetectorType")]
+    public string? DetectorType { get; set; }
+
+    [JsonPropertyName("FirmwareVersion")]
+    public string? FirmwareVersion { get; set; }
+
+    [JsonPropertyName("MacAddress")]
+    public string? MacAddress { get; set; }
+
+    [JsonPropertyName("Pincode")]
+    public string? Pincode { get; set; }
+}
+
 
 public sealed class GetFwVersionCommand
 {

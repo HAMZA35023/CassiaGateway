@@ -37,6 +37,8 @@ namespace AccessAPP.Controllers
             _firmwareUploadService = firmwareUploadService;
             _firmwareManifestService = firmwareManifestService;
             _notificationService = notificationService;
+
+            //_scanService.StartPeriodicScan(_gatewayIpAddress, _gatewayPort);
         }
 
         [HttpGet("scan")]

@@ -2779,6 +2779,25 @@ namespace AccessAPP.Services
                 return false;
             }
         }
+        // Public entrypoint used by MQTT start-update handler
+        public Task EnqueueUpgradesAsync(IEnumerable<UpgradeProgress> devices, int numbersOfThreadsInParallel = -1)
+        {
+            var list = devices?.Where(d => d != null).ToList() ?? new List<UpgradeProgress>();
+            if (list.Count == 0) return Task.CompletedTask;
+
+            // IMPORTANT: mark queued immediately (publishes progress "Queued")
+            foreach (var d in list)
+            {
+                if (string.IsNullOrWhiteSpace(d.MacAddress)) continue;
+                _deviceStorageService.UpdateFirmwareProgress(d.MacAddress, 0, "Queued");
+            }
+
+            // Reuse your existing queue-aware parallel upgrader
+            // (UpgradeDevicesInParallel is already the place you wanted to feed)
+            _ = UpgradeDevicesInParallel(list, numbersOfThreadsInParallel);
+
+            return Task.CompletedTask;
+        }
 
 
 

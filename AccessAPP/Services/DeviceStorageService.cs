@@ -18,71 +18,184 @@ namespace AccessAPP.Services
         private static readonly TimeSpan DevicePublishInterval = TimeSpan.FromSeconds(1);
         private static readonly TimeSpan ProgressPublishInterval = TimeSpan.FromMilliseconds(500);
 
+        private readonly ConcurrentDictionary<string, RssiWindowState> _rssiState
+    = new ConcurrentDictionary<string, RssiWindowState>();
+
+        private readonly Timer _staleTimer;
+
+        private static readonly TimeSpan RssiAverageWindow = TimeSpan.FromMinutes(3);
+        private static readonly TimeSpan StaleAfter = TimeSpan.FromMinutes(5);
+        private static readonly TimeSpan StaleCheckInterval = TimeSpan.FromSeconds(30);
+
+        private sealed class RssiSample
+        {
+            public DateTimeOffset Ts { get; init; }
+            public int Rssi { get; init; }
+        }
+
+        private sealed class RssiWindowState
+        {
+            public readonly object Gate = new object();
+            public readonly Queue<RssiSample> Samples = new Queue<RssiSample>();
+            public DateTimeOffset LastSeenUtc = DateTimeOffset.MinValue;
+
+            // Optional: keep a cached average so the stale-timer can set rssi=-127 without touching samples
+            public int LastAverageRssi = -127;
+        }
+
         public DeviceStorageService(IMqttService mqtt)
         {
             _mqtt = mqtt;
+            _staleTimer = new Timer(_ =>
+            {
+                try
+                {
+                    MarkStaleDevices();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[DeviceStorage] MarkStaleDevices error: {ex.Message}");
+                }
+            }, null, dueTime: StaleCheckInterval, period: StaleCheckInterval);
+        }
+
+        public void Dispose()
+        {
+            _staleTimer?.Dispose();
         }
 
         // Add or update devices based on MAC address and filter by RSSI
         public void AddOrUpdateDevice(ScannedDevicesView device, int minRssi)
         {
+            // Keep minRssi as input, but DO NOT filter/remove based on it.
+            _ = minRssi;
+
             string macAddress = device.bdaddrs.FirstOrDefault()?.Bdaddr;
             if (string.IsNullOrEmpty(macAddress)) return;
 
-            if (device.rssi <= minRssi)
+            var now = DateTimeOffset.UtcNow;
+
+            // --- Update RSSI rolling window state (3 minutes average) ---
+            var state = _rssiState.GetOrAdd(macAddress, _ => new RssiWindowState());
+
+            int avgRssi;
+            lock (state.Gate)
             {
-                _deviceList.AddOrUpdate(macAddress, device, (key, existingDevice) =>
+                state.LastSeenUtc = now;
+
+                // Add sample
+                state.Samples.Enqueue(new RssiSample { Ts = now, Rssi = device.rssi });
+
+                // Trim older than 3 minutes
+                var cutoff = now - RssiAverageWindow;
+                while (state.Samples.Count > 0 && state.Samples.Peek().Ts < cutoff)
+                    state.Samples.Dequeue();
+
+                // Compute average over remaining samples
+                if (state.Samples.Count == 0)
                 {
-                    // Always update volatile fields like RSSI and name
-                    existingDevice.rssi = device.rssi;
+                    avgRssi = -127;
+                }
+                else
+                {
+                    long sum = 0;
+                    foreach (var s in state.Samples) sum += s.Rssi;
+                    avgRssi = (int)Math.Round(sum / (double)state.Samples.Count);
+                }
+
+                state.LastAverageRssi = avgRssi;
+            }
+
+            // --- Store/update device in global dictionary ---
+            _deviceList.AddOrUpdate(macAddress, device, (key, existingDevice) =>
+            {
+                // RSSI is always updated (averaged)
+                existingDevice.rssi = avgRssi;
+
+                bool updatedFromScanData = false;
+
+                // Only update name & enriched fields if scanData is present
+                if (!string.IsNullOrEmpty(device.scanData))
+                {
                     existingDevice.name = device.name;
 
-                    // Only overwrite scanData-enriched fields if scanData is present
-                    if (!string.IsNullOrEmpty(device.scanData))
-                    {
-                        existingDevice.scanData = device.scanData;
-                        existingDevice.adData = device.adData;
+                    existingDevice.bdaddrs = device.bdaddrs;
+                    existingDevice.chipId = device.chipId;
+                    existingDevice.evtType = device.evtType;
+                    existingDevice.adData = device.adData;
+                    existingDevice.scanData = device.scanData;
 
-                        existingDevice.ProductNumber = device.ProductNumber;
-                        existingDevice.DetectorFamily = device.DetectorFamily;
-                        existingDevice.DetectorType = device.DetectorType;
-                        existingDevice.DetectorOutputInfo = device.DetectorOutputInfo;
-                        existingDevice.DetectorDescription = device.DetectorDescription;
-                        existingDevice.DetectorShortDescription = device.DetectorShortDescription;
-                        existingDevice.Range = device.Range;
-                        existingDevice.DetectorMountDescription = device.DetectorMountDescription;
-                        existingDevice.LockedHex = device.LockedHex;
-                        existingDevice.IsLocked = device.IsLocked;
-                    }
+                    existingDevice.ProductNumber = device.ProductNumber;
+                    existingDevice.DetectorFamily = device.DetectorFamily;
+                    existingDevice.DetectorType = device.DetectorType;
+                    existingDevice.DetectorOutputInfo = device.DetectorOutputInfo;
+                    existingDevice.DetectorDescription = device.DetectorDescription;
+                    existingDevice.DetectorShortDescription = device.DetectorShortDescription;
+                    existingDevice.Range = device.Range;
+                    existingDevice.DetectorMountDescription = device.DetectorMountDescription;
+                    existingDevice.LockedHex = device.LockedHex;
+                    existingDevice.IsLocked = device.IsLocked;
 
-                    return existingDevice;
-                });
-
-                Console.WriteLine($"Device {macAddress} added/updated with RSSI: {device.rssi}");
-
-                // MQTT publish (throttled)
-                PublishDeviceThrottled(macAddress, device);
-            }
-            else
-            {
-                if (_deviceList.ContainsKey(macAddress))
-                {
-                    _deviceList.TryRemove(macAddress, out _);
-                    Console.WriteLine($"Device {macAddress} removed due to low RSSI: {device.rssi}");
-
-                    // Optional: publish a log about removal
-                    _ = SafeMqtt(async ct =>
-                    {
-                        await _mqtt.PublishLogAsync(new LogMessage
-                        {
-                            Level = "info",
-                            Mac = macAddress,
-                            Message = $"Device removed due to RSSI filter (rssi={device.rssi}, min={minRssi})"
-                        }, ct);
-                    });
+                    updatedFromScanData = true;
                 }
+                /*
+                Console.WriteLine(
+                    $"[SCAN UPDATE] MAC={macAddress} | " +
+                    $"RSSI(avg3m)={avgRssi} | " +
+                    $"ScanDataUpdate={(updatedFromScanData ? "YES" : "NO")}"
+                );
+                */
+                return existingDevice;
+            });
+
+
+            //Console.WriteLine($"Device {macAddress} added/updated with RSSI(avg 3m): {avgRssi} (raw={device.rssi})");
+
+            // MQTT publish (throttled) - publish the updated/averaged device
+            // (If PublishDeviceThrottled uses the passed device, ensure it publishes avg.
+            //  easiest: set device.rssi = avgRssi before publishing)
+            device.rssi = avgRssi;
+            PublishDeviceThrottled(macAddress, device);
+        }
+
+        private void MarkStaleDevices()
+        {
+            var now = DateTimeOffset.UtcNow;
+
+            foreach (var kvp in _deviceList)
+            {
+                var mac = kvp.Key;
+
+                if (!_rssiState.TryGetValue(mac, out var state))
+                    continue;
+
+                bool isStale;
+                lock (state.Gate)
+                {
+                    isStale = (now - state.LastSeenUtc) > StaleAfter;
+                }
+
+                if (!isStale)
+                    continue;
+
+                // Set RSSI to -127 if stale (do NOT remove)
+                _deviceList.AddOrUpdate(mac,
+                    _ => kvp.Value, // should not happen often, but safe
+                    (_, existing) =>
+                    {
+                        if (existing.rssi != -127)
+                        {
+                            existing.rssi = -127;
+                            Console.WriteLine($"Device {mac} is stale (>5m no announces). RSSI set to -127.");
+                        }
+                        return existing;
+                    });
+
+                // Optional: publish stale update (if you want)
+                //PublishDeviceThrottled(mac, kvp.Value);
             }
         }
+
 
         public void UpdateFirmwareProgress(string mac, double progress, string status = "Programming")
         {

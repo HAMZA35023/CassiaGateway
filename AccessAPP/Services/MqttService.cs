@@ -334,33 +334,101 @@ public sealed class MqttService : IMqttService
 
     private Task HandleCommandAsync(string topic, string payload)
     {
-        // parse topic: accessapp/{network}/cmd/{target}/{command}
-        var parts = topic.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length < 5) return Task.CompletedTask;
-
-        var baseTopic = parts[0];
-        var networkId = parts[1];
-        var cmdLiteral = parts[2];
-        var command = parts[4];
-
-        if (!string.Equals(baseTopic, CurrentOptions.BaseTopic, StringComparison.OrdinalIgnoreCase)) return Task.CompletedTask;
-        if (!string.Equals(cmdLiteral, "cmd", StringComparison.OrdinalIgnoreCase)) return Task.CompletedTask;
-        if (!string.Equals(networkId, CurrentOptions.NetworkId, StringComparison.OrdinalIgnoreCase)) return Task.CompletedTask;
-
-        if (string.Equals(command, "start-update", StringComparison.OrdinalIgnoreCase))
+        try
         {
-            var dto = JsonSerializer.Deserialize<StartUpdateCommand>(payload, JsonOptions) ?? new StartUpdateCommand();
-            return StartUpdateRequested?.Invoke(dto) ?? Task.CompletedTask;
-        }
+            // parse topic: accessapp/{network}/cmd/{target}/{command}
+            var parts = topic.Split('/', StringSplitOptions.RemoveEmptyEntries);
 
-        if (string.Equals(command, "get-fw-version", StringComparison.OrdinalIgnoreCase))
+            Log($"HandleCommandAsync: parts.Length={parts.Length}");
+            for (int i = 0; i < parts.Length; i++)
+                Log($"  parts[{i}]='{parts[i]}'");
+
+            if (parts.Length < 5)
+            {
+                Log("HandleCommandAsync: ignored (too few parts)");
+                return Task.CompletedTask;
+            }
+
+            var baseTopic = parts[0];
+            var networkId = parts[1];
+            var cmdLiteral = parts[2];
+            var target = parts[3];
+            var command = parts[4];
+
+            Log($"HandleCommandAsync parsed: baseTopic='{baseTopic}', networkId='{networkId}', cmdLiteral='{cmdLiteral}', target='{target}', command='{command}'");
+            Log($"Options: BaseTopic='{CurrentOptions.BaseTopic}', NetworkId='{CurrentOptions.NetworkId}', Name='{CurrentOptions.Name}'");
+
+            if (!string.Equals(baseTopic, CurrentOptions.BaseTopic, StringComparison.OrdinalIgnoreCase))
+            {
+                Log("HandleCommandAsync: ignored (baseTopic mismatch)");
+                return Task.CompletedTask;
+            }
+
+            if (!string.Equals(cmdLiteral, "cmd", StringComparison.OrdinalIgnoreCase))
+            {
+                Log("HandleCommandAsync: ignored (not cmd)");
+                return Task.CompletedTask;
+            }
+
+            if (!string.Equals(networkId, CurrentOptions.NetworkId, StringComparison.OrdinalIgnoreCase))
+            {
+                Log("HandleCommandAsync: ignored (networkId mismatch)");
+                return Task.CompletedTask;
+            }
+
+            // Strongly recommended: only accept commands for THIS gateway
+            if (!string.Equals(target, CurrentOptions.Name, StringComparison.OrdinalIgnoreCase))
+            {
+                Log("HandleCommandAsync: ignored (target mismatch)");
+                return Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "start-update", StringComparison.OrdinalIgnoreCase))
+            {
+                Log("HandleCommandAsync: dispatch start-update");
+
+                // Payload is JSON ARRAY => deserialize List<StartUpdateRequest>
+                var reqs = JsonSerializer.Deserialize<List<StartUpdateRequest>>(payload, JsonOptions)
+                           ?? new List<StartUpdateRequest>();
+
+                if (reqs.Count > 0)
+                {
+                    Log($"DEBUG first req: DetectorType='{reqs[0].DetectorType}', FW='{reqs[0].FirmwareVersion}', MAC='{reqs[0].MacAddress}', Pin='{reqs[0].Pincode}'");
+                }
+
+                var dto = new StartUpdateCommand
+                {
+                    Requests = reqs,
+                    Sensors = reqs
+                        .Select(r => r.MacAddress)
+                        .Where(m => !string.IsNullOrWhiteSpace(m))
+                        .Select(m => m!.Trim())
+                        .ToList()
+                };
+
+                Log($"start-update parsed OK: {dto.Requests.Count} request(s)");
+                return StartUpdateRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "get-fw-version", StringComparison.OrdinalIgnoreCase))
+            {
+                Log("HandleCommandAsync: dispatch get-fw-version");
+                var dto = JsonSerializer.Deserialize<GetFwVersionCommand>(payload, JsonOptions) ?? new GetFwVersionCommand();
+                return GetFwVersionRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            Log($"HandleCommandAsync: ignored (unknown command '{command}')");
+            return Task.CompletedTask;
+        }
+        catch (Exception ex)
         {
-            var dto = JsonSerializer.Deserialize<GetFwVersionCommand>(payload, JsonOptions) ?? new GetFwVersionCommand();
-            return GetFwVersionRequested?.Invoke(dto) ?? Task.CompletedTask;
+            Log($"HandleCommandAsync ERROR: {ex}");
+            Log($"topic was: {topic}");
+            Log($"payload was: {payload}");
+            return Task.CompletedTask;
         }
-
-        return Task.CompletedTask;
     }
+
 
     private async Task SubscribeTopicsAsync(CancellationToken ct)
     {
@@ -394,43 +462,50 @@ public sealed class MqttService : IMqttService
 
     private Task OnMessageReceivedCoreAsync(string topic, object payloadObj)
     {
-        Log($"RX topic: {topic}");
-
-        var payloadBytes = GetPayloadBytes(payloadObj);
-        var payload = payloadBytes.Length == 0 ? "" : Encoding.UTF8.GetString(payloadBytes);
-
-        // accessapp/{networkId}/cmd/{target}/{command}
         var topicParts = topic.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (topicParts.Length < 5) return Task.CompletedTask;
+
+        Log($"topicParts.Length={topicParts.Length}");
+        for (int i = 0; i < topicParts.Length; i++)
+            Log($"topicParts[{i}]='{topicParts[i]}'");
+
+        // Expect: [0]=accessapp [1]=dk-lab [2]=cmd [3]=cassia-01 [4]=start-update
+
+        if (topicParts.Length < 5)
+        {
+            Log("Topic ignored: too few parts");
+            return Task.CompletedTask;
+        }
 
         var baseTopic = topicParts[0];
         var networkId = topicParts[1];
         var cmdLiteral = topicParts[2];
+        var target = topicParts[3];
         var command = topicParts[4];
 
-        if (!string.Equals(baseTopic, CurrentOptions.BaseTopic, StringComparison.OrdinalIgnoreCase)) return Task.CompletedTask;
-        if (!string.Equals(cmdLiteral, "cmd", StringComparison.OrdinalIgnoreCase)) return Task.CompletedTask;
-        if (!string.Equals(networkId, CurrentOptions.NetworkId, StringComparison.OrdinalIgnoreCase)) return Task.CompletedTask;
+        Log($"Parsed: baseTopic='{baseTopic}', networkId='{networkId}', cmdLiteral='{cmdLiteral}', target='{target}', command='{command}'");
+        Log($"Options: BaseTopic='{CurrentOptions.BaseTopic}', NetworkId='{CurrentOptions.NetworkId}', Name='{CurrentOptions.Name}'");
 
-        try
+        if (!string.Equals(baseTopic, CurrentOptions.BaseTopic, StringComparison.OrdinalIgnoreCase))
         {
-            if (string.Equals(command, "start-update", StringComparison.OrdinalIgnoreCase))
-            {
-                Log($"Command: start-update ({payload})");
-                var dto = JsonSerializer.Deserialize<StartUpdateCommand>(payload, JsonOptions) ?? new StartUpdateCommand();
-                return StartUpdateRequested?.Invoke(dto) ?? Task.CompletedTask;
-            }
-
-            if (string.Equals(command, "get-fw-version", StringComparison.OrdinalIgnoreCase))
-            {
-                Log($"Command: get-fw-version ({payload})");
-                var dto = JsonSerializer.Deserialize<GetFwVersionCommand>(payload, JsonOptions) ?? new GetFwVersionCommand();
-                return GetFwVersionRequested?.Invoke(dto) ?? Task.CompletedTask;
-            }
+            Log("Topic ignored: baseTopic mismatch");
+            return Task.CompletedTask;
         }
-        catch (Exception ex)
+        if (!string.Equals(cmdLiteral, "cmd", StringComparison.OrdinalIgnoreCase))
         {
-            Log($"Command parse/dispatch error: {ex.Message}");
+            Log("Topic ignored: not a cmd topic");
+            return Task.CompletedTask;
+        }
+        if (!string.Equals(networkId, CurrentOptions.NetworkId, StringComparison.OrdinalIgnoreCase))
+        {
+            Log("Topic ignored: networkId mismatch");
+            return Task.CompletedTask;
+        }
+
+        // Optional (recommended): ensure it's for THIS gateway name
+        if (!string.Equals(target, CurrentOptions.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            Log("Topic ignored: target mismatch");
+            return Task.CompletedTask;
         }
 
         return Task.CompletedTask;

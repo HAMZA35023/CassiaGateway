@@ -14,6 +14,7 @@ namespace AccessAPP.Services
         private readonly CassiaNotificationService _notificationService;
         private readonly IConfiguration _configuration;
 
+
         public CassiaScanService(HttpClient httpClient, DeviceStorageService deviceStorageService, IConfiguration configuration, CassiaNotificationService notificationService)
         {
             _httpClient = httpClient;
@@ -24,6 +25,7 @@ namespace AccessAPP.Services
             _configuration = configuration;
         }
 
+       
         public async Task<List<ScannedDevicesView>> ScanForBleDevices(string gatewayIpAddress, int gatewayPort)
         {
             try
@@ -56,6 +58,10 @@ namespace AccessAPP.Services
                         var lockedHex = ScanDataParser.GetLockedInfo(scanPayload);
                         var isLocked = ScanDataParser.IsLocked(scanPayload);
                         var meta = ScanDataParser.GetDetectorMeta(scanPayload);
+                        string name = "";
+
+                        if (eventData.evtType == 4)
+                            name = ScanDataParser.GetName(scanPayload.Substring(20, 30));
 
                         var enrichedDevice = new ScannedDevicesView
                         {
@@ -65,7 +71,7 @@ namespace AccessAPP.Services
                             rssi = eventData.rssi,
                             adData = eventData.adData,
                             scanData = eventData.scanData,
-                            name = eventData.name,
+                            name = name,
 
                             ProductNumber = productNumber,
                             DetectorFamily = meta.DetectorFamily,
@@ -208,7 +214,7 @@ namespace AccessAPP.Services
 
                         string line = await reader.ReadLineAsync();
                         // Process the SSE event
-                        Console.WriteLine(line);
+                        //Console.WriteLine(line);
 
                         if (!string.IsNullOrEmpty(line) && line != "" && line != ":keep-alive")
                         {

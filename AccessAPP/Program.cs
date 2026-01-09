@@ -65,15 +65,35 @@ using (var scope = app.Services.CreateScope())
     var firmwareUpgradeService = serviceProvider.GetRequiredService<CassiaFirmwareUpgradeService>();
     var deviceStorageService = serviceProvider.GetRequiredService<DeviceStorageService>();
 
-    mqttService.StartUpdateRequested += async cmd =>
+    mqttService.StartUpdateRequested += cmd =>
     {
-        // TODO: replace with your real entrypoint (parallel upgrade, etc.)
-        foreach (var mac in cmd.Sensors)
+        // 1) publish queued immediately
+        foreach (var r in cmd.Requests)
         {
-            // Example placeholder - you likely have a method that takes mac + options
-            
+            var mac = r.MacAddress?.Trim();
+            if (string.IsNullOrWhiteSpace(mac)) continue;
+
+            deviceStorageService.UpdateFirmwareProgress(mac, 0, "Queued");
         }
+
+        // 2) map to UpgradeProgress list
+        var upgrades = cmd.Requests
+            .Where(r => !string.IsNullOrWhiteSpace(r.MacAddress))
+            .Select(r => new UpgradeProgress
+            {
+                MacAddress = r.MacAddress!.Trim(),
+                Pincode = r.Pincode ?? "",
+                DetectotType = r.DetectorType ?? "",
+                FirmwareVersion = r.FirmwareVersion ?? ""
+            })
+            .ToList();
+
+        // 3) enqueue into your FIFO upgrader (queue-aware method)
+        _ = firmwareUpgradeService.EnqueueUpgradesAsync(upgrades);
+
+        return Task.CompletedTask;
     };
+
 
     mqttService.GetFwVersionRequested += async cmd =>
     {
