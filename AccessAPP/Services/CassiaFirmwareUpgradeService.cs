@@ -1337,199 +1337,377 @@ namespace AccessAPP.Services
             return "";
         }
 
-private async Task UpgradeDevicesInParallel(
-    List<UpgradeProgress> devices,
-    int numbersOfThreadsInParallel = -1)
+        // ---------- QUEUE STATE ----------
+        private readonly ConcurrentQueue<UpgradeProgress> _upgradeQueue = new();
+        private readonly ConcurrentDictionary<string, byte> _queuedMacs = new(); // pending membership set
+        private readonly object _upgradeQueueGate = new();
+
+        // Wake-up signal for worker when new items arrive
+        private readonly SemaphoreSlim _queueSignal = new(0, int.MaxValue);
+
+        private bool _upgradeQueueWorkerRunning;
+        private Task? _upgradeQueueWorkerTask;
+
+        private static string NormalizeMac(string? mac)
+            => (mac ?? string.Empty).Trim().ToUpperInvariant();
+
+        /// <summary>
+        /// Queue-enabled FIFO entrypoint.
+        /// First call starts the worker; subsequent calls only enqueue and return quickly.
+        /// Dedup: won't enqueue same MAC twice while pending or running.
+        /// </summary>
+        private Task UpgradeDevicesInParallel(List<UpgradeProgress> devices, int numbersOfThreadsInParallel = -1)
         {
-            if (numbersOfThreadsInParallel == -1)
-                numbersOfThreadsInParallel = GlobalnumberOfParallelThreads;
+            if (devices == null || devices.Count == 0)
+                return Task.CompletedTask;
 
-            int maxRetriesPerComponent = 10;
+            int queued = 0;
+            int skippedDuplicate = 0;
+            int skippedInvalid = 0;
 
-            using var semaphore = new SemaphoreSlim(numbersOfThreadsInParallel);
-
-            // ---- GLOBAL TIMING ----
-            var globalSw = Stopwatch.StartNew();
-            int totalDevices = devices.Count;
-
-            // IMPORTANT: use ms (TimeSpan ticks != Stopwatch ticks)
-            long totalDeviceMs = 0;
-
-            var summaries = new ConcurrentBag<DeviceUpgradeSummary>();
-
-            Console.WriteLine(
-                $"[UPGRADE] Starting parallel upgrade of {totalDevices} device(s) " +
-                $"with max {numbersOfThreadsInParallel} parallel thread(s)");
-
-            Interlocked.Add(ref UpgradeDevicesInProgress, totalDevices);
-
-            var tasks = devices.Select(async dev =>
+            foreach (var dev in devices)
             {
-                var deviceSw = Stopwatch.StartNew();
+                var mac = NormalizeMac(dev?.MacAddress);
 
-                // Normalize the MAC so all lookups match
-                var mac = (dev.MacAddress ?? string.Empty).Trim();
-
-                // --- CLAIM MAC (prevents double-upgrade anywhere in the app) ---
-                if (!_macsInProgress.TryAdd(mac, 0))
+                if (string.IsNullOrWhiteSpace(mac))
                 {
-                    Console.WriteLine($"[SKIP] {mac} already upgrading in another task");
-                    deviceSw.Stop();
-
-                    summaries.Add(new DeviceUpgradeSummary
-                    {
-                        Mac = mac,
-                        DetectorType = dev.DetectotType ?? "",
-                        TargetFw = dev.FirmwareVersion ?? "",
-                        CurrentFw = dev.CurrentFirmwareVersion ?? "",
-                        Seconds = deviceSw.Elapsed.TotalSeconds,
-                        Status = "SKIPPED"
-                    });
-
-                    Interlocked.Decrement(ref UpgradeDevicesInProgress);
-                    return;
+                    skippedInvalid++;
+                    continue;
                 }
 
-                await semaphore.WaitAsync().ConfigureAwait(false);
-
-                try
+                // Already running anywhere?
+                if (_macsInProgress.ContainsKey(mac))
                 {
-                    if (_VERBOSE)
+                    skippedDuplicate++;
+                    Console.WriteLine($"[UPGRADE QUEUE] SKIP add (already running): {mac}");
+                    continue;
+                }
+
+                // Already queued pending?
+                if (!_queuedMacs.TryAdd(mac, 0))
+                {
+                    skippedDuplicate++;
+                    Console.WriteLine($"[UPGRADE QUEUE] SKIP add (already queued): {mac}");
+                    continue;
+                }
+
+                dev.MacAddress = mac;
+
+                _upgradeQueue.Enqueue(dev);
+                queued++;
+
+                Console.WriteLine(
+                    $"[UPGRADE QUEUE] ADDED: {mac} " +
+                    $"type:{dev.DetectotType ?? ""} " +
+                    $"tgt:{dev.FirmwareVersion ?? ""}");
+
+                // Wake the worker so it can start this immediately (if there is capacity)
+                _queueSignal.Release();
+            }
+
+            Console.WriteLine(
+                $"[UPGRADE QUEUE] Add request: in={devices.Count}, added={queued}, dup/ignored={skippedDuplicate}, invalid={skippedInvalid}, pending={_upgradeQueue.Count}");
+
+            lock (_upgradeQueueGate)
+            {
+                if (_upgradeQueueWorkerRunning)
+                    return Task.CompletedTask;
+
+                if (_upgradeQueue.IsEmpty)
+                    return Task.CompletedTask;
+
+                _upgradeQueueWorkerRunning = true;
+
+                int threads = numbersOfThreadsInParallel == -1
+                    ? GlobalnumberOfParallelThreads
+                    : numbersOfThreadsInParallel;
+
+                Console.WriteLine($"[UPGRADE QUEUE] Worker START (threads={threads})");
+
+                _upgradeQueueWorkerTask = Task.Run(() => UpgradeQueueWorkerLiveAsync(threads));
+                return _upgradeQueueWorkerTask;
+            }
+        }
+
+        /// <summary>
+        /// Live queue worker: starts new device upgrades as soon as there is capacity,
+        /// without waiting for the current "batch" to finish.
+        /// </summary>
+        private async Task UpgradeQueueWorkerLiveAsync(int numbersOfThreadsInParallel)
+        {
+            // Per-run summary (run = from first enqueue until queue+running becomes empty)
+            var globalSw = Stopwatch.StartNew();
+            long totalDeviceMs = 0;
+            int totalDevicesProcessed = 0;
+
+            var summaries = new ConcurrentBag<DeviceUpgradeSummary>();
+            var running = new List<Task>(capacity: numbersOfThreadsInParallel);
+
+            try
+            {
+                while (true)
+                {
+                    // Fill capacity immediately from FIFO
+                    while (running.Count < numbersOfThreadsInParallel && _upgradeQueue.TryDequeue(out var dev))
                     {
-                        Console.WriteLine(
-                            $"[VERBOSE][{DateTime.Now:HH:mm:ss.fff}][T{Environment.CurrentManagedThreadId}] " +
-                            System.Text.Json.JsonSerializer.Serialize(dev));
+                        var mac = NormalizeMac(dev?.MacAddress);
+                        if (!string.IsNullOrWhiteSpace(mac))
+                            _queuedMacs.TryRemove(mac, out _); // leaving pending queue
+
+                        if (dev == null)
+                            continue;
+
+                        totalDevicesProcessed++;
+
+                        // Start immediately
+                        running.Add(ProcessSingleDeviceUpgradeAsync(dev, summaries, ms => Interlocked.Add(ref totalDeviceMs, ms)));
                     }
 
-                    if (!CheckIfDeviceInBootMode(_gatewayIpAddress, mac))
-                        dev.CurrentFirmwareVersion = await GetFwVersion(mac, dev.Pincode);
+                    // Clean out completed tasks
+                    for (int i = running.Count - 1; i >= 0; i--)
+                    {
+                        if (running[i].IsCompleted)
+                            running.RemoveAt(i);
+                    }
 
-                    string logId = $"{mac.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
+                    // If nothing queued and nothing running -> stop the run
+                    if (_upgradeQueue.IsEmpty && running.Count == 0)
+                    {
+                        lock (_upgradeQueueGate)
+                        {
+                            if (_upgradeQueue.IsEmpty)
+                            {
+                                _upgradeQueueWorkerRunning = false;
+                                _upgradeQueueWorkerTask = null;
+                                break;
+                            }
+                        }
+                    }
 
-                    UpgradeLogger.Log(logId, mac, "Current FW Version:", dev.CurrentFirmwareVersion, dev.FirmwareVersion);
+                    // Wait for either:
+                    // - a running device completes (freeing capacity)
+                    // - a new device is enqueued (signal), so we can start it immediately if capacity exists
+                    Task? completion = running.Count > 0 ? Task.WhenAny(running) : null;
+                    Task signal = _queueSignal.WaitAsync();
 
-                    dev.RetryCount = 0;
-                    dev.RetryCountActor = 0;
-                    dev.RetryCountBootloader = 0;
-                    dev.RetryCountSensor = 0;
+                    if (completion != null)
+                        await Task.WhenAny(completion, signal).ConfigureAwait(false);
+                    else
+                        await signal.ConfigureAwait(false);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[UPGRADE QUEUE] Worker crashed: {ex.GetType().Name}: {ex.Message}");
+            }
+            finally
+            {
+                globalSw.Stop();
+                Console.WriteLine($"[UPGRADE QUEUE] Worker STOP (run complete). wall={globalSw.Elapsed.TotalSeconds:F2}s, processed={totalDevicesProcessed}, pending={_upgradeQueue.Count}");
 
-                    Console.WriteLine($"[START] {mac}");
+                // Optional: print run summary at end (same style as before)
+                PrintUpgradeRunSummary(summaries, totalDevicesProcessed, totalDeviceMs, numbersOfThreadsInParallel, globalSw);
+            }
+        }
 
-                    dev.upgradeBootloader = FirmwareResolver.ShouldUpgradeBootloader(
-                        dev.DetectotType,
-                        dev.FirmwareVersion,
-                        dev.CurrentFirmwareVersion
-                    );
+        /// <summary>
+        /// Clears only pending items in the FIFO queue (does not cancel in-progress upgrades).
+        /// Returns how many were removed.
+        /// </summary>
+        public int ClearUpgradeQueue()
+        {
+            int removed = 0;
 
-                    dev.isActorUpgradeNeeded = dev.DetectotType == "P48" || dev.DetectotType == "P47";
+            while (_upgradeQueue.TryDequeue(out var dev))
+            {
+                removed++;
+                var mac = NormalizeMac(dev?.MacAddress);
+                if (!string.IsNullOrWhiteSpace(mac))
+                    _queuedMacs.TryRemove(mac, out _);
+            }
+
+            Console.WriteLine($"[UPGRADE QUEUE] Cleared {removed} queued device(s). Pending now: {_upgradeQueue.Count}");
+            return removed;
+        }
+
+        public List<(string Mac, string DetectorType, string TargetFw)> GetUpgradeQueueSnapshot()
+        {
+            return _upgradeQueue
+                .ToArray()
+                .Select(d => (NormalizeMac(d.MacAddress), d.DetectotType ?? "", d.FirmwareVersion ?? ""))
+                .ToList();
+        }
+
+        // ------------------------------------------------------------------------------------
+        // Per-device logic extracted from your original tasks delegate (same behavior)
+        // ------------------------------------------------------------------------------------
+        private async Task ProcessSingleDeviceUpgradeAsync(
+            UpgradeProgress dev,
+            ConcurrentBag<DeviceUpgradeSummary> summaries,
+            Action<long> addDeviceMs)
+        {
+            var deviceSw = Stopwatch.StartNew();
+            var mac = NormalizeMac(dev.MacAddress);
+
+            // --- CLAIM MAC (prevents double-upgrade anywhere in the app) ---
+            if (!_macsInProgress.TryAdd(mac, 0))
+            {
+                Console.WriteLine($"[SKIP] {mac} already upgrading in another task");
+                deviceSw.Stop();
+
+                summaries.Add(new DeviceUpgradeSummary
+                {
+                    Mac = mac,
+                    DetectorType = dev.DetectotType ?? "",
+                    TargetFw = dev.FirmwareVersion ?? "",
+                    CurrentFw = dev.CurrentFirmwareVersion ?? "",
+                    Seconds = deviceSw.Elapsed.TotalSeconds,
+                    Status = "SKIPPED"
+                });
+                return;
+            }
+
+            Interlocked.Increment(ref UpgradeDevicesInProgress);
+
+            try
+            {
+                if (_VERBOSE)
+                {
+                    Console.WriteLine(
+                        $"[VERBOSE][{DateTime.Now:HH:mm:ss.fff}][T{Environment.CurrentManagedThreadId}] " +
+                        System.Text.Json.JsonSerializer.Serialize(dev));
+                }
+
+                if (!CheckIfDeviceInBootMode(_gatewayIpAddress, mac))
+                    dev.CurrentFirmwareVersion = await GetFwVersion(mac, dev.Pincode);
+
+                string logId = $"{mac.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
+                UpgradeLogger.Log(logId, mac, "Current FW Version:", dev.CurrentFirmwareVersion, dev.FirmwareVersion);
+
+                dev.RetryCount = 0;
+                dev.RetryCountActor = 0;
+                dev.RetryCountBootloader = 0;
+                dev.RetryCountSensor = 0;
+
+                Console.WriteLine($"[START] {mac}");
+
+                dev.upgradeBootloader = FirmwareResolver.ShouldUpgradeBootloader(
+                    dev.DetectotType,
+                    dev.FirmwareVersion,
+                    dev.CurrentFirmwareVersion
+                );
+
+                dev.isActorUpgradeNeeded = dev.DetectotType == "P48" || dev.DetectotType == "P47";
+
+                await UpgradeDeviceAsync(
+                    dev, mac, dev.Pincode, dev.DetectotType, dev.FirmwareVersion,
+                    dev.isActorUpgradeNeeded, dev.upgradeBootloader, true, logId
+                ).ConfigureAwait(false);
+
+                int maxRetriesPerComponent = 10;
+
+                while (!dev.IsFullyUpgraded &&
+                       (dev.RetryCountActor < 2 * maxRetriesPerComponent &&
+                        dev.RetryCountBootloader < maxRetriesPerComponent &&
+                        dev.RetryCountSensor < maxRetriesPerComponent))
+                {
+                    await Task.Delay(10000).ConfigureAwait(false);
+
+                    dev.RetryCount++;
+                    Console.WriteLine($"[RETRY] {mac} - Retry {dev.RetryCount}");
 
                     await UpgradeDeviceAsync(
                         dev, mac, dev.Pincode, dev.DetectotType, dev.FirmwareVersion,
-                        dev.isActorUpgradeNeeded, dev.upgradeBootloader, true, logId
+                        dev.isActorUpgradeNeeded && !dev.ActorSuccess,
+                        dev.upgradeBootloader && !dev.BootloaderSuccess,
+                        !dev.SensorSuccess,
+                        logId
                     ).ConfigureAwait(false);
-
-                    while (!dev.IsFullyUpgraded &&
-                           (dev.RetryCountActor < 2 * maxRetriesPerComponent &&
-                            dev.RetryCountBootloader < maxRetriesPerComponent &&
-                            dev.RetryCountSensor < maxRetriesPerComponent))
-                    {
-                        await Task.Delay(10000).ConfigureAwait(false);
-
-                        dev.RetryCount++;
-                        Console.WriteLine($"[RETRY] {mac} - Retry {dev.RetryCount}");
-
-                        await UpgradeDeviceAsync(
-                            dev, mac, dev.Pincode, dev.DetectotType, dev.FirmwareVersion,
-                            dev.isActorUpgradeNeeded && !dev.ActorSuccess,
-                            dev.upgradeBootloader && !dev.BootloaderSuccess,
-                            !dev.SensorSuccess,
-                            logId
-                        ).ConfigureAwait(false);
-                    }
-
-                    deviceSw.Stop();
-                    Interlocked.Add(ref totalDeviceMs, deviceSw.ElapsedMilliseconds);
-
-                    Console.WriteLine(
-                        $">>>> THREAD END - {mac} " +
-                        $"actor:{dev.ActorSuccess}:{dev.RetryCountActor} " +
-                        $"bootloader:{dev.BootloaderSuccess}:{dev.RetryCountBootloader} " +
-                        $"sensor:{dev.SensorSuccess}:{dev.RetryCountSensor} " +
-                        $"restore:{dev.isConfigRestored} " +
-                        $"time:{deviceSw.Elapsed.TotalSeconds:F2}s");
-
-                    summaries.Add(new DeviceUpgradeSummary
-                    {
-                        Mac = mac,
-                        DetectorType = dev.DetectotType ?? "",
-                        TargetFw = dev.FirmwareVersion ?? "",
-                        CurrentFw = dev.CurrentFirmwareVersion ?? "",
-
-                        ActorNeeded = dev.isActorUpgradeNeeded,
-                        BootloaderNeeded = dev.upgradeBootloader,
-
-                        ActorSuccess = dev.ActorSuccess,
-                        BootloaderSuccess = dev.BootloaderSuccess,
-                        SensorSuccess = dev.SensorSuccess,
-                        IsFullyUpgraded = dev.IsFullyUpgraded,
-                        ConfigRestored = dev.isConfigRestored,
-
-                        RetryTotal = dev.RetryCount,
-                        RetryActor = dev.RetryCountActor,
-                        RetryBootloader = dev.RetryCountBootloader,
-                        RetrySensor = dev.RetryCountSensor,
-
-                        Seconds = deviceSw.Elapsed.TotalSeconds,
-                        Status = "OK"
-                    });
                 }
-                catch (Exception ex)
+
+                deviceSw.Stop();
+                addDeviceMs(deviceSw.ElapsedMilliseconds);
+
+                Console.WriteLine(
+                    $">>>> THREAD END - {mac} " +
+                    $"actor:{dev.ActorSuccess}:{dev.RetryCountActor} " +
+                    $"bootloader:{dev.BootloaderSuccess}:{dev.RetryCountBootloader} " +
+                    $"sensor:{dev.SensorSuccess}:{dev.RetryCountSensor} " +
+                    $"restore:{dev.isConfigRestored} " +
+                    $"time:{deviceSw.Elapsed.TotalSeconds:F2}s");
+
+                summaries.Add(new DeviceUpgradeSummary
                 {
-                    deviceSw.Stop();
-                    Interlocked.Add(ref totalDeviceMs, deviceSw.ElapsedMilliseconds);
+                    Mac = mac,
+                    DetectorType = dev.DetectotType ?? "",
+                    TargetFw = dev.FirmwareVersion ?? "",
+                    CurrentFw = dev.CurrentFirmwareVersion ?? "",
 
-                    Console.WriteLine($"[ERROR] {mac} - {ex.GetType().Name}: {ex.Message}");
+                    ActorNeeded = dev.isActorUpgradeNeeded,
+                    BootloaderNeeded = dev.upgradeBootloader,
 
-                    summaries.Add(new DeviceUpgradeSummary
-                    {
-                        Mac = mac,
-                        DetectorType = dev.DetectotType ?? "",
-                        TargetFw = dev.FirmwareVersion ?? "",
-                        CurrentFw = dev.CurrentFirmwareVersion ?? "",
+                    ActorSuccess = dev.ActorSuccess,
+                    BootloaderSuccess = dev.BootloaderSuccess,
+                    SensorSuccess = dev.SensorSuccess,
+                    IsFullyUpgraded = dev.IsFullyUpgraded,
+                    ConfigRestored = dev.isConfigRestored,
 
-                        ActorNeeded = dev.isActorUpgradeNeeded,
-                        BootloaderNeeded = dev.upgradeBootloader,
+                    RetryTotal = dev.RetryCount,
+                    RetryActor = dev.RetryCountActor,
+                    RetryBootloader = dev.RetryCountBootloader,
+                    RetrySensor = dev.RetryCountSensor,
 
-                        ActorSuccess = dev.ActorSuccess,
-                        BootloaderSuccess = dev.BootloaderSuccess,
-                        SensorSuccess = dev.SensorSuccess,
-                        IsFullyUpgraded = dev.IsFullyUpgraded,
-                        ConfigRestored = dev.isConfigRestored,
+                    Seconds = deviceSw.Elapsed.TotalSeconds,
+                    Status = "OK"
+                });
+            }
+            catch (Exception ex)
+            {
+                deviceSw.Stop();
+                addDeviceMs(deviceSw.ElapsedMilliseconds);
 
-                        RetryTotal = dev.RetryCount,
-                        RetryActor = dev.RetryCountActor,
-                        RetryBootloader = dev.RetryCountBootloader,
-                        RetrySensor = dev.RetryCountSensor,
+                Console.WriteLine($"[ERROR] {mac} - {ex.GetType().Name}: {ex.Message}");
 
-                        Seconds = deviceSw.Elapsed.TotalSeconds,
-                        Status = "ERROR",
-                        Error = ex.ToString()
-                    });
-                }
-                finally
+                summaries.Add(new DeviceUpgradeSummary
                 {
-                    semaphore.Release();
-                    _macsInProgress.TryRemove(mac, out _);
-                    Interlocked.Decrement(ref UpgradeDevicesInProgress);
-                }
-            });
+                    Mac = mac,
+                    DetectorType = dev.DetectotType ?? "",
+                    TargetFw = dev.FirmwareVersion ?? "",
+                    CurrentFw = dev.CurrentFirmwareVersion ?? "",
 
-            await Task.WhenAll(tasks).ConfigureAwait(false);
+                    ActorNeeded = dev.isActorUpgradeNeeded,
+                    BootloaderNeeded = dev.upgradeBootloader,
 
-            globalSw.Stop();
+                    ActorSuccess = dev.ActorSuccess,
+                    BootloaderSuccess = dev.BootloaderSuccess,
+                    SensorSuccess = dev.SensorSuccess,
+                    IsFullyUpgraded = dev.IsFullyUpgraded,
+                    ConfigRestored = dev.isConfigRestored,
 
-            // ---- PER-DEVICE SUMMARY (END) ----
-            // Sort with ERROR first, then slowest first (most useful when scanning logs)
+                    RetryTotal = dev.RetryCount,
+                    RetryActor = dev.RetryCountActor,
+                    RetryBootloader = dev.RetryCountBootloader,
+                    RetrySensor = dev.RetryCountSensor,
+
+                    Seconds = deviceSw.Elapsed.TotalSeconds,
+                    Status = "ERROR",
+                    Error = ex.ToString()
+                });
+            }
+            finally
+            {
+                _macsInProgress.TryRemove(mac, out _);
+                Interlocked.Decrement(ref UpgradeDevicesInProgress);
+            }
+        }
+
+        private void PrintUpgradeRunSummary(
+            ConcurrentBag<DeviceUpgradeSummary> summaries,
+            int totalDevicesProcessed,
+            long totalDeviceMs,
+            int numbersOfThreadsInParallel,
+            Stopwatch globalSw)
+        {
             var ordered = summaries
                 .OrderBy(s => s.Status == "ERROR" ? 0 : s.Status == "OK" ? 1 : 2)
                 .ThenByDescending(s => s.Seconds)
@@ -1552,32 +1730,26 @@ private async Task UpgradeDevicesInParallel(
                     $"retry:{s.RetryTotal} (a:{s.RetryActor},b:{s.RetryBootloader},s:{s.RetrySensor}) " +
                     $"time:{s.Seconds,8:F2}s " +
                     $"status:{s.Status}");
-
-                // Optional: show error details on next line
-                // if (s.Status == "ERROR" && !string.IsNullOrWhiteSpace(s.Error))
-                //     Console.WriteLine($"    err: {s.Error}");
             }
 
-            // ---- GLOBAL SUMMARY (END) ----
             int okCount = ordered.Count(x => x.Status == "OK");
             int errCount = ordered.Count(x => x.Status == "ERROR");
             int skipCount = ordered.Count(x => x.Status == "SKIPPED");
 
             double avgSecondsPerDevice =
-                totalDevices > 0 ? (totalDeviceMs / 1000.0) / totalDevices : 0.0;
+                totalDevicesProcessed > 0 ? (totalDeviceMs / 1000.0) / totalDevicesProcessed : 0.0;
 
-            double total_divided_by_devices =
-                totalDevices > 0 ? globalSw.Elapsed.TotalSeconds / totalDevices : 0.0;
+            double wallPerDevice =
+                totalDevicesProcessed > 0 ? globalSw.Elapsed.TotalSeconds / totalDevicesProcessed : 0.0;
 
             Console.WriteLine(
                 $"[UPGRADE SUMMARY]\n" +
-                $"  Devices            : {totalDevices}\n" +
+                $"  Devices processed  : {totalDevicesProcessed}\n" +
                 $"  OK / ERROR / SKIP  : {okCount} / {errCount} / {skipCount}\n" +
                 $"  Parallel threads   : {numbersOfThreadsInParallel}\n" +
                 $"  Total wall time    : {globalSw.Elapsed.TotalSeconds:F2}s\n" +
-                $"  Avg exec / device  : {avgSecondsPerDevice:F2}s\n"+
-                $"  Total exec / device  : {total_divided_by_devices:F2}s"
-
+                $"  Avg exec / device  : {avgSecondsPerDevice:F2}s\n" +
+                $"  Wall / device      : {wallPerDevice:F2}s"
             );
         }
 

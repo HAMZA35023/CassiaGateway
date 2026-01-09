@@ -80,12 +80,7 @@ using (var scope = app.Services.CreateScope())
         foreach (var mac in cmd.Sensors)
         {
            
-            await mqttService.PublishRespAsync(new LogMessage
-            {
-                Level = "info",
-                Mac = mac,
-                Message = $"FW version: DUMMY TEST"
-            });
+            await mqttService.PublishRespAsync("FW version: DUMMY TEST");
         }
     };
 }
