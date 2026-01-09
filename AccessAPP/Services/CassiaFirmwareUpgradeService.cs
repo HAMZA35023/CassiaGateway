@@ -14,6 +14,25 @@ namespace AccessAPP.Services
 {
     public class CassiaFirmwareUpgradeService : IDeviceSettingsBleApi
     {
+
+        private static int _inQueue;
+        public static int inQueue
+        {
+            get => _inQueue;
+            set
+            {
+                if (_inQueue == value)
+                    return;
+
+                var old = _inQueue;
+                _inQueue = value;
+
+                Console.WriteLine(
+                    $"[QUEUE] inQueue {old} → {_inQueue} @ {DateTime.Now:HH:mm:ss.fff}"
+                );
+            }
+        }
+
         const bool _DEBUG = false;
         const bool _VERBOSE = true;
 
@@ -1394,6 +1413,7 @@ namespace AccessAPP.Services
                 dev.MacAddress = mac;
 
                 _upgradeQueue.Enqueue(dev);
+                inQueue = _upgradeQueue.Count;
                 queued++;
 
                 Console.WriteLine(
@@ -1450,6 +1470,7 @@ namespace AccessAPP.Services
                     // Fill capacity immediately from FIFO
                     while (running.Count < numbersOfThreadsInParallel && _upgradeQueue.TryDequeue(out var dev))
                     {
+                        inQueue = _upgradeQueue.Count;
                         var mac = NormalizeMac(dev?.MacAddress);
                         if (!string.IsNullOrWhiteSpace(mac))
                             _queuedMacs.TryRemove(mac, out _); // leaving pending queue
@@ -1461,6 +1482,7 @@ namespace AccessAPP.Services
 
                         // Start immediately
                         running.Add(ProcessSingleDeviceUpgradeAsync(dev, summaries, ms => Interlocked.Add(ref totalDeviceMs, ms)));
+                        inQueue = _upgradeQueue.Count;
                     }
 
                     // Clean out completed tasks
@@ -1525,7 +1547,7 @@ namespace AccessAPP.Services
                 if (!string.IsNullOrWhiteSpace(mac))
                     _queuedMacs.TryRemove(mac, out _);
             }
-
+            inQueue = _upgradeQueue.Count;
             Console.WriteLine($"[UPGRADE QUEUE] Cleared {removed} queued device(s). Pending now: {_upgradeQueue.Count}");
             return removed;
         }
@@ -1564,6 +1586,7 @@ namespace AccessAPP.Services
                     Seconds = deviceSw.Elapsed.TotalSeconds,
                     Status = "SKIPPED"
                 });
+
                 return;
             }
 
@@ -1697,6 +1720,7 @@ namespace AccessAPP.Services
             finally
             {
                 _macsInProgress.TryRemove(mac, out _);
+
                 Interlocked.Decrement(ref UpgradeDevicesInProgress);
             }
         }
@@ -1988,6 +2012,7 @@ namespace AccessAPP.Services
                 }
 
                 allRows.TryAdd(nodeMac, allRowsH);
+
 
                 // Call programming function
                 local_status = bActor

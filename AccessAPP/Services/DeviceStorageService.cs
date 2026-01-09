@@ -1,5 +1,6 @@
 ﻿using AccessAPP.Models;
 using System.Collections.Concurrent;
+using System.Net.Mail;
 
 namespace AccessAPP.Services
 {
@@ -188,6 +189,8 @@ namespace AccessAPP.Services
                             existing.rssi = -127;
                             Console.WriteLine($"Device {mac} is stale (>5m no announces). RSSI set to -127.");
                         }
+                        PublishDeviceThrottled(mac, kvp.Value);
+
                         return existing;
                     });
 

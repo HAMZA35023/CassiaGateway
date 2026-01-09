@@ -214,13 +214,15 @@ public sealed class MqttService : IMqttService
                 Log($"Ensuring connection to {CurrentOptions.Host}:{CurrentOptions.Port} (clientId={CurrentOptions.ClientId}, network={CurrentOptions.NetworkId})");
                 await EnsureConnectedAndSubscribedAsync(ct).ConfigureAwait(false);
 
+
                 // retained online status
                 var online = new StatusMessage
                 {
                     Name = CurrentOptions.Name,
                     NetworkId = CurrentOptions.NetworkId,
                     Time = DateTimeOffset.UtcNow,
-                    State = "online"
+                    State = "online",
+                    queue = CassiaFirmwareUpgradeService.inQueue
                 };
                 await PublishJsonAsync(TeleTopic("status"), online, retain: true, ct).ConfigureAwait(false);
                 Log("Published retained online status");
@@ -238,7 +240,8 @@ public sealed class MqttService : IMqttService
                             Name = CurrentOptions.Name,
                             NetworkId = CurrentOptions.NetworkId,
                             Time = now,
-                            State = "online"
+                            State = "online",
+                            queue = CassiaFirmwareUpgradeService.inQueue
                         };
 
                         await PublishJsonAsync(TeleTopic("status"), heartbeat, retain: false, ct)
