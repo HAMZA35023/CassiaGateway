@@ -73,6 +73,8 @@ public partial class MainViewModel : ObservableObject
     public string ConnectButtonText => IsConnected ? "Disconnect" : "Connect";
     public string DevicesSubtitle => $"{_devices.Count} unique device(s) • model: {SensorFilter} • filter: {DeviceFilter}";
 
+    private readonly System.Collections.Generic.Dictionary<string, System.Collections.Generic.HashSet<string>> _gwSeenMacs
+    = new(StringComparer.OrdinalIgnoreCase);
     public MainViewModel()
     {
         var s = _store.Load();
@@ -284,6 +286,7 @@ public partial class MainViewModel : ObservableObject
     {
         _devices.Clear();
         CassiaGateways.Clear();
+        _gwSeenMacs.Clear(); // <-- reset unique counters
         OnPropertyChanged(nameof(DevicesSubtitle));
     }
 
@@ -486,6 +489,7 @@ public partial class MainViewModel : ObservableObject
                 var name = root.TryGetProperty("name", out var n) ? n.GetString() ?? cassia : cassia;
                 var state = root.TryGetProperty("state", out var s) ? s.GetString() ?? "unknown" : "unknown";
                 var ts = root.TryGetProperty("time", out var t) && t.TryGetDateTimeOffset(out var dto) ? dto : DateTimeOffset.UtcNow;
+                int queue = root.TryGetProperty("queue", out var q) ? q.GetInt32() : 0;
 
                 Application.Current.Dispatcher.Invoke(() =>
                 {
@@ -498,6 +502,7 @@ public partial class MainViewModel : ObservableObject
 
                     gw.State = state;
                     gw.LastSeenUtc = ts;
+                    gw.Queue = queue;
                 });
             }
             catch { }
@@ -606,12 +611,20 @@ public partial class MainViewModel : ObservableObject
 
                         gw.LastSeenUtc = ts;
                         gw.State = "online";
-                        gw.DevicesSeen += arr.GetArrayLength();
+
+                        if (!_gwSeenMacs.TryGetValue(cassia, out var seen))
+                        {
+                            seen = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            _gwSeenMacs[cassia] = seen;
+                        }
 
                         foreach (var dev in arr.EnumerateArray())
                         {
                             var mac = dev.TryGetProperty("mac", out var macEl) ? macEl.GetString() ?? "" : "";
                             if (string.IsNullOrWhiteSpace(mac)) continue;
+
+                            // Track unique MACs per gateway
+                            seen.Add(mac);
 
                             var rssi = dev.TryGetProperty("rssi", out var rssiEl) && rssiEl.TryGetInt32(out var r) ? r : int.MinValue;
                             var dn = dev.TryGetProperty("name", out var nameEl) ? nameEl.GetString() ?? "" : "";
@@ -643,6 +656,10 @@ public partial class MainViewModel : ObservableObject
 
                             existing.UpdateFromCassia(cassia, rssi, ts);
                         }
+
+
+                        // show unique count since last clear
+                        gw.DevicesSeen = seen.Count;
 
                         RequestDevicesRefresh();
                         OnPropertyChanged(nameof(DevicesSubtitle));

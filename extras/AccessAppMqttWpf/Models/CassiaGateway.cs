@@ -10,6 +10,7 @@ public partial class CassiaGateway : ObservableObject
     [ObservableProperty] private string state = "unknown";
     [ObservableProperty] private DateTimeOffset lastSeenUtc = DateTimeOffset.MinValue;
     [ObservableProperty] private int devicesSeen = 0;
+    [ObservableProperty] private int queue = 0;
 
     public string StatusLine => $"{NetworkId} • last seen {LastSeenUtc.ToLocalTime():HH:mm:ss} • devices {DevicesSeen}";
     public string StateLower => (State ?? "").ToLowerInvariant();
