@@ -261,7 +261,7 @@
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <Button Style="{StaticResource GhostButton}" Content="Get FW" Padding="10,4"
-                                                Click="GetFw_Click" IsEnabled="False"/>
+                                                Click="GetFw_Click"/>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>

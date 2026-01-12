@@ -196,7 +196,7 @@ public partial class MainViewModel : ObservableObject
     private void LoadFirmwareOptions()
     {
         FirmwareOptionsP48.Clear();
-        foreach (var v in new[] { "v02.12", "v02.14", "v02.15", "v02.18", "v02.21", "v02.27", "v02.30", "v02.32" })
+        foreach (var v in new[] { "v02.12", "v02.14", "v02.15", "v02.18", "v02.21", "v02.27", "v02.30", "v02.32", "v02.34" })
             FirmwareOptionsP48.Add(v);
 
         FirmwareOptionsP47.Clear();
