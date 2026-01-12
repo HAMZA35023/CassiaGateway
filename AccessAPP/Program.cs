@@ -64,6 +64,7 @@ using (var scope = app.Services.CreateScope())
     // Hook incoming MQTT commands to your services
     var firmwareUpgradeService = serviceProvider.GetRequiredService<CassiaFirmwareUpgradeService>();
     var deviceStorageService = serviceProvider.GetRequiredService<DeviceStorageService>();
+    var manifestSvc = app.Services.GetRequiredService<FirmwareManifestService>();
 
     mqttService.StartUpdateRequested += cmd =>
     {
@@ -103,6 +104,15 @@ using (var scope = app.Services.CreateScope())
             await mqttService.PublishRespAsync("FW version: DUMMY TEST");
         }
     };
+
+    mqttService.GetFirmwareManifestRequested += async cmd =>
+    {
+        var resp = manifestSvc.GetFirmwareManifest();
+
+        // Optional: if you later add DetectorType filtering, do it here using cmd.DetectorType
+        await mqttService.PublishFirmwareManifestAsync(resp);
+    };
+
 }
 
 // Configure the HTTP request pipeline.

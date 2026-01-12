@@ -1,4 +1,5 @@
 ﻿using AccessAPP.Controllers;
+using AccessAPP.Models;
 using MQTTnet;
 using MQTTnet.Packets;
 using MQTTnet.Protocol;
@@ -28,11 +29,13 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
         PropertyNameCaseInsensitive = true
     };
 
-
     public MqttOptions CurrentOptions { get; private set; }
 
     public event Func<StartUpdateCommand, Task>? StartUpdateRequested;
     public event Func<GetFwVersionCommand, Task>? GetFwVersionRequested;
+
+    // NEW
+    public event Func<GetFirmwareManifestCommand, Task>? GetFirmwareManifestRequested;
 
     public MqttService(MqttConfigStore store)
     {
@@ -189,6 +192,14 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
         await PublishJsonAsync(TeleTopic("log"), msg, retain: false, ct).ConfigureAwait(false);
     }
 
+    // NEW: publish manifest response on a dedicated leaf
+    public async Task PublishFirmwareManifestAsync(FirmwareManifestResponse msg, CancellationToken ct = default)
+    {
+        // FirmwareManifestResponse does not contain Name/NetworkId/Time in your project,
+        // so we publish it as-is.
+        await PublishJsonAsync(TeleTopic("fw-manifest"), msg, retain: false, ct).ConfigureAwait(false);
+    }
+
     public async Task PublishRespAsync(string msg, CancellationToken ct = default)
     {
         await PublishJsonAsync(TeleTopic("resp"), msg, retain: false, ct).ConfigureAwait(false);
@@ -226,7 +237,6 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 Log($"Ensuring connection to {CurrentOptions.Host}:{CurrentOptions.Port} (clientId={CurrentOptions.ClientId}, network={CurrentOptions.NetworkId})");
                 await EnsureConnectedAndSubscribedAsync(ct).ConfigureAwait(false);
 
-
                 // retained online status
                 var online = new StatusMessage
                 {
@@ -259,14 +269,11 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                         await PublishJsonAsync(TeleTopic("status"), heartbeat, retain: false, ct)
                             .ConfigureAwait(false);
 
-                        //Log("Heartbeat status sent");
                         nextHeartbeat = now + StatusHeartbeatInterval;
                     }
 
-                    // short sleep keeps loop responsive to disconnects
                     await Task.Delay(500, ct).ConfigureAwait(false);
                 }
-
             }
             catch (OperationCanceledException)
             {
@@ -326,7 +333,6 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
                     return HandleCommandAsync(e.ApplicationMessage.Topic, text);
                 };
-
             }
 
             if (_client.IsConnected) return;
@@ -338,7 +344,6 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
             await ConnectAsyncViaReflection(_client, opts, ct).ConfigureAwait(false);
             Log("Connected");
 
-            // Subscribe
             await SubscribeTopicsAsync(ct).ConfigureAwait(false);
         }
         finally
@@ -349,10 +354,11 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
     public sealed class SendUpgradeLogCommand
     {
-        public string? LogId { get; set; }     // optional filter
-        public int MaxLines { get; set; } = 5000;  // last N lines (after filter)
-        public int ChunkLines { get; set; } = 100;         // lines per MQTT message
+        public string? LogId { get; set; }          // optional filter
+        public int MaxLines { get; set; } = 5000;   // last N lines (after filter)
+        public int ChunkLines { get; set; } = 100;  // lines per MQTT message
     }
+
     private Task HandleCommandAsync(string topic, string payload)
     {
         try
@@ -408,7 +414,6 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
             {
                 Log("HandleCommandAsync: dispatch start-update");
 
-                // Payload is JSON ARRAY => deserialize List<StartUpdateRequest>
                 var reqs = JsonSerializer.Deserialize<List<StartUpdateRequest>>(payload, JsonOptions)
                            ?? new List<StartUpdateRequest>();
 
@@ -435,15 +440,13 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
             {
                 Log("HandleCommandAsync: dispatch get-fw-version");
                 var dto = JsonSerializer.Deserialize<GetFwVersionCommand>(payload, JsonOptions) ?? new GetFwVersionCommand();
-
-
                 return GetFwVersionRequested?.Invoke(dto) ?? Task.CompletedTask;
             }
+
             if (string.Equals(command, "send-upgrade-log", StringComparison.OrdinalIgnoreCase))
             {
                 Log("HandleCommandAsync: dispatch send-upgrade-log");
 
-                // payload optional: { "logId": "...", "maxLines": 2000, "chunkLines": 100 }
                 SendUpgradeLogCommand dto;
                 try
                 {
@@ -453,10 +456,9 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 }
                 catch
                 {
-                    dto = new SendUpgradeLogCommand(); // tolerate invalid payload
+                    dto = new SendUpgradeLogCommand();
                 }
 
-                // Ensure logger uses the correct networkId for publishing
                 UpgradeLogger.NetworkId = CurrentOptions.NetworkId;
 
                 return UpgradeLogger.PublishSavedLogAsync(
@@ -465,6 +467,26 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                     chunkLines: dto.ChunkLines <= 0 ? 100 : dto.ChunkLines,
                     ct: CancellationToken.None
                 );
+            }
+
+            // NEW: request firmware manifest
+            if (string.Equals(command, "get-fw-manifest", StringComparison.OrdinalIgnoreCase))
+            {
+                Log("HandleCommandAsync: dispatch get-fw-manifest");
+
+                GetFirmwareManifestCommand dto;
+                try
+                {
+                    dto = string.IsNullOrWhiteSpace(payload)
+                        ? new GetFirmwareManifestCommand()
+                        : (JsonSerializer.Deserialize<GetFirmwareManifestCommand>(payload, JsonOptions) ?? new GetFirmwareManifestCommand());
+                }
+                catch
+                {
+                    dto = new GetFirmwareManifestCommand();
+                }
+
+                return GetFirmwareManifestRequested?.Invoke(dto) ?? Task.CompletedTask;
             }
 
             Log($"HandleCommandAsync: ignored (unknown command '{command}')");
@@ -478,7 +500,6 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
             return Task.CompletedTask;
         }
     }
-
 
     private async Task SubscribeTopicsAsync(CancellationToken ct)
     {
@@ -508,65 +529,13 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
         Log("Subscriptions active");
     }
 
-    // ---------------- Publish / Receive ----------------
-
-    private Task OnMessageReceivedCoreAsync(string topic, object payloadObj)
-    {
-        var topicParts = topic.Split('/', StringSplitOptions.RemoveEmptyEntries);
-
-        Log($"topicParts.Length={topicParts.Length}");
-        for (int i = 0; i < topicParts.Length; i++)
-            Log($"topicParts[{i}]='{topicParts[i]}'");
-
-        // Expect: [0]=accessapp [1]=dk-lab [2]=cmd [3]=cassia-01 [4]=start-update
-
-        if (topicParts.Length < 5)
-        {
-            Log("Topic ignored: too few parts");
-            return Task.CompletedTask;
-        }
-
-        var baseTopic = topicParts[0];
-        var networkId = topicParts[1];
-        var cmdLiteral = topicParts[2];
-        var target = topicParts[3];
-        var command = topicParts[4];
-
-        Log($"Parsed: baseTopic='{baseTopic}', networkId='{networkId}', cmdLiteral='{cmdLiteral}', target='{target}', command='{command}'");
-        Log($"Options: BaseTopic='{CurrentOptions.BaseTopic}', NetworkId='{CurrentOptions.NetworkId}', Name='{CurrentOptions.Name}'");
-
-        if (!string.Equals(baseTopic, CurrentOptions.BaseTopic, StringComparison.OrdinalIgnoreCase))
-        {
-            Log("Topic ignored: baseTopic mismatch");
-            return Task.CompletedTask;
-        }
-        if (!string.Equals(cmdLiteral, "cmd", StringComparison.OrdinalIgnoreCase))
-        {
-            Log("Topic ignored: not a cmd topic");
-            return Task.CompletedTask;
-        }
-        if (!string.Equals(networkId, CurrentOptions.NetworkId, StringComparison.OrdinalIgnoreCase))
-        {
-            Log("Topic ignored: networkId mismatch");
-            return Task.CompletedTask;
-        }
-
-        // Optional (recommended): ensure it's for THIS gateway name
-        if (!string.Equals(target, CurrentOptions.Name, StringComparison.OrdinalIgnoreCase))
-        {
-            Log("Topic ignored: target mismatch");
-            return Task.CompletedTask;
-        }
-
-        return Task.CompletedTask;
-    }
+    // ---------------- Publish helpers ----------------
 
     private async Task PublishJsonAsync(string topic, object payload, bool retain, CancellationToken ct)
     {
         await EnsureConnectedAndSubscribedAsync(ct).ConfigureAwait(false);
 
         var json = JsonSerializer.Serialize(payload, JsonOptions);
-        //Log($"TX topic: {topic} (retain={retain}, {json.Length} bytes)");
 
         var msg = new MqttApplicationMessageBuilder()
             .WithTopic(topic)
@@ -602,7 +571,6 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
             await client.PublishAsync(msg, ct).ConfigureAwait(false);
     }
 
-
     // ---------------- Topic helpers ----------------
 
     private string TeleTopic(string leaf)
@@ -611,14 +579,13 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     private string CmdTopic(string target, string leaf)
         => $"{CurrentOptions.BaseTopic}/{CurrentOptions.NetworkId}/cmd/{target}/{leaf}";
 
-    // ---------------- Options construction (reflection based, no MQTTnet.Client namespace) ----------------
+    // ---------------- Options construction (reflection based) ----------------
 
     private object BuildOptionsObject()
     {
         var o = CurrentOptions;
         var mqttAsm = typeof(MqttClientFactory).Assembly;
 
-        // Exact MqttClientOptions type from the currently loaded MQTTnet assembly
         var optionsType = mqttAsm.GetType("MQTTnet.MqttClientOptions")
                          ?? mqttAsm.GetTypes().FirstOrDefault(t => t.FullName == "MQTTnet.MqttClientOptions");
 
@@ -628,12 +595,10 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
         var options = Activator.CreateInstance(optionsType)
                       ?? throw new InvalidOperationException("Failed to create MQTT client options instance.");
 
-        // Set simple properties if present
         TrySetProp(options, "ClientId", o.ClientId);
         TrySetProp(options, "KeepAlivePeriod", TimeSpan.FromSeconds(Math.Max(5, o.KeepAliveSeconds)));
         TrySetProp(options, "CleanSession", true);
 
-        // Build TCP options
         var tcpType = mqttAsm.GetType("MQTTnet.MqttClientTcpOptions")
                      ?? mqttAsm.GetTypes().FirstOrDefault(t => t.FullName == "MQTTnet.MqttClientTcpOptions");
 
@@ -644,21 +609,15 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                   ?? throw new InvalidOperationException("Failed to create TCP options instance.");
         Log("TCP options props: " + string.Join(", ", tcp.GetType().GetProperties().Select(p => p.Name)));
 
-
         ApplyTcpEndpoint(tcp, o.Host, o.Port);
 
-        // Attach TCP options to main options
         if (!TrySetProp(options, "ChannelOptions", tcp))
             TrySetProp(options, "TransportOptions", tcp);
 
-        // Credentials via provider interface (your build uses IMqttClientCredentialsProvider)
         if (!string.IsNullOrWhiteSpace(o.Username))
         {
             ApplyCredentialsProvider(options, o.Username!, o.Password ?? "");
         }
-
-        // TLS: your build doesn't expose builder TLS helpers; handle later if needed.
-        // If your MqttClientTcpOptions exposes a TlsOptions property, we can set it similarly.
 
         return options;
     }
@@ -667,14 +626,11 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     {
         var t = tcpOptions.GetType();
 
-        // Your build exposes RemoteEndpoint (see props dump)
         var pRemote = t.GetProperty("RemoteEndpoint");
         if (pRemote != null && pRemote.CanWrite)
         {
-            // RemoteEndpoint usually expects System.Net.EndPoint (IPEndPoint)
             if (typeof(System.Net.EndPoint).IsAssignableFrom(pRemote.PropertyType))
             {
-                // IP is preferred. If host is not IP, try DNS resolve (best-effort).
                 System.Net.IPAddress? ip = null;
                 if (!System.Net.IPAddress.TryParse(host, out var parsedIp))
                 {
@@ -703,11 +659,9 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
             }
         }
 
-        // Fallbacks (in case your build changes later)
         TrySetProp(tcpOptions, "RemoteEndPoint", $"{host}:{port}");
         TrySetProp(tcpOptions, "Endpoint", $"{host}:{port}");
     }
-
 
     private static void ApplyCredentialsProvider(object options, string username, string password)
     {
@@ -719,7 +673,6 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
         if (credProp == null || !credProp.CanWrite)
         {
-            // Some builds use Username/Password directly on options
             TrySetProp(options, "Username", username);
             TrySetProp(options, "Password", password);
             return;
@@ -728,7 +681,6 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
         var iface = credProp.PropertyType;
         var mqttAsm = typeof(MqttClientFactory).Assembly;
 
-        // Find a concrete type that implements the interface and has ctor(string,string) or ctor(string,byte[])
         var candidates = mqttAsm
             .GetTypes()
             .Where(t => !t.IsAbstract && !t.IsInterface && iface.IsAssignableFrom(t))
@@ -788,32 +740,6 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
         }
     }
 
-    // ---------------- Payload extraction (supports multiple shapes) ----------------
-
-    private static byte[] GetPayloadBytes(object payloadObj)
-    {
-        if (payloadObj is null) return Array.Empty<byte>();
-        if (payloadObj is byte[] b) return b;
-        if (payloadObj is ReadOnlyMemory<byte> rom) return rom.ToArray();
-        if (payloadObj is ReadOnlySequence<byte> ros) return ros.ToArray();
-
-        // Some builds use property "Payload" which is ReadOnlySequence<byte> or byte[]
-        var p = payloadObj.GetType().GetProperty("ToArray", BindingFlags.Instance | BindingFlags.Public);
-        if (p != null && p.GetIndexParameters().Length == 0)
-        {
-            try
-            {
-                var v = p.GetValue(payloadObj);
-                if (v is byte[] bb) return bb;
-            }
-            catch { }
-        }
-
-        return Array.Empty<byte>();
-    }
-
-    // ---------------- Reflection invocation helpers ----------------
-
     private static Task ConnectAsyncViaReflection(MQTTnet.IMqttClient client, object options, CancellationToken ct)
     {
         var clientType = client.GetType();
@@ -822,7 +748,6 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
         var mi = clientType.GetMethod("ConnectAsync", new[] { optionsType, typeof(CancellationToken) });
         if (mi == null)
         {
-            // Try ConnectAsync(options) overload
             mi = clientType.GetMethod("ConnectAsync", new[] { optionsType });
             if (mi == null)
             {
@@ -843,7 +768,6 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     {
         var t = client.GetType();
 
-        // Try DisconnectAsync(CancellationToken)
         var mi = t.GetMethod("DisconnectAsync", new[] { typeof(CancellationToken) });
         if (mi != null)
         {
@@ -851,7 +775,6 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
             return r as Task ?? Task.CompletedTask;
         }
 
-        // Try DisconnectAsync()
         mi = t.GetMethod("DisconnectAsync", Type.EmptyTypes);
         if (mi != null)
         {
@@ -860,127 +783,6 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
         }
 
         return Task.CompletedTask;
-    }
-
-    private void HookHandlersViaReflection(MQTTnet.IMqttClient client)
-    {
-        // Hook ApplicationMessageReceivedAsync
-        // Different builds expose either:
-        //  - event ApplicationMessageReceivedAsync: Func<MqttApplicationMessageReceivedEventArgs, Task>
-        //  - event ApplicationMessageReceived: ...
-        //
-        // We'll try to hook ApplicationMessageReceivedAsync first.
-        TryHookAsyncEvent(
-            client,
-            "ApplicationMessageReceivedAsync",
-            (argsObj) =>
-            {
-                try
-                {
-                    var topic = (string?)argsObj.GetType().GetProperty("ApplicationMessage")?.GetValue(argsObj)?
-                        .GetType().GetProperty("Topic")?.GetValue(
-                            argsObj.GetType().GetProperty("ApplicationMessage")!.GetValue(argsObj)!, null);
-
-                    topic ??= "";
-
-                    var appMsg = argsObj.GetType().GetProperty("ApplicationMessage")!.GetValue(argsObj)!;
-                    var payloadObj = appMsg.GetType().GetProperty("Payload")?.GetValue(appMsg) ?? appMsg.GetType().GetProperty("PayloadSegment")?.GetValue(appMsg);
-
-                    return OnMessageReceivedCoreAsync(topic, payloadObj ?? Array.Empty<byte>());
-                }
-                catch (Exception ex)
-                {
-                    Log($"RX handler error: {ex.Message}");
-                    return Task.CompletedTask;
-                }
-            });
-
-        // Hook DisconnectedAsync (detailed logging)
-        TryHookAsyncEvent(
-            client,
-            "DisconnectedAsync",
-            (argsObj) =>
-            {
-                try
-                {
-                    // Dump a few common properties if they exist
-                    var t = argsObj.GetType();
-
-                    string reason =
-                        t.GetProperty("Reason")?.GetValue(argsObj)?.ToString()
-                        ?? t.GetProperty("ReasonCode")?.GetValue(argsObj)?.ToString()
-                        ?? t.GetProperty("DisconnectReason")?.GetValue(argsObj)?.ToString()
-                        ?? "(unknown)";
-
-                    string reasonString =
-                        t.GetProperty("ReasonString")?.GetValue(argsObj)?.ToString()
-                        ?? t.GetProperty("ReasonText")?.GetValue(argsObj)?.ToString()
-                        ?? "";
-
-                    var exObj = t.GetProperty("Exception")?.GetValue(argsObj) as Exception;
-                    var wasConnectedObj = t.GetProperty("ClientWasConnected")?.GetValue(argsObj);
-
-                    Log($"Disconnected: reason={reason} reasonString='{reasonString}' wasConnected={wasConnectedObj} ex={(exObj != null ? exObj.Message : "null")}");
-                }
-                catch (Exception ex)
-                {
-                    Log($"Disconnected (failed to read args): {ex.Message}");
-                }
-
-                _subscribed = false;
-                return Task.CompletedTask;
-            });
-
-                TryHookAsyncEvent(
-            client,
-            "ConnectedAsync",
-            (_argsObj) =>
-            {
-                Log("ConnectedAsync event");
-                return Task.CompletedTask;
-            });
-
-    }
-
-    private void TryHookAsyncEvent(MQTTnet.IMqttClient client, string eventName, Func<object, Task> handler)
-    {
-        try
-        {
-            var evt = client.GetType().GetEvent(eventName, BindingFlags.Instance | BindingFlags.Public);
-            if (evt == null) return;
-
-            var delType = evt.EventHandlerType!;
-            // Create delegate matching signature: (TArgs) => Task
-            var invoke = delType.GetMethod("Invoke")!;
-            var parms = invoke.GetParameters();
-            if (parms.Length != 1) return;
-
-            var argsType = parms[0].ParameterType;
-
-            // Build: Task Handler(TArgs args) => handler(args)
-            var mi = GetType().GetMethod(nameof(BridgeAsync), BindingFlags.Instance | BindingFlags.NonPublic)!;
-            var gmi = mi.MakeGenericMethod(argsType);
-
-            var del = Delegate.CreateDelegate(delType, this, gmi);
-            evt.AddEventHandler(client, del);
-            Log($"Hooked event: {eventName}");
-        }
-        catch (Exception ex)
-        {
-            Log($"Failed to hook {eventName}: {ex.Message}");
-        }
-
-        // Store handler
-        _bridgeHandler = handler;
-    }
-
-    private Func<object, Task>? _bridgeHandler;
-
-    private Task BridgeAsync<TArgs>(TArgs args)
-    {
-        var h = _bridgeHandler;
-        if (h == null) return Task.CompletedTask;
-        return h(args!);
     }
 
     // ---------------- Logging ----------------

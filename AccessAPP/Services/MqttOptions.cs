@@ -6,15 +6,15 @@ public sealed class MqttOptions
 {
     // Identity (who am I, and which logical network do I belong to)
     public string Name { get; set; } = "cassia-unknown";
-    public string NetworkId { get; set; } = "default";
+    public string NetworkId { get; set; } = "dk-lab";
 
     // Broker
-    public string Host { get; set; } = "127.0.0.1";
-    public int Port { get; set; } = 1883;
+    public string Host { get; set; } = "prod.statistics.niko-test.nu";
+    public int Port { get; set; } = 18883;
     public bool UseTls { get; set; } = false;
 
-    public string? Username { get; set; }
-    public string? Password { get; set; }
+    public string? Username { get; set; } = "accessapp";
+    public string? Password { get; set; } = "Niko1234!";
 
     // Topic base
     public string BaseTopic { get; set; } = "accessapp";

@@ -26,7 +26,7 @@ public static class UpgradeLogger
     // ---- MQTT wiring (set these from your app at startup) ----
     public static IUpgradeMqttPublisher? Mqtt { get; set; }
     public static Func<string, string>? TopicResolver { get; set; } // takes networkId -> topic
-    public static string NetworkId { get; set; } = "default";
+    public static string NetworkId { get; set; } = "dk-lab";
 
     // ---- Background publish queue ----
     private static readonly Channel<MqttLogItem> _mqttQueue =

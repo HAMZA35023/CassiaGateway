@@ -1,5 +1,5 @@
 {
-  "name": "cassia-01",
+  "name": "cassia-99",
   "networkId": "dk-lab",
   "host": "prod.statistics.niko-test.nu",
   "port": 18883,
@@ -8,6 +8,6 @@
   "password": "Niko1234!",
   "baseTopic": "accessapp",
   "keepAliveSeconds": 30,
-  "reconnectDelaySeconds": 5,
+  "reconnectDelaySeconds": 10,
   "subscribeToAllTarget": true
 }
