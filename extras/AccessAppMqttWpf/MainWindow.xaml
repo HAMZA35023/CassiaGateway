@@ -392,6 +392,33 @@
                                         <DataGridTextColumn Header="Model" Binding="{Binding DetectorType}" Width="70"/>
                                         <DataGridTextColumn Header="FW" Binding="{Binding FirmwareVersion}" Width="90"/>
                                         <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="260"/>
+                                        <DataGridTemplateColumn Header="%" Width="60">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock>
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Text" Value="{Binding Progress, StringFormat={}{0}%}"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding Status}" Value="">
+                                                                        <Setter Property="Text" Value=""/>
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding Status}" Value="{x:Null}">
+                                                                        <Setter Property="Text" Value=""/>
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding Status}" Value="queued">
+                                                                        <Setter Property="Text" Value=""/>
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding Status}" Value="Queued">
+                                                                        <Setter Property="Text" Value=""/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
                                         <DataGridTextColumn Header="Notes" Binding="{Binding Notes}" Width="*"/>
                                     </DataGrid.Columns>
                                 </DataGrid>

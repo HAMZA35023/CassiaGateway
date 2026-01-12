@@ -246,7 +246,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                     State = "online",
                     queue = CassiaFirmwareUpgradeService.inQueue
                 };
-                await PublishJsonAsync(TeleTopic("status"), online, retain: true, ct).ConfigureAwait(false);
+                await PublishJsonAsync(TeleTopic("status"), online, retain: false, ct).ConfigureAwait(false);
                 Log("Published retained online status");
 
                 var nextHeartbeat = DateTimeOffset.UtcNow + StatusHeartbeatInterval;

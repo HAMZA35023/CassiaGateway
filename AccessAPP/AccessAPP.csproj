@@ -291,7 +291,7 @@
 
 	<ItemGroup>
 	  <Content Update="mqtt.json">
-	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	    <CopyToOutputDirectory>Never</CopyToOutputDirectory>
 	  </Content>
 	</ItemGroup>
 

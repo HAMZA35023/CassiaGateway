@@ -41,6 +41,99 @@ namespace AccessAPP.Controllers
             //_scanService.StartPeriodicScan(_gatewayIpAddress, _gatewayPort);
         }
 
+        // Add near the top of the CassiaController class:
+        private static readonly SemaphoreSlim _mqttConfigLock = new(1, 1);
+
+        private static string MqttConfigPath =>
+            Path.Combine(Directory.GetCurrentDirectory(), "mqtt.json");
+
+        private static AccessAPP.Models.MqttConfig DefaultMqttConfig() => new()
+        {
+            Name = "cassia-01",
+            NetworkId = "dk-lab",
+            Host = "prod.statistics.niko-test.nu",
+            Port = 18883,
+            UseTls = false,
+            Username = "accessapp",
+            Password = "",
+            BaseTopic = "accessapp",
+            KeepAliveSeconds = 30,
+            ReconnectDelaySeconds = 10,
+            SubscribeToAllTarget = true
+        };
+
+        // Add near the bottom of the CassiaController class:
+
+        [HttpGet("mqtt/config")]
+        public async Task<IActionResult> GetMqttConfig()
+        {
+            await _mqttConfigLock.WaitAsync();
+            try
+            {
+                if (!System.IO.File.Exists(MqttConfigPath))
+                {
+                    var def = DefaultMqttConfig();
+                    var json = Newtonsoft.Json.JsonConvert.SerializeObject(def, Newtonsoft.Json.Formatting.Indented);
+                    await System.IO.File.WriteAllTextAsync(MqttConfigPath, json);
+                    return Ok(def);
+                }
+
+                var raw = await System.IO.File.ReadAllTextAsync(MqttConfigPath);
+                var cfg = Newtonsoft.Json.JsonConvert.DeserializeObject<AccessAPP.Models.MqttConfig>(raw);
+
+                // If file exists but is empty/invalid, re-create with defaults
+                if (cfg == null)
+                {
+                    cfg = DefaultMqttConfig();
+                    var json = Newtonsoft.Json.JsonConvert.SerializeObject(cfg, Newtonsoft.Json.Formatting.Indented);
+                    await System.IO.File.WriteAllTextAsync(MqttConfigPath, json);
+                }
+
+                return Ok(cfg);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { success = false, message = $"Error reading mqtt.json: {ex.Message}" });
+            }
+            finally
+            {
+                _mqttConfigLock.Release();
+            }
+        }
+
+        [HttpPut("mqtt/config")]
+        public async Task<IActionResult> SaveMqttConfig([FromBody] AccessAPP.Models.MqttConfig cfg)
+        {
+            if (cfg == null)
+                return BadRequest(new { success = false, message = "Body is required." });
+
+            await _mqttConfigLock.WaitAsync();
+            try
+            {
+                // basic sanity (keep it permissive)
+                cfg.Name ??= "";
+                cfg.NetworkId ??= "";
+                cfg.Host ??= "";
+                cfg.Username ??= "";
+                cfg.Password ??= "";
+                cfg.BaseTopic ??= "";
+
+                var json = Newtonsoft.Json.JsonConvert.SerializeObject(cfg, Newtonsoft.Json.Formatting.Indented);
+                await System.IO.File.WriteAllTextAsync(MqttConfigPath, json);
+
+                return Ok(new { success = true, message = "mqtt.json saved", path = MqttConfigPath });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { success = false, message = $"Error saving mqtt.json: {ex.Message}" });
+            }
+            finally
+            {
+                _mqttConfigLock.Release();
+            }
+        }
+
+
         [HttpGet("scan")]
         public async Task<IActionResult> ScanForBleDevices()
         {
