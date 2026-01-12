@@ -28,7 +28,10 @@ namespace AccessAPP.Services
         {
             var safeMac = (macAddress ?? "unknown").Trim().Replace(":", "").Replace("-", "").Replace(" ", "");
             var safeLog = string.IsNullOrWhiteSpace(logId) ? DateTime.Now.ToString("yyyyMMddHHmmss") : logId.Trim();
-            return Path.Combine(_rootDir, $"{safeMac}_{safeLog}_settings.json");
+                
+            //return Path.Combine(_rootDir, $"{safeMac}_{safeLog}_settings.json");
+            
+            return Path.Combine(_rootDir, $"{safeMac}_settings.json");
         }
 
         public async Task<(string filePath, DeviceSettingsSnapshot snapshot)> BackupToFileAsync(

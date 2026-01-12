@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using System.Reflection;
@@ -14,6 +15,10 @@ namespace AccessAppMqttWpf;
 public partial class MainWindow : Window
 {
     private bool _queueDefaultSortActive = true;
+
+    // Keep Upgrade-log expand/collapse state stable across collection refreshes
+    private readonly Dictionary<string, bool> _upgradeLogExpandedState = new(StringComparer.OrdinalIgnoreCase);
+
 
     public MainWindow()
     {
@@ -219,4 +224,48 @@ public partial class MainWindow : Window
     {
         ClearUpgradeLogCommand(sender, e);
     }
+
+    private static string? GetUpgradeLogGroupKey(object? dataContext)
+    {
+        if (dataContext == null) return null;
+
+        // Expecting UpgradeLogGroup with properties: LogId, Cassia
+        var t = dataContext.GetType();
+        var logId = t.GetProperty("LogId")?.GetValue(dataContext)?.ToString() ?? "";
+        var cassia = t.GetProperty("Cassia")?.GetValue(dataContext)?.ToString() ?? "";
+
+        if (string.IsNullOrWhiteSpace(logId) && string.IsNullOrWhiteSpace(cassia))
+            return null;
+
+        return $"{cassia}|{logId}";
+    }
+
+    private void UpgradeLogExpander_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Expander ex) return;
+
+        var key = GetUpgradeLogGroupKey(ex.DataContext);
+        if (key == null) return;
+
+        // Restore previously chosen state (default is collapsed)
+        if (_upgradeLogExpandedState.TryGetValue(key, out var expanded))
+            ex.IsExpanded = expanded;
+    }
+
+    private void UpgradeLogExpander_Expanded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Expander ex) return;
+        var key = GetUpgradeLogGroupKey(ex.DataContext);
+        if (key == null) return;
+        _upgradeLogExpandedState[key] = true;
+    }
+
+    private void UpgradeLogExpander_Collapsed(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Expander ex) return;
+        var key = GetUpgradeLogGroupKey(ex.DataContext);
+        if (key == null) return;
+        _upgradeLogExpandedState[key] = false;
+    }
+
 }

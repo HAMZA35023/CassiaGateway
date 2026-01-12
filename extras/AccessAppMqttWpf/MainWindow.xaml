@@ -7,7 +7,8 @@
         mc:Ignorable="d"
         Title="AccessAPP • MQTT Device Queue"
         Height="860" Width="1320"
-        WindowStartupLocation="CenterScreen">
+        WindowStartupLocation="CenterScreen"
+        xmlns:scm="clr-namespace:System.ComponentModel;assembly=WindowsBase">
 
     <Window.Resources>
 
@@ -533,7 +534,16 @@
                                                 Margin="0,0,0,10"
                                                 CornerRadius="10"
                                                 BorderBrush="{Binding LatestStatus, Converter={StaticResource StatusToBrush}}">
-                                            <Expander IsExpanded="False">
+                                            <Expander IsExpanded="False" Loaded="UpgradeLogExpander_Loaded" Expanded="UpgradeLogExpander_Expanded" Collapsed="UpgradeLogExpander_Collapsed">
+                                                
+                                                <Expander.Resources>
+                                                    <CollectionViewSource x:Key="EntriesView" Source="{Binding Entries}">
+                                                        <CollectionViewSource.SortDescriptions>
+                                                            <scm:SortDescription PropertyName="TimeLocal" Direction="Descending"/>
+                                                        </CollectionViewSource.SortDescriptions>
+                                                    </CollectionViewSource>
+                                                </Expander.Resources>
+
                                                 <Expander.Header>
                                                     <Grid>
                                                         <Grid.RowDefinitions>
@@ -571,7 +581,7 @@
                                                     </Grid>
                                                 </Expander.Header>
 
-                                                <DataGrid ItemsSource="{Binding Entries}"
+                                                <DataGrid ItemsSource="{Binding Source={StaticResource EntriesView}}"
                                                           Margin="0,10,0,0"
                                                           MaxHeight="420"
                                                           AutoGenerateColumns="False"

@@ -510,6 +510,12 @@ namespace AccessAPP.Services
                 response.Success = false;
                 response.StatusCode = 409; // Conflict
                 response.Message = "Sensor is already in boot mode. It needs to be in Application mode.";
+                
+                UpgradeLogger.Log(logId, nodeMac, "Disconnected as sensor is in bootmode", "Info");
+
+                await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0);
+
+                await Task.Delay(5000);
                 return response;
             }
             else
@@ -671,121 +677,158 @@ namespace AccessAPP.Services
 
 
         private async Task<ConnectLoginResult> ConnectAndLoginWithRetryAsync(
-    string gatewayIp,
-    int gatewayPort,
-    string macAddress,
-    string? pincode,
-    string? logId,
-    string? firmwareVersion,
-    int maxAttempts = 3,
-    int delayBetweenAttemptsMs = 2000)
+            string gatewayIp,
+            int gatewayPort,
+            string macAddress,
+            string? pincode,
+            string? logId,
+            string? firmwareVersion,
+            int maxAttempts = 3,
+            int delayBetweenAttemptsMs = 2000)
         {
             Exception? lastEx = null;
 
             for (int attempt = 1; attempt <= maxAttempts; attempt++)
             {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
                 try
                 {
-                    UpgradeLogger.Log(logId, macAddress, $"Connect+Login attempt {attempt}/{maxAttempts}", "Info", firmwareVersion);
+                    UpgradeLogger.Log(logId, macAddress,
+                        $"Connect+Login attempt {attempt}/{maxAttempts} (timeout 10s)",
+                        "Info", firmwareVersion);
+
                     Console.WriteLine($"[INFO] Connect+Login attempt {attempt}/{maxAttempts} for {macAddress}");
 
-                    // 1) Connect
-                    var connectionResult = await _connectService
-                        .ConnectToBleDevice(gatewayIp, gatewayPort, macAddress)
-                        .ConfigureAwait(false);
-
-                    if (connectionResult.Status != HttpStatusCode.OK)
+                    // ---- Run connect + login with timeout ----
+                    var attemptTask = Task.Run(async () =>
                     {
-                        var msg = $"Connect failed (HTTP {(int)connectionResult.Status} {connectionResult.Status}).";
-                        UpgradeLogger.Log(logId, macAddress, "Connected", "Failed", firmwareVersion);
-                        Console.WriteLine($"[WARN] {msg} MAC={macAddress}");
-
-                        if (attempt < maxAttempts)
-                        {
-                            await Task.Delay(delayBetweenAttemptsMs).ConfigureAwait(false);
-                            continue;
-                        }
-
-                        return new ConnectLoginResult
-                        {
-                            Success = false,
-                            StatusCode = (int)connectionResult.Status,
-                            Message = msg
-                        };
-                    }
-
-                    UpgradeLogger.Log(logId, macAddress, "Connected", "Success", firmwareVersion);
-                    Console.WriteLine($"[INFO] Connected to device... {macAddress}");
-
-                    // 2) Login
-                    var loginResult = await _connectService
-                        .AttemptLogin(gatewayIp, macAddress)
-                        .ConfigureAwait(false);
-
-                    // If pincode required and we have a pincode, check it
-                    bool pincodeReq = loginResult.ResponseBody.PincodeRequired;
-                    if (pincodeReq && !string.IsNullOrEmpty(pincode))
-                    {
-                        var checkPincodeResponse = await _cassiaPinCodeService
-                            .CheckPincode(gatewayIp, macAddress, pincode)
+                        // 1) Connect
+                        var connectionResult = await _connectService
+                            .ConnectToBleDevice(gatewayIp, gatewayPort, macAddress)
                             .ConfigureAwait(false);
 
-                        loginResult.ResponseBody = checkPincodeResponse.ResponseBody;
-                        loginResult.ResponseBody.PincodeRequired = pincodeReq;
-                    }
-
-                    // Your code currently treats "OK" as success criterion
-                    var statusText = loginResult.Status?.ToString() ?? "";
-                    if (!string.Equals(statusText, "OK", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var msg = $"Login failed (Status={statusText}).";
-                        UpgradeLogger.Log(logId, macAddress, "LoggedIn", "Failed", firmwareVersion);
-                        Console.WriteLine($"[WARN] {msg} MAC={macAddress}");
-
-                        if (attempt < maxAttempts)
+                        if (connectionResult.Status != HttpStatusCode.OK)
                         {
-                            await Task.Delay(delayBetweenAttemptsMs).ConfigureAwait(false);
-                            continue;
+                            return new ConnectLoginResult
+                            {
+                                Success = false,
+                                StatusCode = (int)connectionResult.Status,
+                                Message = $"Connect failed (HTTP {(int)connectionResult.Status} {connectionResult.Status})."
+                            };
                         }
+
+                        bool isAlreadyInBootMode = CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress);
+                        if (isAlreadyInBootMode)
+                        {
+                            await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0);
+                            return new ConnectLoginResult
+                            {
+                                Success = false,
+                                StatusCode = 409, // Conflict
+                                Message = "Device is in boot mode."
+                            };
+                        }
+
+                        UpgradeLogger.Log(logId, macAddress, "Connected", "Success", firmwareVersion);
+
+                        // 2) Login
+                        var loginResult = await _connectService
+                            .AttemptLogin(gatewayIp, macAddress)
+                            .ConfigureAwait(false);
+
+                        bool pincodeReq = loginResult.ResponseBody.PincodeRequired;
+                        if (pincodeReq && !string.IsNullOrEmpty(pincode))
+                        {
+                            var checkPincodeResponse = await _cassiaPinCodeService
+                                .CheckPincode(gatewayIp, macAddress, pincode)
+                                .ConfigureAwait(false);
+
+                            loginResult.ResponseBody = checkPincodeResponse.ResponseBody;
+                            loginResult.ResponseBody.PincodeRequired = pincodeReq;
+                        }
+
+                        var statusText = loginResult.Status?.ToString() ?? "";
+
+                        if (!string.Equals(statusText, "OK", StringComparison.OrdinalIgnoreCase))
+                        {
+                            return new ConnectLoginResult
+                            {
+                                Success = false,
+                                StatusCode = 401,
+                                Message = $"Login failed (Status={statusText}).",
+                                LoginResponseBody = loginResult.ResponseBody,
+                                RawStatus = statusText
+                            };
+                        }
+
+                        UpgradeLogger.Log(logId, macAddress, "LoggedIn", "Success", firmwareVersion);
 
                         return new ConnectLoginResult
                         {
-                            Success = false,
-                            StatusCode = 401,
-                            Message = msg,
+                            Success = true,
+                            StatusCode = 200,
+                            Message = "Connected + logged in",
                             LoginResponseBody = loginResult.ResponseBody,
                             RawStatus = statusText
                         };
-                    }
+                    }, cts.Token);
 
-                    UpgradeLogger.Log(logId, macAddress, "LoggedIn", "Success", firmwareVersion);
-                    Console.WriteLine($"[INFO] Logged into device... {macAddress}");
+                    var completed = await Task.WhenAny(attemptTask, Task.Delay(Timeout.Infinite, cts.Token));
 
-                    return new ConnectLoginResult
-                    {
-                        Success = true,
-                        StatusCode = 200,
-                        Message = "Connected + logged in",
-                        LoginResponseBody = loginResult.ResponseBody,
-                        RawStatus = statusText
-                    };
+                    if (completed != attemptTask)
+                        throw new TimeoutException("Connect+Login timed out after 10 seconds");
+
+                    var result = await attemptTask.ConfigureAwait(false);
+                    if (result.Success)
+                        return result;
+
+                    lastEx = new Exception(result.Message);
+                }
+                catch (OperationCanceledException)
+                {
+                    lastEx = new TimeoutException("Connect+Login timed out after 10 seconds");
+                    UpgradeLogger.Log(logId, macAddress,
+                        $"Connect+Login timeout attempt {attempt}/{maxAttempts}",
+                        "Warn", firmwareVersion);
+
+                    _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0).Wait();
+                    UpgradeLogger.Log(logId, macAddress,
+                        $"Disconnected after timeout on attempt {attempt}/{maxAttempts}",
+                        "Info", firmwareVersion);
+                    await Task.Delay(5000);
                 }
                 catch (Exception ex)
                 {
                     lastEx = ex;
-                    UpgradeLogger.Log(logId, macAddress, $"Connect+Login exception attempt {attempt}/{maxAttempts}: {ex.Message}", "Warn", firmwareVersion);
-                    Console.WriteLine($"[WARN] Connect+Login exception attempt {attempt}/{maxAttempts} for {macAddress}: {ex}");
+                    UpgradeLogger.Log(logId, macAddress,
+                        $"Connect+Login exception attempt {attempt}/{maxAttempts}: {ex.Message}",
+                        "Warn", firmwareVersion);
+                    _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0).Wait();
+                    UpgradeLogger.Log(logId, macAddress,
+                        $"Disconnected after exception on attempt {attempt}/{maxAttempts}",
+                        "Info", firmwareVersion);
+                    await Task.Delay(5000);
 
-                    if (attempt < maxAttempts)
-                        await Task.Delay(delayBetweenAttemptsMs).ConfigureAwait(false);
+
                 }
+
+                if (attempt < maxAttempts)
+                    await Task.Delay(delayBetweenAttemptsMs).ConfigureAwait(false);
             }
+
+            _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0).Wait();
+            
+            UpgradeLogger.Log(logId, macAddress,
+                $"Disconnected after all Connect+Login attempts failed",
+                "Info", firmwareVersion);
+            await Task.Delay(5000);
 
             return new ConnectLoginResult
             {
                 Success = false,
                 StatusCode = 500,
-                Message = $"Connect+Login failed after retries. Last error: {lastEx?.Message}",
+                Message = $"Connect+Login failed after retries. Last error: {lastEx?.Message}"
             };
         }
 
@@ -828,14 +871,16 @@ namespace AccessAPP.Services
                         {
                             var cl = await ConnectAndLoginWithRetryAsync(
                             _gatewayIpAddress, 80, macAddress, pincode, logId, FirmwareVersion,
-                            maxAttempts: 3,
+                            maxAttempts: 2,
                             delayBetweenAttemptsMs: 2000).ConfigureAwait(false);
 
                             if (!cl.Success)
                             {
-                                UpgradeLogger.Log(logId, macAddress, $"Connect+login failed: {cl.Message}", "Warn", FirmwareVersion);
-                                Console.WriteLine($"[WARN] Connect+login failed for {macAddress}: {cl.Message}");
-                                // Best-effort backup: do NOT return; continue with upgrade
+                                UpgradeLogger.Log(logId, macAddress, $"[1] Connect+login failed: {cl.Message}", "Warn", FirmwareVersion);
+                                Console.WriteLine($"[WARN] [1] Connect+login failed for {macAddress}: {cl.Message}");
+                                
+                                goto update;
+
                             }
                             else
                             {
@@ -885,6 +930,9 @@ namespace AccessAPP.Services
                         UpgradeLogger.Log(logId, macAddress, "Settings backup skipped (not P47 or P48)", "Info", FirmwareVersion);
                     }
                 }
+
+                update:
+
                 // Step 2: Upgrade the actor / bootloader / sensor
                 var stopwatch = new Stopwatch();
 
@@ -957,6 +1005,34 @@ namespace AccessAPP.Services
                     dev.SensorSuccess = true;
                 }
 
+                if (dev.ActorSuccess != true && dev.isActorUpgradeNeeded)
+                {
+                    if (upgradeActor && !disable_update)
+                    {
+                        Console.WriteLine($"Starting actor upgrade for {macAddress}");
+                        dev.RetryCountActor++;
+
+                        stopwatch.Restart();
+                        var actorUpgradeResult = await UpgradeActorAsync(macAddress, pincode, true, DetectorType, FirmwareVersion, logId)
+                                                    .ConfigureAwait(false);
+                        stopwatch.Stop();
+
+                        Console.WriteLine($"Retry Actor upgrade after sensor application completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds - result: {actorUpgradeResult.Success}");
+
+                        dev.ActorSuccess = actorUpgradeResult.Success;
+
+                        if (!actorUpgradeResult.Success)
+                        {
+                            response.Success = false;
+                            response.StatusCode = actorUpgradeResult.StatusCode;
+                            response.Message = $"Actor upgrade failed again after sensor application completed: {actorUpgradeResult.Message}";
+                            return response;
+                        }
+
+                        await Task.Delay(10000).ConfigureAwait(false); // FIXED: must await
+                    }
+                }
+
                 if (DetectorType == "P48" || DetectorType == "P47")
                 {
                     await Task.Delay(10000).ConfigureAwait(false);
@@ -965,13 +1041,18 @@ namespace AccessAPP.Services
 
                     var cl = await ConnectAndLoginWithRetryAsync(
                         _gatewayIpAddress, 80, macAddress, pincode, logId, FirmwareVersion,
-                        maxAttempts: 3,
+                        maxAttempts: 1,
                         delayBetweenAttemptsMs: 3000).ConfigureAwait(false);
 
                     if (!cl.Success)
                     {
                         UpgradeLogger.Log(logId, macAddress, $"Restore connect+login failed: {cl.Message}", "Warn", FirmwareVersion);
                         Console.WriteLine($"[WARN] Restore connect+login failed for {macAddress}: {cl.Message}");
+
+                        response.Success = false;
+                        response.StatusCode = 500;
+                        response.Message = "Could not connect and login to detector!";
+                        return response;
                     }
                     else
                     {
@@ -1693,8 +1774,16 @@ namespace AccessAPP.Services
 
                     Console.WriteLine($"[RETRY RESULT] {mac} - {resp.StatusCode} - {resp.Message}");
                     UpgradeLogger.Log(logId, mac, $"Retry result: {resp.StatusCode} - {resp.Message}", resp.Success ? "Success" : "Failed");
-                    // Optional: if UpgradeDeviceAsync returned a hard failure (bootloader/sensor returns early),
-                    // we still loop, but CanRetryNow() will stop immediately once counts are exceeded.
+
+                    // HARD FAIL: firmware missing / path issues -> never retry
+                    if (!resp.Success && resp.Message != null &&
+                        (resp.Message.Contains("Could not find a part of the path", StringComparison.OrdinalIgnoreCase) ||
+                         resp.Message.Contains("Firmware file missing", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        dev.LastFailureReason = resp.Message;
+                        UpgradeLogger.Log(logId, mac, "Hard failure (firmware missing). Stopping retries.", "Failed");
+                        break;
+                    }
                 }
 
 
@@ -2021,6 +2110,11 @@ namespace AccessAPP.Services
                 // Phase 1 - Return relative path string
                 firmwarePath = FirmwareResolver.ResolveFirmwareFile(DetectorType, FirmwareVersion, bActor, isBootloader);
                 Console.WriteLine($"Firmware path resolved: {firmwarePath}");
+                if (!File.Exists(firmwarePath))
+                {
+                    Console.WriteLine($"[FATAL] Firmware file missing: {firmwarePath}");
+                    return false;
+                }
                 if (bActor)
                 {
                     Console.WriteLine($"Programming Actor  - {nodeMac}");
