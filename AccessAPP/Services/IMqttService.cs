@@ -22,4 +22,5 @@ public interface IMqttService : IAsyncDisposable
     // Events when commands arrive
     event Func<StartUpdateCommand, Task>? StartUpdateRequested;
     event Func<GetFwVersionCommand, Task>? GetFwVersionRequested;
+
 }

@@ -1,0 +1,30 @@
+AccessApp Cassia backend:
+
+- While updateing -> on error, return progress update with the error
+
+- Backups should not have timestamps - always overwrite the previous backup, and use latest if it exists
+
+
+- Queue can be stuck if an error happens - make sure to handle that
+
+- On error make sure to disconnect from sensor again!
+        -> HAVE made sure the while loop can exit efter retry limit reached - to test!
+== Log Snippet ==
+
+nfo: CassiaNotificationService[0]
+      Replacing existing handler for 10:B9:F7:10:39:F7
+Unexpected response received: 01160007006D91
+Actor 10:B9:F7:10:39:F7 is in boot mode.
+Actor 10:B9:F7:10:39:F7 is in boot mode.
+Bootloader mode achieved for 10:B9:F7:10:39:F7.
+Actor is going to be programmed? : True
+Firmware path resolved: FirmwareVersions/0232/353AP20232.cyacd
+Programming Actor  - 10:B9:F7:10:39:F7
+Error during sensor and actor upgrade: Could not find a part of the path '/home/cassia/FWUpgrade/FirmwareVersions/0232/353AP20232.cyacd'.
+[RETRY] 10:B9:F7:10:00:9F - Retry 13
+Getting current FW Verison if possible 10:B9:F7:10:00:9F
+Starting settings backup for 10:B9:F7:10:00:9F
+[INFO] Connect+Login attempt 1/3 for 10:B9:F7:10:00:9F
+[INFO] Connected to device... 10:B9:F7:10:00:9F
+
+== End Log Snippet ==

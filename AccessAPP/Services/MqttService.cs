@@ -8,7 +8,7 @@ using System.Text.Json;
 
 namespace AccessAPP.Services;
 
-public sealed class MqttService : IMqttService
+public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 {
     private readonly MqttConfigStore _store;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -23,8 +23,10 @@ public sealed class MqttService : IMqttService
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true
     };
+
 
     public MqttOptions CurrentOptions { get; private set; }
 
@@ -42,6 +44,15 @@ public sealed class MqttService : IMqttService
     public async Task StartAsync(CancellationToken ct = default)
     {
         Log("Starting MQTT service");
+
+        // Wire UpgradeLogger to MQTT + topic shape used by this service
+        UpgradeLogger.Mqtt = this;
+
+        // Use the SAME topic pattern as your TeleTopic() => .../tele/{name}/{leaf}
+        UpgradeLogger.TopicResolver = _ => TeleTopic("upgrade-log");
+
+        // Keep network id in sync (used by saved-log replay if needed)
+        UpgradeLogger.NetworkId = CurrentOptions.NetworkId;
 
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -335,6 +346,12 @@ public sealed class MqttService : IMqttService
         }
     }
 
+    public sealed class SendUpgradeLogCommand
+    {
+        public string? LogId { get; set; }     // optional filter
+        public int MaxLines { get; set; } = 5000;  // last N lines (after filter)
+        public int ChunkLines { get; set; } = 100;         // lines per MQTT message
+    }
     private Task HandleCommandAsync(string topic, string payload)
     {
         try
@@ -418,6 +435,33 @@ public sealed class MqttService : IMqttService
                 Log("HandleCommandAsync: dispatch get-fw-version");
                 var dto = JsonSerializer.Deserialize<GetFwVersionCommand>(payload, JsonOptions) ?? new GetFwVersionCommand();
                 return GetFwVersionRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+            if (string.Equals(command, "send-upgrade-log", StringComparison.OrdinalIgnoreCase))
+            {
+                Log("HandleCommandAsync: dispatch send-upgrade-log");
+
+                // payload optional: { "logId": "...", "maxLines": 2000, "chunkLines": 100 }
+                SendUpgradeLogCommand dto;
+                try
+                {
+                    dto = string.IsNullOrWhiteSpace(payload)
+                        ? new SendUpgradeLogCommand()
+                        : (JsonSerializer.Deserialize<SendUpgradeLogCommand>(payload, JsonOptions) ?? new SendUpgradeLogCommand());
+                }
+                catch
+                {
+                    dto = new SendUpgradeLogCommand(); // tolerate invalid payload
+                }
+
+                // Ensure logger uses the correct networkId for publishing
+                UpgradeLogger.NetworkId = CurrentOptions.NetworkId;
+
+                return UpgradeLogger.PublishSavedLogAsync(
+                    logIdFilter: dto.LogId,
+                    maxLines: dto.MaxLines <= 0 ? 5000 : dto.MaxLines,
+                    chunkLines: dto.ChunkLines <= 0 ? 100 : dto.ChunkLines,
+                    ct: CancellationToken.None
+                );
             }
 
             Log($"HandleCommandAsync: ignored (unknown command '{command}')");
@@ -532,6 +576,29 @@ public sealed class MqttService : IMqttService
         if (client is not null && client.IsConnected)
             await client.PublishAsync(msg, ct).ConfigureAwait(false);
     }
+
+    public async Task PublishAsync(string topic, string payload, bool retain = false, int qos = 0, CancellationToken ct = default)
+    {
+        await EnsureConnectedAndSubscribedAsync(ct).ConfigureAwait(false);
+
+        var level = qos <= 0
+            ? MqttQualityOfServiceLevel.AtMostOnce
+            : qos == 1
+                ? MqttQualityOfServiceLevel.AtLeastOnce
+                : MqttQualityOfServiceLevel.ExactlyOnce;
+
+        var msg = new MqttApplicationMessageBuilder()
+            .WithTopic(topic)
+            .WithPayload(Encoding.UTF8.GetBytes(payload ?? string.Empty))
+            .WithQualityOfServiceLevel(level)
+            .WithRetainFlag(retain)
+            .Build();
+
+        var client = _client;
+        if (client is not null && client.IsConnected)
+            await client.PublishAsync(msg, ct).ConfigureAwait(false);
+    }
+
 
     // ---------------- Topic helpers ----------------
 

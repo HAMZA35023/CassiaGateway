@@ -1627,25 +1627,39 @@ namespace AccessAPP.Services
                     dev.isActorUpgradeNeeded, dev.upgradeBootloader, true, logId
                 ).ConfigureAwait(false);
 
-                int maxRetriesPerComponent = 10;
+                int maxRetriesPerComponent = 5;
 
-                while (!dev.IsFullyUpgraded &&
-                       (dev.RetryCountActor < 2 * maxRetriesPerComponent &&
-                        dev.RetryCountBootloader < maxRetriesPerComponent &&
-                        dev.RetryCountSensor < maxRetriesPerComponent))
+                bool retriesLeft =
+                    (!dev.isActorUpgradeNeeded || dev.ActorSuccess || dev.RetryCountActor < 2 * maxRetriesPerComponent) &&
+                    (!dev.upgradeBootloader || dev.BootloaderSuccess || dev.RetryCountBootloader < maxRetriesPerComponent) &&
+                    (dev.SensorSuccess || dev.RetryCountSensor < maxRetriesPerComponent);
+
+                while (!dev.IsFullyUpgraded && retriesLeft)
                 {
-                    await Task.Delay(10000).ConfigureAwait(false);
+                    await Task.Delay(10_000).ConfigureAwait(false);
 
-                    dev.RetryCount++;
-                    Console.WriteLine($"[RETRY] {mac} - Retry {dev.RetryCount}");
+                    if (dev.isActorUpgradeNeeded && !dev.ActorSuccess)
+                        dev.RetryCountActor++;
 
-                    await UpgradeDeviceAsync(
+                    if (dev.upgradeBootloader && !dev.BootloaderSuccess)
+                        dev.RetryCountBootloader++;
+
+                    if (!dev.SensorSuccess)
+                        dev.RetryCountSensor++;
+
+                    retriesLeft =
+                        (!dev.isActorUpgradeNeeded || dev.ActorSuccess || dev.RetryCountActor < 2 * maxRetriesPerComponent) &&
+                        (!dev.upgradeBootloader || dev.BootloaderSuccess || dev.RetryCountBootloader < maxRetriesPerComponent) &&
+                        (dev.SensorSuccess || dev.RetryCountSensor < maxRetriesPerComponent);
+
+                    var resp = await UpgradeDeviceAsync(
                         dev, mac, dev.Pincode, dev.DetectotType, dev.FirmwareVersion,
                         dev.isActorUpgradeNeeded && !dev.ActorSuccess,
                         dev.upgradeBootloader && !dev.BootloaderSuccess,
                         !dev.SensorSuccess,
                         logId
                     ).ConfigureAwait(false);
+                    Console.WriteLine($"[RETRY RESULT] {mac} - Success: {resp.Message} - StatusCode: {resp.StatusCode}");
                 }
 
                 deviceSw.Stop();
