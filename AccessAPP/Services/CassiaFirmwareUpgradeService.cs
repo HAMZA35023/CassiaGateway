@@ -1055,6 +1055,7 @@ namespace AccessAPP.Services
                     // Prefer async instead of .Wait()
                     await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0)
                         .ConfigureAwait(false);
+
                 }
                 else
                 {
@@ -1068,6 +1069,9 @@ namespace AccessAPP.Services
                 response.Success = true;
                 response.StatusCode = 200;
                 response.Message = "Sensor and actor upgrades completed successfully.";
+
+                UpgradeLogger.Log(logId, macAddress, $"Device Upgrade Done.", "Success");
+
                 return response;
             }
             catch (Exception ex)
@@ -1076,6 +1080,8 @@ namespace AccessAPP.Services
                 response.Success = false;
                 response.StatusCode = 500; // Internal Server Error
                 response.Message = "An unexpected error occurred during the upgrade process.";
+                UpgradeLogger.Log(logId, macAddress, $"Device Upgrade Failed: {ex.Message}", "Failed");
+
                 return response;
             }
 

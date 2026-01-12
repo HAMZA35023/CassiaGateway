@@ -1,4 +1,5 @@
-﻿using MQTTnet;
+﻿using AccessAPP.Controllers;
+using MQTTnet;
 using MQTTnet.Packets;
 using MQTTnet.Protocol;
 using System.Buffers;
@@ -434,6 +435,8 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
             {
                 Log("HandleCommandAsync: dispatch get-fw-version");
                 var dto = JsonSerializer.Deserialize<GetFwVersionCommand>(payload, JsonOptions) ?? new GetFwVersionCommand();
+
+
                 return GetFwVersionRequested?.Invoke(dto) ?? Task.CompletedTask;
             }
             if (string.Equals(command, "send-upgrade-log", StringComparison.OrdinalIgnoreCase))

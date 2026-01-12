@@ -22,7 +22,10 @@ public partial class DiscoveredDevice : ObservableObject
 [ObservableProperty] private int processProgress = 0; // 0..100
 [ObservableProperty] private string processCassia = "";
 [ObservableProperty] private string processFirmware = "";
-[ObservableProperty] private DateTimeOffset? processLastUpdateUtc;
+    [ObservableProperty] private DateTimeOffset? processLastUpdateUtc;
+
+    // Parsed from upgrade-log ("Current FW Version" lines)
+    [ObservableProperty] private string currentFw = "";
 
 
 

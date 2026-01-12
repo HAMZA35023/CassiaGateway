@@ -1,6 +1,7 @@
 <Window x:Class="AccessAppMqttWpf.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:conv="clr-namespace:AccessAppMqttWpf.Converters"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
@@ -9,6 +10,8 @@
         WindowStartupLocation="CenterScreen">
 
     <Window.Resources>
+
+        <conv:StatusToBrushConverter x:Key="StatusToBrush"/>
 
         <!-- ONLINE / OFFLINE badge -->
         <DataTemplate x:Key="CassiaStateBadge">
@@ -39,6 +42,12 @@
             <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="Margin" Value="0,8,0,4"/>
+        </Style>
+
+        <!-- Simple tabs styling -->
+        <Style x:Key="TabControlStyle" TargetType="TabControl">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
         </Style>
 
     </Window.Resources>
@@ -119,23 +128,23 @@
                     <!-- ===== Connection ===== -->
                     <TextBlock Text="Connection" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10"/>
 
-                    <TextBlock Text="Host" Style="{StaticResource MetaLabel}"/>
-                    <TextBox Text="{Binding MqttHost}"/>
+                    <TextBlock Text="Host" Style="{StaticResource MetaLabel}" Visibility="Collapsed"/>
+                    <TextBox Text="{Binding MqttHost}" Visibility="Collapsed"/>
 
-                    <TextBlock Text="Port" Style="{StaticResource MetaLabel}"/>
-                    <TextBox Text="{Binding MqttPort}"/>
+                    <TextBlock Text="Port" Style="{StaticResource MetaLabel}" Visibility="Collapsed"/>
+                    <TextBox Text="{Binding MqttPort}" Visibility="Collapsed"/>
 
-                    <TextBlock Text="Topic" Style="{StaticResource MetaLabel}"/>
-                    <TextBox Text="{Binding MqttTopic}"/>
+                    <TextBlock Text="Topic" Style="{StaticResource MetaLabel}" Visibility="Collapsed"/>
+                    <TextBox Text="{Binding MqttTopic}" Visibility="Collapsed"/>
 
-                    <TextBlock Text="Username" Style="{StaticResource MetaLabel}"/>
-                    <TextBox Text="{Binding MqttUser}"/>
+                    <TextBlock Text="Username" Style="{StaticResource MetaLabel}" Visibility="Collapsed"/>
+                    <TextBox Text="{Binding MqttUser}" Visibility="Collapsed"/>
 
-                    <TextBlock Text="Password" Style="{StaticResource MetaLabel}"/>
-                    <PasswordBox PasswordChanged="PasswordBox_PasswordChanged"/>
+                    <TextBlock Text="Password" Style="{StaticResource MetaLabel}" Visibility="Collapsed"/>
+                    <PasswordBox PasswordChanged="PasswordBox_PasswordChanged" Visibility="Collapsed"/>
 
-                    <CheckBox Content="Use TLS" IsChecked="{Binding UseTls}" Margin="0,10,0,0"/>
-                    <CheckBox Content="Ignore TLS certificate errors" IsChecked="{Binding IgnoreTlsErrors}" Margin="0,4,0,0"/>
+                    <CheckBox Content="Use TLS" IsChecked="{Binding UseTls}" Margin="0,10,0,0" Visibility="Collapsed"/>
+                    <CheckBox Content="Ignore TLS certificate errors" IsChecked="{Binding IgnoreTlsErrors}" Margin="0,4,0,0" Visibility="Collapsed"/>
 
                     <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                         <Button Style="{StaticResource PrimaryButton}"
@@ -143,7 +152,7 @@
                                 Command="{Binding ToggleConnectCommand}"/>
                         <Button Style="{StaticResource GhostButton}"
                                 Content="Save"
-                                Command="{Binding SaveSettingsCommand}"/>
+                                Command="{Binding SaveSettingsCommand}" Visibility="Collapsed"/>
                     </StackPanel>
 
                     <TextBlock Text="{Binding ConnectionStatus}" Foreground="{StaticResource MutedBrush}" Margin="0,10,0,0"/>
@@ -156,11 +165,11 @@
                     <TextBlock Text="NetworkId" Style="{StaticResource MetaLabel}"/>
                     <TextBox Text="{Binding NetworkId}"/>
 
-                    <TextBlock Text="Command topic template" Style="{StaticResource MetaLabel}"/>
-                    <TextBox Text="{Binding CommandTopicTemplate}"/>
+                    <TextBlock Text="Command topic template" Style="{StaticResource MetaLabel}" Visibility="Collapsed"/>
+                    <TextBox Text="{Binding CommandTopicTemplate}" Visibility="Collapsed"/>
 
-                    <TextBlock Text="Default command" Style="{StaticResource MetaLabel}"/>
-                    <TextBox Text="{Binding DefaultCommand}"/>
+                    <TextBlock Text="Default command" Style="{StaticResource MetaLabel}" Visibility="Collapsed"/>
+                    <TextBox Text="{Binding DefaultCommand}" Visibility="Collapsed"/>
 
                     <Separator Margin="0,12,0,12"/>
 
@@ -187,156 +196,332 @@
         </Border>
 
         <!-- ================= RIGHT PANEL ================= -->
-        <Grid Grid.Column="2">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="*"/>
-                <RowDefinition Height="18"/>
-                <RowDefinition Height="280"/>
-            </Grid.RowDefinitions>
+        <TabControl Grid.Column="2" Style="{StaticResource TabControlStyle}">
 
             <!-- ===== Devices ===== -->
-            <Border Grid.Row="0" Style="{StaticResource Card}">
-                <DockPanel>
+            <TabItem Header="Devices">
+                <Border Style="{StaticResource Card}">
+                    <DockPanel>
 
-                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10">
-                        <TextBlock Text="Devices" FontSize="18" FontWeight="SemiBold"/>
-                        <TextBlock Text="  "/>
-                        <TextBlock Text="{Binding DevicesSubtitle}" Foreground="{StaticResource MutedBrush}"/>
+                        <!-- TOP controls -->
+                        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10">
+                            <TextBlock Text="Devices" FontSize="18" FontWeight="SemiBold"/>
+                            <TextBlock Text="  "/>
+                            <TextBlock Text="{Binding DevicesSubtitle}" Foreground="{StaticResource MutedBrush}"/>
 
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                            <TextBox Width="280" Text="{Binding DeviceFilter}" Margin="18,0,10,0"/>
-                            <ComboBox Width="120" ItemsSource="{Binding SensorFilterOptions}" SelectedItem="{Binding SensorFilter}"/>
-                            <CheckBox x:Name="EnableDoubleClickQueueCheckBox"
-                                      Content="Double-click to queue"
-                                      IsChecked="{Binding EnableDoubleClickQueue, Mode=TwoWay}"
-                                      Margin="14,0,10,0"
-                                      VerticalAlignment="Center"/>
-                            <Button Style="{StaticResource GhostButton}"
-                                    Content="Clear"
-                                    Padding="12,6"
-                                    VerticalAlignment="Center"
-                                    Click="ClearDevices_Click"/>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                <TextBox Width="280" Text="{Binding DeviceFilter}" Margin="18,0,10,0"/>
+                                <ComboBox Width="120" ItemsSource="{Binding SensorFilterOptions}" SelectedItem="{Binding SensorFilter}"/>
+                                <CheckBox x:Name="EnableDoubleClickQueueCheckBox"
+                                          Content="Double-click to queue"
+                                          IsChecked="{Binding EnableDoubleClickQueue, Mode=TwoWay}"
+                                          Margin="14,0,10,0"
+                                          VerticalAlignment="Center"/>
+                                <Button Style="{StaticResource GhostButton}"
+                                        Content="Clear"
+                                        Padding="12,6"
+                                        VerticalAlignment="Center"
+                                        Click="ClearDevices_Click"/>
+                            </StackPanel>
                         </StackPanel>
-                    </StackPanel>
 
-                    <DataGrid x:Name="DevicesGrid"
-                              ItemsSource="{Binding FilteredDevices}"
-                              SelectedItem="{Binding SelectedDevice}"
-                              AutoGenerateColumns="False"
-                              MouseDoubleClick="DevicesGrid_MouseDoubleClick"
-                              IsReadOnly="True"
-                              CanUserSortColumns="True">
-                        <DataGrid.Columns>
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="220"/>
+                            </Grid.RowDefinitions>
 
-                            <DataGridTemplateColumn Header="" Width="32" CanUserSort="False">
-                                <DataGridTemplateColumn.CellTemplate>
+                            <!-- Discovered devices -->
+                            <DataGrid x:Name="DevicesGrid"
+                                      Grid.Row="0"
+                                      ItemsSource="{Binding FilteredDevices}"
+                                      SelectedItem="{Binding SelectedDevice, Mode=TwoWay}"
+                                      AutoGenerateColumns="False"
+                                      MouseDoubleClick="DevicesGrid_MouseDoubleClick"
+                                      IsReadOnly="True"
+                                      CanUserSortColumns="True">
+                                <DataGrid.Columns>
+                                    <DataGridTemplateColumn Header="" Width="32" CanUserSort="False">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                          HorizontalAlignment="Center"
+                                                          VerticalAlignment="Center"
+                                                          Focusable="False"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+
+                                    <DataGridTemplateColumn Header="Update FW" Width="100" CanUserSort="False">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Button Style="{StaticResource GhostButton}" Content="Update" Padding="10,4"
+                                                        Click="UpdateFw_Click"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+
+                                    <DataGridTextColumn Header="MAC" Binding="{Binding Mac}" Width="160"/>
+                                    <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="160"/>
+                                    <DataGridTextColumn Header="Product" Binding="{Binding ProductNumber}" Width="120"/>
+                                    <DataGridTextColumn Header="Model" Binding="{Binding SensorModel}" Width="70"/>
+                                    <DataGridTextColumn Header="RSSI" Binding="{Binding BestRssi}" Width="70"/>
+                                    <DataGridTextColumn Header="Cassia" Binding="{Binding BestCassia}" Width="110"/>
+
+                                    <DataGridTextColumn Header="Status" Binding="{Binding ProcessStatus}" Width="120"/>
+                                    <DataGridTextColumn Header="%" Binding="{Binding ProcessProgress}" Width="60"/>
+                                    <DataGridTextColumn Header="FW" Binding="{Binding ProcessFirmware}" Width="90"/>
+                                    <DataGridTextColumn Header="Current FW" Binding="{Binding CurrentFw}" Width="90"/>
+
+                                    <DataGridTemplateColumn Header="Get FW" Width="90" CanUserSort="False">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Button Style="{StaticResource GhostButton}" Content="Get FW" Padding="10,4"
+                                                        Click="GetFw_Click"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+
+                                    <DataGridTextColumn Header="Proc Cassia" Binding="{Binding ProcessCassia}" Width="110"/>
+                                    <DataGridTextColumn Header="Proc Time" Binding="{Binding ProcessLastUpdateLocal}" Width="150"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+
+                            <!-- ===== MOVED FROM QUEUE TAB TO HERE ===== -->
+                            <Border Grid.Row="1"
+                                    Background="{StaticResource CardBrush}"
+                                    BorderBrush="{StaticResource BorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="10"
+                                    Padding="10"
+                                    Margin="0,12,0,8">
+                                <DockPanel>
+                                    <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock Text="Queue actions" FontWeight="SemiBold"/>
+                                        <TextBlock Text="  " />
+                                        <TextBlock Text="(operate on selected devices above)" Foreground="{StaticResource MutedBrush}"/>
+                                    </StackPanel>
+
+                                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+                                        <!-- This is the button you wanted moved -->
+                                        <Button Style="{StaticResource PrimaryButton}"
+                                                Content="Queue selected"
+                                                Command="{Binding QueueSelectedCommand}"
+                                                Margin="0,0,8,0"/>
+                                        <Button Style="{StaticResource GhostButton}"
+                                                Content="Clear queue"
+                                                Command="{Binding ClearQueueCommand}"
+                                                Margin="0,0,8,0"/>
+                                        <Button Style="{StaticResource GhostButton}"
+                                                Content="Default sort"
+                                                Padding="12,6"
+                                                Click="QueueDefaultSort_Click"/>
+                                    </StackPanel>
+                                </DockPanel>
+                            </Border>
+
+                            <!-- Queue list below discovered devices -->
+                            <DockPanel Grid.Row="2">
+                                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
+                                    <TextBlock Text="Queued devices" FontWeight="SemiBold"/>
+                                    <TextBlock Text="  " />
+                                    <TextBlock Text="(same data as Queue tab)" Foreground="{StaticResource MutedBrush}"/>
+                                </StackPanel>
+
+                                <DataGrid x:Name="QueueGridInline"
+                                          ItemsSource="{Binding QueueView}"
+                                          SelectedItem="{Binding SelectedQueueItem, Mode=TwoWay}"
+                                          AutoGenerateColumns="False"
+                                          IsReadOnly="True"
+                                          CanUserSortColumns="True">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="MAC" Binding="{Binding Mac}" Width="160"/>
+                                        <DataGridTextColumn Header="Cassia" Binding="{Binding Cassia}" Width="110"/>
+                                        <DataGridTextColumn Header="Model" Binding="{Binding DetectorType}" Width="70"/>
+                                        <DataGridTextColumn Header="FW" Binding="{Binding FirmwareVersion}" Width="90"/>
+                                        <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="260"/>
+                                        <DataGridTextColumn Header="Notes" Binding="{Binding Notes}" Width="*"/>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </DockPanel>
+
+                        </Grid>
+                    </DockPanel>
+                </Border>
+            </TabItem>
+
+            <!-- ===== Queue (kept, but now WITHOUT "Queue selected") ===== -->
+            <TabItem Header="Queue">
+                <Border Style="{StaticResource Card}">
+                    <DockPanel>
+
+                        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10">
+                            <TextBlock Text="Queue" FontSize="18" FontWeight="SemiBold"/>
+                        </StackPanel>
+
+                        <DataGrid x:Name="QueueGrid"
+                                  ItemsSource="{Binding QueueView}"
+                                  SelectedItem="{Binding SelectedQueueItem, Mode=TwoWay}"
+                                  AutoGenerateColumns="False"
+                                  IsReadOnly="True"
+                                  CanUserSortColumns="True"
+                                  Sorting="QueueGrid_Sorting">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="MAC" Binding="{Binding Mac}" Width="160"/>
+                                <DataGridTextColumn Header="Cassia" Binding="{Binding Cassia}" Width="110"/>
+                                <DataGridTextColumn Header="Model" Binding="{Binding DetectorType}" Width="70"/>
+                                <DataGridTextColumn Header="FW" Binding="{Binding FirmwareVersion}" Width="90"/>
+                                <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="140"/>
+                                <DataGridTemplateColumn Header="%" Width="60">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <TextBlock>
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Text" Value="{Binding Progress, StringFormat={}{0}%}"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Status}" Value="">
+                                                                <Setter Property="Text" Value=""/>
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding Status}" Value="{x:Null}">
+                                                                <Setter Property="Text" Value=""/>
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding Status}" Value="queued">
+                                                                <Setter Property="Text" Value=""/>
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding Status}" Value="Queued">
+                                                                <Setter Property="Text" Value=""/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                            </DataGrid.Columns>
+                        </DataGrid>
+
+                    </DockPanel>
+                </Border>
+            </TabItem>
+
+            <!-- ===== Upgrade log ===== -->
+            <TabItem Header="Upgrade log">
+                <Border Style="{StaticResource Card}">
+                    <DockPanel>
+
+                        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10" VerticalAlignment="Center">
+                            <TextBlock Text="Upgrade log" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            <TextBlock Text="  " />
+                            <TextBlock Text="{Binding UpgradeLogSummary}" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"/>
+
+                            <TextBlock Text="   Search:" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="18,0,0,0"/>
+                            <TextBox Width="220"
+                                     Text="{Binding UpgradeLogSearchText, UpdateSourceTrigger=PropertyChanged}"
+                                     Margin="8,0,0,0"
+                                     VerticalAlignment="Center"/>
+
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="18,0,0,0">
+                                <ComboBox Width="160"
+                                          ItemsSource="{Binding LogGatewayOptions}"
+                                          SelectedItem="{Binding SelectedLogGatewayName}"
+                                          Margin="0,0,8,0"/>
+                                <Button Style="{StaticResource PrimaryButton}"
+                                        Content="Request"
+                                        Command="{Binding RequestUpgradeLogCommand}"
+                                        Margin="0,0,8,0"/>
+                                <Button Style="{StaticResource GhostButton}"
+                                        Content="Clear"
+                                        Command="{Binding ClearUpgradeLogCommand}"/>
+                            </StackPanel>
+                        </StackPanel>
+
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                            <ItemsControl ItemsSource="{Binding UpgradeLogGroupsView}">
+                                <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                  HorizontalAlignment="Center"
-                                                  VerticalAlignment="Center"
-                                                  Focusable="False"/>
+                                        <Border Background="{StaticResource CardBrush}"
+                                                BorderThickness="2"
+                                                Padding="10"
+                                                Margin="0,0,0,10"
+                                                CornerRadius="10"
+                                                BorderBrush="{Binding LatestStatus, Converter={StaticResource StatusToBrush}}">
+                                            <Expander IsExpanded="False">
+                                                <Expander.Header>
+                                                    <Grid>
+                                                        <Grid.RowDefinitions>
+                                                            <RowDefinition Height="Auto"/>
+                                                            <RowDefinition Height="Auto"/>
+                                                        </Grid.RowDefinitions>
+
+                                                        <StackPanel Orientation="Horizontal" Grid.Row="0">
+                                                            <TextBlock Text="{Binding LogIdMacPart}" FontWeight="SemiBold"/>
+                                                            <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
+                                                            <TextBlock Text="{Binding StartedAtLocalText}" />
+                                                            <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
+                                                            <TextBlock Text="{Binding Cassia}"/>
+                                                            <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
+                                                            <TextBlock Text="{Binding LatestMac}"/>
+                                                            <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
+                                                            <TextBlock Text="{Binding LastTimeLocalText}"/>
+
+                                                            <Border Margin="12,0,0,0"
+                                                                    Padding="8,2"
+                                                                    CornerRadius="10"
+                                                                    VerticalAlignment="Center"
+                                                                    Background="{Binding LatestStatus, Converter={StaticResource StatusToBrush}}">
+                                                                <TextBlock Text="{Binding LatestStatus}"
+                                                                           FontWeight="SemiBold"
+                                                                           Foreground="White"/>
+                                                            </Border>
+                                                        </StackPanel>
+
+                                                        <TextBlock Grid.Row="1"
+                                                                   Margin="0,4,0,0"
+                                                                   Foreground="{StaticResource MutedBrush}"
+                                                                   Text="{Binding LatestSummary}"
+                                                                   TextTrimming="CharacterEllipsis"/>
+                                                    </Grid>
+                                                </Expander.Header>
+
+                                                <DataGrid ItemsSource="{Binding Entries}"
+                                                          Margin="0,10,0,0"
+                                                          MaxHeight="420"
+                                                          AutoGenerateColumns="False"
+                                                          IsReadOnly="True"
+                                                          HeadersVisibility="Column"
+                                                          CanUserAddRows="False"
+                                                          CanUserResizeRows="False"
+                                                          CanUserSortColumns="False"
+                                                          GridLinesVisibility="None">
+                                                    <DataGrid.Columns>
+                                                        <DataGridTextColumn Header="Time" Binding="{Binding TimeLocalText}" Width="170"/>
+                                                        <DataGridTextColumn Header="Stage" Binding="{Binding Stage}" Width="*"/>
+                                                        <DataGridTextColumn Header="FW" Binding="{Binding Firmware}" Width="90"/>
+                                                        <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="120">
+                                                            <DataGridTextColumn.ElementStyle>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="FontWeight" Value="SemiBold"/>
+                                                                    <Setter Property="Foreground"
+                                                                            Value="{Binding Status, Converter={StaticResource StatusToBrush}}"/>
+                                                                </Style>
+                                                            </DataGridTextColumn.ElementStyle>
+                                                        </DataGridTextColumn>
+                                                    </DataGrid.Columns>
+                                                </DataGrid>
+                                            </Expander>
+                                        </Border>
                                     </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="Update FW" Width="100" CanUserSort="False">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <Button Style="{StaticResource GhostButton}" Content="Update" Padding="10,4"
-                                                Click="UpdateFw_Click"/>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                            <DataGridTextColumn Header="MAC" Binding="{Binding Mac}" Width="160"/>
-                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="160"/>
-                            <DataGridTextColumn Header="Product" Binding="{Binding ProductNumber}" Width="120"/>
-                            <DataGridTextColumn Header="Model" Binding="{Binding SensorModel}" Width="70"/>
-                            <DataGridTextColumn Header="RSSI" Binding="{Binding BestRssi}" Width="70"/>
-                            <DataGridTextColumn Header="Cassia" Binding="{Binding BestCassia}" Width="110"/>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
 
-                            <DataGridTextColumn Header="Status" Binding="{Binding ProcessStatus}" Width="120"/>
-                            <DataGridTextColumn Header="%" Binding="{Binding ProcessProgress}" Width="60"/>
-                            <DataGridTextColumn Header="FW" Binding="{Binding ProcessFirmware}" Width="90"/>
-                            <DataGridTextColumn Header="Current FW" Binding="{Binding CurrentFw}" Width="90"/>
-                            <DataGridTemplateColumn Header="Get FW" Width="90" CanUserSort="False">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <Button Style="{StaticResource GhostButton}" Content="Get FW" Padding="10,4"
-                                                Click="GetFw_Click"/>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                            <DataGridTextColumn Header="Proc Cassia" Binding="{Binding ProcessCassia}" Width="110"/>
-                            <DataGridTextColumn Header="Proc Time" Binding="{Binding ProcessLastUpdateLocal}" Width="150"/>
-                        </DataGrid.Columns>
-                    </DataGrid>
-                </DockPanel>
-            </Border>
+                    </DockPanel>
+                </Border>
+            </TabItem>
 
-            <!-- ===== Queue ===== -->
-            <Border Grid.Row="2" Style="{StaticResource Card}">
-                <DockPanel>
-
-                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10">
-                        <TextBlock Text="Queue" FontSize="18" FontWeight="SemiBold"/>
-
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                            <Button Style="{StaticResource PrimaryButton}"
-                                    Content="Queue selected"
-                                    Command="{Binding QueueSelectedCommand}"
-                                    Margin="18,0,8,0"/>
-                            <Button Style="{StaticResource GhostButton}"
-                                    Content="Clear"
-                                    Command="{Binding ClearQueueCommand}"
-                                    Margin="0,0,8,0"/>
-                            <Button Style="{StaticResource GhostButton}" Content="Default sort" Padding="12,6" Margin="0,0,8,0" Click="QueueDefaultSort_Click"/>
-</StackPanel>
-                    </StackPanel>
-
-                    <DataGrid x:Name="QueueGrid"
-                              ItemsSource="{Binding QueueView}"
-                              SelectedItem="{Binding SelectedQueueItem}"
-                              AutoGenerateColumns="False"
-                              IsReadOnly="True"
-                              CanUserSortColumns="True"
-                              Sorting="QueueGrid_Sorting">
-                        <DataGrid.Columns>
-                            <DataGridTextColumn Header="MAC" Binding="{Binding Mac}" Width="160"/>
-                            <DataGridTextColumn Header="Cassia" Binding="{Binding Cassia}" Width="110"/>
-                            <DataGridTextColumn Header="Model" Binding="{Binding DetectorType}" Width="70"/>
-                            <DataGridTextColumn Header="FW" Binding="{Binding FirmwareVersion}" Width="90"/>
-                            <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="140"/>
-                                                        <DataGridTemplateColumn Header="%" Width="60">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <TextBlock>
-                                            <TextBlock.Style>
-                                                <Style TargetType="TextBlock">
-                                                    <Setter Property="Text" Value="{Binding Progress, StringFormat={}{0}%}"/>
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding Status}" Value="">
-                                                            <Setter Property="Text" Value=""/>
-                                                        </DataTrigger>
-                                                        <DataTrigger Binding="{Binding Status}" Value="{x:Null}">
-                                                            <Setter Property="Text" Value=""/>
-                                                        </DataTrigger>
-                                                        <DataTrigger Binding="{Binding Status}" Value="queued">
-                                                            <Setter Property="Text" Value=""/>
-                                                        </DataTrigger>
-                                                        <DataTrigger Binding="{Binding Status}" Value="Queued">
-                                                            <Setter Property="Text" Value=""/>
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </TextBlock.Style>
-                                        </TextBlock>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                        </DataGrid.Columns>
-                    </DataGrid>
-
-                </DockPanel>
-            </Border>
-        </Grid>
+        </TabControl>
     </Grid>
 </Window>

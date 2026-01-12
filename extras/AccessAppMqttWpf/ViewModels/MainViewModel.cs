@@ -38,6 +38,9 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty] private DiscoveredDevice? selectedDevice;
     [ObservableProperty] private QueueItem? selectedQueueItem;
+    [ObservableProperty] private string? selectedQueueMac;
+
+    [ObservableProperty] private bool enableDoubleClickQueue;
 
     [ObservableProperty] private string deviceFilter = "";
     [ObservableProperty] private string sensorFilter = "All";
@@ -69,6 +72,38 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty] private string connectionStatus = "Disconnected";
     [ObservableProperty] private bool isConnected;
+
+    // ---- Upgrade log viewer (tele/.../upgrade-log) ----
+    // Raw lines (kept for debugging / copy-paste)
+    public ObservableCollection<string> UpgradeLogLines { get; } = new();
+
+    // Grouped view by logId
+    public ObservableCollection<UpgradeLogGroup> UpgradeLogGroups { get; } = new();
+    public ICollectionView UpgradeLogGroupsView { get; }
+
+    [ObservableProperty] private string upgradeLogText = "";
+    [ObservableProperty] private string upgradeLogStatus = "Idle";
+    [ObservableProperty] private int upgradeLogTotalLines;
+    [ObservableProperty] private int upgradeLogReceivedLines;
+    [ObservableProperty] private CassiaGateway? selectedLogGateway;
+
+    public ObservableCollection<string> LogGatewayOptions { get; } = new();
+    [ObservableProperty] private string selectedLogGatewayName = "All";
+
+    // Search (matches MAC/logId/line; works across all groups)
+    [ObservableProperty] private string upgradeLogSearchText = "";
+
+    public string UpgradeLogSummary =>
+        UpgradeLogTotalLines > 0
+            ? $"{UpgradeLogStatus} • {UpgradeLogReceivedLines}/{UpgradeLogTotalLines} lines"
+            : UpgradeLogStatus;
+
+    partial void OnUpgradeLogStatusChanged(string value) => OnPropertyChanged(nameof(UpgradeLogSummary));
+    partial void OnUpgradeLogTotalLinesChanged(int value) => OnPropertyChanged(nameof(UpgradeLogSummary));
+    partial void OnUpgradeLogReceivedLinesChanged(int value) => OnPropertyChanged(nameof(UpgradeLogSummary));
+
+    private readonly System.Text.StringBuilder _upgradeLogSb = new();
+    private bool _pendingUpgradeLogTextRefresh;
 
     private readonly System.Windows.Threading.DispatcherTimer _gatewayStaleTimer;
     private static readonly TimeSpan GatewayOfflineAfter = TimeSpan.FromMinutes(5);
@@ -165,6 +200,58 @@ public partial class MainViewModel : ObservableObject
         };
 
         _gatewayStaleTimer.Start();
+
+        UpgradeLogGroupsView = CollectionViewSource.GetDefaultView(UpgradeLogGroups);
+        UpgradeLogGroupsView.SortDescriptions.Clear();
+        UpgradeLogGroupsView.SortDescriptions.Add(new SortDescription(nameof(UpgradeLogGroup.LastTimeLocal), ListSortDirection.Descending));
+        UpgradeLogGroupsView.Filter = obj =>
+        {
+            if (obj is not UpgradeLogGroup g) return false;
+            // Gateway filter
+            if (!string.IsNullOrWhiteSpace(SelectedLogGatewayName)
+                && !SelectedLogGatewayName.Equals("All", StringComparison.OrdinalIgnoreCase)
+                && !g.Cassia.Equals(SelectedLogGatewayName, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            // Search filter (MAC/logId/line)
+            var q = (UpgradeLogSearchText ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(q)) return true;
+
+            return (g.Mac?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (g.LogId?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (g.LogIdMacPart?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
+                || g.Entries.Any(e =>
+                       (e.Mac?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || (e.Line?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false));
+        };
+
+        LogGatewayOptions.Clear();
+        LogGatewayOptions.Add("All");
+    }
+
+    partial void OnSelectedLogGatewayNameChanged(string value)
+    {
+        UpgradeLogGroupsView.Refresh();
+    }
+
+    partial void OnUpgradeLogSearchTextChanged(string value)
+    {
+        UpgradeLogGroupsView.Refresh();
+    }
+
+    partial void OnSelectedQueueItemChanged(QueueItem? value)
+    {
+        // Sync queue selection -> device selection
+        SelectedQueueMac = value?.Mac;
+
+        if (string.IsNullOrWhiteSpace(SelectedQueueMac))
+            return;
+
+        var dev = _devices.FirstOrDefault(d =>
+            string.Equals(d.Mac, SelectedQueueMac, StringComparison.OrdinalIgnoreCase));
+
+        if (dev != null)
+            SelectedDevice = dev;
     }
 
     partial void OnDeviceFilterChanged(string value)
@@ -497,6 +584,28 @@ public partial class MainViewModel : ObservableObject
         new(@"^accessapp/(?<net>[^/]+)/(?<kind>tele|cmd)/(?<cassia>[^/]+)/(?<leaf>[^/]+)$",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    // Upgrade-log / text-line parsing
+    private static readonly Regex LogLineMacRx =
+        new(@"\bmac=(?<mac>([0-9A-F]{2}:){5}[0-9A-F]{2})\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex LogLineStageRx =
+        new(@"\bstage=(?<stage>.*?)\s+time=", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex LogLineStatusRx =
+        new(@"\bstatus=(?<status>.*)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex LogLineFwRx =
+        new(@"\bfw=(?<fw>[^\s]+)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex SensorAppFromStatusRx =
+        new(@"Sensor:\s*App:\s*(?<app>[^\s|]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex LogLineIdRx =
+        new(@"\[logId=(?<id>[^\]]+)\]", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex LogLineTimeRx =
+        new(@"\btime=(?<time>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     private void OnMqttMessage(string topic, string payload)
     {
         var m = TopicRx.Match(topic);
@@ -531,12 +640,25 @@ public partial class MainViewModel : ObservableObject
                         CassiaGateways.Add(gw);
                     }
 
+                    // default for upgrade log tab
+                    if (SelectedLogGateway == null)
+                        SelectedLogGateway = gw;
+
+                    if (!LogGatewayOptions.Any(x => x.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                        LogGatewayOptions.Add(name);
+
                     gw.State = state;
                     gw.LastSeenUtc = ts;
                     gw.Queue = queue;
                 });
             }
             catch { }
+            return;
+        }
+
+        if (kind == "tele" && leaf == "upgrade-log")
+        {
+            HandleUpgradeLogTele(cassia, payload);
             return;
         }
 
@@ -640,6 +762,9 @@ public partial class MainViewModel : ObservableObject
                             CassiaGateways.Add(gw);
                         }
 
+                        if (!LogGatewayOptions.Any(x => x.Equals(cassia, StringComparison.OrdinalIgnoreCase)))
+                            LogGatewayOptions.Add(cassia);
+
                         gw.LastSeenUtc = ts;
                         gw.State = "online";
 
@@ -700,6 +825,360 @@ public partial class MainViewModel : ObservableObject
             catch { }
             return;
         }
+    }
+
+    private void HandleUpgradeLogTele(string cassia, string payload)
+    {
+        // Example messages seen in mqtt.log:
+        //  {"type":"saved-log-begin","totalLines":2340,"timeLocal":"2026-01-12 15:48:28"}
+        //  {"type":"saved-log-chunk","seq":0,"lines":["..."]}
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+
+            var type = root.TryGetProperty("type", out var t) ? (t.GetString() ?? "") : "";
+            type = type.Trim().ToLowerInvariant();
+
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                // Default the gateway picker (handy when you only have one cassia)
+                SelectedLogGateway ??= CassiaGateways.FirstOrDefault();
+
+                if (type == "saved-log-begin")
+                {
+                    UpgradeLogLines.Clear();
+                    _upgradeLogSb.Clear();
+
+                    UpgradeLogTotalLines = root.TryGetProperty("totalLines", out var tl) && tl.TryGetInt32(out var total) ? total : 0;
+                    UpgradeLogReceivedLines = 0;
+                    var timeLocal = root.TryGetProperty("timeLocal", out var tlc) ? (tlc.GetString() ?? "") : "";
+                    UpgradeLogStatus = string.IsNullOrWhiteSpace(timeLocal)
+                        ? $"Receiving log from {cassia}…"
+                        : $"Receiving log from {cassia}… (saved {timeLocal})";
+
+                    UpgradeLogText = "";
+                    return;
+                }
+
+                if (type == "saved-log-chunk")
+                {
+                    if (root.TryGetProperty("lines", out var linesEl) && linesEl.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var le in linesEl.EnumerateArray())
+                        {
+                            var line = le.GetString() ?? "";
+                            if (string.IsNullOrEmpty(line)) continue;
+                            UpgradeLogLines.Add(line);
+                            _upgradeLogSb.AppendLine(line);
+                            UpgradeLogReceivedLines++;
+
+                            // Grouped view + status mirror
+                            AddUpgradeLogEntryFromLine(cassia, line);
+
+                            // Use upgrade-log as a secondary status source (useful when progress isn't emitted)
+                            ApplyStatusFromUpgradeLogLine(cassia, line);
+                        }
+
+                        RequestUpgradeLogTextRefresh();
+                        UpgradeLogStatus = UpgradeLogTotalLines > 0
+                            ? $"Receiving… {UpgradeLogReceivedLines}/{UpgradeLogTotalLines} lines"
+                            : $"Receiving… {UpgradeLogReceivedLines} lines";
+                    }
+                    return;
+                }
+
+                // Some deployments publish a single JSON log entry (no "type"):
+                // {
+                //   "logId":"...", "mac":"..", "stage":"...", "status":"...", "fw":"...", "timeLocal":"...", "line":"[...]"
+                // }
+                if (string.IsNullOrWhiteSpace(type) && root.ValueKind == JsonValueKind.Object)
+                {
+                    if (TryAddUpgradeLogEntryFromJson(cassia, root, out var line2))
+                    {
+                        if (!string.IsNullOrWhiteSpace(line2))
+                        {
+                            UpgradeLogLines.Add(line2);
+                            _upgradeLogSb.AppendLine(line2);
+                            UpgradeLogReceivedLines++;
+                            ApplyStatusFromUpgradeLogLine(cassia, line2);
+                            RequestUpgradeLogTextRefresh();
+                        }
+                        UpgradeLogStatus = "upgrade-log";
+                        return;
+                    }
+                }
+
+                if (type == "saved-log-end")
+                {
+                    UpgradeLogStatus = UpgradeLogTotalLines > 0
+                        ? $"Done ({UpgradeLogReceivedLines}/{UpgradeLogTotalLines} lines)"
+                        : $"Done ({UpgradeLogReceivedLines} lines)";
+                    RequestUpgradeLogTextRefresh();
+                    return;
+                }
+
+                // fallback
+                UpgradeLogStatus = string.IsNullOrWhiteSpace(type) ? "upgrade-log" : type;
+            });
+        }
+        catch
+        {
+            // ignore malformed chunks
+        }
+    }
+
+    private void AddUpgradeLogEntryFromLine(string cassia, string line)
+    {
+        try
+        {
+            var idm = LogLineIdRx.Match(line);
+            if (!idm.Success) return;
+            var logId = idm.Groups["id"].Value.Trim();
+            if (string.IsNullOrWhiteSpace(logId)) return;
+
+            var macm = LogLineMacRx.Match(line);
+            var mac = macm.Success ? macm.Groups["mac"].Value.Trim() : "";
+
+            var stagem = LogLineStageRx.Match(line);
+            var stage = stagem.Success ? stagem.Groups["stage"].Value.Trim() : "";
+
+            var statusm = LogLineStatusRx.Match(line);
+            var status = statusm.Success ? statusm.Groups["status"].Value.Trim() : "";
+
+            var fwm = LogLineFwRx.Match(line);
+            var fw = fwm.Success ? fwm.Groups["fw"].Value.Trim() : "";
+
+            var timem = LogLineTimeRx.Match(line);
+            var timeLocal = ParseLocalTime(timem.Success ? timem.Groups["time"].Value : null);
+
+            var entry = new UpgradeLogEntry
+            {
+                Cassia = cassia,
+                LogId = logId,
+                Mac = mac,
+                Stage = stage,
+                Status = status,
+                Firmware = fw,
+                TimeLocal = timeLocal,
+                Line = line
+            };
+
+            AddUpgradeLogEntry(entry);
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+
+    private bool TryAddUpgradeLogEntryFromJson(string cassia, JsonElement root, out string line)
+    {
+        line = "";
+        try
+        {
+            var logId = root.TryGetProperty("logId", out var idEl) ? (idEl.GetString() ?? "") : "";
+            if (string.IsNullOrWhiteSpace(logId)) return false;
+
+            var mac = root.TryGetProperty("mac", out var macEl) ? (macEl.GetString() ?? "") : "";
+            var stage = root.TryGetProperty("stage", out var stEl) ? (stEl.GetString() ?? "") : "";
+            var status = root.TryGetProperty("status", out var sEl) ? (sEl.GetString() ?? "") : "";
+            var fw = root.TryGetProperty("fw", out var fwEl) ? (fwEl.GetString() ?? "") : "";
+            var timeStr = root.TryGetProperty("timeLocal", out var tlEl) ? (tlEl.GetString() ?? "") : "";
+            line = root.TryGetProperty("line", out var lEl) ? (lEl.GetString() ?? "") : "";
+
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                // Fallback recreate a readable line
+                line = $"[logId={logId}] stage={stage} time={timeStr} mac={mac} fw={fw} status={status}";
+            }
+
+            var entry = new UpgradeLogEntry
+            {
+                Cassia = cassia,
+                LogId = logId.Trim(),
+                Mac = mac.Trim(),
+                Stage = stage.Trim(),
+                Status = status.Trim(),
+                Firmware = fw.Trim(),
+                TimeLocal = ParseLocalTime(timeStr),
+                Line = line
+            };
+
+            AddUpgradeLogEntry(entry);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private void AddUpgradeLogEntry(UpgradeLogEntry entry)
+    {
+        // Find group
+        var g = UpgradeLogGroups.FirstOrDefault(x => x.LogId.Equals(entry.LogId, StringComparison.OrdinalIgnoreCase)
+                                                 && x.Cassia.Equals(entry.Cassia, StringComparison.OrdinalIgnoreCase));
+        if (g == null)
+        {
+            g = new UpgradeLogGroup
+            {
+                Cassia = entry.Cassia,
+                LogId = entry.LogId,
+                Mac = entry.Mac
+            };
+            UpgradeLogGroups.Add(g);
+        }
+
+        if (string.IsNullOrWhiteSpace(g.Mac) && !string.IsNullOrWhiteSpace(entry.Mac))
+            g.Mac = entry.Mac;
+
+        g.AddEntry(entry);
+        UpgradeLogGroupsView.Refresh();
+    }
+
+    private static DateTimeOffset ParseLocalTime(string? timeStr)
+    {
+        if (string.IsNullOrWhiteSpace(timeStr)) return DateTimeOffset.MinValue;
+
+        // Formats we see: "2026-01-12 16:23:45" (no tz)
+        if (DateTime.TryParse(timeStr, System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AssumeLocal, out var dt))
+        {
+            if (dt.Kind == DateTimeKind.Unspecified)
+                dt = DateTime.SpecifyKind(dt, DateTimeKind.Local);
+            return new DateTimeOffset(dt);
+        }
+
+        return DateTimeOffset.MinValue;
+    }
+
+    private void ApplyStatusFromUpgradeLogLine(string cassia, string line)
+    {
+        try
+        {
+            var mm = LogLineMacRx.Match(line);
+            if (!mm.Success) return;
+            var mac = mm.Groups["mac"].Value;
+            if (string.IsNullOrWhiteSpace(mac)) return;
+
+            var stage = "";
+            var sm = LogLineStageRx.Match(line);
+            if (sm.Success) stage = sm.Groups["stage"].Value.Trim();
+
+            var status = "";
+            var stm = LogLineStatusRx.Match(line);
+            if (stm.Success) status = stm.Groups["status"].Value.Trim();
+
+            // Update QueueItem
+            var qi = QueueItems.FirstOrDefault(q => q.Mac.Equals(mac, StringComparison.OrdinalIgnoreCase));
+            if (qi == null)
+            {
+                // Only auto-create if it looks like an upgrade-related line
+                if (string.IsNullOrWhiteSpace(stage)) return;
+                qi = new QueueItem
+                {
+                    Mac = mac,
+                    Cassia = cassia,
+                    Status = stage,
+                    Notes = status,
+                    LastUpdateUtc = DateTimeOffset.UtcNow
+                };
+                QueueItems.Add(qi);
+            }
+            else
+            {
+                qi.Cassia = string.IsNullOrWhiteSpace(qi.Cassia) ? cassia : qi.Cassia;
+                if (!string.IsNullOrWhiteSpace(stage)) qi.Status = stage;
+                if (!string.IsNullOrWhiteSpace(status)) qi.Notes = status;
+                qi.LastUpdateUtc = DateTimeOffset.UtcNow;
+            }
+
+            // Update DiscoveredDevice view
+            var dev = EnsureDeviceExistsForProgress(mac);
+            if (!string.IsNullOrWhiteSpace(stage)) dev.ProcessStatus = stage;
+            dev.ProcessCassia = string.IsNullOrWhiteSpace(dev.ProcessCassia) ? cassia : dev.ProcessCassia;
+            dev.ProcessLastUpdateUtc = DateTimeOffset.UtcNow;
+
+            // Try extract "Sensor: App: <X>" into CurrentFw for the device list
+            if (!string.IsNullOrWhiteSpace(status))
+            {
+                var appm = SensorAppFromStatusRx.Match(status);
+                if (appm.Success)
+                {
+                    var app = appm.Groups["app"].Value;
+                    if (!string.IsNullOrWhiteSpace(app)) dev.CurrentFw = app;
+                }
+            }
+
+            MirrorQueueToDevice(qi);
+            QueueView.Refresh();
+            RequestDevicesRefresh();
+        }
+        catch
+        {
+            // ignore per-line parse errors
+        }
+    }
+
+    private void RequestUpgradeLogTextRefresh()
+    {
+        if (_pendingUpgradeLogTextRefresh) return;
+        _pendingUpgradeLogTextRefresh = true;
+
+        Application.Current.Dispatcher.InvokeAsync(async () =>
+        {
+            await Task.Delay(150);
+            _pendingUpgradeLogTextRefresh = false;
+            UpgradeLogText = _upgradeLogSb.ToString();
+        });
+    }
+
+    [RelayCommand]
+    private async Task RequestUpgradeLogAsync()
+    {
+        if (!IsConnected)
+        {
+            ConnectionStatus = "Not connected";
+            return;
+        }
+
+        var cassia = !string.IsNullOrWhiteSpace(SelectedLogGatewayName) && !SelectedLogGatewayName.Equals("All", StringComparison.OrdinalIgnoreCase)
+            ? SelectedLogGatewayName
+            : (SelectedLogGateway?.Name ?? CassiaGateways.FirstOrDefault()?.Name ?? "");
+
+        if (string.IsNullOrWhiteSpace(cassia))
+        {
+            ConnectionStatus = "No Cassia gateway known yet";
+            return;
+        }
+
+        var topic = CommandTopicTemplate
+            .Replace("{networkId}", NetworkId)
+            .Replace("{cassia}", cassia)
+            .Replace("{command}", "send-upgrade-log");
+
+        UpgradeLogStatus = $"Requesting saved log from {cassia}…";
+        try
+        {
+            await _mqtt.PublishAsync(topic, "{}", retain: false);
+        }
+        catch (Exception ex)
+        {
+            UpgradeLogStatus = "Request failed: " + ex.Message;
+        }
+    }
+
+    [RelayCommand]
+    private void ClearUpgradeLog()
+    {
+        UpgradeLogLines.Clear();
+        UpgradeLogGroups.Clear();
+        _upgradeLogSb.Clear();
+        UpgradeLogText = "";
+        UpgradeLogStatus = "Idle";
+        UpgradeLogTotalLines = 0;
+        UpgradeLogReceivedLines = 0;
     }
 
     private bool _pendingDevicesRefresh;
