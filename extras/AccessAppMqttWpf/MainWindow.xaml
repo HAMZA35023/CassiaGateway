@@ -111,41 +111,24 @@
                                         Padding="10"
                                         Margin="0,0,0,8">
                                     <Grid>
+                                        <!-- FIX: 2 rows so badge sits in row 0 and text can use full width below -->
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
 
-                                        <StackPanel>
-                                            <TextBlock Text="{Binding Name}"
-                                                       FontWeight="SemiBold"
-                                                       FontSize="14"/>
+                                        <!-- Row 0: Name + badges -->
+                                        <TextBlock Grid.Row="0" Grid.Column="0"
+                                                   Text="{Binding Name}"
+                                                   FontWeight="SemiBold"
+                                                   FontSize="14"
+                                                   VerticalAlignment="Top"/>
 
-                                            <StackPanel Orientation="Vertical" Margin="0,6,0,0">
-
-                                                <!-- Line 1 -->
-                                                <StackPanel Orientation="Horizontal">
-                                                    <TextBlock Text="Last:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
-                                                    <TextBlock Text="{Binding LastSeenLocal}" FontSize="12" FontWeight="SemiBold" Margin="0,0,12,0"/>
-
-                                                    <TextBlock Text="Devices:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
-                                                    <TextBlock Text="{Binding DevicesSeen}" FontSize="12" FontWeight="SemiBold" Margin="0,0,12,0"/>
-
-                                                    <TextBlock Text="In Queue:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
-                                                    <TextBlock Text="{Binding Queue}" FontSize="12" FontWeight="SemiBold"/>
-                                                </StackPanel>
-
-                                                <!-- Line 2 -->
-                                                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                                                    <TextBlock Text="LastSeen:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
-                                                    <TextBlock Text="{Binding LastSeenUtc}" FontSize="12" FontWeight="SemiBold"/>
-                                                </StackPanel>
-
-                                            </StackPanel>
-                                        </StackPanel>
-
-                                        <!-- BADGE + RELOAD (same style, side-by-side) -->
-                                        <StackPanel Grid.Column="1"
+                                        <StackPanel Grid.Row="0" Grid.Column="1"
                                                     Orientation="Horizontal"
                                                     HorizontalAlignment="Right"
                                                     VerticalAlignment="Top">
@@ -160,6 +143,32 @@
                                                     Command="{Binding DataContext.RefreshFwManifestForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                     CommandParameter="{Binding Name}"/>
                                         </StackPanel>
+
+                                        <!-- Row 1: all details spans full width so no hidden text -->
+                                        <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
+                                                    Orientation="Vertical"
+                                                    Margin="0,6,0,0">
+
+                                            <!-- Line 1 -->
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="Last:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
+                                                <TextBlock Text="{Binding LastSeenLocal}" FontSize="12" FontWeight="SemiBold" Margin="0,0,12,0"/>
+
+                                                <TextBlock Text="Devices:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
+                                                <TextBlock Text="{Binding DevicesSeen}" FontSize="12" FontWeight="SemiBold" Margin="0,0,12,0"/>
+
+                                                <TextBlock Text="In Queue:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
+                                                <TextBlock Text="{Binding Queue}" FontSize="12" FontWeight="SemiBold"/>
+                                            </StackPanel>
+
+                                            <!-- Line 2 -->
+                                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                                <TextBlock Text="LastSeen:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
+                                                <TextBlock Text="{Binding LastSeenUtc}" FontSize="12" FontWeight="SemiBold"/>
+                                            </StackPanel>
+
+                                        </StackPanel>
+
                                     </Grid>
                                 </Border>
                             </DataTemplate>
@@ -347,7 +356,6 @@
                                     </StackPanel>
 
                                     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
-                                        <!-- This is the button you wanted moved -->
                                         <Button Style="{StaticResource PrimaryButton}"
                                                 Content="Queue selected"
                                                 Command="{Binding QueueSelectedCommand}"
@@ -394,7 +402,7 @@
                 </Border>
             </TabItem>
 
-            <!-- ===== Queue (kept, but now WITHOUT "Queue selected") ===== -->
+            <!-- ===== Queue ===== -->
             <TabItem Header="Queue">
                 <Border Style="{StaticResource Card}">
                     <DockPanel>
@@ -468,27 +476,20 @@
 
                             <!-- UPDATED: add (LogId dropdown) + keep existing gateway dropdown + request/clear buttons -->
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="18,0,0,0">
-
-                                <!-- Cassia filter (existing) -->
                                 <ComboBox Width="160"
                                           ItemsSource="{Binding LogGatewayOptions}"
                                           SelectedItem="{Binding SelectedLogGatewayName}"
                                           Margin="0,0,8,0"/>
 
-                                <!-- NEW: LogId filter (All or specific upgrade-log id) -->
                                 <ComboBox Width="260"
                                           ItemsSource="{Binding LogIdOptions}"
                                           SelectedItem="{Binding SelectedLogId}"
-                                          Margin="0,0,8,0"
-                                          Visibility="Collapsed"/>
+                                          Margin="0,0,8,0"/>
 
-                                <!-- Request logs (existing command) -->
                                 <Button Style="{StaticResource PrimaryButton}"
                                         Content="Request"
                                         Command="{Binding RequestUpgradeLogCommand}"
                                         Margin="0,0,8,0"/>
-
-                                <!-- Clear (existing command) -->
                                 <Button Style="{StaticResource GhostButton}"
                                         Content="Clear"
                                         Command="{Binding ClearUpgradeLogCommand}"/>

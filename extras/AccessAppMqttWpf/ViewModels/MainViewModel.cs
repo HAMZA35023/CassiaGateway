@@ -319,25 +319,15 @@ public partial class MainViewModel : ObservableObject
     private void LoadFirmwareOptions()
     {
         FirmwareOptionsP48.Clear();
-        foreach (var v in new[] { "v02.12", "v02.14", "v02.15", "v02.18", "v02.21", "v02.27", "v02.30", "v02.32", "v02.34" })
-            FirmwareOptionsP48.Add(v);
-
+      
         FirmwareOptionsP47.Clear();
-        foreach (var v in new[] { "v02.18", "v02.27" })
-            FirmwareOptionsP47.Add(v);
-
+      
         FirmwareOptionsP46.Clear();
-        foreach (var v in new[] { "v02.16", "v02.20", "v02.25", "v02.28", "v02.31", "v02.33", "v02.35" })
-            FirmwareOptionsP46.Add(v);
-
+        
         FirmwareOptionsP41.Clear();
-        foreach (var v in new[] { "v02.12", "v02.14", "v02.15", "v02.17", "v02.21", "v02.27", "v02.30", "v02.32", "v02.36" })
-            FirmwareOptionsP41.Add(v);
-
+        
         FirmwareOptionsP42.Clear();
-        foreach (var v in new[] { "v02.12", "v02.14", "v02.15", "v02.17", "v02.21", "v02.27", "v02.30", "v02.32", "v02.36" })
-            FirmwareOptionsP42.Add(v);
-
+      
         SelectedFirmwareP48 = FirmwareOptionsP48.LastOrDefault() ?? "";
         SelectedFirmwareP47 = FirmwareOptionsP47.LastOrDefault() ?? "";
         SelectedFirmwareP46 = FirmwareOptionsP46.LastOrDefault() ?? "";
