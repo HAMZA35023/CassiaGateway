@@ -1436,7 +1436,9 @@ namespace AccessAPP.Services
 
             lock (_upgradeQueueGate)
             {
-                if (_upgradeQueueWorkerRunning)
+                // If the previous worker task died/completed but the flag didn't get cleared due to a race,
+                // allow restart safely.
+                if (_upgradeQueueWorkerRunning && _upgradeQueueWorkerTask is { IsCompleted: false })
                     return Task.CompletedTask;
 
                 if (_upgradeQueue.IsEmpty)
@@ -1498,11 +1500,24 @@ namespace AccessAPP.Services
                             running.RemoveAt(i);
                     }
 
-                    // If nothing queued and nothing running -> stop the run
+                    // If nothing queued and nothing running -> stop the run,
+                    // BUT avoid a race where an enqueue happens right as we decide to stop.
+                    // We "linger" briefly waiting for a signal.
                     if (_upgradeQueue.IsEmpty && running.Count == 0)
                     {
+                        // If someone enqueued right now, they release _queueSignal.
+                        // Wait a tiny bit to catch it.
+                        bool gotLateSignal = await _queueSignal.WaitAsync(250).ConfigureAwait(false);
+
+                        if (gotLateSignal)
+                        {
+                            // New work arrived during shutdown window; continue loop and drain queue.
+                            continue;
+                        }
+
                         lock (_upgradeQueueGate)
                         {
+                            // Double-check again under the gate before stopping.
                             if (_upgradeQueue.IsEmpty)
                             {
                                 _upgradeQueueWorkerRunning = false;
@@ -1511,6 +1526,8 @@ namespace AccessAPP.Services
                             }
                         }
                     }
+
+
 
                     // Wait for either:
                     // - a running device completes (freeing capacity)
@@ -1635,28 +1652,36 @@ namespace AccessAPP.Services
 
                 int maxRetriesPerComponent = 5;
 
-                bool retriesLeft =
-                    (!dev.isActorUpgradeNeeded || dev.ActorSuccess || dev.RetryCountActor < 2 * maxRetriesPerComponent) &&
-                    (!dev.upgradeBootloader || dev.BootloaderSuccess || dev.RetryCountBootloader < maxRetriesPerComponent) &&
-                    (dev.SensorSuccess || dev.RetryCountSensor < maxRetriesPerComponent);
-
-                while (!dev.IsFullyUpgraded && retriesLeft)
+                bool CanRetryNow()
                 {
+                    // IMPORTANT: RetryCountActor/Sensor/Bootloader are incremented inside UpgradeDeviceAsync before each attempt.
+                    // So we only *check* here, we do NOT increment here (avoids double-counting and off-by-one behavior).
+                    bool actorOk =
+                        !dev.isActorUpgradeNeeded || dev.ActorSuccess || dev.RetryCountActor < 2 * maxRetriesPerComponent;
+
+                    bool bootOk =
+                        !dev.upgradeBootloader || dev.BootloaderSuccess || dev.RetryCountBootloader < maxRetriesPerComponent;
+
+                    bool sensorOk =
+                        dev.SensorSuccess || dev.RetryCountSensor < maxRetriesPerComponent;
+
+                    return actorOk && bootOk && sensorOk;
+                }
+
+                while (!dev.IsFullyUpgraded)
+                {
+                    if (!CanRetryNow())
+                    {
+                        Console.WriteLine(
+                            $"[RETRY STOP] {mac} - retries exhausted. " +
+                            $"actor:{dev.RetryCountActor} boot:{dev.RetryCountBootloader} sensor:{dev.RetryCountSensor}");
+                        UpgradeLogger.Log(logId, mac, "Retries exhausted.", "Failed");
+                        break;
+                    }
+
                     await Task.Delay(10_000).ConfigureAwait(false);
 
-                    if (dev.isActorUpgradeNeeded && !dev.ActorSuccess)
-                        dev.RetryCountActor++;
-
-                    if (dev.upgradeBootloader && !dev.BootloaderSuccess)
-                        dev.RetryCountBootloader++;
-
-                    if (!dev.SensorSuccess)
-                        dev.RetryCountSensor++;
-
-                    retriesLeft =
-                        (!dev.isActorUpgradeNeeded || dev.ActorSuccess || dev.RetryCountActor < 2 * maxRetriesPerComponent) &&
-                        (!dev.upgradeBootloader || dev.BootloaderSuccess || dev.RetryCountBootloader < maxRetriesPerComponent) &&
-                        (dev.SensorSuccess || dev.RetryCountSensor < maxRetriesPerComponent);
+                    dev.RetryCount++; // total retry rounds (for summary/reporting)
 
                     var resp = await UpgradeDeviceAsync(
                         dev, mac, dev.Pincode, dev.DetectotType, dev.FirmwareVersion,
@@ -1665,8 +1690,13 @@ namespace AccessAPP.Services
                         !dev.SensorSuccess,
                         logId
                     ).ConfigureAwait(false);
-                    Console.WriteLine($"[RETRY RESULT] {mac} - Success: {resp.Message} - StatusCode: {resp.StatusCode}");
+
+                    Console.WriteLine($"[RETRY RESULT] {mac} - {resp.StatusCode} - {resp.Message}");
+                    UpgradeLogger.Log(logId, mac, $"Retry result: {resp.StatusCode} - {resp.Message}", resp.Success ? "Success" : "Failed");
+                    // Optional: if UpgradeDeviceAsync returned a hard failure (bootloader/sensor returns early),
+                    // we still loop, but CanRetryNow() will stop immediately once counts are exceeded.
                 }
+
 
                 deviceSw.Stop();
                 addDeviceMs(deviceSw.ElapsedMilliseconds);
@@ -1703,6 +1733,8 @@ namespace AccessAPP.Services
                     Seconds = deviceSw.Elapsed.TotalSeconds,
                     Status = "OK"
                 });
+
+                UpgradeLogger.Log(logId, mac, "Device Upgrade Completed.", dev.IsFullyUpgraded ? "Success" : "Failed");
             }
             catch (Exception ex)
             {
