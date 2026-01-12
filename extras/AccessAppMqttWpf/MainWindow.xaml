@@ -38,6 +38,37 @@
             </DataTemplate.Triggers>
         </DataTemplate>
 
+        <!-- Refresh badge button (same style as ONLINE/OFFLINE badge) -->
+        <Style x:Key="CassiaBadgeButtonStyle" TargetType="Button">
+            <Setter Property="Padding" Value="8,2"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Background" Value="#777"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border CornerRadius="10"
+                                Background="{TemplateBinding Background}">
+                            <ContentPresenter Margin="{TemplateBinding Padding}"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding State}" Value="online">
+                    <Setter Property="Background" Value="#2ECC71"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding State}" Value="offline">
+                    <Setter Property="Background" Value="#E74C3C"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
         <Style x:Key="MetaLabel" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
             <Setter Property="FontSize" Value="12"/>
@@ -113,10 +144,22 @@
                                             </StackPanel>
                                         </StackPanel>
 
-                                        <ContentControl Grid.Column="1"
-                                                        Content="{Binding}"
-                                                        ContentTemplate="{StaticResource CassiaStateBadge}"
-                                                        VerticalAlignment="Top"/>
+                                        <!-- BADGE + RELOAD (same style, side-by-side) -->
+                                        <StackPanel Grid.Column="1"
+                                                    Orientation="Horizontal"
+                                                    HorizontalAlignment="Right"
+                                                    VerticalAlignment="Top">
+                                            <ContentControl Content="{Binding}"
+                                                            ContentTemplate="{StaticResource CassiaStateBadge}"
+                                                            VerticalAlignment="Top"/>
+
+                                            <Button Style="{StaticResource CassiaBadgeButtonStyle}"
+                                                    Content="↻"
+                                                    Margin="6,0,0,0"
+                                                    ToolTip="Refresh firmware manifest"
+                                                    Command="{Binding DataContext.RefreshFwManifestForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding Name}"/>
+                                        </StackPanel>
                                     </Grid>
                                 </Border>
                             </DataTemplate>
@@ -423,15 +466,29 @@
                                      Margin="8,0,0,0"
                                      VerticalAlignment="Center"/>
 
+                            <!-- UPDATED: add (LogId dropdown) + keep existing gateway dropdown + request/clear buttons -->
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="18,0,0,0">
+
+                                <!-- Cassia filter (existing) -->
                                 <ComboBox Width="160"
                                           ItemsSource="{Binding LogGatewayOptions}"
                                           SelectedItem="{Binding SelectedLogGatewayName}"
                                           Margin="0,0,8,0"/>
+
+                                <!-- NEW: LogId filter (All or specific upgrade-log id) -->
+                                <ComboBox Width="260"
+                                          ItemsSource="{Binding LogIdOptions}"
+                                          SelectedItem="{Binding SelectedLogId}"
+                                          Margin="0,0,8,0"
+                                          Visibility="Collapsed"/>
+
+                                <!-- Request logs (existing command) -->
                                 <Button Style="{StaticResource PrimaryButton}"
                                         Content="Request"
                                         Command="{Binding RequestUpgradeLogCommand}"
                                         Margin="0,0,8,0"/>
+
+                                <!-- Clear (existing command) -->
                                 <Button Style="{StaticResource GhostButton}"
                                         Content="Clear"
                                         Command="{Binding ClearUpgradeLogCommand}"/>

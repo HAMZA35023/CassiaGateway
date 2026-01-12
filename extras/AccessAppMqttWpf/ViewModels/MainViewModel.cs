@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using System;
 using System.Collections.ObjectModel;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using System.Text.Json;
@@ -12,6 +13,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Data;
+using System.Windows.Threading;
 
 namespace AccessAppMqttWpf.ViewModels;
 
@@ -19,6 +21,17 @@ public partial class MainViewModel : ObservableObject
 {
     private readonly MqttClientService _mqtt = new();
     private readonly SettingsStore _store = new();
+
+    // ---- Firmware manifest (tele/.../fw-manifest) ----
+    private readonly DispatcherTimer _fwManifestValidateTimer = new() { Interval = TimeSpan.FromSeconds(1.5) };
+    private readonly DispatcherTimer _fwManifestTimeoutTimer = new() { Interval = TimeSpan.FromSeconds(6) };
+    private bool _fwManifestTimeoutArmed;
+    private string _lastFwManifestMissingHash = "";
+
+    // After each connect we wait for per-gateway status, then request its FW manifest once.
+    private readonly HashSet<string> _fwManifestRequestedForGw = new(StringComparer.OrdinalIgnoreCase);
+    private DateTimeOffset _connectedAtUtc = DateTimeOffset.MinValue;
+
 
     private readonly ObservableCollection<DiscoveredDevice> _devices = new();
     public ICollectionView FilteredDevices { get; }
@@ -45,11 +58,11 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string deviceFilter = "";
     [ObservableProperty] private string sensorFilter = "All";
 
-    [ObservableProperty] private string mqttHost = "192.168.0.10";
-    [ObservableProperty] private int mqttPort = 1883;
+    [ObservableProperty] private string mqttHost = "prod.statistics.niko-test.nu";
+    [ObservableProperty] private int mqttPort = 18883;
     [ObservableProperty] private string mqttTopic = "accessapp/#";
-    [ObservableProperty] private string mqttUser = "user";
-    [ObservableProperty] private string? mqttPassword = "password";
+    [ObservableProperty] private string mqttUser = "accessapp";
+    [ObservableProperty] private string? mqttPassword = "Niko1234!";
     [ObservableProperty] private bool useTls;
     [ObservableProperty] private bool ignoreTlsErrors = true;
 
@@ -138,9 +151,32 @@ public partial class MainViewModel : ObservableObject
                 ConnectionStatus = status;
                 OnPropertyChanged(nameof(ConnectButtonText));
             });
+
+            // We request FW manifests when we see each gateway's status (online)
+            if (connected)
+            {
+                _connectedAtUtc = DateTimeOffset.UtcNow;
+                _fwManifestRequestedForGw.Clear();
+            }
         };
 
         _mqtt.Message += OnMqttMessage;
+
+        _fwManifestValidateTimer.Tick += (_, _) =>
+        {
+            _fwManifestValidateTimer.Stop();
+            ValidateFwManifestsAndUpdateOptions();
+        };
+
+        _fwManifestTimeoutTimer.Tick += (_, _) =>
+        {
+            _fwManifestTimeoutTimer.Stop();
+            if (_fwManifestTimeoutArmed)
+            {
+                _fwManifestTimeoutArmed = false;
+                ShowFwManifestTimeoutIfAny();
+            }
+        };
 
         LoadProductMap();
         LoadFirmwareOptions();
@@ -650,6 +686,9 @@ public partial class MainViewModel : ObservableObject
                     gw.State = state;
                     gw.LastSeenUtc = ts;
                     gw.Queue = queue;
+
+                    // When a gateway announces itself, ask it for FW manifest once per connect.
+                    MaybeAutoRequestFirmwareManifestAfterStatus(gw);
                 });
             }
             catch { }
@@ -661,6 +700,13 @@ public partial class MainViewModel : ObservableObject
             HandleUpgradeLogTele(cassia, payload);
             return;
         }
+
+        if (kind == "tele" && leaf == "fw-manifest")
+        {
+            HandleFwManifestTele(cassia, payload);
+            return;
+        }
+
 
         if (kind == "tele" && leaf == "progress")
         {
@@ -1202,4 +1248,224 @@ public partial class MainViewModel : ObservableObject
                 SelectedDevice = _devices.FirstOrDefault(d => d.Mac.Equals(selectedMac, StringComparison.OrdinalIgnoreCase));
         });
     }
+
+    private void MaybeAutoRequestFirmwareManifestAfterStatus(CassiaGateway gw)
+    {
+        if (!IsConnected) return;
+        if (!string.Equals(gw.StateLower, "online", StringComparison.OrdinalIgnoreCase)) return;
+
+        // Only do this once per connection per gateway.
+        if (_fwManifestRequestedForGw.Contains(gw.Name)) return;
+
+        // If we already have a manifest received after this connect, don't re-request automatically.
+        var needs = !gw.HasFwManifest || gw.FwManifestLastSeenUtc < _connectedAtUtc;
+        if (!needs) return;
+
+        _fwManifestRequestedForGw.Add(gw.Name);
+        _ = RequestFirmwareManifestAsync(gw.Name, manual: false);
+    }
+
+    [RelayCommand]
+    private async Task RefreshFwManifestForCassia(string cassiaName)
+    {
+        if (string.IsNullOrWhiteSpace(cassiaName)) return;
+        await RequestFirmwareManifestAsync(cassiaName, manual: true).ConfigureAwait(false);
+    }
+
+    private async Task RequestFirmwareManifestAsync(string? cassiaName, bool manual)
+    {
+        try
+        {
+            if (!IsConnected) return;
+
+            // Reset state for a fresh run
+            _fwManifestTimeoutArmed = true;
+            _fwManifestTimeoutTimer.Stop();
+            _fwManifestTimeoutTimer.Start();
+
+            // Ask target gateway (preferred), plus fall back to all aggregator (if present)
+            // Examples:
+            //   accessapp/{net}/cmd/cassia-01/get-fw-manifest : {}
+            //   accessapp/{net}/cmd/all/get-fw-manifest : {}
+
+            if (!string.IsNullOrWhiteSpace(cassiaName))
+            {
+                var perGwTopic = $"accessapp/{NetworkId}/cmd/{cassiaName}/get-fw-manifest";
+                await _mqtt.PublishJsonAsync(perGwTopic, new { }, retain: false, qos: 1).ConfigureAwait(false);
+            }
+
+            //var aggTopic = $"accessapp/{NetworkId}/cmd/all/get-fw-manifest";
+            //await _mqtt.PublishJsonAsync(aggTopic, new { }, retain: false, qos: 1).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Application.Current.Dispatcher.Invoke(() =>
+                MessageBox.Show($"Failed to request firmware manifest.\n\n{ex.Message}", "FW manifest", MessageBoxButton.OK, MessageBoxImage.Error));
+        }
+    }
+
+    private void HandleFwManifestTele(string cassia, string payload)
+    {
+        try
+        {
+            var resp = JsonSerializer.Deserialize<FirmwareManifestTele>(payload, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+            if (resp?.FirmwareManifest == null || resp.FirmwareManifest.Count == 0)
+                return;
+
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                var gw = CassiaGateways.FirstOrDefault(x => x.Name.Equals(cassia, StringComparison.OrdinalIgnoreCase));
+                if (gw == null)
+                {
+                    gw = new CassiaGateway { Name = cassia, NetworkId = NetworkId };
+                    CassiaGateways.Add(gw);
+                }
+
+                gw.FwManifestLastSeenUtc = DateTimeOffset.UtcNow;
+                gw.FirmwareManifest = new Dictionary<string, string[]>(resp.FirmwareManifest, StringComparer.OrdinalIgnoreCase);
+
+                // Debounced validate + update dropdowns
+                _fwManifestValidateTimer.Stop();
+                _fwManifestValidateTimer.Start();
+            });
+        }
+        catch
+        {
+            // ignore malformed payloads
+        }
+    }
+
+    private void ShowFwManifestTimeoutIfAny()
+    {
+        // If we have at least one manifest, don't show a timeout warning
+        var haveAny = CassiaGateways.Any(g => g.HasFwManifest);
+        if (haveAny) return;
+
+        MessageBox.Show(
+            "No firmware manifest received yet.\n\n" +
+            "Expected one or more retained/tele messages on:\n" +
+            $"  accessapp/{NetworkId}/tele/<cassia>/fw-manifest\n\n" +
+            "Make sure the Cassia gateways are online and publishing manifests.",
+            "FW manifest",
+            MessageBoxButton.OK,
+            MessageBoxImage.Warning);
+    }
+
+    private void ValidateFwManifestsAndUpdateOptions()
+    {
+        var union = GetUnionManifest();
+        if (union.Count == 0) return;
+
+        UpdateFirmwareOptionsFromUnion(union);
+
+        // Check per gateway for missing versions (relative to union)
+        var missingLines = new List<string>();
+
+        foreach (var gw in CassiaGateways.OrderBy(g => g.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            if (!gw.HasFwManifest) continue;
+
+            foreach (var kv in union)
+            {
+                var product = kv.Key;
+                var expected = kv.Value;
+
+                if (!gw.FirmwareManifest.TryGetValue(product, out var gotArr) || gotArr == null)
+                {
+                    missingLines.Add($"{gw.Name}: missing {product}: {string.Join(", ", expected)}");
+                    continue;
+                }
+
+                var got = new HashSet<string>(gotArr, StringComparer.OrdinalIgnoreCase);
+                var miss = expected.Where(v => !got.Contains(v)).ToList();
+                if (miss.Count > 0)
+                    missingLines.Add($"{gw.Name}: missing {product}: {string.Join(", ", miss)}");
+            }
+        }
+
+        if (missingLines.Count == 0) return;
+
+        var hash = string.Join("|", missingLines);
+        if (hash.Equals(_lastFwManifestMissingHash, StringComparison.Ordinal))
+            return;
+
+        _lastFwManifestMissingHash = hash;
+
+        MessageBox.Show(
+            "Some Cassia gateways do not contain all firmwares (compared to the union of received manifests):\n\n" +
+            string.Join("\n", missingLines),
+            "FW manifest mismatch",
+            MessageBoxButton.OK,
+            MessageBoxImage.Error);
+    }
+
+    private Dictionary<string, List<string>> GetUnionManifest()
+    {
+        var union = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var gw in CassiaGateways)
+        {
+            if (!gw.HasFwManifest) continue;
+
+            foreach (var kv in gw.FirmwareManifest)
+            {
+                if (!union.TryGetValue(kv.Key, out var set))
+                {
+                    set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    union[kv.Key] = set;
+                }
+
+                foreach (var v in kv.Value ?? Array.Empty<string>())
+                    if (!string.IsNullOrWhiteSpace(v))
+                        set.Add(v.Trim());
+            }
+        }
+
+        // Convert to sorted lists
+        var result = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var kv in union)
+            result[kv.Key] = kv.Value.OrderBy(ParseFwVersionSafe).ThenBy(s => s, StringComparer.OrdinalIgnoreCase).ToList();
+
+        return result;
+    }
+
+    private static Version ParseFwVersionSafe(string s)
+    {
+        // expects v02.36 etc
+        if (string.IsNullOrWhiteSpace(s)) return new Version(0, 0);
+        var m = Regex.Match(s.Trim(), @"^v?(\d+)\.(\d+)$", RegexOptions.IgnoreCase);
+        if (m.Success && int.TryParse(m.Groups[1].Value, out var maj) && int.TryParse(m.Groups[2].Value, out var min))
+            return new Version(maj, min);
+
+        return new Version(0, 0);
+    }
+
+    private void UpdateFirmwareOptionsFromUnion(Dictionary<string, List<string>> union)
+    {
+        void apply(ObservableCollection<string> target, string key)
+        {
+            if (!union.TryGetValue(key, out var list) || list.Count == 0) return;
+
+            target.Clear();
+            foreach (var v in list)
+                target.Add(v);
+        }
+
+        apply(FirmwareOptionsP48, "P48");
+        apply(FirmwareOptionsP47, "P47");
+        apply(FirmwareOptionsP46, "P46");
+        apply(FirmwareOptionsP41, "P41");
+        apply(FirmwareOptionsP42, "P42");
+
+        // Always auto-select the latest FW (last = highest after sorting)
+        SelectedFirmwareP48 = FirmwareOptionsP48.LastOrDefault() ?? "";
+        SelectedFirmwareP47 = FirmwareOptionsP47.LastOrDefault() ?? "";
+        SelectedFirmwareP46 = FirmwareOptionsP46.LastOrDefault() ?? "";
+        SelectedFirmwareP41 = FirmwareOptionsP41.LastOrDefault() ?? "";
+        SelectedFirmwareP42 = FirmwareOptionsP42.LastOrDefault() ?? "";
+    }
+
 }

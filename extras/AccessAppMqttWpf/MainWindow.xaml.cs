@@ -209,4 +209,14 @@ public partial class MainWindow : Window
             return 5;
         }
     }
+
+    private void ClearUpgradeLogCommand(object sender, RoutedEventArgs e)
+    {
+
+    }
+
+    private void ClearLog_Click(object sender, RoutedEventArgs e)
+    {
+        ClearUpgradeLogCommand(sender, e);
+    }
 }

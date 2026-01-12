@@ -35,11 +35,11 @@ public sealed class AppSettings
 
 public sealed class MqttSettings
 {
-    public string host { get; set; } = "192.168.0.10";
-    public int port { get; set; } = 1883;
+    public string host { get; set; } = "prod.statistics.niko-test.nu";
+    public int port { get; set; } = 18883;
     public string topic { get; set; } = "accessapp/#";
-    public string username { get; set; } = "user";
-    public string password { get; set; } = "password";
+    public string username { get; set; } = "accessapp";
+    public string password { get; set; } = "Niko1234!";
     public bool useTls { get; set; } = false;
     public bool ignoreTlsErrors { get; set; } = true;
 }
