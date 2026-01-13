@@ -2801,6 +2801,8 @@ namespace AccessAPP.Services
             );
 
             _deviceStorageService.UpdateFirmwareProgress(macContext, progress);
+            totalSpeed = Math.Round(globalTotalRatePerMin, 2);
+
         }
 
 
