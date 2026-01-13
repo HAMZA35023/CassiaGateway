@@ -656,7 +656,7 @@ public partial class MainViewModel : ObservableObject
                 var state = root.TryGetProperty("state", out var s) ? s.GetString() ?? "unknown" : "unknown";
                 var ts = root.TryGetProperty("time", out var t) && t.TryGetDateTimeOffset(out var dto) ? dto : DateTimeOffset.UtcNow;
                 int queue = root.TryGetProperty("queue", out var q) ? q.GetInt32() : 0;
-
+                double totalSpeedpct = root.TryGetProperty("totalSpeedpct", out var sp) ? sp.GetDouble() : 0;
                 Application.Current.Dispatcher.Invoke(() =>
                 {
                     var gw = CassiaGateways.FirstOrDefault(x => x.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
@@ -676,6 +676,8 @@ public partial class MainViewModel : ObservableObject
                     gw.State = state;
                     gw.LastSeenUtc = ts;
                     gw.Queue = queue;
+                    gw.TotalSpeedpct = totalSpeedpct;
+
 
                     // When a gateway announces itself, ask it for FW manifest once per connect.
                     MaybeAutoRequestFirmwareManifestAfterStatus(gw);

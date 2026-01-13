@@ -12,6 +12,7 @@ public partial class CassiaGateway : ObservableObject
     [ObservableProperty] private DateTimeOffset lastSeenUtc = DateTimeOffset.MinValue;
     [ObservableProperty] private int devicesSeen = 0;
     [ObservableProperty] private int queue = 0;
+    [ObservableProperty] private double totalSpeedpct = 1;
 
     // Firmware manifest (tele/.../fw-manifest)
     [ObservableProperty] private DateTimeOffset fwManifestLastSeenUtc = DateTimeOffset.MinValue;
