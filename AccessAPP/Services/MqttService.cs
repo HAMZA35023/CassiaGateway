@@ -244,7 +244,9 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                     NetworkId = CurrentOptions.NetworkId,
                     Time = DateTimeOffset.UtcNow,
                     State = "online",
-                    queue = CassiaFirmwareUpgradeService.inQueue
+                    queue = CassiaFirmwareUpgradeService.inQueue,
+                    totalSpeedpct = CassiaFirmwareUpgradeService.totalSpeed
+
                 };
                 await PublishJsonAsync(TeleTopic("status"), online, retain: false, ct).ConfigureAwait(false);
                 Log("Published retained online status");
@@ -263,7 +265,8 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                             NetworkId = CurrentOptions.NetworkId,
                             Time = now,
                             State = "online",
-                            queue = CassiaFirmwareUpgradeService.inQueue
+                            queue = CassiaFirmwareUpgradeService.inQueue,
+                            totalSpeedpct = CassiaFirmwareUpgradeService.totalSpeed
                         };
 
                         await PublishJsonAsync(TeleTopic("status"), heartbeat, retain: false, ct)

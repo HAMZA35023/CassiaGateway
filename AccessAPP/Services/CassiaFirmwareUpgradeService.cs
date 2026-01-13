@@ -33,6 +33,8 @@ namespace AccessAPP.Services
             }
         }
 
+        public static double totalSpeed { get; set; } = 0;
+
         const bool _DEBUG = false;
         const bool _VERBOSE = true;
 
@@ -2767,6 +2769,7 @@ namespace AccessAPP.Services
                 );
 
                 _deviceStorageService.UpdateFirmwareProgress(macContext, 100.0);
+                totalSpeed = Math.Round(globalTotalAfterPurge, 2);
                 return;
             }
 

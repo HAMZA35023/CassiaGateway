@@ -94,4 +94,6 @@ public sealed class StatusMessage
     public string State { get; set; } = "online"; // online/offline/etc.
     public string? Version { get; set; }
     public int queue { get; set; }
-}
+
+    public double totalSpeedpct { get; set; }
+    }
