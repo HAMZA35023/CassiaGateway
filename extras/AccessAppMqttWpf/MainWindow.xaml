@@ -314,12 +314,16 @@
                     <DockPanel>
 
                         <!-- TOP controls -->
-                        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10">
+                        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+    <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+
                             <TextBlock Text="Devices" FontSize="18" FontWeight="SemiBold"/>
                             <TextBlock Text="  "/>
                             <TextBlock Text="{Binding DevicesSubtitle}" Foreground="{StaticResource MutedBrush}"/>
 
-                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                </StackPanel>
+    <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" HorizontalAlignment="Right">
+
                                 <TextBox Width="280" Text="{Binding DeviceFilter}" Margin="18,0,10,0"/>
                                 <ComboBox Width="120" ItemsSource="{Binding SensorFilterOptions}" SelectedItem="{Binding SensorFilter}"/>
                                 <CheckBox x:Name="EnableDoubleClickQueueCheckBox"
@@ -347,15 +351,17 @@
                                         Margin="10,0,0,0"
                                         ToolTip="Re-balance sticky Cassia assignments (will not change again until you press this)."
                                         Command="{Binding ReassignDevicesCommand}"/>
-                            </StackPanel>
-                        </StackPanel>
+                            
+                        
 
-                        <Grid>
+                            </StackPanel>
+</DockPanel>
+
+<Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="*"/>
-                                <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="5"/>
-                                <RowDefinition Height="220"/>
+                                <RowDefinition Height="*"/>
                             </Grid.RowDefinitions>
 
                             <!-- Discovered devices -->
@@ -470,51 +476,29 @@
                             </DataGrid>
 
                             <!-- ===== MOVED FROM QUEUE TAB TO HERE ===== -->
-                            <Border Grid.Row="1"
-                                    Background="{StaticResource CardBrush}"
-                                    BorderBrush="{StaticResource BorderBrush}"
-                                    BorderThickness="1"
-                                    CornerRadius="10"
-                                    Padding="10"
-                                    Margin="0,12,0,8">
-                                <DockPanel>
-                                    <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
-                                        <TextBlock Text="Queue actions" FontWeight="SemiBold"/>
-                                        <TextBlock Text="  " />
-                                        <TextBlock Text="(operate on selected devices above)" Foreground="{StaticResource MutedBrush}"/>
-                                    </StackPanel>
-
-                                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
-                                        <Button Style="{StaticResource PrimaryButton}"
-                                                Content="Queue selected"
-                                                Command="{Binding QueueSelectedCommand}"
-                                                Margin="0,0,8,0"/>
-                                        <Button Style="{StaticResource GhostButton}"
-                                                Content="Clear queue"
-                                                Command="{Binding ClearQueueCommand}"
-                                                Margin="0,0,8,0"/>
-                                        <Button Style="{StaticResource GhostButton}"
-                                                Content="Default sort"
-                                                Padding="12,6"
-                                                Click="QueueDefaultSort_Click"/>
-                                    </StackPanel>
-                                </DockPanel>
-                            </Border>
-
-                            <!-- Queue list below discovered devices -->
-                            <GridSplitter Grid.Row="2"
+<!-- Queue list below discovered devices -->
+                            <GridSplitter Grid.Row="1"
                                           Height="5"
                                           HorizontalAlignment="Stretch"
                                           VerticalAlignment="Stretch"
                                           Background="{StaticResource BorderBrush}"
                                           ShowsPreview="True"/>
 
-                            <DockPanel Grid.Row="3">
+                            <DockPanel Grid.Row="2">
                                 <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
                                     <TextBlock Text="Queued devices" FontWeight="SemiBold"/>
                                     <TextBlock Text="  " />
                                     <TextBlock Text="(same data as Queue tab)" Foreground="{StaticResource MutedBrush}"/>
                                 </StackPanel>
+
+                                <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                                    <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                                        <Button Style="{StaticResource GhostButton}" Content="Queue selected" Padding="12,6" Margin="0,0,8,0" Command="{Binding QueueSelectedCommand}"/>
+                                        <Button Style="{StaticResource GhostButton}" Content="Clear queue" Padding="12,6" Margin="0,0,8,0" Command="{Binding ClearQueueCommand}"/>
+                                        <Button Style="{StaticResource GhostButton}" Content="Default sort" Padding="12,6" Click="QueueDefaultSort_Click"/>
+                                    </StackPanel>
+                                </DockPanel>
+
 
                                 <DataGrid x:Name="QueueGridInline"
                                           ItemsSource="{Binding QueueView}"

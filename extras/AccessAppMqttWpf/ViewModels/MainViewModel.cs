@@ -1392,42 +1392,12 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
                         if (qi.Progress >= 100)
                             qi.Status = "Done";
 
-                        // Mirror into discovered list (no full refresh spam)
+                        // Mirror into discovered list + cache (keeps row coloring stable)
+                        MirrorQueueToDevice(qi);
+
                         var dev2 = _devices.FirstOrDefault(d => d.Mac.Equals(mac, StringComparison.OrdinalIgnoreCase));
-                        if (dev2 == null)
-                        {
-                            // Cache only (do not add to discovered list)
-                            var cs = GetOrCreateCache(mac);
-                            cs.ProcessStatus = qi.Status ?? "";
-                            cs.ProcessProgress = qi.Progress;
-                            cs.ProcessCassia = qi.Cassia ?? cassia;
-                            cs.ProcessFirmware = qi.FirmwareVersion ?? "";
-                            cs.LastUpdateUtc = qi.LastUpdateUtc;
-                        }
-                        else
-                        {
-                            // Keep device list and cache in sync.
-                            var status = qi.Status ?? "";
-                            var cassiaName = qi.Cassia ?? cassia;
-                            var fw = qi.FirmwareVersion ?? "";
-
-                            dev2.ProcessStatus = status;
-                            dev2.ProcessProgress = qi.Progress;
-                            dev2.ProcessCassia = cassiaName;
-                            dev2.ProcessFirmware = fw;
-                            dev2.ProcessLastUpdateUtc = qi.LastUpdateUtc;
-
-                            var cs2 = GetOrCreateCache(dev2.Mac);
-                            cs2.ProcessStatus = status;
-                            cs2.ProcessProgress = qi.Progress;
-                            cs2.ProcessCassia = cassiaName;
-                            cs2.ProcessFirmware = fw;
-                            cs2.LastUpdateUtc = qi.LastUpdateUtc;
-                        }
 
                         var doneExpired = qi.Progress >= 100 && (DateTimeOffset.UtcNow - qi.LastUpdateUtc) > TimeSpan.FromMinutes(1);
-                        if (dev2 != null)
-                            dev2.IsInQueue = !qi.IsDone && !doneExpired;
 
 
                         QueueView.Refresh();

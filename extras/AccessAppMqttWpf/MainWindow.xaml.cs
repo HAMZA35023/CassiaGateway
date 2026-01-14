@@ -8,6 +8,7 @@ using System.Linq;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Threading;
 using System.Windows.Data;
 using System.Windows.Input;
 
@@ -24,6 +25,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        Loaded += MainWindow_Loaded;
         DataContext = new MainViewModel();
 
         Loaded += (_, _) => ApplyQueueDefaultSort();
@@ -272,4 +274,25 @@ public partial class MainWindow : Window
         _upgradeLogExpandedState[key] = false;
     }
 
+
+    private void MainWindow_Loaded(object sender, RoutedEventArgs e)
+    {
+        // Auto-connect shortly after startup (lets UI render first)
+        var t = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        t.Tick += (_, __) =>
+        {
+            t.Stop();
+            if (DataContext is not MainViewModel vm) return;
+            if (vm.IsConnected) return;
+
+            try
+            {
+                // CommunityToolkit generates ToggleConnectCommand from ToggleConnectAsync()
+                if (vm.ToggleConnectCommand is ICommand cmd && cmd.CanExecute(null))
+                    cmd.Execute(null);
+            }
+            catch { }
+        };
+        t.Start();
+    }
 }
