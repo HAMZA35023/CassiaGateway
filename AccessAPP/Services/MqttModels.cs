@@ -92,8 +92,9 @@ public sealed class StatusMessage
     public DateTimeOffset Time { get; set; } = DateTimeOffset.UtcNow;
 
     public string State { get; set; } = "online"; // online/offline/etc.
-    public string? Version { get; set; }
+    public string? Version { get; set; } = AccessAPP.Version.AppVersion;
     public int queue { get; set; }
+    public int programming { get; set; }
 
     public double totalSpeedpct { get; set; }
     }

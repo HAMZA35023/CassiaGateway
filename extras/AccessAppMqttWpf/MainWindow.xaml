@@ -174,14 +174,7 @@
                                                 <Run Text="{Binding DevicesSeen}" FontWeight="SemiBold" Foreground="Black"/>
                                                 <Run Text="   "/>
 
-                                                <Run Text="Queue" Foreground="{StaticResource MutedBrush}"/>
-                                                <Run Text=" "/>
-                                                <Run Text="{Binding Queue}" FontWeight="SemiBold" Foreground="Black"/>
-                                                <Run Text="   "/>
 
-                                                <Run Text="Programming" Foreground="{StaticResource MutedBrush}"/>
-                                                <Run Text=" "/>
-                                                <Run Text="{Binding Programming}" FontWeight="SemiBold" Foreground="Black"/>
                                             </TextBlock>
 
                                             <!-- Line 2 -->
@@ -191,6 +184,16 @@
                                                 <Run Text="{Binding TotalSpeedpct}" FontWeight="SemiBold" Foreground="Black"/>
                                                 <Run Text=" "/>
                                                 <Run Text="% / min" Foreground="{StaticResource MutedBrush}"/>
+                                                
+                                                <Run Text="  |  Queue" Foreground="{StaticResource MutedBrush}"/>
+                                                <Run Text=" "/>
+                                                <Run Text="{Binding Queue}" FontWeight="SemiBold" Foreground="Black"/>
+                                                <Run Text="   "/>
+
+                                                <Run Text="Programming" Foreground="{StaticResource MutedBrush}"/>
+                                                <Run Text=" "/>
+                                                <Run Text="{Binding Programming}" FontWeight="SemiBold" Foreground="Black"/>
+                                                
                                             </TextBlock>
 
                                             <!-- Line 3: Sticky assignment counts -->

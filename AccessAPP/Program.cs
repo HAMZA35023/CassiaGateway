@@ -1,5 +1,7 @@
 ﻿using AccessAPP.Services;
 
+const string VERSION = "0.2.0";
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.

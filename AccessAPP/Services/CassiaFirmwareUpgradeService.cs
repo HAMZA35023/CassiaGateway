@@ -38,7 +38,7 @@ namespace AccessAPP.Services
         const bool _DEBUG = false;
         const bool _VERBOSE = true;
 
-        const int GlobalnumberOfParallelThreads = 3; // Optimal setting with current Cassia Gateway HW (21:43 Min for 3 P48 with actor and sensor firmware update)
+        public static int GlobalnumberOfParallelThreads = 3; // runtime adjustable via MQTT (resets on restart) // Optimal setting with current Cassia Gateway HW (21:43 Min for 3 P48 with actor and sensor firmware update)
         
         //TODO: Be moved to app-settings
         //Only for P47+P48
@@ -90,6 +90,51 @@ namespace AccessAPP.Services
         private readonly CassiaNotificationService _notificationService; // ✅ Injected singleton
 
         private static CassiaFirmwareUpgradeService _ownInstance = null;
+
+// Tracks currently programming devices and their target firmware (for MQTT programming list)
+private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string DetectorType, string FirmwareVersion)> _programmingTargets
+    = new(StringComparer.OrdinalIgnoreCase);
+
+public static int GetParallelProgrammers()
+    => Volatile.Read(ref GlobalnumberOfParallelThreads);
+
+public static int SetParallelProgrammers(int value)
+{
+    // Only lives until restart (not persisted). Guard against silly values.
+    var v = Math.Clamp(value, 1, 32);
+    Volatile.Write(ref GlobalnumberOfParallelThreads, v);
+    return v;
+}
+
+public static IReadOnlyList<(string Mac, string DetectorType, string FirmwareVersion)> GetQueueListSnapshot()
+{
+    var inst = _ownInstance;
+    if (inst is null) return Array.Empty<(string, string, string)>();
+
+    var arr = inst._upgradeQueue.ToArray();
+    return arr
+        .Where(d => d is not null && !string.IsNullOrWhiteSpace(d.MacAddress))
+        .Select(d => (NormalizeMac(d.MacAddress), d.DetectotType ?? "", d.FirmwareVersion ?? ""))
+        .ToList();
+}
+
+public static IReadOnlyList<(string Mac, string DetectorType, string FirmwareVersion)> GetProgrammingListSnapshot()
+{
+    var inst = _ownInstance;
+    if (inst is null) return Array.Empty<(string, string, string)>();
+
+    return inst._programmingTargets
+        .Select(kvp => (NormalizeMac(kvp.Key), kvp.Value.DetectorType ?? "", kvp.Value.FirmwareVersion ?? ""))
+        .OrderBy(x => x.Item1, StringComparer.OrdinalIgnoreCase)
+        .ToList();
+}
+
+public static int GetProgrammingCount()
+{
+    var inst = _ownInstance;
+    return inst is null ? 0 : inst._programmingTargets.Count;
+}
+
 
 
         private static readonly ConcurrentDictionary<string, object> _macLocks = new();
@@ -1614,14 +1659,27 @@ namespace AccessAPP.Services
 
                     // Wait for either:
                     // - a running device completes (freeing capacity)
-                    // - a new device is enqueued (signal), so we can start it immediately if capacity exists
-                    Task? completion = running.Count > 0 ? Task.WhenAny(running) : null;
-                    Task signal = _queueSignal.WaitAsync();
-
-                    if (completion != null)
+                    // - a new device is enqueued (signal)
+                    //
+                    // IMPORTANT:
+                    // We must never block on the signal if the queue already contains items,
+                    // because the signal tokens can be consumed earlier while we were at capacity.
+                    // In that case, relying on the signal would stall the worker even though work is queued.
+                    if (running.Count > 0)
+                    {
+                        Task completion = Task.WhenAny(running);
+                        Task signal = _queueSignal.WaitAsync();
                         await Task.WhenAny(completion, signal).ConfigureAwait(false);
+                    }
                     else
-                        await signal.ConfigureAwait(false);
+                    {
+                        // No running tasks. If we already have queued work, loop immediately and start it.
+                        if (!_upgradeQueue.IsEmpty)
+                            continue;
+
+                        // Otherwise wait until something is enqueued.
+                        await _queueSignal.WaitAsync().ConfigureAwait(false);
+                    }
                 }
             }
             catch (Exception ex)
@@ -1698,7 +1756,10 @@ namespace AccessAPP.Services
 
             Interlocked.Increment(ref UpgradeDevicesInProgress);
 
-            try
+            
+// Track programming list for MQTT (mac + target fw)
+_programmingTargets[mac] = (dev.DetectotType ?? "", dev.FirmwareVersion ?? "");
+try
             {
                 if (_VERBOSE)
                 {
@@ -1864,7 +1925,9 @@ namespace AccessAPP.Services
             {
                 _macsInProgress.TryRemove(mac, out _);
 
-                Interlocked.Decrement(ref UpgradeDevicesInProgress);
+                
+_programmingTargets.TryRemove(mac, out _);
+Interlocked.Decrement(ref UpgradeDevicesInProgress);
             }
         }
 

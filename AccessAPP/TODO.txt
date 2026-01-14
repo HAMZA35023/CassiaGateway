@@ -1,10 +1,10 @@
 AccessApp Cassia backend:
 
 MAJOR:
--> Implement mqtt function to get queuelist with mac and fw version
--> Implement mqtt function to get programminglist with mac and fw version
+-> Implement function to get queuelist with mac and fw version
+-> Implement function to get programminglist with mac and fw version
 -> Implement mqtt status message to include current programming count as we did what is in queue
--> Implement mqtt cmd to set / get number of parrallel programmers - should only live until restart of the app
+-> Implement mqtt cmd to set / get number of parrallel programmers
 
 
 MINOR:

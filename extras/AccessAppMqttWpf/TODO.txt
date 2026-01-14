@@ -1,3 +1,154 @@
 MAJOR:
 
 -> Queued color should override the green success color
+-> Implement function to set number of parallel programmers on a single cassis or all cassias (also show what it is set to)
+-> Implement functino to get active queue and programming devices on connect - then the client can always connect halfway throug and have all the informations
+-> After the cassia name, show the version received from the status message.
+
+
+AccessAPP – New MQTT Features Documentation
+===========================================
+
+This document describes the newly added MQTT commands and telemetry
+introduced to extend queue visibility, programming status, and runtime
+control of parallel programmers.
+
+All features are backward-compatible and do NOT change any persisted
+configuration.
+
+------------------------------------------------------------
+1. Get Queue List (MAC + Firmware Version)
+------------------------------------------------------------
+
+Command Topic:
+  accessapp/{networkId}/cmd/{cassiaName}/get-queue-list
+
+Description:
+  Requests the current firmware upgrade queue from the Cassia instance.
+
+Telemetry Response Topic:
+  accessapp/{networkId}/tele/{cassiaName}/queue-list
+
+Response Payload:
+{
+  "success": true,
+  "message": "Queue list retrieved successfully.",
+  "count": <number of queued devices>,
+  "queueList": [
+    {
+      "mac": "10:B9:F7:11:08:3B",
+      "detectorType": "P46",
+      "firmwareVersion": "v02.35"
+    }
+  ]
+}
+
+------------------------------------------------------------
+2. Get Programming List (MAC + Firmware Version)
+------------------------------------------------------------
+
+Command Topic:
+  accessapp/{networkId}/cmd/{cassiaName}/get-programming-list
+
+Description:
+  Requests the list of devices that are currently being programmed
+  (actively upgrading firmware).
+
+Telemetry Response Topic:
+  accessapp/{networkId}/tele/{cassiaName}/programming-list
+
+Response Payload:
+{
+  "success": true,
+  "message": "Programming list retrieved successfully.",
+  "count": <number of active programmers>,
+  "programmingList": [
+    {
+      "mac": "10:B9:F7:10:39:F7",
+      "detectorType": "P48",
+      "firmwareVersion": "v02.32"
+    }
+  ]
+}
+
+------------------------------------------------------------
+3. Status Message Enhancement – Programming Count
+------------------------------------------------------------
+
+Status Topic:
+  accessapp/{networkId}/tele/{cassiaName}/status
+
+Enhancement:
+  The status payload now includes the current number of active
+  programming operations.
+
+Additional Field:
+  "programming": <current programming count>
+
+This mirrors how the queue count is already reported and allows
+dashboards to show real-time programming load per Cassia.
+
+------------------------------------------------------------
+4. Runtime Control of Parallel Programmers
+------------------------------------------------------------
+
+IMPORTANT:
+  This setting is runtime-only and is NOT persisted.
+  It resets to the default value when the application restarts.
+
+------------------------------------------------------------
+4.1 Get Number of Parallel Programmers
+------------------------------------------------------------
+
+Command Topic:
+  accessapp/{networkId}/cmd/{cassiaName}/get-parallel-programmers
+
+Telemetry Response Topic:
+  accessapp/{networkId}/tele/{cassiaName}/parallel-programmers
+
+Response Payload:
+{
+  "success": true,
+  "value": 3
+}
+
+------------------------------------------------------------
+4.2 Set Number of Parallel Programmers
+------------------------------------------------------------
+
+Command Topic:
+  accessapp/{networkId}/cmd/{cassiaName}/set-parallel-programmers
+
+Payload (either form is accepted):
+  3
+or
+{
+  "value": 3
+}
+
+Telemetry Response Topic:
+  accessapp/{networkId}/tele/{cassiaName}/parallel-programmers
+
+Response Payload:
+{
+  "success": true,
+  "value": 3
+}
+
+Effect:
+  Updates the internal parallel programming limit immediately.
+  No restart required.
+  Value is lost on application restart by design.
+
+------------------------------------------------------------
+Compatibility & Safety Notes
+------------------------------------------------------------
+
+• No existing MQTT topics or payloads were changed or removed
+• No configuration files were modified
+• No persisted settings were introduced
+• All new functionality is additive and safe for existing deployments
+
+------------------------------------------------------------
+End of Document
+------------------------------------------------------------

@@ -245,6 +245,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                     Time = DateTimeOffset.UtcNow,
                     State = "online",
                     queue = CassiaFirmwareUpgradeService.inQueue,
+                    programming = CassiaFirmwareUpgradeService.GetProgrammingCount(),
                     totalSpeedpct = CassiaFirmwareUpgradeService.totalSpeed
 
                 };
@@ -266,6 +267,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                             Time = now,
                             State = "online",
                             queue = CassiaFirmwareUpgradeService.inQueue,
+                    programming = CassiaFirmwareUpgradeService.GetProgrammingCount(),
                             totalSpeedpct = CassiaFirmwareUpgradeService.totalSpeed
                         };
 
@@ -492,7 +494,149 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 return GetFirmwareManifestRequested?.Invoke(dto) ?? Task.CompletedTask;
             }
 
-            if (string.Equals(command, "clear-upgrade-log", StringComparison.OrdinalIgnoreCase))
+            
+if (string.Equals(command, "get-queue-list", StringComparison.OrdinalIgnoreCase))
+{
+    Log("HandleCommandAsync: dispatch get-queue-list");
+
+    // payload can be {} / empty / include requestId, but we keep it tolerant
+    string? requestId = null;
+    try
+    {
+        if (!string.IsNullOrWhiteSpace(payload))
+        {
+            using var doc = JsonDocument.Parse(payload);
+            if (doc.RootElement.ValueKind == JsonValueKind.Object &&
+                doc.RootElement.TryGetProperty("requestId", out var rid) &&
+                rid.ValueKind == JsonValueKind.String)
+                requestId = rid.GetString();
+        }
+    }
+    catch { /* ignore */ }
+
+    var items = CassiaFirmwareUpgradeService.GetQueueListSnapshot()
+        .Select(x => new { mac = x.Mac, detectorType = x.DetectorType, firmwareVersion = x.FirmwareVersion })
+        .ToList();
+
+    var resp = new
+    {
+        success = true,
+        message = "Queue list retrieved successfully.",
+        requestId,
+        name = CurrentOptions.Name,
+        networkId = CurrentOptions.NetworkId,
+        time = DateTimeOffset.UtcNow,
+        count = items.Count,
+        queueList = items
+    };
+
+    return PublishJsonAsync(TeleTopic("queue-list"), resp, retain: false, CancellationToken.None);
+}
+
+if (string.Equals(command, "get-programming-list", StringComparison.OrdinalIgnoreCase))
+{
+    Log("HandleCommandAsync: dispatch get-programming-list");
+
+    string? requestId = null;
+    try
+    {
+        if (!string.IsNullOrWhiteSpace(payload))
+        {
+            using var doc = JsonDocument.Parse(payload);
+            if (doc.RootElement.ValueKind == JsonValueKind.Object &&
+                doc.RootElement.TryGetProperty("requestId", out var rid) &&
+                rid.ValueKind == JsonValueKind.String)
+                requestId = rid.GetString();
+        }
+    }
+    catch { /* ignore */ }
+
+    var items = CassiaFirmwareUpgradeService.GetProgrammingListSnapshot()
+        .Select(x => new { mac = x.Mac, detectorType = x.DetectorType, firmwareVersion = x.FirmwareVersion })
+        .ToList();
+
+    var resp = new
+    {
+        success = true,
+        message = "Programming list retrieved successfully.",
+        requestId,
+        name = CurrentOptions.Name,
+        networkId = CurrentOptions.NetworkId,
+        time = DateTimeOffset.UtcNow,
+        count = items.Count,
+        programmingList = items
+    };
+
+    return PublishJsonAsync(TeleTopic("programming-list"), resp, retain: false, CancellationToken.None);
+}
+
+if (string.Equals(command, "get-parallel-programmers", StringComparison.OrdinalIgnoreCase))
+{
+    Log("HandleCommandAsync: dispatch get-parallel-programmers");
+
+    var current = CassiaFirmwareUpgradeService.GetParallelProgrammers();
+    var resp = new
+    {
+        success = true,
+        message = "Parallel programmers value retrieved successfully.",
+        name = CurrentOptions.Name,
+        networkId = CurrentOptions.NetworkId,
+        time = DateTimeOffset.UtcNow,
+        value = current
+    };
+
+    return PublishJsonAsync(TeleTopic("parallel-programmers"), resp, retain: false, CancellationToken.None);
+}
+
+if (string.Equals(command, "set-parallel-programmers", StringComparison.OrdinalIgnoreCase))
+{
+    Log("HandleCommandAsync: dispatch set-parallel-programmers");
+
+    int? requested = null;
+    try
+    {
+        if (!string.IsNullOrWhiteSpace(payload))
+        {
+            using var doc = JsonDocument.Parse(payload);
+            if (doc.RootElement.ValueKind == JsonValueKind.Number &&
+                doc.RootElement.TryGetInt32(out var v1))
+                requested = v1;
+            else if (doc.RootElement.ValueKind == JsonValueKind.Object &&
+                doc.RootElement.TryGetProperty("value", out var v2) &&
+                v2.ValueKind == JsonValueKind.Number &&
+                v2.TryGetInt32(out var vObj))
+                requested = vObj;
+        }
+    }
+    catch { /* ignore */ }
+
+    if (requested is null)
+    {
+        var bad = new
+        {
+            success = false,
+            message = "Missing integer value. Send payload like {\"value\":3} or just 3."
+        };
+        return PublishJsonAsync(TeleTopic("parallel-programmers"), bad, retain: false, CancellationToken.None);
+    }
+
+    var setTo = CassiaFirmwareUpgradeService.SetParallelProgrammers(requested.Value);
+
+    var resp = new
+    {
+        success = true,
+        message = "Parallel programmers value updated (runtime only; resets on restart).",
+        name = CurrentOptions.Name,
+        networkId = CurrentOptions.NetworkId,
+        time = DateTimeOffset.UtcNow,
+        requested = requested.Value,
+        value = setTo
+    };
+
+    return PublishJsonAsync(TeleTopic("parallel-programmers"), resp, retain: false, CancellationToken.None);
+}
+
+if (string.Equals(command, "clear-upgrade-log", StringComparison.OrdinalIgnoreCase))
             {
                 Log("HandleCommandAsync: dispatch clear-upgrade-log");
 
