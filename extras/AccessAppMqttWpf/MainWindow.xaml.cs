@@ -1,3 +1,5 @@
+using AccessAppMqttWpf.Models;
+using AccessAppMqttWpf.ViewModels;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -8,7 +10,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
-using AccessAppMqttWpf.ViewModels;
 
 namespace AccessAppMqttWpf;
 
@@ -91,13 +92,16 @@ public partial class MainWindow : Window
         if (DataContext is not MainViewModel vm)
             return;
 
-        var device = (sender as FrameworkElement)?.DataContext;
+        var device = (sender as FrameworkElement)?.DataContext as DiscoveredDevice;
+        if (device == null)
+            return;
 
         // Ensure selection matches the row button pressed
-        vm.SelectedDevice = device as dynamic;
+        vm.SelectedDevice = device;
 
         ExecuteQueueSingle(vm, device);
     }
+
 
     private void QueueDefaultSort_Click(object sender, RoutedEventArgs e)
     {

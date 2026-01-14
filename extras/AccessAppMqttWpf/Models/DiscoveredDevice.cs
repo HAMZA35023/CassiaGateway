@@ -31,6 +31,25 @@ public partial class DiscoveredDevice : ObservableObject
     [ObservableProperty] private string currentFw = "";
 
 
+    // --- Upgrade result (from upgrade-log) ---
+    [ObservableProperty] private bool isUpgradeSuccess;
+    [ObservableProperty] private string lastTargetFw = "";
+    [ObservableProperty] private DateTimeOffset? lastUpgradeSuccessUtc;
+
+    // Device is in queue / being processed (derived from queue/progress)
+    [ObservableProperty] private bool isInQueue;
+
+    
+    // For device list: when upgrade completed successfully, show the FW from log entries (LastTargetFw, like v02.xx),
+    // otherwise show the current FW (from "Current FW Version" lines).
+    public string DisplayFw =>
+        IsUpgradeSuccess && !string.IsNullOrWhiteSpace(LastTargetFw) && LastTargetFw.Trim().StartsWith("v", StringComparison.OrdinalIgnoreCase)
+            ? LastTargetFw.Trim()
+            : (CurrentFw ?? "");
+public string LastUpgradeSuccessLocal => LastUpgradeSuccessUtc.HasValue
+        ? LastUpgradeSuccessUtc.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
+        : "";
+
 
     [ObservableProperty] private int bestRssi = int.MinValue;
     [ObservableProperty] private string bestCassia = "";
@@ -50,7 +69,11 @@ public partial class DiscoveredDevice : ObservableObject
 
     partial void OnProductNumberChanged(string value) => OnPropertyChanged(nameof(SensorModel));
 
-    public void UpdateFromCassia(string cassia, int rssi, DateTimeOffset tsUtc)
+    
+    partial void OnCurrentFwChanged(string value) => OnPropertyChanged(nameof(DisplayFw));
+    partial void OnLastTargetFwChanged(string value) => OnPropertyChanged(nameof(DisplayFw));
+    partial void OnIsUpgradeSuccessChanged(bool value) => OnPropertyChanged(nameof(DisplayFw));
+public void UpdateFromCassia(string cassia, int rssi, DateTimeOffset tsUtc)
     {
         CassiaRssi[cassia] = rssi;
         LastSeenUtc = tsUtc;

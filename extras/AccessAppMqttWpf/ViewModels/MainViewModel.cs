@@ -39,6 +39,11 @@ public partial class MainViewModel : ObservableObject
 
     public ObservableCollection<CassiaGateway> CassiaGateways { get; } = new();
 
+    // Speed graph: include virtual options without polluting the main Cassia list in the UI.
+    private readonly CassiaGateway _speedAllGateways = new() { Name = "(All gateways)" };
+    private readonly CassiaGateway _speedTotalGateways = new() { Name = "(Total)" };
+    public ObservableCollection<CassiaGateway> SpeedGraphGateways { get; } = new();
+
     // Names for dropdowns (assignment, commands, etc.)
     public ObservableCollection<string> CassiaNameOptions { get; } = new();
 
@@ -53,6 +58,75 @@ public partial class MainViewModel : ObservableObject
         new(StringComparer.OrdinalIgnoreCase);
 
     private readonly CancellationTokenSource _appCts = new();
+
+    // ---- Cached status from upgrade-log / progress (do NOT create "discovered devices" from logs) ----
+    private sealed class CachedDeviceStatus
+    {
+        public string ProcessStatus = "";
+        public int ProcessProgress = 0;
+        public string ProcessCassia = "";
+        public string ProcessFirmware = "";
+        public DateTimeOffset LastUpdateUtc = DateTimeOffset.MinValue;
+
+        public string CurrentFw = "";
+        public bool IsUpgradeSuccess = false;
+        public string LastTargetFw = "";
+        public DateTimeOffset? LastUpgradeSuccessUtc = null;
+
+        public bool IsInQueue = false;
+    }
+
+    private readonly Dictionary<string, CachedDeviceStatus> _cachedStatusByMac = new(StringComparer.OrdinalIgnoreCase);
+
+    private DiscoveredDevice? FindDiscoveredDevice(string mac) =>
+        _devices.FirstOrDefault(d => d.Mac.Equals(mac, StringComparison.OrdinalIgnoreCase));
+
+    private CachedDeviceStatus GetOrCreateCache(string mac)
+    {
+        if (!_cachedStatusByMac.TryGetValue(mac, out var cs))
+        {
+            cs = new CachedDeviceStatus();
+            _cachedStatusByMac[mac] = cs;
+        }
+        return cs;
+    }
+
+    private void ApplyCachedStatusToDevice(DiscoveredDevice dev)
+    {
+        if (dev == null) return;
+        if (string.IsNullOrWhiteSpace(dev.Mac)) return;
+
+        if (!_cachedStatusByMac.TryGetValue(dev.Mac, out var cs)) return;
+
+        // Apply cached process status ONLY if it's newer than what the device already shows.
+        // This prevents an older cached "Requested update" from overwriting a newer "Queued"/progress status.
+        var devTs = dev.ProcessLastUpdateUtc ?? DateTimeOffset.MinValue;
+        var cacheTs = cs.LastUpdateUtc;
+
+        if (cacheTs == DateTimeOffset.MinValue || cacheTs >= devTs)
+        {
+            if (!string.IsNullOrWhiteSpace(cs.ProcessStatus)) dev.ProcessStatus = cs.ProcessStatus;
+            if (!string.IsNullOrWhiteSpace(cs.ProcessCassia)) dev.ProcessCassia = cs.ProcessCassia;
+            if (!string.IsNullOrWhiteSpace(cs.ProcessFirmware)) dev.ProcessFirmware = cs.ProcessFirmware;
+            if (cs.ProcessProgress > 0) dev.ProcessProgress = cs.ProcessProgress;
+            if (cacheTs != DateTimeOffset.MinValue) dev.ProcessLastUpdateUtc = cacheTs;
+        }
+
+        if (!string.IsNullOrWhiteSpace(cs.CurrentFw)) dev.CurrentFw = cs.CurrentFw;
+
+        if (cs.IsUpgradeSuccess)
+        {
+            dev.IsUpgradeSuccess = true;
+            dev.LastUpgradeSuccessUtc = cs.LastUpgradeSuccessUtc ?? dev.LastUpgradeSuccessUtc;
+            if (!string.IsNullOrWhiteSpace(cs.LastTargetFw)) dev.LastTargetFw = cs.LastTargetFw;
+            dev.IsInQueue = false;
+        }
+        else
+        {
+            dev.IsInQueue = cs.IsInQueue;
+        }
+    }
+
 
     // Plain text responses for connect/write-read are published on a response topic (exact topic may vary).
     // Payload format: "AA:BB:CC:DD:EE:FF: <message>".
@@ -114,6 +188,8 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private int upgradeLogReceivedLines;
     [ObservableProperty] private CassiaGateway? selectedLogGateway;
 
+    [ObservableProperty] private CassiaGateway? selectedSpeedGateway;
+
     public ObservableCollection<string> LogGatewayOptions { get; } = new();
     [ObservableProperty] private string selectedLogGatewayName = "All";
 
@@ -130,6 +206,9 @@ public partial class MainViewModel : ObservableObject
     partial void OnUpgradeLogReceivedLinesChanged(int value) => OnPropertyChanged(nameof(UpgradeLogSummary));
 
     private readonly System.Text.StringBuilder _upgradeLogSb = new();
+
+    private readonly HashSet<string> _requestedUpgradeLogCassias = new(StringComparer.OrdinalIgnoreCase);
+
     private bool _pendingUpgradeLogTextRefresh;
 
     private readonly System.Windows.Threading.DispatcherTimer _gatewayStaleTimer;
@@ -182,6 +261,10 @@ public partial class MainViewModel : ObservableObject
         };
 
         _mqtt.Message += OnMqttMessage;
+
+        // Speed graph options: keep a separate list with virtual items.
+        CassiaGateways.CollectionChanged += (_, __) => RebuildSpeedGraphGateways();
+        RebuildSpeedGraphGateways();
 
         _fwManifestValidateTimer.Tick += (_, _) =>
         {
@@ -402,6 +485,7 @@ public partial class MainViewModel : ObservableObject
             if (IsConnected)
             {
                 await _mqtt.DisconnectAsync();
+                _requestedUpgradeLogCassias.Clear();
                 return;
             }
 
@@ -421,7 +505,23 @@ public partial class MainViewModel : ObservableObject
             {
                 await _mqtt.SubscribeAsync($"accessapp/{NetworkId}/tele/#").ConfigureAwait(false);
                 await _mqtt.SubscribeAsync($"accessapp/{NetworkId}/cmd/#").ConfigureAwait(false);
+
+
+            // Auto-gather saved upgrade logs on connect (per gateway).
+            // We request for every gateway we currently know, and also auto-request when new gateways announce status.
+            try
+            {
+                foreach (var gw in CassiaGateways.ToList())
+                {
+                    if (string.IsNullOrWhiteSpace(gw?.Name)) continue;
+                    if (_requestedUpgradeLogCassias.Contains(gw.Name)) continue;
+
+                    _requestedUpgradeLogCassias.Add(gw.Name);
+                    _ = RequestUpgradeLogForCassiaAsync(gw.Name);
+                }
             }
+            catch { }
+}
 
             ConnectionStatus = "Connected";
         }
@@ -467,7 +567,30 @@ public partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(DevicesSubtitle));
     }
 
+    
+
     [RelayCommand]
+    private void CheckAllDevices()
+    {
+        // Toggle: if any visible device is checked -> uncheck all, else check all.
+        bool anyChecked = false;
+        foreach (var obj in FilteredDevices)
+        {
+            if (obj is DiscoveredDevice d && d.IsSelected)
+            {
+                anyChecked = true;
+                break;
+            }
+        }
+
+        foreach (var obj in FilteredDevices)
+        {
+            if (obj is DiscoveredDevice d)
+                d.IsSelected = !anyChecked;
+        }
+    }
+
+[RelayCommand]
     private void ClearQueue() => QueueItems.Clear();
 
     // IMPORTANT: Keep method names QueueSingle/QueueSelected so your XAML/code-behind bindings keep working.
@@ -487,7 +610,11 @@ public partial class MainViewModel : ObservableObject
             selected.Add(SelectedDevice);
 
         foreach (var d in selected)
+        {
             await QueueDeviceAndRequestAsync(d);
+            // After queueing, uncheck in device list as requested.
+            d.IsSelected = false;
+        }
     }
 
     // ---------------------------------------------------------------------
@@ -669,10 +796,65 @@ public partial class MainViewModel : ObservableObject
     /// Ensures the device has a sticky AssignedCassia.
     /// We only auto-assign once (when AssignedCassia is empty).
     /// </summary>
-    private void EnsureStickyAssignment(DiscoveredDevice d)
+    
+    // ---------------- Assignment helpers ----------------
+    private bool IsDeviceInWork(DiscoveredDevice d)
+    {
+        if (d == null) return false;
+
+        // If the device has an active queue entry (not done), consider it "in work".
+        var mac = (d.Mac ?? "").Trim();
+        if (!string.IsNullOrWhiteSpace(mac))
+        {
+            if (QueueItems.Any(q => q != null &&
+                                   mac.Equals((q.Mac ?? "").Trim(), StringComparison.OrdinalIgnoreCase) &&
+                                   !q.IsDone &&
+                                   (q.Progress < 100 || (DateTimeOffset.UtcNow - q.LastUpdateUtc) <= TimeSpan.FromMinutes(1))))
+                return true;
+        }
+
+        // Also treat "process/progress tele" as work if progress is < 100.
+        if (d.ProcessProgress > 0 && d.ProcessProgress < 100)
+            return true;
+
+        return false;
+    }
+
+    private bool IsDoneForBalancing(DiscoveredDevice d)
+    {
+        if (d == null) return false;
+
+        // User rule: if % is 100 for over 1 minute, assume done and exclude from balancing counts.
+        if (d.ProcessProgress >= 100 && d.ProcessLastUpdateUtc.HasValue)
+        {
+            if (DateTimeOffset.UtcNow - d.ProcessLastUpdateUtc.Value > TimeSpan.FromMinutes(1))
+                return true;
+        }
+
+        // If we only have queue info, apply same heuristic.
+        var mac = (d.Mac ?? "").Trim();
+        if (!string.IsNullOrWhiteSpace(mac))
+        {
+            var q = QueueItems.FirstOrDefault(x =>
+                x != null && mac.Equals((x.Mac ?? "").Trim(), StringComparison.OrdinalIgnoreCase));
+
+            if (q != null && q.Progress >= 100 && (DateTimeOffset.UtcNow - q.LastUpdateUtc) > TimeSpan.FromMinutes(1))
+                return true;
+
+            if (q != null && q.IsDone)
+                return true;
+        }
+
+        return false;
+    }
+
+private void EnsureStickyAssignment(DiscoveredDevice d)
     {
         if (d == null) return;
         if (!string.IsNullOrWhiteSpace(d.AssignedCassia)) return; // already assigned (sticky)
+
+        // Do not auto-assign devices that are already being worked on (queued/programming).
+        if (IsDeviceInWork(d)) return;
 
         // Need at least one RSSI reading.
         if (d.CassiaRssi.Count == 0)
@@ -725,6 +907,7 @@ public partial class MainViewModel : ObservableObject
         var dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var dev in _devices)
         {
+            if (IsDoneForBalancing(dev)) continue;
             var cassia = (dev.AssignedCassia ?? "").Trim();
             if (string.IsNullOrWhiteSpace(cassia)) continue;
             if (GetGroupForModel(dev.SensorModel) != group) continue;
@@ -739,6 +922,7 @@ public partial class MainViewModel : ObservableObject
         model = (model ?? "").Trim().ToUpperInvariant();
         foreach (var dev in _devices)
         {
+            if (IsDoneForBalancing(dev)) continue;
             var cassia = (dev.AssignedCassia ?? "").Trim();
             if (string.IsNullOrWhiteSpace(cassia)) continue;
             if (!string.Equals((dev.SensorModel ?? "").Trim(), model, StringComparison.OrdinalIgnoreCase)) continue;
@@ -761,6 +945,7 @@ public partial class MainViewModel : ObservableObject
 
         foreach (var dev in _devices)
         {
+            if (IsDoneForBalancing(dev)) continue;
             var cassia = (dev.AssignedCassia ?? "").Trim();
             if (string.IsNullOrWhiteSpace(cassia)) continue;
 
@@ -784,7 +969,11 @@ public partial class MainViewModel : ObservableObject
     {
         // Clear and re-run assignment algorithm. (Still sticky until next manual reassign.)
         foreach (var dev in _devices)
+        {
+            // Keep assignment for devices already queued/programming.
+            if (IsDeviceInWork(dev)) continue;
             dev.AssignedCassia = "";
+        }
 
         foreach (var dev in _devices.OrderBy(d => d.SensorModel).ThenBy(d => d.Mac, StringComparer.OrdinalIgnoreCase))
             EnsureStickyAssignment(dev);
@@ -821,6 +1010,11 @@ public partial class MainViewModel : ObservableObject
 
         // Determine firmware from dropdown selection
         var fw = GetFirmwareForModel(model);
+
+
+        // Guard: firmware must look like a version (v02.xx). If not, don't accidentally send a model string.
+        if (!string.IsNullOrWhiteSpace(fw) && !fw.Trim().StartsWith("v", StringComparison.OrdinalIgnoreCase))
+            fw = "";
 
         // Determine cassia (sticky assignment), else best RSSI, else first online cassia, else any cassia
         var cassia = (d.AssignedCassia ?? "").Trim();
@@ -921,28 +1115,88 @@ public partial class MainViewModel : ObservableObject
 
     private DiscoveredDevice EnsureDeviceExistsForProgress(string mac)
     {
+        // IMPORTANT: Do NOT create new "discovered devices" from progress/logs.
+        // Only the scan/discovered feed may add devices to the device list.
         var dev = _devices.FirstOrDefault(d => d.Mac.Equals(mac, StringComparison.OrdinalIgnoreCase));
         if (dev != null) return dev;
 
-        dev = new DiscoveredDevice { Mac = mac };
-        _devices.Add(dev);
-        EnsureDeviceAssignmentWiring(dev);
-        return dev;
+        return new DiscoveredDevice { Mac = mac };
     }
 
     private void MirrorQueueToDevice(QueueItem qi)
     {
+        if (qi == null || string.IsNullOrWhiteSpace(qi.Mac)) return;
+
+        // Always update cache
+        var cs = GetOrCreateCache(qi.Mac);
+        cs.ProcessStatus = qi.Status ?? "";
+        cs.ProcessProgress = qi.Progress;
+        cs.ProcessCassia = qi.Cassia ?? "";
+        cs.ProcessFirmware = qi.FirmwareVersion ?? "";
+        cs.LastUpdateUtc = qi.LastUpdateUtc;
+
+        // Mark queue state for row coloring (ignore items that have been 100% for > 1 minute)
+        var doneExpired = qi.Progress >= 100 && (DateTimeOffset.UtcNow - qi.LastUpdateUtc) > TimeSpan.FromMinutes(1);
+        cs.IsInQueue = !qi.IsDone && !doneExpired;
+
         var dev = _devices.FirstOrDefault(d => d.Mac.Equals(qi.Mac, StringComparison.OrdinalIgnoreCase));
         if (dev == null) return;
 
-        dev.ProcessStatus = qi.Status ?? "";
-        dev.ProcessProgress = qi.Progress;
-        dev.ProcessCassia = qi.Cassia ?? "";
-        dev.ProcessFirmware = qi.FirmwareVersion ?? "";
-        dev.ProcessLastUpdateUtc = qi.LastUpdateUtc;
+        dev.ProcessStatus = cs.ProcessStatus;
+        dev.ProcessProgress = cs.ProcessProgress;
+        dev.ProcessCassia = cs.ProcessCassia;
+        dev.ProcessFirmware = cs.ProcessFirmware;
+        dev.ProcessLastUpdateUtc = cs.LastUpdateUtc;
+
+        dev.IsInQueue = cs.IsInQueue;
     }
 
-    // ---- MQTT parsing ----
+    
+    
+    private void RebuildSpeedGraphGateways()
+    {
+        SpeedGraphGateways.Clear();
+        SpeedGraphGateways.Add(_speedAllGateways);
+        SpeedGraphGateways.Add(_speedTotalGateways);
+
+        foreach (var gw in CassiaGateways)
+            SpeedGraphGateways.Add(gw);
+
+        // Keep selection valid
+        if (SelectedSpeedGateway == null || !SpeedGraphGateways.Contains(SelectedSpeedGateway))
+        {
+            SelectedSpeedGateway = CassiaGateways.FirstOrDefault() ?? _speedAllGateways;
+        }
+    }
+
+[RelayCommand]
+    private void OpenSpeedGraph(string? cassiaName)
+    {
+        // Open a simple speed graph window (client-side history, max 1 hour).
+        try
+        {
+            CassiaGateway? gw = null;
+
+            if (!string.IsNullOrWhiteSpace(cassiaName))
+                gw = CassiaGateways.FirstOrDefault(g => string.Equals(g.Name, cassiaName, StringComparison.OrdinalIgnoreCase));
+
+            gw ??= CassiaGateways.FirstOrDefault();
+
+            if (gw == null) return;
+
+            SelectedSpeedGateway = gw;
+
+            var wnd = new SpeedGraphWindow(this)
+            {
+                Owner = Application.Current.MainWindow
+            };
+            wnd.Show();
+            wnd.Activate();
+        }
+        catch { }
+    }
+
+// ---- MQTT parsing ----
     // accessapp/dk-lab/tele/cassia-01/status
     // accessapp/dk-lab/tele/cassia-01/discovered
     // accessapp/dk-lab/tele/cassia-01/progress
@@ -1057,10 +1311,14 @@ public partial class MainViewModel : ObservableObject
                     gw.Queue = queue;
                     gw.Programming = programming;
                     gw.TotalSpeedpct = totalSpeedpct;
+                    gw.AddSpeedSample(ts, totalSpeedpct);
 
 
                     // When a gateway announces itself, ask it for FW manifest once per connect.
                     MaybeAutoRequestFirmwareManifestAfterStatus(gw);
+
+                    MaybeAutoRequestUpgradeLogAfterStatus(gw);
+
                 });
             }
             catch { }
@@ -1101,8 +1359,6 @@ public partial class MainViewModel : ObservableObject
                 {
                     Application.Current.Dispatcher.Invoke(() =>
                     {
-                        _ = EnsureDeviceExistsForProgress(mac);
-
                         var qi = QueueItems.FirstOrDefault(q => q.Mac.Equals(mac, StringComparison.OrdinalIgnoreCase));
                         if (qi == null)
                         {
@@ -1140,15 +1396,39 @@ public partial class MainViewModel : ObservableObject
                         var dev2 = _devices.FirstOrDefault(d => d.Mac.Equals(mac, StringComparison.OrdinalIgnoreCase));
                         if (dev2 == null)
                         {
-                            dev2 = new DiscoveredDevice { Mac = mac };
-                            _devices.Add(dev2);
+                            // Cache only (do not add to discovered list)
+                            var cs = GetOrCreateCache(mac);
+                            cs.ProcessStatus = qi.Status ?? "";
+                            cs.ProcessProgress = qi.Progress;
+                            cs.ProcessCassia = qi.Cassia ?? cassia;
+                            cs.ProcessFirmware = qi.FirmwareVersion ?? "";
+                            cs.LastUpdateUtc = qi.LastUpdateUtc;
+                        }
+                        else
+                        {
+                            // Keep device list and cache in sync.
+                            var status = qi.Status ?? "";
+                            var cassiaName = qi.Cassia ?? cassia;
+                            var fw = qi.FirmwareVersion ?? "";
+
+                            dev2.ProcessStatus = status;
+                            dev2.ProcessProgress = qi.Progress;
+                            dev2.ProcessCassia = cassiaName;
+                            dev2.ProcessFirmware = fw;
+                            dev2.ProcessLastUpdateUtc = qi.LastUpdateUtc;
+
+                            var cs2 = GetOrCreateCache(dev2.Mac);
+                            cs2.ProcessStatus = status;
+                            cs2.ProcessProgress = qi.Progress;
+                            cs2.ProcessCassia = cassiaName;
+                            cs2.ProcessFirmware = fw;
+                            cs2.LastUpdateUtc = qi.LastUpdateUtc;
                         }
 
-                        dev2.ProcessStatus = qi.Status ?? "";
-                        dev2.ProcessProgress = qi.Progress;
-                        dev2.ProcessCassia = qi.Cassia ?? cassia;
-                        dev2.ProcessFirmware = qi.FirmwareVersion ?? "";
-                        dev2.ProcessLastUpdateUtc = qi.LastUpdateUtc;
+                        var doneExpired = qi.Progress >= 100 && (DateTimeOffset.UtcNow - qi.LastUpdateUtc) > TimeSpan.FromMinutes(1);
+                        if (dev2 != null)
+                            dev2.IsInQueue = !qi.IsDone && !doneExpired;
+
 
                         QueueView.Refresh();
                         // keep selection stable; throttled refresh only
@@ -1218,6 +1498,7 @@ public partial class MainViewModel : ObservableObject
                             }
 
                             EnsureDeviceAssignmentWiring(existing);
+                            ApplyCachedStatusToDevice(existing);
 
                             if (!string.IsNullOrWhiteSpace(dn)) existing.Name = dn;
                             if (!string.IsNullOrWhiteSpace(fam)) existing.DetectorFamily = fam;
@@ -1297,8 +1578,19 @@ public partial class MainViewModel : ObservableObject
 
                 if (type == "saved-log-begin")
                 {
-                    UpgradeLogLines.Clear();
-                    _upgradeLogSb.Clear();
+                    // When requesting from multiple gateways, each gateway will send a begin.
+                    // Only clear if this is the first begin in the current view.
+                    if (UpgradeLogLines.Count == 0)
+                    {
+                        UpgradeLogLines.Clear();
+                        _upgradeLogSb.Clear();
+                    }
+                    else
+                    {
+                        var sep = $"----- {cassia} saved-log-begin -----";
+                        UpgradeLogLines.Add(sep);
+                        _upgradeLogSb.AppendLine(sep);
+                    }
 
                     UpgradeLogTotalLines = root.TryGetProperty("totalLines", out var tl) && tl.TryGetInt32(out var total) ? total : 0;
                     UpgradeLogReceivedLines = 0;
@@ -1323,11 +1615,11 @@ public partial class MainViewModel : ObservableObject
                             _upgradeLogSb.AppendLine(line);
                             UpgradeLogReceivedLines++;
 
-                            // Grouped view + status mirror
+                            // Grouped view
                             AddUpgradeLogEntryFromLine(cassia, line);
-
-                            // Use upgrade-log as a secondary status source (useful when progress isn't emitted)
+                            // Harvest Current FW + completion success for UI fields (safe for saved log playback)
                             ApplyStatusFromUpgradeLogLine(cassia, line);
+
                         }
 
                         RequestUpgradeLogTextRefresh();
@@ -1352,6 +1644,7 @@ public partial class MainViewModel : ObservableObject
                             _upgradeLogSb.AppendLine(line2);
                             UpgradeLogReceivedLines++;
                             ApplyStatusFromUpgradeLogLine(cassia, line2);
+                            ApplyLiveProcessStatusFromUpgradeLogLine(cassia, line2);
                             RequestUpgradeLogTextRefresh();
                         }
                         UpgradeLogStatus = "upgrade-log";
@@ -1395,6 +1688,9 @@ public partial class MainViewModel : ObservableObject
 
             var statusm = LogLineStatusRx.Match(line);
             var status = statusm.Success ? statusm.Groups["status"].Value.Trim() : "";
+
+            if (!string.IsNullOrWhiteSpace(status) && status.Trim().Equals("success", StringComparison.OrdinalIgnoreCase))
+                status = "Success";
 
             var fwm = LogLineFwRx.Match(line);
             var fw = fwm.Success ? fwm.Groups["fw"].Value.Trim() : "";
@@ -1503,6 +1799,7 @@ public partial class MainViewModel : ObservableObject
         return DateTimeOffset.MinValue;
     }
 
+    
     private void ApplyStatusFromUpgradeLogLine(string cassia, string line)
     {
         try
@@ -1520,58 +1817,161 @@ public partial class MainViewModel : ObservableObject
             var stm = LogLineStatusRx.Match(line);
             if (stm.Success) status = stm.Groups["status"].Value.Trim();
 
-            // Update QueueItem
-            var qi = QueueItems.FirstOrDefault(q => q.Mac.Equals(mac, StringComparison.OrdinalIgnoreCase));
-            if (qi == null)
+            // Timestamp embedded in log line (used to pick newest across gateways)
+            DateTimeOffset tsUtc = DateTimeOffset.UtcNow;
+            var tm = LogLineTimeRx.Match(line);
+            if (tm.Success)
             {
-                // Only auto-create if it looks like an upgrade-related line
-                if (string.IsNullOrWhiteSpace(stage)) return;
-                qi = new QueueItem
+                if (DateTime.TryParseExact(
+                        tm.Groups["time"].Value.Trim(),
+                        "yyyy-MM-dd HH:mm:ss",
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.AssumeLocal,
+                        out var dtLocal))
                 {
-                    Mac = mac,
-                    Cassia = cassia,
-                    Status = stage,
-                    Notes = status,
-                    LastUpdateUtc = DateTimeOffset.UtcNow
-                };
-                QueueItems.Add(qi);
+                    tsUtc = new DateTimeOffset(DateTime.SpecifyKind(dtLocal, DateTimeKind.Local)).ToUniversalTime();
+                }
             }
-            else
+
+            // Logs must NOT drive queue/progress UI.
+            // We only harvest:
+            //  - Current FW info (from "Current FW Version" lines)
+            //  - Success completion + target FW (fw=v02.xx)
+            var cs = GetOrCreateCache(mac);
+
+            // 1) Completion success
+            var isCompletedSuccess =
+                !string.IsNullOrWhiteSpace(stage) &&
+                stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(status) &&
+                status.Trim().Equals("Success", StringComparison.OrdinalIgnoreCase);
+
+            if (isCompletedSuccess)
             {
-                qi.Cassia = string.IsNullOrWhiteSpace(qi.Cassia) ? cassia : qi.Cassia;
-                if (!string.IsNullOrWhiteSpace(stage)) qi.Status = stage;
-                if (!string.IsNullOrWhiteSpace(status)) qi.Notes = status;
-                qi.LastUpdateUtc = DateTimeOffset.UtcNow;
+                // Only accept if newer than previous success record
+                if (!cs.LastUpgradeSuccessUtc.HasValue || tsUtc >= cs.LastUpgradeSuccessUtc.Value)
+                {
+                    cs.IsUpgradeSuccess = true;
+                    cs.LastUpgradeSuccessUtc = tsUtc;
+
+                    var fwm = LogLineFwRx.Match(line);
+                    if (fwm.Success)
+                        cs.LastTargetFw = fwm.Groups["fw"].Value.Trim();
+                }
             }
 
-            // Update DiscoveredDevice view
-            var dev = EnsureDeviceExistsForProgress(mac);
-            if (!string.IsNullOrWhiteSpace(stage)) dev.ProcessStatus = stage;
-            dev.ProcessCassia = string.IsNullOrWhiteSpace(dev.ProcessCassia) ? cassia : dev.ProcessCassia;
-            dev.ProcessLastUpdateUtc = DateTimeOffset.UtcNow;
-
-            // Try extract "Sensor: App: <X>" into CurrentFw for the device list
+            // 2) Current FW (Sensor: App: ...)
             if (!string.IsNullOrWhiteSpace(status))
             {
                 var appm = SensorAppFromStatusRx.Match(status);
                 if (appm.Success)
                 {
                     var app = appm.Groups["app"].Value;
-                    if (!string.IsNullOrWhiteSpace(app)) dev.CurrentFw = app;
+                    if (!string.IsNullOrWhiteSpace(app))
+                        cs.CurrentFw = app;
                 }
             }
 
-            MirrorQueueToDevice(qi);
-            QueueView.Refresh();
-            RequestDevicesRefresh();
+            // Apply to discovered device if it exists (without touching ProcessStatus/queue fields)
+            var dev = FindDiscoveredDevice(mac);
+            if (dev != null)
+            {
+                dev.IsUpgradeSuccess = cs.IsUpgradeSuccess;
+                dev.LastUpgradeSuccessUtc = cs.LastUpgradeSuccessUtc;
+                dev.LastTargetFw = cs.LastTargetFw ?? "";
+                dev.CurrentFw = cs.CurrentFw ?? "";
+            }
         }
         catch
         {
-            // ignore per-line parse errors
+            // ignore malformed lines
         }
     }
 
-    private void RequestUpgradeLogTextRefresh()
+    
+    private void ApplyLiveProcessStatusFromUpgradeLogLine(string cassia, string line)
+    {
+        try
+        {
+            var mm = LogLineMacRx.Match(line);
+            if (!mm.Success) return;
+            var mac = mm.Groups["mac"].Value;
+            if (string.IsNullOrWhiteSpace(mac)) return;
+
+            var stage = "";
+            var sm = LogLineStageRx.Match(line);
+            if (sm.Success) stage = sm.Groups["stage"].Value.Trim();
+
+            var status = "";
+            var stm = LogLineStatusRx.Match(line);
+            if (stm.Success) status = stm.Groups["status"].Value.Trim();
+
+            // Timestamp embedded in log line (used to pick newest across gateways)
+            DateTimeOffset tsUtc = DateTimeOffset.UtcNow;
+            var tm = LogLineTimeRx.Match(line);
+            if (tm.Success)
+            {
+                if (DateTime.TryParseExact(
+                        tm.Groups["time"].Value.Trim(),
+                        "yyyy-MM-dd HH:mm:ss",
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.AssumeLocal,
+                        out var dtLocal))
+                {
+                    tsUtc = new DateTimeOffset(DateTime.SpecifyKind(dtLocal, DateTimeKind.Local)).ToUniversalTime();
+                }
+            }
+
+            // What we want to show in the device/queue lists:
+            // Prefer stage, but if stage is empty, show status.
+            var text = !string.IsNullOrWhiteSpace(stage) ? stage : status;
+            if (string.IsNullOrWhiteSpace(text)) return;
+
+            // Best effort fw=v02.xx (can be null in JSON)
+            var fw = "";
+            var fwm = LogLineFwRx.Match(line);
+            if (fwm.Success) fw = fwm.Groups["fw"].Value.Trim();
+
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                // Update queue row (if exists) so operators can see live stage changes.
+                var qi = QueueItems.FirstOrDefault(q => q.Mac.Equals(mac, StringComparison.OrdinalIgnoreCase));
+                if (qi != null)
+                {
+                    qi.Cassia = cassia;
+                        qi.Status = text.Trim();
+                        if (!string.IsNullOrWhiteSpace(fw))
+                            qi.FirmwareVersion = fw;
+                        qi.LastUpdateUtc = tsUtc;
+
+                        // Keep sorting helpers fresh
+                        QueueView?.Refresh();
+                    }
+
+                // Cache + device list mirror (without creating devices from logs)
+                var cs = GetOrCreateCache(mac);
+                cs.ProcessCassia = cassia;
+                cs.ProcessStatus = text.Trim();
+                if (!string.IsNullOrWhiteSpace(fw))
+                    cs.ProcessFirmware = fw;
+                cs.LastUpdateUtc = tsUtc;
+
+                var dev = FindDiscoveredDevice(mac);
+                if (dev == null) return;
+                dev.ProcessCassia = cassia;
+                dev.ProcessStatus = cs.ProcessStatus;
+                if (!string.IsNullOrWhiteSpace(cs.ProcessFirmware))
+                    dev.ProcessFirmware = cs.ProcessFirmware;
+                dev.ProcessLastUpdateUtc = tsUtc;
+            });
+        }
+        catch
+        {
+            // ignore malformed lines
+        }
+    }
+
+private void RequestUpgradeLogTextRefresh()
     {
         if (_pendingUpgradeLogTextRefresh) return;
         _pendingUpgradeLogTextRefresh = true;
@@ -1593,25 +1993,39 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
-        var cassia = !string.IsNullOrWhiteSpace(SelectedLogGatewayName) && !SelectedLogGatewayName.Equals("All", StringComparison.OrdinalIgnoreCase)
-            ? SelectedLogGatewayName
-            : (SelectedLogGateway?.Name ?? CassiaGateways.FirstOrDefault()?.Name ?? "");
-
-        if (string.IsNullOrWhiteSpace(cassia))
+        // Clear current view (user-initiated)
+        Application.Current.Dispatcher.Invoke(() =>
         {
-            ConnectionStatus = "No Cassia gateway known yet";
+            UpgradeLogLines.Clear();
+            UpgradeLogGroups.Clear();
+            UpgradeLogText = "";
+            _upgradeLogSb.Clear();
+            UpgradeLogReceivedLines = 0;
+            UpgradeLogTotalLines = 0;
+            UpgradeLogStatus = "Requesting saved logs from all gateways…";
+        });
+
+        var gateways = CassiaGateways
+            .Where(g => g != null && !string.IsNullOrWhiteSpace(g.Name))
+            .Select(g => g.Name)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (gateways.Count == 0)
+        {
+            ConnectionStatus = "No Cassia gateways known yet";
             return;
         }
 
-        var topic = CommandTopicTemplate
-            .Replace("{networkId}", NetworkId)
-            .Replace("{cassia}", cassia)
-            .Replace("{command}", "send-upgrade-log");
-
-        UpgradeLogStatus = $"Requesting saved log from {cassia}…";
         try
         {
-            await _mqtt.PublishAsync(topic, "{}", retain: false);
+            foreach (var cassia in gateways)
+            {
+                _requestedUpgradeLogCassias.Add(cassia);
+                await RequestUpgradeLogForCassiaAsync(cassia).ConfigureAwait(false);
+            }
+
+            UpgradeLogStatus = $"Requested saved logs from {gateways.Count} gateway(s)";
         }
         catch (Exception ex)
         {
@@ -1619,16 +2033,105 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+
+    /// <summary>
+    /// Internal helper used by the auto-request logic (per gateway). Not a command.
+    /// </summary>
+    private async Task RequestUpgradeLogForCassiaAsync(string cassia)
+    {
+        if (!IsConnected) return;
+        if (string.IsNullOrWhiteSpace(cassia)) return;
+
+        var topic = CommandTopicTemplate
+            .Replace("{networkId}", NetworkId)
+            .Replace("{cassia}", cassia)
+            .Replace("{command}", "send-upgrade-log");
+
+        try
+        {
+            await _mqtt.PublishAsync(topic, "{}", retain: false).ConfigureAwait(false);
+        }
+        catch
+        {
+            // best effort; UI command path shows errors, auto path stays quiet
+        }
+    }
+
+
+    [RelayCommand]
+    private async Task ClearUpgradeLogOnCassiaAsync()
+    {
+        if (!IsConnected)
+        {
+            UpgradeLogStatus = "Not connected";
+            return;
+        }
+
+        // If "All" is selected, send clear command to each Cassia sequentially.
+        var selected = (SelectedLogGatewayName ?? "").Trim();
+
+        List<string> targets;
+        if (string.IsNullOrWhiteSpace(selected) || string.Equals(selected, "All", StringComparison.OrdinalIgnoreCase))
+        {
+            targets = CassiaGateways
+                .Select(g => g.Name)
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        else
+        {
+            targets = new List<string> { selected };
+        }
+
+        if (targets.Count == 0)
+        {
+            UpgradeLogStatus = "No Cassia gateway known yet";
+            return;
+        }
+
+        try
+        {
+            for (int i = 0; i < targets.Count; i++)
+            {
+                var cassia = targets[i];
+
+                var topic = CommandTopicTemplate
+                    .Replace("{networkId}", NetworkId)
+                    .Replace("{cassia}", cassia)
+                    .Replace("{command}", "clear-upgrade-log");
+
+                await _mqtt.PublishAsync(topic, "{}", retain: false).ConfigureAwait(false);
+
+                UpgradeLogStatus = targets.Count == 1
+                    ? $"Requested clear-upgrade-log on {cassia}"
+                    : $"Requested clear-upgrade-log on {cassia} ({i + 1}/{targets.Count})";
+
+                await Task.Delay(120).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            UpgradeLogStatus = "Clear request failed: " + ex.Message;
+        }
+    }
+
     [RelayCommand]
     private void ClearUpgradeLog()
     {
-        UpgradeLogLines.Clear();
-        UpgradeLogGroups.Clear();
-        _upgradeLogSb.Clear();
-        UpgradeLogText = "";
-        UpgradeLogStatus = "Idle";
-        UpgradeLogTotalLines = 0;
-        UpgradeLogReceivedLines = 0;
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            UpgradeLogLines.Clear();
+            UpgradeLogGroups.Clear();
+            UpgradeLogGroupsView?.Refresh();
+            _upgradeLogSb.Clear();
+            UpgradeLogText = "";
+            UpgradeLogSearchText = "";
+            UpgradeLogReceivedLines = 0;
+            UpgradeLogTotalLines = 0;
+            UpgradeLogStatus = "Idle";
+        });
     }
 
     private bool _pendingDevicesRefresh;
@@ -1651,6 +2154,20 @@ public partial class MainViewModel : ObservableObject
             if (!string.IsNullOrWhiteSpace(selectedMac))
                 SelectedDevice = _devices.FirstOrDefault(d => d.Mac.Equals(selectedMac, StringComparison.OrdinalIgnoreCase));
         });
+    }
+
+    private void MaybeAutoRequestUpgradeLogAfterStatus(CassiaGateway gw)
+    {
+        if (!IsConnected) return;
+        if (!string.Equals(gw.StateLower, "online", StringComparison.OrdinalIgnoreCase)) return;
+
+        // Only auto-request once per connection per gateway.
+        // If we already tried requesting "all" on connect, we do not spam per-gateway requests.
+        if (_requestedUpgradeLogCassias.Contains("all")) return;
+        if (_requestedUpgradeLogCassias.Contains(gw.Name)) return;
+
+        _requestedUpgradeLogCassias.Add(gw.Name);
+        _ = RequestUpgradeLogForCassiaAsync(gw.Name);
     }
 
     private void MaybeAutoRequestFirmwareManifestAfterStatus(CassiaGateway gw)

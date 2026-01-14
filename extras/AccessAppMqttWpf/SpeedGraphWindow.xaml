@@ -1,0 +1,46 @@
+<Window x:Class="AccessAppMqttWpf.SpeedGraphWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Cassia Speed Graph"
+        Height="520" Width="900"
+        WindowStartupLocation="CenterOwner">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Orientation="Horizontal" Grid.Row="0" Margin="0,0,0,10">
+            <TextBlock Text="Gateway:" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"/>
+            <ComboBox Width="220"
+                      ItemsSource="{Binding SpeedGraphGateways}"
+                      DisplayMemberPath="Name"
+                      SelectedItem="{Binding SelectedSpeedGateway, Mode=TwoWay}"/>
+            <TextBlock Text="  (max 1 hour history)" VerticalAlignment="Center" Margin="10,0,0,0"
+                       Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"/>
+        </StackPanel>
+
+        <Border Grid.Row="1" BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" BorderThickness="1" CornerRadius="8" Padding="10">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <Canvas x:Name="ChartCanvas" Background="White" Grid.Row="0"/>
+
+                <DockPanel Grid.Row="1" Margin="0,10,0,0">
+                    <TextBlock DockPanel.Dock="Left"
+                               Text="{Binding ElementName=ChartCanvas, Path=Tag}"
+                               Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"/>
+                    <Button DockPanel.Dock="Right" Content="Close" Width="90" IsCancel="True"/>
+                </DockPanel>
+            </Grid>
+        </Border>
+
+        <TextBlock Grid.Row="2" Margin="0,10,0,0"
+                   Text="Note: the Cassia gateways do not provide history; this chart is built from live status updates while this app is running."
+                   Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"/>
+    </Grid>
+</Window>

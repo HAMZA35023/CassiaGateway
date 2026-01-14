@@ -27,8 +27,28 @@ public partial class UpgradeLogGroup : ObservableObject
     public string LatestStage =>
         Entries.OrderByDescending(e => e.TimeLocal).FirstOrDefault()?.Stage ?? "";
 
-    public string LatestStatus =>
-        Entries.OrderByDescending(e => e.TimeLocal).FirstOrDefault()?.Status ?? "";
+    public string LatestStatus
+    {
+        get
+        {
+            var last = Entries.OrderByDescending(e => e.TimeLocal).FirstOrDefault();
+            if (last == null) return "";
+
+            // Only treat "Success" as a success status if the completion stage was reached.
+            if (!string.IsNullOrWhiteSpace(last.Stage) &&
+                last.Stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(last.Status) &&
+                last.Status.Trim().Equals("Success", StringComparison.OrdinalIgnoreCase))
+                return "Success";
+
+            // If status says "Success" but the stage isn't completion, don't mark it as success in the UI.
+            if (!string.IsNullOrWhiteSpace(last.Status) &&
+                last.Status.Trim().Equals("Success", StringComparison.OrdinalIgnoreCase))
+                return "Info";
+
+            return last.Status ?? "";
+        }
+    }
 
     public string LatestFirmware =>
         Entries.OrderByDescending(e => e.TimeLocal).FirstOrDefault()?.Firmware ?? "";

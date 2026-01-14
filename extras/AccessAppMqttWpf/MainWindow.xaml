@@ -13,6 +13,9 @@
     <Window.Resources>
 
         <conv:StatusToBrushConverter x:Key="StatusToBrush"/>
+        <SolidColorBrush x:Key="DoneRowBrush" Color="#2A22C55E"/>
+        <SolidColorBrush x:Key="QueueRowBrush" Color="#2A60A5FA"/>
+
 
         <!-- ONLINE / OFFLINE badge -->
         <DataTemplate x:Key="CassiaStateBadge">
@@ -44,7 +47,7 @@
             <Setter Property="Padding" Value="8,2"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Foreground" Value="Black"/>
             <Setter Property="Background" Value="#777"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Cursor" Value="Hand"/>
@@ -143,6 +146,14 @@
                                                     ToolTip="Refresh firmware manifest"
                                                     Command="{Binding DataContext.RefreshFwManifestForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                     CommandParameter="{Binding Name}"/>
+
+                                            <Button Style="{StaticResource CassiaBadgeButtonStyle}"
+                                                    Content="📈"
+                                                    Margin="6,0,0,0"
+                                                    ToolTip="Open speed graph (last 1 hour)"
+                                                    Command="{Binding DataContext.OpenSpeedGraphCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding Name}"/>
+
                                         </StackPanel>
 
                                         <!-- Row 1: all details spans full width so no hidden text -->
@@ -150,32 +161,69 @@
                                                     Orientation="Vertical"
                                                     Margin="0,6,0,0">
 
+                                            
                                             <!-- Line 1 -->
-                                            <StackPanel Orientation="Horizontal">
-                                                <TextBlock Text="Last:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
-                                                <TextBlock Text="{Binding LastSeenLocal}" FontSize="12" FontWeight="SemiBold" Margin="0,0,12,0"/>
+                                            <TextBlock FontSize="12">
+                                                <Run Text="Last:" Foreground="{StaticResource MutedBrush}"/>
+                                                <Run Text=" "/>
+                                                <Run Text="{Binding LastSeenLocal, Mode=OneWay}" FontWeight="SemiBold" Foreground="Black"/>
+                                                <Run Text="   "/>
 
-                                                <TextBlock Text="Speed:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
-                                                <TextBlock Text="{Binding TotalSpeedpct}" FontSize="12" FontWeight="SemiBold" Margin="0,0,6,0"/>
-                                                <TextBlock Text="% / min" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
+                                                <Run Text="Devices:" Foreground="{StaticResource MutedBrush}"/>
+                                                <Run Text=" "/>
+                                                <Run Text="{Binding DevicesSeen}" FontWeight="SemiBold" Foreground="Black"/>
+                                                <Run Text="   "/>
 
-                                            </StackPanel>
+                                                <Run Text="Queue" Foreground="{StaticResource MutedBrush}"/>
+                                                <Run Text=" "/>
+                                                <Run Text="{Binding Queue}" FontWeight="SemiBold" Foreground="Black"/>
+                                                <Run Text="   "/>
+
+                                                <Run Text="Programming" Foreground="{StaticResource MutedBrush}"/>
+                                                <Run Text=" "/>
+                                                <Run Text="{Binding Programming}" FontWeight="SemiBold" Foreground="Black"/>
+                                            </TextBlock>
 
                                             <!-- Line 2 -->
-                                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                                                <TextBlock Text="Devices:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
-                                                <TextBlock Text="{Binding DevicesSeen}" FontSize="12" FontWeight="SemiBold" Margin="0,0,12,0"/>
-
-                                                <TextBlock Text="Work:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
-                                                <TextBlock Text="{Binding QueueLine}" FontSize="12" FontWeight="SemiBold" Margin="0,0,6,0"/>
-                                               
-                                            </StackPanel>
+                                            <TextBlock FontSize="12" Margin="0,4,0,0">
+                                                <Run Text="Speed:" Foreground="{StaticResource MutedBrush}"/>
+                                                <Run Text=" "/>
+                                                <Run Text="{Binding TotalSpeedpct}" FontWeight="SemiBold" Foreground="Black"/>
+                                                <Run Text=" "/>
+                                                <Run Text="% / min" Foreground="{StaticResource MutedBrush}"/>
+                                            </TextBlock>
 
                                             <!-- Line 3: Sticky assignment counts -->
-                                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                                                <TextBlock Text="Assign:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
-                                                <TextBlock Text="{Binding AssignedLine}" FontSize="12" FontWeight="SemiBold"/>
-                                            </StackPanel>
+                                            <TextBlock FontSize="12" Margin="0,4,0,0">
+                                                <Run Text="Assign:" Foreground="{StaticResource MutedBrush}"/>
+                                                <Run Text=" "/>
+
+                                                <Run Text="P41" Foreground="{StaticResource MutedBrush}"/>
+                                                <Run Text=" "/>
+                                                <Run Text="{Binding AssignedP41}" Foreground="Black" FontWeight="SemiBold"/>
+                                                <Run Text="   "/>
+
+                                                <Run Text="P42" Foreground="{StaticResource MutedBrush}"/>
+                                                <Run Text=" "/>
+                                                <Run Text="{Binding AssignedP42}" Foreground="Black" FontWeight="SemiBold"/>
+                                                <Run Text="   "/>
+
+                                                <Run Text="P46" Foreground="{StaticResource MutedBrush}"/>
+                                                <Run Text=" "/>
+                                                <Run Text="{Binding AssignedP46}" Foreground="Black" FontWeight="SemiBold"/>
+
+                                                <Run Text="   |   "/>
+
+                                                <Run Text="P47" Foreground="{StaticResource MutedBrush}"/>
+                                                <Run Text=" "/>
+                                                <Run Text="{Binding AssignedP47}" Foreground="Black" FontWeight="SemiBold"/>
+                                                <Run Text="   "/>
+
+                                                <Run Text="P48" Foreground="{StaticResource MutedBrush}"/>
+                                                <Run Text=" "/>
+                                                <Run Text="{Binding AssignedP48}" Foreground="Black" FontWeight="SemiBold"/>
+                                            </TextBlock>
+
 
                                         </StackPanel>
 
@@ -286,6 +334,13 @@
                                         Click="ClearDevices_Click"/>
 
                                 <Button Style="{StaticResource GhostButton}"
+                                        Content="Check all"
+                                        Padding="12,6"
+                                        VerticalAlignment="Center"
+                                        Margin="10,0,0,0"
+                                        Command="{Binding CheckAllDevicesCommand}"/>
+
+                                <Button Style="{StaticResource GhostButton}"
                                         Content="Reassign"
                                         Padding="12,6"
                                         VerticalAlignment="Center"
@@ -299,6 +354,7 @@
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="*"/>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="5"/>
                                 <RowDefinition Height="220"/>
                             </Grid.RowDefinitions>
 
@@ -333,7 +389,21 @@
                                                 </ContextMenu>
                                             </Setter.Value>
                                         </Setter>
-                                    </Style>
+                                    
+
+<Style.Triggers>
+    <!-- Completed devices are green, but queue/progress state should override (stay blue while queued) -->
+    <DataTrigger Binding="{Binding IsUpgradeSuccess}" Value="True">
+        <Setter Property="Background" Value="{StaticResource DoneRowBrush}"/>
+        <Setter Property="Foreground" Value="Black"/>
+    </DataTrigger>
+
+    <DataTrigger Binding="{Binding IsInQueue}" Value="True">
+        <Setter Property="Background" Value="{StaticResource QueueRowBrush}"/>
+        <Setter Property="Foreground" Value="Black"/>
+    </DataTrigger>
+</Style.Triggers>
+</Style>
                                 </DataGrid.RowStyle>
 
                                 <DataGrid.Columns>
@@ -383,7 +453,7 @@
                                     <DataGridTextColumn Header="Status" Binding="{Binding ProcessStatus}" Width="120" IsReadOnly="True"/>
                                     <DataGridTextColumn Header="%" Binding="{Binding ProcessProgress}" Width="60" IsReadOnly="True"/>
                                     <DataGridTextColumn Header="FW" Binding="{Binding ProcessFirmware}" Width="90" IsReadOnly="True"/>
-                                    <DataGridTextColumn Header="Current FW" Binding="{Binding CurrentFw}" Width="90" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="Current FW" Binding="{Binding DisplayFw}" Width="90" IsReadOnly="True"/>
 
                                     <DataGridTemplateColumn Header="Get FW" Width="90" CanUserSort="False">
                                         <DataGridTemplateColumn.CellTemplate>
@@ -432,7 +502,14 @@
                             </Border>
 
                             <!-- Queue list below discovered devices -->
-                            <DockPanel Grid.Row="2">
+                            <GridSplitter Grid.Row="2"
+                                          Height="5"
+                                          HorizontalAlignment="Stretch"
+                                          VerticalAlignment="Stretch"
+                                          Background="{StaticResource BorderBrush}"
+                                          ShowsPreview="True"/>
+
+                            <DockPanel Grid.Row="3">
                                 <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
                                     <TextBlock Text="Queued devices" FontWeight="SemiBold"/>
                                     <TextBlock Text="  " />
@@ -575,6 +652,10 @@
                                 <Button Style="{StaticResource PrimaryButton}"
                                         Content="Request"
                                         Command="{Binding RequestUpgradeLogCommand}"
+                                        Margin="0,0,8,0"/>
+                                <Button Style="{StaticResource GhostButton}"
+                                        Content="Clear on Cassia"
+                                        Command="{Binding ClearUpgradeLogOnCassiaCommand}"
                                         Margin="0,0,8,0"/>
                                 <Button Style="{StaticResource GhostButton}"
                                         Content="Clear"

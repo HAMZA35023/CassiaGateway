@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 
 namespace AccessAppMqttWpf.Models;
 
@@ -15,6 +16,21 @@ public partial class CassiaGateway : ObservableObject
     // Will be added to the status payload later (same level as "queue").
     [ObservableProperty] private int programming = 0;
     [ObservableProperty] private double totalSpeedpct = 1;
+
+    // Client-side speed history for graphing (max 1 hour kept)
+    public ObservableCollection<SpeedSample> SpeedHistory { get; } = new();
+
+    public void AddSpeedSample(DateTimeOffset tsUtc, double speedPctPerMin)
+    {
+        // Append
+        SpeedHistory.Add(new SpeedSample(tsUtc, speedPctPerMin));
+
+        // Prune older than 1 hour
+        var cutoff = DateTimeOffset.UtcNow - TimeSpan.FromHours(1);
+        while (SpeedHistory.Count > 0 && SpeedHistory[0].TimeUtc < cutoff)
+            SpeedHistory.RemoveAt(0);
+    }
+
 
     // ---- Sticky assignment counts (computed client-side) ----
     [ObservableProperty] private int assignedP41;
@@ -74,3 +90,5 @@ public partial class CassiaGateway : ObservableObject
     partial void OnFwManifestLastSeenUtcChanged(DateTimeOffset value) => OnPropertyChanged(nameof(FwManifestLastSeenLocal));
     partial void OnFirmwareManifestChanged(Dictionary<string, string[]> value) => OnPropertyChanged(nameof(HasFwManifest));
 }
+
+public sealed record SpeedSample(DateTimeOffset TimeUtc, double SpeedPctPerMin);
