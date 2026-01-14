@@ -1,8 +1,13 @@
 AccessApp Cassia backend:
 
-- Backups should not have timestamps - always overwrite the previous backup, and use latest if it exists
+MAJOR:
+-> Implement mqtt function to get queuelist with mac and fw version
+-> Implement mqtt function to get programminglist with mac and fw version
+-> Implement mqtt status message to include current programming count as we did what is in queue
+-> Implement mqtt cmd to set / get number of parrallel programmers - should only live until restart of the app
 
 
+MINOR:
 - Queue can be stuck if an error happens - make sure to handle that
 
 - On error make sure to disconnect from sensor again!

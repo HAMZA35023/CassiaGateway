@@ -6,7 +6,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         Title="AccessAPP • MQTT Device Queue"
-        Height="860" Width="1320"
+        Height="941" Width="1715"
         WindowStartupLocation="CenterScreen"
         xmlns:scm="clr-namespace:System.ComponentModel;assembly=WindowsBase">
 
@@ -337,14 +337,14 @@
                                         VerticalAlignment="Center"
                                         Click="ClearDevices_Click"/>
 
-                                <Button Style="{StaticResource GhostButton}"
+                                <Button Style="{StaticResource PrimaryButton}"
                                         Content="Check all"
                                         Padding="12,6"
                                         VerticalAlignment="Center"
                                         Margin="10,0,0,0"
                                         Command="{Binding CheckAllDevicesCommand}"/>
 
-                                <Button Style="{StaticResource GhostButton}"
+                                <Button Style="{StaticResource PrimaryButton}"
                                         Content="Reassign"
                                         Padding="12,6"
                                         VerticalAlignment="Center"
@@ -493,7 +493,7 @@
 
                                 <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
                                     <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
-                                        <Button Style="{StaticResource GhostButton}" Content="Queue selected" Padding="12,6" Margin="0,0,8,0" Command="{Binding QueueSelectedCommand}"/>
+                                        <Button Style="{StaticResource PrimaryButton}" Content="Update / Queue selected" Padding="12,6" Margin="0,0,8,0" Command="{Binding QueueSelectedCommand}"/>
                                         <Button Style="{StaticResource GhostButton}" Content="Clear queue" Padding="12,6" Margin="0,0,8,0" Command="{Binding ClearQueueCommand}"/>
                                         <Button Style="{StaticResource GhostButton}" Content="Default sort" Padding="12,6" Click="QueueDefaultSort_Click"/>
                                     </StackPanel>

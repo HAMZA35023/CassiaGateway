@@ -1,0 +1,3 @@
+MAJOR:
+
+-> Queued color should override the green success color
