@@ -158,7 +158,7 @@ public partial class MainViewModel : ObservableObject
 
     // Runtime-only: set/get number of parallel programmers.
     // "All" value is used when pressing Set all / Get all.
-    [ObservableProperty] private int parallelProgrammersAllDesired = 0;
+    [ObservableProperty] private int parallelProgrammersAllDesired = 3;
 
 
     [ObservableProperty] private string networkId = "dk-lab";
@@ -1164,6 +1164,9 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
         dev.ProcessStatus = cs.ProcessStatus;
         dev.ProcessProgress = cs.ProcessProgress;
         dev.ProcessCassia = cs.ProcessCassia;
+        // When a device is queued/programming, force AssignedCassia to the gateway currently handling it
+        if (!string.IsNullOrWhiteSpace(dev.ProcessCassia) && dev.IsInQueue)
+            dev.AssignedCassia = dev.ProcessCassia;
         dev.ProcessFirmware = cs.ProcessFirmware;
         dev.ProcessLastUpdateUtc = cs.LastUpdateUtc;
 
@@ -1807,8 +1810,20 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
                 dt = DateTime.SpecifyKind(dt, DateTimeKind.Local);
             return new DateTimeOffset(dt);
         }
-
         return DateTimeOffset.MinValue;
+    }
+
+    private static bool LooksLikeFirmwareVersion(string s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return false;
+        s = s.Trim();
+
+        // Ignore detector model strings like "P46", "P47", etc.
+        if (Regex.IsMatch(s, @"^P\d{2}$", RegexOptions.IgnoreCase))
+            return false;
+
+        // Accept typical target versions like "v02.35" or "02.35"
+        return Regex.IsMatch(s, @"^v?\d{2}\.\d{2}$", RegexOptions.IgnoreCase);
     }
 
     
@@ -1952,7 +1967,7 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
                 {
                     qi.Cassia = cassia;
                         qi.Status = text.Trim();
-                        if (!string.IsNullOrWhiteSpace(fw))
+                        if (LooksLikeFirmwareVersion(fw))
                             qi.FirmwareVersion = fw;
                         qi.LastUpdateUtc = tsUtc;
 
@@ -1964,7 +1979,7 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
                 var cs = GetOrCreateCache(mac);
                 cs.ProcessCassia = cassia;
                 cs.ProcessStatus = text.Trim();
-                if (!string.IsNullOrWhiteSpace(fw))
+                if (LooksLikeFirmwareVersion(fw))
                     cs.ProcessFirmware = fw;
                 cs.LastUpdateUtc = tsUtc;
 
@@ -2460,8 +2475,11 @@ private void RequestUpgradeLogTextRefresh()
             int value = 0;
             if (root.ValueKind == JsonValueKind.Number)
                 value = root.GetInt32();
-            else if (root.TryGetProperty("value", out var v) && v.TryGetInt32(out var vi))
-                value = vi;
+            else if (root.TryGetProperty("value", out var v))
+            {
+                if (v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var vi)) value = vi;
+                else if (v.ValueKind == JsonValueKind.String && int.TryParse(v.GetString(), out var vsi)) value = vsi;
+            }
 
             if (value <= 0) return;
 
@@ -2476,8 +2494,7 @@ private void RequestUpgradeLogTextRefresh()
                 }
 
                 gw.ParallelProgrammers = value;
-                if (gw.ParallelProgrammersDesired <= 0)
-                    gw.ParallelProgrammersDesired = value;
+                gw.ParallelProgrammersDesired = value;
             });
         }
         catch { }

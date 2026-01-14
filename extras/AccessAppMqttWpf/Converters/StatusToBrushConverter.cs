@@ -12,28 +12,33 @@ namespace AccessAppMqttWpf.Converters
         {
             var s = (value?.ToString() ?? "").Trim().ToLowerInvariant();
 
-            Brush Good() => (Brush?)Application.Current.TryFindResource("GoodBrush") ?? Brushes.LimeGreen;
-            Brush Bad()  => (Brush?)Application.Current.TryFindResource("BadBrush")  ?? Brushes.IndianRed;
-            Brush Warn() => (Brush?)Application.Current.TryFindResource("WarnBrush") ?? Brushes.Goldenrod;
-            Brush Muted() => (Brush?)Application.Current.TryFindResource("MutedBrush") ?? Brushes.Gray;
+            Brush FromKey(string key, Brush fallback)
+                => (Brush?)Application.Current.TryFindResource(key) ?? fallback;
 
-            // IMPORTANT: queued/progress state must override "success" (some lines contain both words).
-            // Use AccentBrush (blue) as the queued color.
-            Brush Queued() => (Brush?)Application.Current.TryFindResource("AccentBrush") ?? Brushes.DodgerBlue;
+            var good = FromKey("GoodBrush", Brushes.LimeGreen);
+            var bad = FromKey("BadBrush", Brushes.IndianRed);
+            var warn = FromKey("WarnBrush", Brushes.Orange);
+            var muted = FromKey("MutedBrush", Brushes.Gray);
+            var accent = FromKey("AccentBrush", Brushes.DodgerBlue);
 
-            if (s.Contains("queued") || s.Contains("queue") || s.Contains("programming") || s.Contains("upgrading") || s.Contains("running"))
-                return Queued();
+            // ---- IMPORTANT ORDERING ----
+            // Queued/Programming must override "Success" (some statuses may contain both words)
+            if (s.Contains("queued") || s.Contains("queue") || s.Contains("programming") || s.Contains("upgrading"))
+                return accent;
 
-            if (s.Contains("success") || s == "ok" || s.Contains("achieved"))
-                return Good();
+            if (s.Contains("requested update") || s.Contains("requested"))
+                return accent;
+
+            if (s.Contains("done") || s.Contains("success") || s.Contains("ok") || s.Contains("completed"))
+                return good;
 
             if (s.Contains("fail") || s.Contains("error"))
-                return Bad();
+                return bad;
 
             if (s.Contains("warn"))
-                return Warn();
+                return warn;
 
-            return Muted();
+            return muted;
         }
 
         public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
