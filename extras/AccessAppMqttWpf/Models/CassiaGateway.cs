@@ -8,6 +8,8 @@ namespace AccessAppMqttWpf.Models;
 public partial class CassiaGateway : ObservableObject
 {
     [ObservableProperty] private string name = "";
+    // Version string received from tele/.../status (e.g. "2.5.1" or "v2.5.1")
+    [ObservableProperty] private string version = "";
     [ObservableProperty] private string networkId = "";
     [ObservableProperty] private string state = "unknown";
     [ObservableProperty] private DateTimeOffset lastSeenUtc = DateTimeOffset.MinValue;
@@ -15,6 +17,10 @@ public partial class CassiaGateway : ObservableObject
     [ObservableProperty] private int queue = 0;
     // Will be added to the status payload later (same level as "queue").
     [ObservableProperty] private int programming = 0;
+    // Runtime-only limit received from tele/.../parallel-programmers
+    [ObservableProperty] private int parallelProgrammers = 0;
+    // Editable value in UI (what the user wants to set). Kept separate from ParallelProgrammers.
+    [ObservableProperty] private int parallelProgrammersDesired = 0;
     [ObservableProperty] private double totalSpeedpct = 1;
 
     // Client-side speed history for graphing (max 1 hour kept)
@@ -45,6 +51,10 @@ public partial class CassiaGateway : ObservableObject
     public string AssignedLine => $"Assigned: P41 {AssignedP41}  P42 {AssignedP42}  P46 {AssignedP46}   |   P47 {AssignedP47}  P48 {AssignedP48}";
     public string QueueLine => $"Queue {Queue} • Programming {Programming}";
 
+    public string NameWithVersion => string.IsNullOrWhiteSpace(Version)
+        ? Name
+        : $"{Name}  •  {Version}";
+
     // Firmware manifest (tele/.../fw-manifest)
     [ObservableProperty] private DateTimeOffset fwManifestLastSeenUtc = DateTimeOffset.MinValue;
 
@@ -65,6 +75,8 @@ public partial class CassiaGateway : ObservableObject
     public bool HasFwManifest => FirmwareManifest.Count > 0;
 
     partial void OnStateChanged(string value) => OnPropertyChanged(nameof(StatusLine));
+    partial void OnNameChanged(string value) => OnPropertyChanged(nameof(NameWithVersion));
+    partial void OnVersionChanged(string value) => OnPropertyChanged(nameof(NameWithVersion));
     partial void OnLastSeenUtcChanged(DateTimeOffset value)
     {
         OnPropertyChanged(nameof(StatusLine));
@@ -81,6 +93,14 @@ public partial class CassiaGateway : ObservableObject
         OnPropertyChanged(nameof(QueueLine));
         OnPropertyChanged(nameof(StatusLine));
     }
+
+    partial void OnParallelProgrammersChanged(int value)
+    {
+        // Keep UI editable value in sync when we receive an update.
+        if (ParallelProgrammersDesired <= 0)
+            ParallelProgrammersDesired = value;
+    }
+    partial void OnParallelProgrammersDesiredChanged(int value) { }
 
     partial void OnAssignedP41Changed(int value) => OnPropertyChanged(nameof(AssignedLine));
     partial void OnAssignedP42Changed(int value) => OnPropertyChanged(nameof(AssignedLine));

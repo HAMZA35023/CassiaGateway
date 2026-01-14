@@ -17,6 +17,13 @@ namespace AccessAppMqttWpf.Converters
             Brush Warn() => (Brush?)Application.Current.TryFindResource("WarnBrush") ?? Brushes.Goldenrod;
             Brush Muted() => (Brush?)Application.Current.TryFindResource("MutedBrush") ?? Brushes.Gray;
 
+            // IMPORTANT: queued/progress state must override "success" (some lines contain both words).
+            // Use AccentBrush (blue) as the queued color.
+            Brush Queued() => (Brush?)Application.Current.TryFindResource("AccentBrush") ?? Brushes.DodgerBlue;
+
+            if (s.Contains("queued") || s.Contains("queue") || s.Contains("programming") || s.Contains("upgrading") || s.Contains("running"))
+                return Queued();
+
             if (s.Contains("success") || s == "ok" || s.Contains("achieved"))
                 return Good();
 

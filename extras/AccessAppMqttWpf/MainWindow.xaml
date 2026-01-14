@@ -89,7 +89,7 @@
 
     <Grid Margin="18">
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="380"/>
+            <ColumnDefinition Width="400"/>
             <ColumnDefinition Width="18"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
@@ -104,6 +104,21 @@
                                FontSize="18"
                                FontWeight="SemiBold"
                                Margin="0,0,0,10"/>
+
+                    <!-- Runtime control of parallel programmers (ALL gateways) -->
+                    <Border Background="{StaticResource Card2Brush}" CornerRadius="10" Padding="10" Margin="0,0,0,10">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="Parallel programmers (all):" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"/>
+                            <TextBox Width="52" Margin="10,0,6,0" Padding="6,3"
+                                     Text="{Binding ParallelProgrammersAllDesired, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                            <Button Style="{StaticResource GhostButton}" Padding="12,6" Margin="0,0,6,0"
+                                    Content="Set all"
+                                    Command="{Binding SetParallelProgrammersForAllCassiasCommand}"/>
+                            <Button Style="{StaticResource GhostButton}" Padding="12,6" Margin="0,0,0,0"
+                                    Content="Get all"
+                                    Command="{Binding GetParallelProgrammersForAllCassiasCommand}"/>
+                        </StackPanel>
+                    </Border>
 
                     <ItemsControl ItemsSource="{Binding CassiaGateways}">
                         <ItemsControl.ItemTemplate>
@@ -127,7 +142,7 @@
 
                                         <!-- Row 0: Name + badges -->
                                         <TextBlock Grid.Row="0" Grid.Column="0"
-                                                   Text="{Binding Name}"
+                                                   Text="{Binding NameWithVersion}"
                                                    FontWeight="SemiBold"
                                                    FontSize="14"
                                                    VerticalAlignment="Top"/>
@@ -193,8 +208,27 @@
                                                 <Run Text="Programming" Foreground="{StaticResource MutedBrush}"/>
                                                 <Run Text=" "/>
                                                 <Run Text="{Binding Programming}" FontWeight="SemiBold" Foreground="Black"/>
+
+                                                <Run Text="   |   Par" Foreground="{StaticResource MutedBrush}"/>
+                                                <Run Text=" "/>
+                                                <Run Text="{Binding ParallelProgrammers}" FontWeight="SemiBold" Foreground="Black"/>
                                                 
                                             </TextBlock>
+
+                                            <!-- Line 2b: runtime control of parallel programmers (per Cassia) -->
+                                            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                                <TextBlock Text="Set parallel:" Foreground="{StaticResource MutedBrush}" FontSize="12" VerticalAlignment="Center"/>
+                                                <TextBox Width="52" Margin="8,0,6,0" Padding="6,3"
+                                                         Text="{Binding ParallelProgrammersDesired, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                                <Button Style="{StaticResource GhostButton}" Padding="10,4" Margin="0,0,6,0"
+                                                        Content="Set"
+                                                        Command="{Binding DataContext.SetParallelProgrammersForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        CommandParameter="{Binding}"/>
+                                                <Button Style="{StaticResource GhostButton}" Padding="10,4" Margin="0,0,0,0"
+                                                        Content="Get"
+                                                        Command="{Binding DataContext.GetParallelProgrammersForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        CommandParameter="{Binding Name}"/>
+                                            </StackPanel>
 
                                             <!-- Line 3: Sticky assignment counts -->
                                             <TextBlock FontSize="12" Margin="0,4,0,0">

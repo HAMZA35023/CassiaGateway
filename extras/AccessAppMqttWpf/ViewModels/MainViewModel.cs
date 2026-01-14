@@ -31,6 +31,8 @@ public partial class MainViewModel : ObservableObject
 
     // After each connect we wait for per-gateway status, then request its FW manifest once.
     private readonly HashSet<string> _fwManifestRequestedForGw = new(StringComparer.OrdinalIgnoreCase);
+    // After each connect we request queue/programming/parallel-programmers once per gateway.
+    private readonly HashSet<string> _runtimeStateRequestedForGw = new(StringComparer.OrdinalIgnoreCase);
     private DateTimeOffset _connectedAtUtc = DateTimeOffset.MinValue;
 
 
@@ -154,6 +156,11 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private bool useTls;
     [ObservableProperty] private bool ignoreTlsErrors = true;
 
+    // Runtime-only: set/get number of parallel programmers.
+    // "All" value is used when pressing Set all / Get all.
+    [ObservableProperty] private int parallelProgrammersAllDesired = 0;
+
+
     [ObservableProperty] private string networkId = "dk-lab";
     [ObservableProperty] private string commandTopicTemplate = "accessapp/{networkId}/cmd/{cassia}/{command}";
     [ObservableProperty] private string defaultCommand = "start-update";
@@ -257,6 +264,7 @@ public partial class MainViewModel : ObservableObject
             {
                 _connectedAtUtc = DateTimeOffset.UtcNow;
                 _fwManifestRequestedForGw.Clear();
+                _runtimeStateRequestedForGw.Clear();
             }
         };
 
@@ -505,6 +513,17 @@ public partial class MainViewModel : ObservableObject
             {
                 await _mqtt.SubscribeAsync($"accessapp/{NetworkId}/tele/#").ConfigureAwait(false);
                 await _mqtt.SubscribeAsync($"accessapp/{NetworkId}/cmd/#").ConfigureAwait(false);
+
+                // If we already know some gateways (from a previous run), request snapshots immediately.
+                try
+                {
+                    foreach (var gw in CassiaGateways.ToList())
+                    {
+                        if (string.IsNullOrWhiteSpace(gw?.Name)) continue;
+                        MaybeAutoRequestRuntimeStateAfterStatus(gw);
+                    }
+                }
+                catch { }
 
 
             // Auto-gather saved upgrade logs on connect (per gateway).
@@ -1283,6 +1302,7 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
                 var root = doc.RootElement;
 
                 var name = root.TryGetProperty("name", out var n) ? n.GetString() ?? cassia : cassia;
+                var version = root.TryGetProperty("version", out var verEl) ? (verEl.GetString() ?? "") : "";
                 var state = root.TryGetProperty("state", out var s) ? s.GetString() ?? "unknown" : "unknown";
                 var ts = root.TryGetProperty("time", out var t) && t.TryGetDateTimeOffset(out var dto) ? dto : DateTimeOffset.UtcNow;
                 int queue = root.TryGetProperty("queue", out var q) ? q.GetInt32() : 0;
@@ -1307,6 +1327,7 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
                         LogGatewayOptions.Add(name);
 
                     gw.State = state;
+                    gw.Version = version;
                     gw.LastSeenUtc = ts;
                     gw.Queue = queue;
                     gw.Programming = programming;
@@ -1316,6 +1337,9 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
 
                     // When a gateway announces itself, ask it for FW manifest once per connect.
                     MaybeAutoRequestFirmwareManifestAfterStatus(gw);
+
+                    // Also request runtime snapshot (queue / programming / parallel programmers) so the UI can reconnect mid-run.
+                    MaybeAutoRequestRuntimeStateAfterStatus(gw);
 
                     MaybeAutoRequestUpgradeLogAfterStatus(gw);
 
@@ -1334,6 +1358,24 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
         if (kind == "tele" && leaf == "fw-manifest")
         {
             HandleFwManifestTele(cassia, payload);
+            return;
+        }
+
+        if (kind == "tele" && leaf == "queue-list")
+        {
+            HandleQueueListTele(cassia, payload);
+            return;
+        }
+
+        if (kind == "tele" && leaf == "programming-list")
+        {
+            HandleProgrammingListTele(cassia, payload);
+            return;
+        }
+
+        if (kind == "tele" && leaf == "parallel-programmers")
+        {
+            HandleParallelProgrammersTele(cassia, payload);
             return;
         }
 
@@ -2156,6 +2198,78 @@ private void RequestUpgradeLogTextRefresh()
         _ = RequestFirmwareManifestAsync(gw.Name, manual: false);
     }
 
+    private void MaybeAutoRequestRuntimeStateAfterStatus(CassiaGateway gw)
+    {
+        if (!IsConnected) return;
+        if (!string.Equals(gw.StateLower, "online", StringComparison.OrdinalIgnoreCase)) return;
+        if (string.IsNullOrWhiteSpace(gw.Name)) return;
+
+        // Only request once per connect per gateway.
+        if (_runtimeStateRequestedForGw.Contains(gw.Name)) return;
+        _runtimeStateRequestedForGw.Add(gw.Name);
+
+        _ = RequestQueueListAsync(gw.Name);
+        _ = RequestProgrammingListAsync(gw.Name);
+        _ = RequestParallelProgrammersAsync(gw.Name);
+    }
+
+    private Task RequestQueueListAsync(string cassiaName)
+        => _mqtt.PublishJsonAsync(BuildCmdTopic(cassiaName, "get-queue-list"), new { }, retain: false, qos: 1, ct: _appCts.Token);
+
+    private Task RequestProgrammingListAsync(string cassiaName)
+        => _mqtt.PublishJsonAsync(BuildCmdTopic(cassiaName, "get-programming-list"), new { }, retain: false, qos: 1, ct: _appCts.Token);
+
+    private Task RequestParallelProgrammersAsync(string cassiaName)
+        => _mqtt.PublishJsonAsync(BuildCmdTopic(cassiaName, "get-parallel-programmers"), new { }, retain: false, qos: 1, ct: _appCts.Token);
+
+    private Task SetParallelProgrammersAsync(string cassiaName, int value)
+        => _mqtt.PublishJsonAsync(BuildCmdTopic(cassiaName, "set-parallel-programmers"), new { value }, retain: false, qos: 1, ct: _appCts.Token);
+
+    [RelayCommand]
+    private async Task GetParallelProgrammersForCassia(string cassiaName)
+    {
+        if (!IsConnected) { ConnectionStatus = "Not connected"; return; }
+        if (string.IsNullOrWhiteSpace(cassiaName)) return;
+        await RequestParallelProgrammersAsync(cassiaName).ConfigureAwait(false);
+    }
+
+    [RelayCommand]
+    private async Task SetParallelProgrammersForCassia(object? cassiaGateway)
+    {
+        if (!IsConnected) { ConnectionStatus = "Not connected"; return; }
+        if (cassiaGateway is not CassiaGateway gw) return;
+        if (string.IsNullOrWhiteSpace(gw.Name)) return;
+
+        var value = gw.ParallelProgrammersDesired;
+        if (value <= 0) return;
+        await SetParallelProgrammersAsync(gw.Name, value).ConfigureAwait(false);
+    }
+
+    [RelayCommand]
+    private async Task GetParallelProgrammersForAllCassias()
+    {
+        if (!IsConnected) { ConnectionStatus = "Not connected"; return; }
+        foreach (var gw in CassiaGateways.ToList())
+        {
+            if (string.IsNullOrWhiteSpace(gw?.Name)) continue;
+            await RequestParallelProgrammersAsync(gw.Name).ConfigureAwait(false);
+        }
+    }
+
+    [RelayCommand]
+    private async Task SetParallelProgrammersForAllCassias()
+    {
+        if (!IsConnected) { ConnectionStatus = "Not connected"; return; }
+        var value = ParallelProgrammersAllDesired;
+        if (value <= 0) return;
+
+        foreach (var gw in CassiaGateways.ToList())
+        {
+            if (string.IsNullOrWhiteSpace(gw?.Name)) continue;
+            await SetParallelProgrammersAsync(gw.Name, value).ConfigureAwait(false);
+        }
+    }
+
     [RelayCommand]
     private async Task RefreshFwManifestForCassia(string cassiaName)
     {
@@ -2227,6 +2341,146 @@ private void RequestUpgradeLogTextRefresh()
         {
             // ignore malformed payloads
         }
+    }
+
+    private void HandleQueueListTele(string cassia, string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("queueList", out var listEl) || listEl.ValueKind != JsonValueKind.Array)
+                return;
+
+            var now = DateTimeOffset.UtcNow;
+
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                foreach (var item in listEl.EnumerateArray())
+                {
+                    var mac = item.TryGetProperty("mac", out var m) ? (m.GetString() ?? "") : "";
+                    if (string.IsNullOrWhiteSpace(mac)) continue;
+
+                    var detectorType = item.TryGetProperty("detectorType", out var dt) ? (dt.GetString() ?? "") : "";
+                    var fw = item.TryGetProperty("firmwareVersion", out var fv) ? (fv.GetString() ?? "") : "";
+
+                    var qi = QueueItems.FirstOrDefault(q => q.Mac.Equals(mac, StringComparison.OrdinalIgnoreCase));
+                    if (qi == null)
+                    {
+                        qi = new QueueItem
+                        {
+                            Mac = mac,
+                            Cassia = cassia,
+                            Command = DefaultCommand,
+                            Status = "Queued",
+                            Progress = 0,
+                            FirmwareVersion = fw,
+                            DetectorType = detectorType,
+                            LastUpdateUtc = now
+                        };
+                        QueueItems.Add(qi);
+                    }
+                    else
+                    {
+                        qi.Cassia = cassia;
+                        qi.Status = "Queued";
+                        qi.DetectorType = string.IsNullOrWhiteSpace(qi.DetectorType) ? detectorType : qi.DetectorType;
+                        if (!string.IsNullOrWhiteSpace(fw)) qi.FirmwareVersion = fw;
+                        qi.LastUpdateUtc = now;
+                    }
+
+                    MirrorQueueToDevice(qi);
+                }
+            });
+        }
+        catch { }
+    }
+
+    private void HandleProgrammingListTele(string cassia, string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("programmingList", out var listEl) || listEl.ValueKind != JsonValueKind.Array)
+                return;
+
+            var now = DateTimeOffset.UtcNow;
+
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                foreach (var item in listEl.EnumerateArray())
+                {
+                    var mac = item.TryGetProperty("mac", out var m) ? (m.GetString() ?? "") : "";
+                    if (string.IsNullOrWhiteSpace(mac)) continue;
+
+                    var detectorType = item.TryGetProperty("detectorType", out var dt) ? (dt.GetString() ?? "") : "";
+                    var fw = item.TryGetProperty("firmwareVersion", out var fv) ? (fv.GetString() ?? "") : "";
+
+                    var qi = QueueItems.FirstOrDefault(q => q.Mac.Equals(mac, StringComparison.OrdinalIgnoreCase));
+                    if (qi == null)
+                    {
+                        qi = new QueueItem
+                        {
+                            Mac = mac,
+                            Cassia = cassia,
+                            Command = DefaultCommand,
+                            Status = "Programming",
+                            Progress = 1,
+                            FirmwareVersion = fw,
+                            DetectorType = detectorType,
+                            LastUpdateUtc = now
+                        };
+                        QueueItems.Add(qi);
+                    }
+                    else
+                    {
+                        qi.Cassia = cassia;
+                        qi.Status = "Programming";
+                        if (qi.Progress <= 0) qi.Progress = 1;
+                        qi.DetectorType = string.IsNullOrWhiteSpace(qi.DetectorType) ? detectorType : qi.DetectorType;
+                        if (!string.IsNullOrWhiteSpace(fw)) qi.FirmwareVersion = fw;
+                        qi.LastUpdateUtc = now;
+                    }
+
+                    MirrorQueueToDevice(qi);
+                }
+            });
+        }
+        catch { }
+    }
+
+    private void HandleParallelProgrammersTele(string cassia, string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+
+            int value = 0;
+            if (root.ValueKind == JsonValueKind.Number)
+                value = root.GetInt32();
+            else if (root.TryGetProperty("value", out var v) && v.TryGetInt32(out var vi))
+                value = vi;
+
+            if (value <= 0) return;
+
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                var gw = CassiaGateways.FirstOrDefault(x => x.Name.Equals(cassia, StringComparison.OrdinalIgnoreCase));
+                if (gw == null)
+                {
+                    gw = new CassiaGateway { Name = cassia, NetworkId = NetworkId };
+                    CassiaGateways.Add(gw);
+                    EnsureCassiaOption(cassia);
+                }
+
+                gw.ParallelProgrammers = value;
+                if (gw.ParallelProgrammersDesired <= 0)
+                    gw.ParallelProgrammersDesired = value;
+            });
+        }
+        catch { }
     }
 
     private void ShowFwManifestTimeoutIfAny()
