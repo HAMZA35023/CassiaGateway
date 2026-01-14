@@ -492,6 +492,34 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 return GetFirmwareManifestRequested?.Invoke(dto) ?? Task.CompletedTask;
             }
 
+            if (string.Equals(command, "clear-upgrade-log", StringComparison.OrdinalIgnoreCase))
+            {
+                Log("HandleCommandAsync: dispatch clear-upgrade-log");
+
+                var currentDir = Directory.GetCurrentDirectory();
+                Console.WriteLine("Current Directory: " + currentDir);
+
+                var logPath = Path.Combine(currentDir, "Logs", "upgrade_logs.txt");
+
+                if (!System.IO.File.Exists(logPath))
+                {
+                    Log("No upgrade log file to clear.");
+                    return Task.CompletedTask;
+                }
+
+                try
+                {
+                    System.IO.File.Delete(logPath);
+                    Log("Upgrade log cleared successfully.");
+                    return Task.CompletedTask;
+                }
+                catch (Exception ex)
+                {
+                    Log($"Error clearing upgrade log: {ex.Message}");
+                    return Task.CompletedTask;
+
+                }
+            }
             Log($"HandleCommandAsync: ignored (unknown command '{command}')");
             return Task.CompletedTask;
         }
