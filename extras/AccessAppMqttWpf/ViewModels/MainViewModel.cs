@@ -14,6 +14,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Data;
 using System.Windows.Threading;
+using AccessAppMqttWpf;
 
 namespace AccessAppMqttWpf.ViewModels;
 
@@ -37,6 +38,10 @@ public partial class MainViewModel : ObservableObject
     public ICollectionView FilteredDevices { get; }
 
     public ObservableCollection<CassiaGateway> CassiaGateways { get; } = new();
+
+    // Names for dropdowns (assignment, commands, etc.)
+    public ObservableCollection<string> CassiaNameOptions { get; } = new();
+
     public ObservableCollection<QueueItem> QueueItems { get; } = new();
 
     public ICollectionView QueueView { get; }
@@ -48,6 +53,15 @@ public partial class MainViewModel : ObservableObject
         new(StringComparer.OrdinalIgnoreCase);
 
     private readonly CancellationTokenSource _appCts = new();
+
+    // Plain text responses for connect/write-read are published on a response topic (exact topic may vary).
+    // Payload format: "AA:BB:CC:DD:EE:FF: <message>".
+    // Plain-text replies are often published on tele/* topics as human readable lines.
+    // They may be quoted ("...") and/or contain additional prefix text.
+    // Example: "10:B9:F7:0F:F1:EB: connect OK" or "[info] 10:B9:..: disconnect OK".
+    private static readonly Regex PlainReplyMacRx =
+        new(@"(?<mac>(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    public event Action<string, string>? PlainReplyReceived; // mac, message
 
     [ObservableProperty] private DiscoveredDevice? selectedDevice;
     [ObservableProperty] private QueueItem? selectedQueueItem;
@@ -126,6 +140,13 @@ public partial class MainViewModel : ObservableObject
 
     private readonly System.Collections.Generic.Dictionary<string, System.Collections.Generic.HashSet<string>> _gwSeenMacs
     = new(StringComparer.OrdinalIgnoreCase);
+
+    // Sticky per-device assignment.
+    // - We auto-assign ONCE when a device first appears.
+    // - We NEVER change assignment when RSSI changes, unless user presses "Reassign".
+    private const int AssignmentRssiSlack = 10; // if another cassia is within 8-10 RSSI, it can take the device for balancing
+    private readonly HashSet<string> _deviceAssignmentWired = new(StringComparer.OrdinalIgnoreCase);
+
     public MainViewModel()
     {
         var s = _store.Load();
@@ -263,6 +284,9 @@ public partial class MainViewModel : ObservableObject
 
         LogGatewayOptions.Clear();
         LogGatewayOptions.Add("All");
+
+        CassiaNameOptions.Clear();
+        CassiaNameOptions.Add("(auto)");
     }
 
     partial void OnSelectedLogGatewayNameChanged(string value)
@@ -391,6 +415,14 @@ public partial class MainViewModel : ObservableObject
                 MqttTopic,
                 _appCts.Token);
 
+            // Ensure we also receive telemetry responses (many backends publish connect/write-read replies on tele/*).
+            // If the user configured a narrow subscription like accessapp/<net>/cmd/#, we still want tele/#.
+            if (!string.IsNullOrWhiteSpace(NetworkId))
+            {
+                await _mqtt.SubscribeAsync($"accessapp/{NetworkId}/tele/#").ConfigureAwait(false);
+                await _mqtt.SubscribeAsync($"accessapp/{NetworkId}/cmd/#").ConfigureAwait(false);
+            }
+
             ConnectionStatus = "Connected";
         }
         catch (Exception ex)
@@ -430,6 +462,7 @@ public partial class MainViewModel : ObservableObject
     {
         _devices.Clear();
         CassiaGateways.Clear();
+        CassiaNameOptions.Clear();
         _gwSeenMacs.Clear(); // <-- reset unique counters
         OnPropertyChanged(nameof(DevicesSubtitle));
     }
@@ -455,6 +488,309 @@ public partial class MainViewModel : ObservableObject
 
         foreach (var d in selected)
             await QueueDeviceAndRequestAsync(d);
+    }
+
+    // ---------------------------------------------------------------------
+    // Device context actions (Connect / Disconnect / Write-Read)
+    // These are used by the Devices grid right-click menu.
+    // ---------------------------------------------------------------------
+
+    [RelayCommand]
+    private async Task ConnectDevice(DiscoveredDevice? device)
+        => await ConnectDeviceAsync(device);
+
+    [RelayCommand]
+    private async Task DisconnectDevice(DiscoveredDevice? device)
+        => await DisconnectDeviceAsync(device);
+
+    internal async Task ConnectDeviceAsync(DiscoveredDevice? device)
+    {
+        if (device == null) return;
+        await SendConnectOrDisconnectAsync(device, action: "connect");
+    }
+
+    internal async Task DisconnectDeviceAsync(DiscoveredDevice? device)
+    {
+        if (device == null) return;
+        await SendConnectOrDisconnectAsync(device, action: "disconnect");
+    }
+
+    [RelayCommand]
+    private void OpenWriteRead(DiscoveredDevice? device)
+    {
+        if (device == null) return;
+        try
+        {
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                var win = new WriteReadWindow(this, device);
+                win.Owner = Application.Current.MainWindow;
+                win.Show();
+                win.Activate();
+            });
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = "Open Write-Read failed: " + ex.Message;
+        }
+    }
+
+    private string BuildCmdTopic(string cassia, string command)
+    {
+        var tpl = string.IsNullOrWhiteSpace(CommandTopicTemplate)
+            ? "accessapp/{networkId}/cmd/{cassia}/{command}"
+            : CommandTopicTemplate;
+
+        return tpl
+            .Replace("{networkId}", NetworkId ?? "", StringComparison.OrdinalIgnoreCase)
+            .Replace("{cassia}", cassia ?? "", StringComparison.OrdinalIgnoreCase)
+            .Replace("{command}", command ?? "", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task SendConnectOrDisconnectAsync(DiscoveredDevice device, string action)
+    {
+        if (!IsConnected)
+        {
+            ConnectionStatus = "Not connected";
+            return;
+        }
+
+        var mac = (device.Mac ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(mac)) return;
+
+        var cassia = (device.AssignedCassia ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(cassia))
+            cassia = (device.BestCassia ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(cassia))
+        {
+            ConnectionStatus = "No Cassia selected for device";
+            return;
+        }
+
+        var topic = BuildCmdTopic(cassia, "connect"); // same command endpoint; action differentiates
+
+        object payload = action.Equals("disconnect", StringComparison.OrdinalIgnoreCase)
+            ? new { sensors = new[] { mac }, action = "disconnect" }
+            : new { sensors = new[] { mac } }; // default connect
+
+        device.BleLink = action.Equals("disconnect", StringComparison.OrdinalIgnoreCase) ? "disconnecting…" : "connecting…";
+        await _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+    }
+
+    internal async Task SendWriteReadAsync(
+        DiscoveredDevice device,
+        string hex,
+        int handle = 19,
+        bool noResponse = true,
+        bool expectReply = false,
+        int? timeoutSeconds = null)
+    {
+        if (!IsConnected)
+        {
+            ConnectionStatus = "Not connected";
+            return;
+        }
+
+        var mac = (device.Mac ?? "").Trim();
+        var cassia = (device.AssignedCassia ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(cassia))
+            cassia = (device.BestCassia ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(mac) || string.IsNullOrWhiteSpace(cassia))
+            return;
+
+        var topic = BuildCmdTopic(cassia, "write-read");
+
+        hex = NormalizeHexInput(hex);
+
+        // Minimal payload defaults: handle=19, noResponse=true, expectReply=false
+        object payload = timeoutSeconds.HasValue
+            ? new { sensors = new[] { mac }, handle, hex, noResponse, expectReply, timeoutSeconds = timeoutSeconds.Value }
+            : new { sensors = new[] { mac }, handle, hex, noResponse, expectReply };
+
+        await _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+    }
+
+    private static readonly Regex NonHexRx = new("[^0-9A-Fa-f]", RegexOptions.Compiled);
+
+    private static string NormalizeHexInput(string? hex)
+    {
+        var s = (hex ?? "").Trim();
+        if (s.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            s = s.Substring(2);
+
+        // Allow common formats: "0110", "01 10", "01-10", etc.
+        s = NonHexRx.Replace(s, "");
+        return s.ToUpperInvariant();
+    }
+
+    // ---------------------------------------------------------------------
+    // Sticky assignment (balanced between cassias)
+    // ---------------------------------------------------------------------
+
+    private void EnsureCassiaOption(string? name)
+    {
+        name = (name ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(name)) return;
+        if (!CassiaNameOptions.Any(x => x.Equals(name, StringComparison.OrdinalIgnoreCase)))
+            CassiaNameOptions.Add(name);
+    }
+
+    private void EnsureDeviceAssignmentWiring(DiscoveredDevice d)
+    {
+        if (d == null) return;
+        var mac = (d.Mac ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(mac)) return;
+        if (_deviceAssignmentWired.Contains(mac)) return;
+        _deviceAssignmentWired.Add(mac);
+
+        d.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(DiscoveredDevice.AssignedCassia)
+                || e.PropertyName == nameof(DiscoveredDevice.SensorModel))
+            {
+                // User changed assignment from the dropdown, or model updated.
+                RecalculateAssignmentCounts();
+            }
+        };
+    }
+
+    private static int GetGroupForModel(string? model)
+    {
+        model = (model ?? "").Trim().ToUpperInvariant();
+        return model switch
+        {
+            "P41" or "P42" or "P46" => 1,
+            "P47" or "P48" => 2,
+            _ => 0
+        };
+    }
+
+    /// <summary>
+    /// Ensures the device has a sticky AssignedCassia.
+    /// We only auto-assign once (when AssignedCassia is empty).
+    /// </summary>
+    private void EnsureStickyAssignment(DiscoveredDevice d)
+    {
+        if (d == null) return;
+        if (!string.IsNullOrWhiteSpace(d.AssignedCassia)) return; // already assigned (sticky)
+
+        // Need at least one RSSI reading.
+        if (d.CassiaRssi.Count == 0)
+            return;
+
+        var best = d.CassiaRssi.OrderByDescending(kv => kv.Value).First();
+        var bestCassia = (best.Key ?? "").Trim();
+        var bestRssi = best.Value;
+        if (string.IsNullOrWhiteSpace(bestCassia)) return;
+
+        // Eligible cassias = within slack of the best RSSI (e.g. best=-55 => eligible >= -65)
+        var eligible = d.CassiaRssi
+            .Where(kv => !string.IsNullOrWhiteSpace(kv.Key) && kv.Value >= bestRssi - AssignmentRssiSlack)
+            .OrderByDescending(kv => kv.Value)
+            .Select(kv => kv.Key)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (eligible.Count == 0)
+            eligible.Add(bestCassia);
+
+        var model = (d.SensorModel ?? "").Trim().ToUpperInvariant();
+        var group = GetGroupForModel(model);
+
+        // Prefer balance within the group the user defined.
+        // Tie-break by higher RSSI, then name.
+        string chosen = bestCassia;
+        if (group == 0)
+        {
+            chosen = bestCassia;
+        }
+        else
+        {
+            var groupCounts = GetCurrentGroupCounts(group);
+            var modelCounts = GetCurrentModelCounts(model);
+
+            chosen = eligible
+                .OrderBy(c => groupCounts.TryGetValue(c, out var gc) ? gc : 0)
+                .ThenBy(c => modelCounts.TryGetValue(c, out var mc) ? mc : 0)
+                .ThenByDescending(c => d.CassiaRssi.TryGetValue(c, out var r) ? r : int.MinValue)
+                .ThenBy(c => c, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault() ?? bestCassia;
+        }
+
+        d.AssignedCassia = chosen;
+    }
+
+    private Dictionary<string, int> GetCurrentGroupCounts(int group)
+    {
+        var dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var dev in _devices)
+        {
+            var cassia = (dev.AssignedCassia ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(cassia)) continue;
+            if (GetGroupForModel(dev.SensorModel) != group) continue;
+            dict[cassia] = dict.TryGetValue(cassia, out var v) ? v + 1 : 1;
+        }
+        return dict;
+    }
+
+    private Dictionary<string, int> GetCurrentModelCounts(string model)
+    {
+        var dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        model = (model ?? "").Trim().ToUpperInvariant();
+        foreach (var dev in _devices)
+        {
+            var cassia = (dev.AssignedCassia ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(cassia)) continue;
+            if (!string.Equals((dev.SensorModel ?? "").Trim(), model, StringComparison.OrdinalIgnoreCase)) continue;
+            dict[cassia] = dict.TryGetValue(cassia, out var v) ? v + 1 : 1;
+        }
+        return dict;
+    }
+
+    private void RecalculateAssignmentCounts()
+    {
+        // Reset
+        foreach (var gw in CassiaGateways)
+        {
+            gw.AssignedP41 = 0;
+            gw.AssignedP42 = 0;
+            gw.AssignedP46 = 0;
+            gw.AssignedP47 = 0;
+            gw.AssignedP48 = 0;
+        }
+
+        foreach (var dev in _devices)
+        {
+            var cassia = (dev.AssignedCassia ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(cassia)) continue;
+
+            var gw = CassiaGateways.FirstOrDefault(g => g.Name.Equals(cassia, StringComparison.OrdinalIgnoreCase));
+            if (gw == null) continue;
+
+            var model = (dev.SensorModel ?? "").Trim().ToUpperInvariant();
+            switch (model)
+            {
+                case "P41": gw.AssignedP41++; break;
+                case "P42": gw.AssignedP42++; break;
+                case "P46": gw.AssignedP46++; break;
+                case "P47": gw.AssignedP47++; break;
+                case "P48": gw.AssignedP48++; break;
+            }
+        }
+    }
+
+    [RelayCommand]
+    private void ReassignDevices()
+    {
+        // Clear and re-run assignment algorithm. (Still sticky until next manual reassign.)
+        foreach (var dev in _devices)
+            dev.AssignedCassia = "";
+
+        foreach (var dev in _devices.OrderBy(d => d.SensorModel).ThenBy(d => d.Mac, StringComparer.OrdinalIgnoreCase))
+            EnsureStickyAssignment(dev);
+
+        RecalculateAssignmentCounts();
+        RequestDevicesRefresh();
     }
 
     /// <summary>
@@ -486,8 +822,11 @@ public partial class MainViewModel : ObservableObject
         // Determine firmware from dropdown selection
         var fw = GetFirmwareForModel(model);
 
-        // Determine cassia (best RSSI), else first online cassia, else any cassia
-        var cassia = (d.BestCassia ?? "").Trim();
+        // Determine cassia (sticky assignment), else best RSSI, else first online cassia, else any cassia
+        var cassia = (d.AssignedCassia ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(cassia))
+            cassia = (d.BestCassia ?? "").Trim();
+
         if (string.IsNullOrWhiteSpace(cassia) || cassia.Equals("auto", StringComparison.OrdinalIgnoreCase))
         {
             cassia = CassiaGateways.FirstOrDefault(g => string.Equals(g.State, "online", StringComparison.OrdinalIgnoreCase))?.Name
@@ -587,6 +926,7 @@ public partial class MainViewModel : ObservableObject
 
         dev = new DiscoveredDevice { Mac = mac };
         _devices.Add(dev);
+        EnsureDeviceAssignmentWiring(dev);
         return dev;
     }
 
@@ -634,6 +974,42 @@ public partial class MainViewModel : ObservableObject
 
     private void OnMqttMessage(string topic, string payload)
     {
+        // 1) Handle plain-text replies regardless of topic.
+        // We accept:
+        //   "AA:BB:..: connect OK"
+        //   "[info] AA:BB:..: disconnect OK"
+        //   "\"AA:BB:..: notif=01-10-...\"" (quoted)
+        // and we handle multiple lines in one payload.
+        try
+        {
+            var text = payload ?? "";
+            foreach (var raw in text.Split(new[] { "\r", "\n" }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var line = raw.Trim();
+                if (line.Length == 0) continue;
+                line = line.Trim().Trim('"');
+
+                var mm = PlainReplyMacRx.Match(line);
+                if (!mm.Success) continue;
+
+                var mac = mm.Groups["mac"].Value.ToUpperInvariant();
+
+                // Message is whatever comes after the MAC (optionally preceded by ':')
+                var after = line.Substring(mm.Index + mm.Length).TrimStart();
+                if (after.StartsWith(":")) after = after.Substring(1).TrimStart();
+                var msg = after.Length > 0 ? after : line; // fallback
+
+                // Always update on UI thread so subscribers can safely update ObservableCollections.
+                Application.Current.Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    SetDeviceBleLinkFromPlainReply(mac, msg);
+                    PlainReplyReceived?.Invoke(mac, msg);
+                }));
+            }
+        }
+        catch { /* ignore */ }
+
+
         var m = TopicRx.Match(topic);
         if (!m.Success) return;
 
@@ -656,6 +1032,7 @@ public partial class MainViewModel : ObservableObject
                 var state = root.TryGetProperty("state", out var s) ? s.GetString() ?? "unknown" : "unknown";
                 var ts = root.TryGetProperty("time", out var t) && t.TryGetDateTimeOffset(out var dto) ? dto : DateTimeOffset.UtcNow;
                 int queue = root.TryGetProperty("queue", out var q) ? q.GetInt32() : 0;
+                int programming = root.TryGetProperty("programming", out var pr) ? pr.GetInt32() : 0;
                 double totalSpeedpct = root.TryGetProperty("totalSpeedpct", out var sp) ? sp.GetDouble() : 0;
                 Application.Current.Dispatcher.Invoke(() =>
                 {
@@ -665,6 +1042,8 @@ public partial class MainViewModel : ObservableObject
                         gw = new CassiaGateway { Name = name, NetworkId = net };
                         CassiaGateways.Add(gw);
                     }
+
+                    EnsureCassiaOption(name);
 
                     // default for upgrade log tab
                     if (SelectedLogGateway == null)
@@ -676,6 +1055,7 @@ public partial class MainViewModel : ObservableObject
                     gw.State = state;
                     gw.LastSeenUtc = ts;
                     gw.Queue = queue;
+                    gw.Programming = programming;
                     gw.TotalSpeedpct = totalSpeedpct;
 
 
@@ -800,6 +1180,10 @@ public partial class MainViewModel : ObservableObject
                             CassiaGateways.Add(gw);
                         }
 
+                        EnsureCassiaOption(gw.Name);
+
+                    EnsureCassiaOption(cassia);
+
                         if (!LogGatewayOptions.Any(x => x.Equals(cassia, StringComparison.OrdinalIgnoreCase)))
                             LogGatewayOptions.Add(cassia);
 
@@ -833,6 +1217,8 @@ public partial class MainViewModel : ObservableObject
                                 _devices.Add(existing);
                             }
 
+                            EnsureDeviceAssignmentWiring(existing);
+
                             if (!string.IsNullOrWhiteSpace(dn)) existing.Name = dn;
                             if (!string.IsNullOrWhiteSpace(fam)) existing.DetectorFamily = fam;
                             if (!string.IsNullOrWhiteSpace(typ)) existing.DetectorType = typ;
@@ -849,11 +1235,15 @@ public partial class MainViewModel : ObservableObject
                             }
 
                             existing.UpdateFromCassia(cassia, rssi, ts);
+                            EnsureStickyAssignment(existing);
                         }
 
 
                         // show unique count since last clear
                         gw.DevicesSeen = seen.Count;
+
+                        // Update per-gateway assignment counts
+                        RecalculateAssignmentCounts();
 
                         RequestDevicesRefresh();
                         OnPropertyChanged(nameof(DevicesSubtitle));
@@ -863,6 +1253,28 @@ public partial class MainViewModel : ObservableObject
             catch { }
             return;
         }
+    }
+
+    private void SetDeviceBleLinkFromPlainReply(string mac, string msg)
+    {
+        if (string.IsNullOrWhiteSpace(mac)) return;
+        var d = _devices.FirstOrDefault(x => string.Equals(x.Mac, mac, StringComparison.OrdinalIgnoreCase));
+        if (d == null) return;
+
+        // Normalize a compact status for the grid
+        var lower = (msg ?? "").ToLowerInvariant();
+        if (lower.StartsWith("connect"))
+            d.BleLink = msg;
+        else if (lower.StartsWith("disconnect"))
+            d.BleLink = msg;
+        else if (lower.StartsWith("write"))
+            d.BleLink = msg;
+        else if (lower.StartsWith("notif"))
+            d.BleLink = "notif";
+        else if (lower.Contains("timeout"))
+            d.BleLink = "timeout";
+        else
+            d.BleLink = msg;
     }
 
     private void HandleUpgradeLogTele(string cassia, string payload)

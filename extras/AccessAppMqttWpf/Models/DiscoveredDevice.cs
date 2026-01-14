@@ -24,6 +24,9 @@ public partial class DiscoveredDevice : ObservableObject
 [ObservableProperty] private string processFirmware = "";
     [ObservableProperty] private DateTimeOffset? processLastUpdateUtc;
 
+    // BLE link status from connect/disconnect plain replies
+    [ObservableProperty] private string bleLink = "";
+
     // Parsed from upgrade-log ("Current FW Version" lines)
     [ObservableProperty] private string currentFw = "";
 
@@ -31,6 +34,11 @@ public partial class DiscoveredDevice : ObservableObject
 
     [ObservableProperty] private int bestRssi = int.MinValue;
     [ObservableProperty] private string bestCassia = "";
+
+    // ----- Assignment (sticky) -----
+    // This is the Cassia we will actually use for commands (connect / update / write-read).
+    // IMPORTANT: we only auto-set it once (when first discovered) unless the user manually reassigns.
+    [ObservableProperty] private string assignedCassia = "";
     [ObservableProperty] private DateTimeOffset lastSeenUtc = DateTimeOffset.MinValue;
 
     public Dictionary<string, int> CassiaRssi { get; } = new(StringComparer.OrdinalIgnoreCase);

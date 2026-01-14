@@ -155,23 +155,26 @@
                                                 <TextBlock Text="Last:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
                                                 <TextBlock Text="{Binding LastSeenLocal}" FontSize="12" FontWeight="SemiBold" Margin="0,0,12,0"/>
 
-                                                <TextBlock Text="Devices:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
-                                                <TextBlock Text="{Binding DevicesSeen}" FontSize="12" FontWeight="SemiBold" Margin="0,0,12,0"/>
-
-                                                <TextBlock Text="In Queue:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
-                                                <TextBlock Text="{Binding Queue}" FontSize="12" FontWeight="SemiBold"/>
-                                                
-                                            </StackPanel>
-
-                                            <!-- Line 2 -->
-                                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                                                <TextBlock Text="LastSeen:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
-                                                <TextBlock Text="{Binding LastSeenUtc}" FontSize="12" FontWeight="SemiBold" Margin="0,0,12,0"/>
-
                                                 <TextBlock Text="Speed:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
                                                 <TextBlock Text="{Binding TotalSpeedpct}" FontSize="12" FontWeight="SemiBold" Margin="0,0,6,0"/>
                                                 <TextBlock Text="% / min" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
 
+                                            </StackPanel>
+
+                                            <!-- Line 2 -->
+                                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                                <TextBlock Text="Devices:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
+                                                <TextBlock Text="{Binding DevicesSeen}" FontSize="12" FontWeight="SemiBold" Margin="0,0,12,0"/>
+
+                                                <TextBlock Text="Work:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
+                                                <TextBlock Text="{Binding QueueLine}" FontSize="12" FontWeight="SemiBold" Margin="0,0,6,0"/>
+                                               
+                                            </StackPanel>
+
+                                            <!-- Line 3: Sticky assignment counts -->
+                                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                                <TextBlock Text="Assign:" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="0,0,6,0"/>
+                                                <TextBlock Text="{Binding AssignedLine}" FontSize="12" FontWeight="SemiBold"/>
                                             </StackPanel>
 
                                         </StackPanel>
@@ -281,6 +284,14 @@
                                         Padding="12,6"
                                         VerticalAlignment="Center"
                                         Click="ClearDevices_Click"/>
+
+                                <Button Style="{StaticResource GhostButton}"
+                                        Content="Reassign"
+                                        Padding="12,6"
+                                        VerticalAlignment="Center"
+                                        Margin="10,0,0,0"
+                                        ToolTip="Re-balance sticky Cassia assignments (will not change again until you press this)."
+                                        Command="{Binding ReassignDevicesCommand}"/>
                             </StackPanel>
                         </StackPanel>
 
@@ -298,8 +309,33 @@
                                       SelectedItem="{Binding SelectedDevice, Mode=TwoWay}"
                                       AutoGenerateColumns="False"
                                       MouseDoubleClick="DevicesGrid_MouseDoubleClick"
-                                      IsReadOnly="True"
+                                      IsReadOnly="False"
                                       CanUserSortColumns="True">
+
+                                <!-- Right-click device actions (Connect / Disconnect / Write-Read) -->
+                                <!-- NOTE: ContextMenu is not in the visual tree; we stash the VM on the row Tag to bind commands reliably. -->
+                                <DataGrid.RowStyle>
+                                    <Style TargetType="DataGridRow">
+                                        <Setter Property="Tag" Value="{Binding DataContext, RelativeSource={RelativeSource AncestorType=DataGrid}}"/>
+                                        <Setter Property="ContextMenu">
+                                            <Setter.Value>
+                                                <ContextMenu>
+                                                    <MenuItem Header="Connect"
+                                                              Command="{Binding PlacementTarget.Tag.ConnectDeviceCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                              CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                                    <MenuItem Header="Disconnect"
+                                                              Command="{Binding PlacementTarget.Tag.DisconnectDeviceCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                              CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                                    <Separator/>
+                                                    <MenuItem Header="Write-Read…"
+                                                              Command="{Binding PlacementTarget.Tag.OpenWriteReadCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                              CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                                </ContextMenu>
+                                            </Setter.Value>
+                                        </Setter>
+                                    </Style>
+                                </DataGrid.RowStyle>
+
                                 <DataGrid.Columns>
                                     <DataGridTemplateColumn Header="" Width="32" CanUserSort="False">
                                         <DataGridTemplateColumn.CellTemplate>
@@ -321,17 +357,33 @@
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
 
-                                    <DataGridTextColumn Header="MAC" Binding="{Binding Mac}" Width="160"/>
-                                    <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="160"/>
-                                    <DataGridTextColumn Header="Product" Binding="{Binding ProductNumber}" Width="120"/>
-                                    <DataGridTextColumn Header="Model" Binding="{Binding SensorModel}" Width="70"/>
-                                    <DataGridTextColumn Header="RSSI" Binding="{Binding BestRssi}" Width="70"/>
-                                    <DataGridTextColumn Header="Cassia" Binding="{Binding BestCassia}" Width="110"/>
+                                    <DataGridTextColumn Header="MAC" Binding="{Binding Mac}" Width="160" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="160" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="Product" Binding="{Binding ProductNumber}" Width="120" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="Model" Binding="{Binding SensorModel}" Width="70" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="RSSI" Binding="{Binding BestRssi}" Width="70" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="Cassia (best)" Binding="{Binding BestCassia}" Width="110" IsReadOnly="True"/>
 
-                                    <DataGridTextColumn Header="Status" Binding="{Binding ProcessStatus}" Width="120"/>
-                                    <DataGridTextColumn Header="%" Binding="{Binding ProcessProgress}" Width="60"/>
-                                    <DataGridTextColumn Header="FW" Binding="{Binding ProcessFirmware}" Width="90"/>
-                                    <DataGridTextColumn Header="Current FW" Binding="{Binding CurrentFw}" Width="90"/>
+                                    <!-- Sticky assignment (used for commands) -->
+                                    <DataGridTemplateColumn Header="Assigned Cassia" Width="140" CanUserSort="False">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding AssignedCassia}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                        <DataGridTemplateColumn.CellEditingTemplate>
+                                            <DataTemplate>
+                                                <ComboBox ItemsSource="{Binding DataContext.CassiaNameOptions, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                         SelectedItem="{Binding AssignedCassia, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                         MinWidth="120"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellEditingTemplate>
+                                    </DataGridTemplateColumn>
+
+                                    <DataGridTextColumn Header="Status" Binding="{Binding ProcessStatus}" Width="120" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="%" Binding="{Binding ProcessProgress}" Width="60" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="FW" Binding="{Binding ProcessFirmware}" Width="90" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="Current FW" Binding="{Binding CurrentFw}" Width="90" IsReadOnly="True"/>
 
                                     <DataGridTemplateColumn Header="Get FW" Width="90" CanUserSort="False">
                                         <DataGridTemplateColumn.CellTemplate>
@@ -342,8 +394,8 @@
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
 
-                                    <DataGridTextColumn Header="Proc Cassia" Binding="{Binding ProcessCassia}" Width="110"/>
-                                    <DataGridTextColumn Header="Proc Time" Binding="{Binding ProcessLastUpdateLocal}" Width="150"/>
+                                    <DataGridTextColumn Header="Proc Cassia" Binding="{Binding ProcessCassia}" Width="110" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="Proc Time" Binding="{Binding ProcessLastUpdateLocal}" Width="150" IsReadOnly="True"/>
                                 </DataGrid.Columns>
                             </DataGrid>
 

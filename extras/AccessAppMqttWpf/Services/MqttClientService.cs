@@ -88,6 +88,17 @@ public sealed class MqttClientService : IDisposable
     }
 
     /// <summary>
+    /// Subscribe after connecting (or to add additional topic filters).
+    /// No-op if not connected.
+    /// </summary>
+    public async Task SubscribeAsync(string topicFilter)
+    {
+        if (!IsConnected) return;
+        if (string.IsNullOrWhiteSpace(topicFilter)) return;
+        await _client.SubscribeAsync(topicFilter).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Enables TLS and optionally ignores certificate validation.
     /// Uses reflection/expressions to avoid binding to MQTTnet's TLS builder types at compile time.
     /// </summary>
