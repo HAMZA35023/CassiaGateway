@@ -182,14 +182,14 @@
                                                 <Run Text="Last:" Foreground="{StaticResource MutedBrush}"/>
                                                 <Run Text=" "/>
                                                 <Run Text="{Binding LastSeenLocal, Mode=OneWay}" FontWeight="SemiBold" Foreground="Black"/>
-                                                <Run Text="   "/>
+                                                <Run Text=""/>
 
                                                 <Run Text="Devices:" Foreground="{StaticResource MutedBrush}"/>
                                                 <Run Text=" "/>
                                                 <Run Text="{Binding DevicesSeen}" FontWeight="SemiBold" Foreground="Black"/>
-                                                <Run Text="   "/>
+                                                <Run Text=""/>
 
-                                                <Run Text="   |   Workers" Foreground="{StaticResource MutedBrush}"/>
+                                                <Run Text=" | Workers" Foreground="{StaticResource MutedBrush}"/>
                                                 <Run Text=" "/>
                                                 <Run Text="{Binding ParallelProgrammers}" FontWeight="SemiBold" Foreground="Black"/>
 
@@ -206,7 +206,7 @@
                                                 <Run Text="  |  Queue" Foreground="{StaticResource MutedBrush}"/>
                                                 <Run Text=" "/>
                                                 <Run Text="{Binding Queue}" FontWeight="SemiBold" Foreground="Black"/>
-                                                <Run Text="   "/>
+                                                <Run Text=" "/>
 
                                                 <Run Text="Programming" Foreground="{StaticResource MutedBrush}"/>
                                                 <Run Text=" "/>
@@ -360,7 +360,7 @@
                                 </StackPanel>
     <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" HorizontalAlignment="Right">
 
-                                <TextBox Width="280" Text="{Binding DeviceFilter}" Margin="18,0,10,0"/>
+                                <TextBox Width="280" Text="{Binding DeviceFilter, UpdateSourceTrigger=PropertyChanged}" Margin="18,0,10,0"/>
                                 <ComboBox Width="120" ItemsSource="{Binding SensorFilterOptions}" SelectedItem="{Binding SensorFilter}"/>
                                 <CheckBox x:Name="EnableDoubleClickQueueCheckBox"
                                           Content="Double-click to queue"

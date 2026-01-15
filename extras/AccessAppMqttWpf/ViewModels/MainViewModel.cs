@@ -37,6 +37,8 @@ public partial class MainViewModel : ObservableObject
 
 
     private readonly ObservableCollection<DiscoveredDevice> _devices = new();
+    private readonly Dictionary<string, DiscoveredDevice> _deviceByMac = new(StringComparer.OrdinalIgnoreCase);
+
     public ICollectionView FilteredDevices { get; }
 
     public ObservableCollection<CassiaGateway> CassiaGateways { get; } = new();
@@ -218,7 +220,27 @@ public partial class MainViewModel : ObservableObject
 
     private bool _pendingUpgradeLogTextRefresh;
 
-    private readonly System.Windows.Threading.DispatcherTimer _gatewayStaleTimer;
+    
+    // ---- Progress buffering (prevents UI lag / lost clicks when many % updates arrive) ----
+    private readonly object _progressBufLock = new();
+    private readonly Dictionary<string, BufferedProgress> _progressByMac = new(StringComparer.OrdinalIgnoreCase);
+    private readonly System.Windows.Threading.DispatcherTimer _progressFlushTimer;
+
+    private sealed class BufferedProgress
+    {
+        public string Cassia { get; set; } = "";
+        public string Mac { get; set; } = "";
+        public string Stage { get; set; } = "";
+        public string FirmwareTarget { get; set; } = "";
+        public double ProgressPercent { get; set; }
+        public DateTimeOffset TimeUtc { get; set; } = DateTimeOffset.UtcNow;
+
+        // Throttle per device (avoid repainting 20+ rows every 200ms if value didn't change)
+        public double LastAppliedPercent { get; set; } = double.NaN;
+        public DateTimeOffset LastAppliedUtc { get; set; } = DateTimeOffset.MinValue;
+    }
+
+private readonly System.Windows.Threading.DispatcherTimer _gatewayStaleTimer;
     private static readonly TimeSpan GatewayOfflineAfter = TimeSpan.FromMinutes(5);
 
     public string ConnectButtonText => IsConnected ? "Disconnect" : "Connect";
@@ -348,6 +370,15 @@ public partial class MainViewModel : ObservableObject
         };
 
         _gatewayStaleTimer.Start();
+
+        // Flush buffered progress updates in small batches to keep UI responsive
+        _progressFlushTimer = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(500)
+        };
+        _progressFlushTimer.Tick += (s2, e2) => FlushBufferedProgressOnUi();
+        _progressFlushTimer.Start();
+
 
         UpgradeLogGroupsView = CollectionViewSource.GetDefaultView(UpgradeLogGroups);
         UpgradeLogGroupsView.SortDescriptions.Clear();
@@ -1383,72 +1414,50 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
         }
 
 
-        if (kind == "tele" && leaf == "progress")
+        
+if (kind == "tele" && leaf == "progress")
         {
-            // { mac, progressPercent, stage, time, name, networkId }
+            // { mac, progressPercent, stage, time, firmwareTarget, ... }
             try
             {
                 using var doc = JsonDocument.Parse(payload);
                 var root = doc.RootElement;
 
-                var ts = root.TryGetProperty("time", out var t) && t.TryGetDateTimeOffset(out var dto) ? dto : DateTimeOffset.UtcNow;
-                var mac = root.TryGetProperty("mac", out var macEl) ? macEl.GetString() ?? "" : "";
-                var stage = root.TryGetProperty("stage", out var stEl) ? stEl.GetString() ?? "" : "";
-                var fwTarget = root.TryGetProperty("firmwareTarget", out var ftEl) ? ftEl.GetString() ?? "" : "";
+                var ts = DateTimeOffset.UtcNow;
+                if (root.TryGetProperty("time", out var tEl))
+                {
+                    if (tEl.ValueKind == JsonValueKind.String && DateTimeOffset.TryParse(tEl.GetString(), out var dto))
+                        ts = dto;
+                    else if (tEl.TryGetDateTimeOffset(out var dto2))
+                        ts = dto2;
+                }
+
+                var mac = root.TryGetProperty("mac", out var macEl) ? (macEl.GetString() ?? "") : "";
+                if (string.IsNullOrWhiteSpace(mac))
+                    return;
+
+                var stage = root.TryGetProperty("stage", out var stEl) ? (stEl.GetString() ?? "") : "";
+                var fwTarget = root.TryGetProperty("firmwareTarget", out var ftEl) ? (ftEl.GetString() ?? "") : "";
 
                 double pct = 0;
-                if (root.TryGetProperty("progressPercent", out var pEl) && pEl.TryGetDouble(out var pd))
-                    pct = pd;
-
-                if (!string.IsNullOrWhiteSpace(mac))
+                if (root.TryGetProperty("progressPercent", out var pEl))
                 {
-                    Application.Current.Dispatcher.Invoke(() =>
+                    if (pEl.ValueKind == JsonValueKind.Number) pct = pEl.GetDouble();
+                    else if (pEl.ValueKind == JsonValueKind.String && double.TryParse(pEl.GetString(), out var pd)) pct = pd;
+                }
+
+                lock (_progressBufLock)
+                {
+                    if (!_progressByMac.TryGetValue(mac, out var bp))
                     {
-                        var qi = QueueItems.FirstOrDefault(q => q.Mac.Equals(mac, StringComparison.OrdinalIgnoreCase));
-                        if (qi == null)
-                        {
-                            qi = new QueueItem
-                            {
-                                Mac = mac,
-                                Cassia = cassia,
-                                Command = DefaultCommand,
-                                Status = "Queued",
-                                Notes = "Auto-added from progress",
-                                LastUpdateUtc = ts
-                            };
-                            QueueItems.Add(qi);
-                        }
-
-                        qi.Progress = (int)Math.Clamp(Math.Round(pct), 0, 100);
-                        qi.Cassia = cassia;
-                        qi.LastUpdateUtc = ts;
-
-                        // IMPORTANT: first progress means the backend accepted it.
-                        if (qi.Status.Equals("Requested update", StringComparison.OrdinalIgnoreCase))
-                            qi.Status = "Queued";
-
-                        // stage wins if present
-                        if (!string.IsNullOrWhiteSpace(stage))
-                            qi.Status = stage;
-
-                        if (!string.IsNullOrWhiteSpace(fwTarget))
-                            qi.FirmwareVersion = fwTarget;
-
-                        if (qi.Progress >= 100)
-                            qi.Status = "Done";
-
-                        // Mirror into discovered list + cache (keeps row coloring stable)
-                        MirrorQueueToDevice(qi);
-
-                        var dev2 = _devices.FirstOrDefault(d => d.Mac.Equals(mac, StringComparison.OrdinalIgnoreCase));
-
-                        var doneExpired = qi.Progress >= 100 && (DateTimeOffset.UtcNow - qi.LastUpdateUtc) > TimeSpan.FromMinutes(1);
-
-
-                        QueueView.Refresh();
-                        // keep selection stable; throttled refresh only
-                        RequestDevicesRefresh();
-                    });
+                        bp = new BufferedProgress { Mac = mac };
+                        _progressByMac[mac] = bp;
+                    }
+                    bp.Cassia = cassia;
+                    bp.Stage = stage;
+                    bp.FirmwareTarget = fwTarget;
+                    bp.ProgressPercent = pct;
+                    bp.TimeUtc = ts;
                 }
             }
             catch { }
@@ -1505,12 +1514,13 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
                             var fam = dev.TryGetProperty("detectorFamily", out var famEl) ? famEl.GetString() ?? "" : "";
                             var typ = dev.TryGetProperty("detectorType", out var typEl) ? typEl.GetString() ?? "" : "";
 
-                            var existing = _devices.FirstOrDefault(x => x.Mac.Equals(mac, StringComparison.OrdinalIgnoreCase));
-                            if (existing == null)
-                            {
-                                existing = new DiscoveredDevice { Mac = mac };
-                                _devices.Add(existing);
-                            }
+                            
+if (!_deviceByMac.TryGetValue(mac, out var existing))
+{
+    existing = new DiscoveredDevice { Mac = mac };
+    _deviceByMac[mac] = existing;
+    _devices.Add(existing);
+}
 
                             EnsureDeviceAssignmentWiring(existing);
                             ApplyCachedStatusToDevice(existing);
@@ -2628,6 +2638,102 @@ private void RequestUpgradeLogTextRefresh()
         SelectedFirmwareP46 = FirmwareOptionsP46.LastOrDefault() ?? "";
         SelectedFirmwareP41 = FirmwareOptionsP41.LastOrDefault() ?? "";
         SelectedFirmwareP42 = FirmwareOptionsP42.LastOrDefault() ?? "";
+    }
+
+
+    private void FlushBufferedProgressOnUi()
+    {
+        List<BufferedProgress> batch;
+        lock (_progressBufLock)
+        {
+            if (_progressByMac.Count == 0) return;
+            batch = _progressByMac.Values.ToList();
+            _progressByMac.Clear();
+        }
+
+        // Apply minimal diffs - do NOT refresh CollectionViews per item.
+        // QueueView refresh is throttled by doing it once after the batch.
+        var anyQueueChanged = false;
+
+        foreach (var p in batch)
+        {
+            // Per-device throttle: if percent didn't change and last apply was very recent, skip.
+            var now = DateTimeOffset.UtcNow;
+            var pctRounded = (int)Math.Round(p.ProgressPercent, 0);
+
+            // Update discovered device if present
+            if (_deviceByMac.TryGetValue(p.Mac, out var dev))
+            {
+                // Keep FW field as target firmware (not model)
+                if (!string.IsNullOrWhiteSpace(p.FirmwareTarget) && dev.ProcessFirmware != p.FirmwareTarget)
+                    dev.ProcessFirmware = p.FirmwareTarget;
+
+                if (!string.IsNullOrWhiteSpace(p.Stage) && dev.ProcessStatus != p.Stage)
+                    dev.ProcessStatus = p.Stage;
+
+                if (dev.ProcessProgress != pctRounded)
+                    dev.ProcessProgress = pctRounded;
+
+                if (!string.IsNullOrWhiteSpace(p.Cassia) && dev.ProcessCassia != p.Cassia)
+                    dev.ProcessCassia = p.Cassia;
+
+                dev.ProcessLastUpdateUtc = p.TimeUtc;
+            }
+
+            // Update queue item (keyed by mac)
+            var qi = QueueItems.FirstOrDefault(x => x.Mac.Equals(p.Mac, StringComparison.OrdinalIgnoreCase));
+            if (qi == null)
+            {
+                qi = new QueueItem
+                {
+                    Mac = p.Mac,
+                    Cassia = p.Cassia,
+                    Status = p.Stage,
+                    Progress = pctRounded,
+                    LastUpdateUtc = p.TimeUtc,
+                };
+                QueueItems.Add(qi);
+                anyQueueChanged = true;
+            }
+            else
+            {
+                if (!string.IsNullOrWhiteSpace(p.Cassia) && qi.Cassia != p.Cassia) qi.Cassia = p.Cassia;
+                if (!string.IsNullOrWhiteSpace(p.Stage) && qi.Status != p.Stage) qi.Status = p.Stage;
+                if (qi.Progress != pctRounded) qi.Progress = pctRounded;
+                qi.LastUpdateUtc = p.TimeUtc;
+                anyQueueChanged = true;
+            }
+
+            // Mirror to device list (existing logic)
+            MirrorQueueToDevice(qi);
+        }
+
+        if (anyQueueChanged)
+        {
+            try { QueueView?.Refresh(); } catch { }
+        }
+
+        // Keep Cassia cards updated (total devices seen is updated elsewhere; here we at least keep queue/programming counts moving)
+        try { UpdateCassiaCountsFromQueue(); } catch { }
+    }
+
+    private void UpdateCassiaCountsFromQueue()
+    {
+        // queue/programming derived from queue items; devicesSeen remains based on discovered tracking
+        foreach (var gw in CassiaGateways)
+        {
+            var name = gw.Name ?? "";
+            if (string.IsNullOrWhiteSpace(name)) continue;
+
+            var q = QueueItems.Count(x => x.Cassia.Equals(name, StringComparison.OrdinalIgnoreCase) &&
+                                          !((x.Status ?? "").Contains("Programming", StringComparison.OrdinalIgnoreCase)));
+            var prog = QueueItems.Count(x => x.Cassia.Equals(name, StringComparison.OrdinalIgnoreCase) &&
+                                             ((x.Status ?? "").Contains("Programming", StringComparison.OrdinalIgnoreCase) ||
+                                              (x.Progress > 0 && x.Progress < 100)));
+
+            gw.Queue = q;
+            gw.Programming = prog;
+        }
     }
 
 }
