@@ -251,8 +251,8 @@ public partial class MainViewModel : ObservableObject
         public DateTimeOffset LastAppliedUtc { get; set; } = DateTimeOffset.MinValue;
     }
 
-private readonly System.Windows.Threading.DispatcherTimer _gatewayStaleTimer;
-    private static readonly TimeSpan GatewayOfflineAfter = TimeSpan.FromMinutes(5);
+    private readonly System.Windows.Threading.DispatcherTimer _gatewayStaleTimer;
+    private static readonly TimeSpan GatewayOfflineAfter = TimeSpan.FromMinutes(1);
 
     public string ConnectButtonText => IsConnected ? "Disconnect" : "Connect";
     public string DevicesSubtitle => $"{_devices.Count} unique device(s) • model: {SensorFilter} • filter: {DeviceFilter}";
