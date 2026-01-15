@@ -30,7 +30,7 @@ public sealed class SshCassiaDeployer
             }
             else
             {
-                Console.WriteLine("[WARN] No Wi-Fi SSID detected – password not auto-filled");
+                Console.WriteLine("[WARN] No Wi-Fi SSID detected â€“ password not auto-filled");
             }
         }
     }
@@ -98,6 +98,20 @@ public sealed class SshCassiaDeployer
 
         try
         {
+            // Provision SSH public-key login (so future logins/deploys can be password-less)
+            if (_opt.EnsureSshKeyLogin)
+            {
+                try
+                {
+                    EnsureSshKeyLoginAndHardenSshd(ssh);
+                }
+                catch (Exception ex)
+                {
+                    // Do not fail deployment if hardening fails â€“ keep current behavior.
+                    _log.Error($"SSH key provisioning failed (deployment continues): {ex.Message}");
+                }
+            }
+
             EnsureRemoteDirWritable(ssh);
 
             var init = DetectInit(ssh);
@@ -507,6 +521,84 @@ exit 0
     }
 
     // ------------------------------------------------------------
+    // SSH KEY PROVISIONING (authorized_keys + sshd_config)
+    // ------------------------------------------------------------
+    private void EnsureSshKeyLoginAndHardenSshd(SshClient ssh)
+    {
+        if (string.IsNullOrWhiteSpace(_opt.LocalSshPublicKeyPath))
+        {
+            _log.Warn("EnsureSshKeyLogin enabled, but LocalSshPublicKeyPath is empty. Skipping.");
+            return;
+        }
+
+        if (!File.Exists(_opt.LocalSshPublicKeyPath))
+        {
+            _log.Warn($"SSH public key not found: {_opt.LocalSshPublicKeyPath}. Skipping SSH key provisioning.");
+            return;
+        }
+
+        var pubKey = File.ReadAllText(_opt.LocalSshPublicKeyPath).Trim();
+        if (string.IsNullOrWhiteSpace(pubKey) || !pubKey.StartsWith("ssh-", StringComparison.OrdinalIgnoreCase))
+        {
+            _log.Warn($"SSH public key file does not look valid: {_opt.LocalSshPublicKeyPath}. Skipping.");
+            return;
+        }
+
+        _log.Info("Ensuring SSH public key is installed on target (~/.ssh/authorized_keys)...");
+
+        // 1) Ensure ~/.ssh exists and has sane permissions
+        RunCommand(ssh, "mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys");
+
+        // 2) Append key if missing (safe quoting via base64)
+        var keyB64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(pubKey));
+        var addKeyCmd =
+            $"KEY=$(echo '{keyB64}' | base64 -d); " +
+            "grep -qxF \"$KEY\" ~/.ssh/authorized_keys || echo \"$KEY\" >> ~/.ssh/authorized_keys";
+        RunCommand(ssh, $"sh -lc '{addKeyCmd.Replace("'", "'\"'\"'")}'");
+
+        // 3) Ensure sshd allows pubkey auth and (optionally) disables password auth
+        _log.Info("Ensuring sshd_config enables public-key authentication...");
+
+        // Helper to set or append config lines (works whether commented or not)
+        static string SetOrAppend(string key, string value)
+        {
+            // Uses sed to replace: ^#?Key.*  -> Key value
+            // If not found, appends.
+            var escapedValue = value.Replace("'", "'\"'\"'");
+            return
+                $"if grep -qE '^\\s*#?\\s*{key}\\b' /etc/ssh/sshd_config; then " +
+                $"sed -i -E 's/^\\s*#?\\s*{key}\\b.*/{key} {escapedValue}/' /etc/ssh/sshd_config; " +
+                "else " +
+                $"echo '{key} {escapedValue}' >> /etc/ssh/sshd_config; " +
+                "fi";
+        }
+
+        var cfgCmds = new List<string>
+        {
+            SetOrAppend("PubkeyAuthentication", "yes"),
+            SetOrAppend("AuthorizedKeysFile", ".ssh/authorized_keys"),
+            SetOrAppend("ChallengeResponseAuthentication", "no"),
+            SetOrAppend("KbdInteractiveAuthentication", "no")
+        };
+
+        if (_opt.DisablePasswordAuthentication)
+            cfgCmds.Add(SetOrAppend("PasswordAuthentication", "no"));
+        else
+            cfgCmds.Add(SetOrAppend("PasswordAuthentication", "yes"));
+
+        // Run as sudo
+        RunSudo(ssh, string.Join("; ", cfgCmds));
+
+        if (_opt.RestartSshServiceAfterConfig)
+        {
+            _log.Info("Restarting SSH service to apply config...");
+            RunSudo(ssh, "systemctl restart ssh || systemctl restart sshd || service ssh restart || service sshd restart || true");
+        }
+
+        _log.Info("SSH key provisioning completed.");
+    }
+
+    // ------------------------------------------------------------
     // SFTP SYNC (manifest-based skip)
     // ------------------------------------------------------------
     private void UploadDirectorySftpWithManifest(
@@ -583,7 +675,7 @@ exit 0
 
         _log.Info($"Sync summary: Checked={checkedCount}, Uploaded={uploaded}, Skipped={skipped}");
 
-        // Write updated manifest via SFTP so it’s guaranteed to persist
+        // Write updated manifest via SFTP so itâ€™s guaranteed to persist
         _log.Info("Writing remote manifest via SFTP...");
         WriteRemoteManifestSftp(sftp, remoteManifestPath, localEntries);
         _log.Info("Manifest updated.");

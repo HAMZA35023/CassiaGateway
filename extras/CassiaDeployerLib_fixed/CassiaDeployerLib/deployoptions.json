@@ -23,5 +23,10 @@
 
   "PublishConfiguration": "Release",
   "PublishRuntime": "linux-arm",
-  "SelfContained": true
+  "SelfContained": true,
+
+  "EnsureSshKeyLogin": true,
+  "LocalSshPublicKeyPath": "C:\\Users\\PLO\\.ssh\\id_ed25519.pub",
+  "DisablePasswordAuthentication": true,
+  "RestartSshServiceAfterConfig": true
 }

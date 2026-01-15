@@ -33,6 +33,25 @@ public sealed class DeployOptions
     public string PublishRuntime { get; set; } = "linux-arm";
     public bool SelfContained { get; set; } = true;
 
+    // ---------- SSH key login provisioning ----------
+    // If enabled, the deployer will:
+    //  1) Ensure your local public key is present in ~/.ssh/authorized_keys on the target.
+    //  2) Ensure sshd is configured to allow public-key auth.
+    //  3) Optionally disable password authentication and restart ssh.
+    //
+    // Defaults are set up for Peter's Windows key at:
+    //   C:\Users\PLO\.ssh\id_ed25519(.pub)
+    public bool EnsureSshKeyLogin { get; set; } = true;
+
+    // Public key path (the deployer will read this file and append it if missing on target)
+    public string LocalSshPublicKeyPath { get; set; } = @"C:\Users\PLO\.ssh\id_ed25519.pub";
+
+    // If true, sets PasswordAuthentication no (recommended once key auth works)
+    public bool DisablePasswordAuthentication { get; set; } = false;
+
+    // If true, restarts ssh/sshd after updating sshd_config
+    public bool RestartSshServiceAfterConfig { get; set; } = true;
+
     // ---------- JSON loading ----------
 
     public static DeployOptions Load(string path)
