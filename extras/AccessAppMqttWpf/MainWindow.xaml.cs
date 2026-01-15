@@ -17,6 +17,7 @@ namespace AccessAppMqttWpf;
 public partial class MainWindow : Window
 {
     private bool _queueDefaultSortActive = true;
+    private DispatcherTimer? _queueDefaultSortTimer;
 
     // Keep Upgrade-log expand/collapse state stable across collection refreshes
     private readonly Dictionary<string, bool> _upgradeLogExpandedState = new(StringComparer.OrdinalIgnoreCase);
@@ -28,7 +29,8 @@ public partial class MainWindow : Window
         Loaded += MainWindow_Loaded;
         DataContext = new MainViewModel();
 
-        Loaded += (_, _) => ApplyQueueDefaultSort();
+        Loaded += (_, _) => _queueDefaultSortActive = true;
+        ApplyQueueDefaultSort();
     }
 
     private void DevicesGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
@@ -294,5 +296,20 @@ public partial class MainWindow : Window
             catch { }
         };
         t.Start();
+
+        // Re-apply default queue sort every 5 seconds while default sort is active
+        _queueDefaultSortTimer ??= new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+        _queueDefaultSortTimer.Tick -= QueueDefaultSortTimer_Tick;
+        _queueDefaultSortTimer.Tick += QueueDefaultSortTimer_Tick;
+        _queueDefaultSortTimer.Start();
+
     }
+
+
+    private void QueueDefaultSortTimer_Tick(object? sender, EventArgs e)
+    {
+        if (_queueDefaultSortActive)
+            ApplyQueueDefaultSort();
+    }
+
 }

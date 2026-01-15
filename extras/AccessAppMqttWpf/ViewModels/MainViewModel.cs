@@ -158,6 +158,11 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty] private bool enableDoubleClickQueue;
 
+    // Devices list options
+    [ObservableProperty] private bool hideCompletedDevices = false;
+
+
+
     [ObservableProperty] private string deviceFilter = "";
     [ObservableProperty] private string sensorFilter = "All";
 
@@ -216,6 +221,21 @@ public partial class MainViewModel : ObservableObject
     // Search (matches MAC/logId/line; works across all groups)
     [ObservableProperty] private string upgradeLogSearchText = "";
 
+
+    // Upgrade log view filters
+    public ObservableCollection<string> UpgradeLogShowOptions { get; } = new()
+    {
+        "All",
+        "Only failed",
+        "Hide success",
+        "Only success"
+    };
+
+    [ObservableProperty] private string selectedUpgradeLogShowOption = "All";
+    [ObservableProperty] private bool upgradeLogLatestOnlyPerMac = false;
+
+
+
     public string UpgradeLogSummary =>
         UpgradeLogTotalLines > 0
             ? $"{UpgradeLogStatus} • {UpgradeLogReceivedLines}/{UpgradeLogTotalLines} lines"
@@ -230,6 +250,12 @@ public partial class MainViewModel : ObservableObject
     private readonly HashSet<string> _requestedUpgradeLogCassias = new(StringComparer.OrdinalIgnoreCase);
 
     private bool _pendingUpgradeLogTextRefresh;
+
+    // Latest-per-MAC filtering support for UpgradeLogGroupsView.
+    // Rebuilt on-demand when filters change or new entries arrive.
+    private readonly object _latestUpgradeLogMapLock = new();
+    private readonly Dictionary<string, string> _latestUpgradeLogIdByMac = new(StringComparer.OrdinalIgnoreCase);
+    private bool _latestUpgradeLogMapDirty = true;
 
     
     // ---- Progress buffering (prevents UI lag / lost clicks when many % updates arrive) ----
@@ -345,7 +371,10 @@ public partial class MainViewModel : ObservableObject
         {
             if (obj is not DiscoveredDevice d) return false;
 
-            if (!string.IsNullOrWhiteSpace(SensorFilter) && !SensorFilter.Equals("All", StringComparison.OrdinalIgnoreCase))
+                        if (HideCompletedDevices && d.IsUpgradeSuccess)
+                return false;
+
+if (!string.IsNullOrWhiteSpace(SensorFilter) && !SensorFilter.Equals("All", StringComparison.OrdinalIgnoreCase))
             {
                 if (!d.SensorModel.Equals(SensorFilter, StringComparison.OrdinalIgnoreCase))
                     return false;
@@ -411,22 +440,20 @@ public partial class MainViewModel : ObservableObject
         UpgradeLogGroupsView.Filter = obj =>
         {
             if (obj is not UpgradeLogGroup g) return false;
-            // Gateway filter
-            if (!string.IsNullOrWhiteSpace(SelectedLogGatewayName)
-                && !SelectedLogGatewayName.Equals("All", StringComparison.OrdinalIgnoreCase)
-                && !g.Cassia.Equals(SelectedLogGatewayName, StringComparison.OrdinalIgnoreCase))
+
+            if (!UpgradeLogGroupPassesFilters(g))
                 return false;
 
-            // Search filter (MAC/logId/line)
-            var q = (UpgradeLogSearchText ?? "").Trim();
-            if (string.IsNullOrWhiteSpace(q)) return true;
+            // Latest-per-MAC filter (after other filters)
+            if (UpgradeLogLatestOnlyPerMac)
+            {
+                EnsureLatestUpgradeLogMap();
+                if (_latestUpgradeLogIdByMac.TryGetValue(g.Mac ?? "", out var latestId))
+                    return string.Equals(latestId, g.LogId, StringComparison.OrdinalIgnoreCase);
+                return false;
+            }
 
-            return (g.Mac?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
-                || (g.LogId?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
-                || (g.LogIdMacPart?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
-                || g.Entries.Any(e =>
-                       (e.Mac?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
-                    || (e.Line?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false));
+            return true;
         };
 
         LogGatewayOptions.Clear();
@@ -438,12 +465,127 @@ public partial class MainViewModel : ObservableObject
 
     partial void OnSelectedLogGatewayNameChanged(string value)
     {
+        MarkLatestUpgradeLogMapDirty();
         UpgradeLogGroupsView.Refresh();
     }
 
-    partial void OnUpgradeLogSearchTextChanged(string value)
+    
+    partial void OnSelectedUpgradeLogShowOptionChanged(string value)
     {
+        MarkLatestUpgradeLogMapDirty();
         UpgradeLogGroupsView.Refresh();
+    }
+
+    partial void OnUpgradeLogLatestOnlyPerMacChanged(bool value)
+    {
+        MarkLatestUpgradeLogMapDirty();
+        UpgradeLogGroupsView.Refresh();
+    }
+
+partial void OnUpgradeLogSearchTextChanged(string value)
+    {
+        MarkLatestUpgradeLogMapDirty();
+        UpgradeLogGroupsView.Refresh();
+    }
+
+    private void MarkLatestUpgradeLogMapDirty()
+    {
+        _latestUpgradeLogMapDirty = true;
+    }
+
+    private void EnsureLatestUpgradeLogMap()
+    {
+        if (!_latestUpgradeLogMapDirty)
+            return;
+
+        lock (_latestUpgradeLogMapLock)
+        {
+            if (!_latestUpgradeLogMapDirty)
+                return;
+
+            _latestUpgradeLogIdByMac.Clear();
+
+            foreach (var g in UpgradeLogGroups)
+            {
+                if (g == null) continue;
+                if (!UpgradeLogGroupPassesFilters(g))
+                    continue;
+
+                var mac = (g.Mac ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(mac))
+                    continue;
+
+                if (_latestUpgradeLogIdByMac.TryGetValue(mac, out var existingLogId))
+                {
+                    var existing = UpgradeLogGroups.FirstOrDefault(x => string.Equals(x.LogId, existingLogId, StringComparison.OrdinalIgnoreCase));
+                    if (existing != null && existing.LastTimeLocal >= g.LastTimeLocal)
+                        continue;
+                }
+
+                _latestUpgradeLogIdByMac[mac] = g.LogId;
+            }
+
+            _latestUpgradeLogMapDirty = false;
+        }
+    }
+
+    private bool UpgradeLogGroupPassesFilters(UpgradeLogGroup g)
+    {
+        if (g == null) return false;
+
+        // Gateway filter
+        var gw = (SelectedLogGatewayName ?? "All").Trim();
+        if (!string.IsNullOrWhiteSpace(gw) && !string.Equals(gw, "All", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!string.Equals((g.Cassia ?? "").Trim(), gw, StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+
+        // Text search filter
+        var s = (UpgradeLogSearchText ?? "").Trim();
+        if (!string.IsNullOrWhiteSpace(s))
+        {
+            if (!ContainsIgnoreCase(g.LogId, s)
+                && !ContainsIgnoreCase(g.Mac, s)
+                && !ContainsIgnoreCase(g.Cassia, s)
+                && !ContainsIgnoreCase(g.LatestFirmware, s)
+                && !ContainsIgnoreCase(g.LatestStage, s)
+                && !ContainsIgnoreCase(g.LatestStatus, s)
+                && !ContainsIgnoreCase(g.LatestSummary, s))
+                return false;
+        }
+
+        // Show option filter
+        var option = (SelectedUpgradeLogShowOption ?? "All").Trim();
+        var status = (g.LatestStatus ?? "").Trim();
+        var stage = (g.LatestStage ?? "").Trim();
+
+        var isSuccess = string.Equals(status, "Success", StringComparison.OrdinalIgnoreCase)
+                        || (string.Equals(stage, "Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase)
+                            && string.Equals(status, "Success", StringComparison.OrdinalIgnoreCase));
+
+        // Treat anything that looks like an error/fail as failure
+        var statusLower = status.ToLowerInvariant();
+        var stageLower = stage.ToLowerInvariant();
+        var isFailure = statusLower.Contains("fail") || statusLower.Contains("error") || statusLower.Contains("timeout") || statusLower.Contains("aborted")
+                        || stageLower.Contains("fail") || stageLower.Contains("error") || stageLower.Contains("timeout") || stageLower.Contains("aborted");
+
+        if (string.Equals(option, "Only success", StringComparison.OrdinalIgnoreCase))
+            return isSuccess;
+
+        if (string.Equals(option, "Hide success", StringComparison.OrdinalIgnoreCase))
+            return !isSuccess;
+
+        if (string.Equals(option, "Only failed", StringComparison.OrdinalIgnoreCase))
+            return isFailure || (!isSuccess && !string.IsNullOrWhiteSpace(status) && !string.Equals(status, "Info", StringComparison.OrdinalIgnoreCase));
+
+        return true;
+    }
+
+    private static bool ContainsIgnoreCase(string? haystack, string needle)
+    {
+        if (string.IsNullOrWhiteSpace(haystack)) return false;
+        return haystack.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
     partial void OnSelectedQueueItemChanged(QueueItem? value)
@@ -467,7 +609,13 @@ public partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(DevicesSubtitle));
     }
 
-    partial void OnSensorFilterChanged(string value)
+    
+    partial void OnHideCompletedDevicesChanged(bool value)
+    {
+        FilteredDevices.Refresh();
+    }
+
+partial void OnSensorFilterChanged(string value)
     {
         RequestDevicesRefresh();
         OnPropertyChanged(nameof(DevicesSubtitle));
@@ -1832,6 +1980,7 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
             g.Mac = entry.Mac;
 
         g.AddEntry(entry);
+        MarkLatestUpgradeLogMapDirty();
         UpgradeLogGroupsView.Refresh();
     }
 
@@ -1861,6 +2010,46 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
 
         // Accept typical target versions like "v02.35" or "02.35"
         return Regex.IsMatch(s, @"^v?\d{2}\.\d{2}$", RegexOptions.IgnoreCase);
+    }
+
+    private static bool LooksLikeNewRunStage(string? stage, int progressPercent)
+    {
+        // Heuristic: stages that indicate a fresh run starting (even if progress is still low).
+        if (string.IsNullOrWhiteSpace(stage))
+            return progressPercent <= 5;
+
+        var s = stage.Trim();
+        if (progressPercent <= 5)
+        {
+            if (s.Contains("Process Start", StringComparison.OrdinalIgnoreCase)) return true;
+            if (s.Contains("Connect+Login", StringComparison.OrdinalIgnoreCase)) return true;
+            if (s.Contains("Current FW Version", StringComparison.OrdinalIgnoreCase)) return true;
+            if (s.Contains("Requested update", StringComparison.OrdinalIgnoreCase)) return true;
+        }
+
+        // Some runs can jump directly to a start stage.
+        if (s.Contains("Process Start", StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
+
+    private static bool IsNonTerminalStage(string? stage)
+    {
+        if (string.IsNullOrWhiteSpace(stage))
+            return true;
+
+        var s = stage.Trim();
+        if (s.Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        // Treat common terminal words as terminal.
+        if (s.Contains("completed", StringComparison.OrdinalIgnoreCase)) return false;
+        if (s.Contains("success", StringComparison.OrdinalIgnoreCase)) return false;
+        if (s.Contains("failed", StringComparison.OrdinalIgnoreCase)) return false;
+        if (s.Contains("error", StringComparison.OrdinalIgnoreCase)) return false;
+        if (s.Contains("aborted", StringComparison.OrdinalIgnoreCase)) return false;
+        if (s.Contains("timeout", StringComparison.OrdinalIgnoreCase)) return false;
+
+        return true;
     }
 
     
@@ -1989,6 +2178,12 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
             // What we want to show in the device/queue lists:
             // Prefer stage, but if stage is empty, show status.
             var text = !string.IsNullOrWhiteSpace(stage) ? stage : status;
+
+            var isCompletedSuccess = stage.Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase)
+                && status.Equals("Success", StringComparison.OrdinalIgnoreCase);
+
+            var queueText = isCompletedSuccess ? "Done" : text;
+
             if (string.IsNullOrWhiteSpace(text)) return;
 
             // Best effort fw=v02.xx (can be null in JSON)
@@ -2006,7 +2201,7 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
                         return;
 
                     qi.Cassia = cassia;
-                    qi.Status = text.Trim();
+                    qi.Status = queueText.Trim();
                     if (LooksLikeFirmwareVersion(fw))
                         qi.FirmwareVersion = fw;
                     qi.LastUpdateUtc = tsUtc;
@@ -2021,6 +2216,9 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
 
                 cs.ProcessCassia = cassia;
                 cs.ProcessStatus = text.Trim();
+                if (isCompletedSuccess)
+                    cs.ProcessProgress = 100;
+
                 if (LooksLikeFirmwareVersion(fw))
                     cs.ProcessFirmware = fw;
                 cs.LastUpdateUtc = tsUtc;
@@ -2238,7 +2436,12 @@ private void RequestUpgradeLogTextRefresh()
             // preserve selection
             var selectedMac = SelectedQueueItem?.Mac;
 
-            try { RequestQueueRefresh(); } catch { }
+            try
+            {
+                // Refresh the collection view (do NOT call RequestQueueRefresh recursively)
+                QueueView?.Refresh();
+            }
+            catch { }
 
             if (!string.IsNullOrWhiteSpace(selectedMac))
                 SelectedQueueItem = QueueItems.FirstOrDefault(d => d.Mac.Equals(selectedMac, StringComparison.OrdinalIgnoreCase));
@@ -2705,68 +2908,232 @@ private void RequestUpgradeLogTextRefresh()
             _progressByMac.Clear();
         }
 
-        // Apply minimal diffs - do NOT refresh CollectionViews per item.
-        // QueueView refresh is throttled by doing it once after the batch.
         var anyQueueChanged = false;
 
         foreach (var p in batch)
         {
-            // Per-device throttle: if percent didn't change and last apply was very recent, skip.
-            var now = DateTimeOffset.UtcNow;
             var pctRounded = (int)Math.Round(p.ProgressPercent, 0);
 
-            // Update discovered device if present
-            if (_deviceByMac.TryGetValue(p.Mac, out var dev))
+            // Protect terminal completion state from being overwritten by late/duplicate progress=100 "Programming" updates.
+            var cs = GetOrCreateCache(p.Mac);
+
+            if (cs.IsUpgradeSuccess && cs.LastUpgradeSuccessUtc.HasValue)
             {
-                // Keep FW field as target firmware (not model)
-                if (!string.IsNullOrWhiteSpace(p.FirmwareTarget) && dev.ProcessFirmware != p.FirmwareTarget)
-                    dev.ProcessFirmware = p.FirmwareTarget;
+                // Older than completion -> ignore
+                if (p.TimeUtc <= cs.LastUpgradeSuccessUtc.Value)
+                    continue;
 
-                if (!string.IsNullOrWhiteSpace(p.Stage) && dev.ProcessStatus != p.Stage)
-                    dev.ProcessStatus = p.Stage;
-
-                if (dev.ProcessProgress != pctRounded)
-                    dev.ProcessProgress = pctRounded;
-
-                if (!string.IsNullOrWhiteSpace(p.Cassia) && dev.ProcessCassia != p.Cassia)
-                    dev.ProcessCassia = p.Cassia;
-
-                dev.ProcessLastUpdateUtc = p.TimeUtc;
+                // New run starts -> clear completion
+                if (LooksLikeNewRunStage(p.Stage, pctRounded))
+                {
+                    cs.IsUpgradeSuccess = false;
+                    cs.LastUpgradeSuccessUtc = null;
+                    cs.LastTargetFw = "";
+                }
+                else if (pctRounded >= 100 && IsNonTerminalStage(p.Stage)
+                         && string.Equals(cs.ProcessStatus?.Trim(), "Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Late progress=100 "Programming"/etc after completion -> ignore
+                    continue;
+                }
             }
+
+            // Keep FW field as target firmware (not model)
+            if (LooksLikeFirmwareVersion(p.FirmwareTarget))
+                cs.ProcessFirmware = p.FirmwareTarget;
+
+            if (!string.IsNullOrWhiteSpace(p.Cassia))
+                cs.ProcessCassia = p.Cassia;
+
+            if (!string.IsNullOrWhiteSpace(p.Stage))
+                cs.ProcessStatus = p.Stage;
+
+            cs.ProcessProgress = pctRounded;
+            cs.LastUpdateUtc = p.TimeUtc;
+
+            // Update discovered device if present (apply cached so timestamp rules are respected)
+            if (_deviceByMac.TryGetValue(p.Mac, out var dev))
+                ApplyCachedStatusToDevice(dev);
 
             // Update queue item (keyed by mac)
             var qi = QueueItems.FirstOrDefault(x => x.Mac.Equals(p.Mac, StringComparison.OrdinalIgnoreCase));
             if (qi == null)
             {
-                qi = new QueueItem
-                {
-                    Mac = p.Mac,
-                    Cassia = p.Cassia,
-                    Status = p.Stage,
-                    Progress = pctRounded,
-                    LastUpdateUtc = p.TimeUtc,
-                };
+                qi = new QueueItem { Mac = p.Mac };
                 QueueItems.Add(qi);
                 anyQueueChanged = true;
             }
+
+            // Only apply if newer than the current queue row
+            if (qi.LastUpdateUtc != default && p.TimeUtc < qi.LastUpdateUtc)
+                continue;
+
+            qi.Cassia = cs.ProcessCassia ?? "";
+            qi.FirmwareVersion = LooksLikeFirmwareVersion(cs.ProcessFirmware) ? cs.ProcessFirmware : qi.FirmwareVersion;
+
+            // If we already know the device completed successfully, keep the queue row "Done".
+            if (cs.IsUpgradeSuccess && string.Equals(cs.ProcessStatus?.Trim(), "Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase))
+            {
+                qi.Status = "Done";
+                qi.Progress = 100;
+            }
             else
             {
-                if (!string.IsNullOrWhiteSpace(p.Cassia) && qi.Cassia != p.Cassia) qi.Cassia = p.Cassia;
-                if (!string.IsNullOrWhiteSpace(p.Stage) && qi.Status != p.Stage) qi.Status = p.Stage;
-                if (qi.Progress != pctRounded) qi.Progress = pctRounded;
-                qi.LastUpdateUtc = p.TimeUtc;
-                anyQueueChanged = true;
+                qi.Status = cs.ProcessStatus ?? "";
+                qi.Progress = pctRounded;
             }
 
-            // Mirror to device list (existing logic)
-            MirrorQueueToDevice(qi);
+            qi.LastUpdateUtc = p.TimeUtc;
         }
 
         if (anyQueueChanged)
-        {
-            try { RequestQueueRefresh(); } catch { }
-        }
+            RequestQueueRefresh();
+        else
+            RequestQueueRefresh();
+    }
 
+
+
+
+    [RelayCommand]
+    private void RefreshUiNow()
+    {
+        try
+        {
+            // Re-apply cached status to all known devices (cheap)
+            foreach (var d in _devices)
+                ApplyCachedStatusToDevice(d);
+
+            FilteredDevices.Refresh();
+            QueueView.Refresh();
+            MarkLatestUpgradeLogMapDirty();
+            UpgradeLogGroupsView.Refresh();
+        }
+        catch { }
+    }
+
+    [RelayCommand]
+    private void RemoveRssiMinus127Devices()
+    {
+        try
+        {
+            var toRemove = _devices.Where(d => d.BestRssi <= -127).ToList();
+            foreach (var d in toRemove)
+            {
+                _devices.Remove(d);
+                _deviceByMac.Remove(d.Mac);
+            }
+            FilteredDevices.Refresh();
+        }
+        catch { }
+    }
+
+    [RelayCommand]
+    private void RemoveCompletedFromQueue()
+    {
+        try
+        {
+            var done = QueueItems.Where(q =>
+                    q.IsDone
+                    || string.Equals(q.Status?.Trim(), "Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(q.Status?.Trim(), "Success", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            foreach (var q in done)
+                QueueItems.Remove(q);
+
+            RequestQueueRefresh();
+        }
+        catch { }
+    }
+
+    [RelayCommand]
+    private void ExportUpgradeLogToExcel()
+    {
+        try
+        {
+            // Build export list from CURRENT VIEW (what the operator sees)
+            var groups = UpgradeLogGroupsView.Cast<object>()
+                .OfType<UpgradeLogGroup>()
+                .OrderByDescending(g => g.LastTimeLocal)
+                .ToList();
+
+            if (groups.Count == 0)
+            {
+                MessageBox.Show("No upgrade log entries to export (current view is empty).", "Export", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var dlg = new Microsoft.Win32.SaveFileDialog
+            {
+                Filter = "Excel Workbook (*.xlsx)|*.xlsx",
+                FileName = $"upgrade-log_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx"
+            };
+
+            if (dlg.ShowDialog() != true)
+                return;
+
+            using var wb = new ClosedXML.Excel.XLWorkbook();
+
+            var ws1 = wb.Worksheets.Add("Groups");
+            ws1.Cell(1, 1).Value = "Cassia";
+            ws1.Cell(1, 2).Value = "MAC";
+            ws1.Cell(1, 3).Value = "LogId";
+            ws1.Cell(1, 4).Value = "Last time";
+            ws1.Cell(1, 5).Value = "Latest stage";
+            ws1.Cell(1, 6).Value = "Latest status";
+
+            for (int i = 0; i < groups.Count; i++)
+            {
+                var g = groups[i];
+                ws1.Cell(i + 2, 1).Value = g.Cassia;
+                ws1.Cell(i + 2, 2).Value = g.Mac;
+                ws1.Cell(i + 2, 3).Value = g.LogId;
+                ws1.Cell(i + 2, 4).Value = g.LastTimeLocalText;
+                ws1.Cell(i + 2, 5).Value = g.LatestStage;
+                ws1.Cell(i + 2, 6).Value = g.LatestStatus;
+            }
+
+            ws1.Columns().AdjustToContents();
+
+            var ws2 = wb.Worksheets.Add("Entries");
+            ws2.Cell(1, 1).Value = "Cassia";
+            ws2.Cell(1, 2).Value = "MAC";
+            ws2.Cell(1, 3).Value = "LogId";
+            ws2.Cell(1, 4).Value = "Time";
+            ws2.Cell(1, 5).Value = "Stage";
+            ws2.Cell(1, 6).Value = "Status";
+            ws2.Cell(1, 7).Value = "Firmware";
+            ws2.Cell(1, 8).Value = "Line";
+
+            int row = 2;
+            foreach (var g in groups)
+            {
+                foreach (var e in g.Entries.OrderBy(x => x.TimeLocal))
+                {
+                    ws2.Cell(row, 1).Value = e.Cassia;
+                    ws2.Cell(row, 2).Value = e.Mac;
+                    ws2.Cell(row, 3).Value = e.LogId;
+                    ws2.Cell(row, 4).Value = e.TimeLocalText;
+                    ws2.Cell(row, 5).Value = e.Stage;
+                    ws2.Cell(row, 6).Value = e.Status;
+                    ws2.Cell(row, 7).Value = e.Firmware;
+                    ws2.Cell(row, 8).Value = e.Line;
+                    row++;
+                }
+            }
+
+            ws2.Columns(1, 7).AdjustToContents();
+            ws2.Column(8).Width = 120;
+
+            wb.SaveAs(dlg.FileName);
+
+            MessageBox.Show("Export completed.", "Export", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("Export failed: " + ex.Message, "Export", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
 }

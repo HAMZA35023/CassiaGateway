@@ -1,154 +1,81 @@
 MAJOR:
 
--> Queued color should override the green success color
--> Implement function to set number of parallel programmers on a single cassis or all cassias (also show what it is set to)
--> Implement functino to get active queue and programming devices on connect - then the client can always connect halfway throug and have all the informations
--> After the cassia name, show the version received from the status message.
+-> When there is logentries for the same mac, then on all the old, show that there is a newer entry, and instead of read badge, show a yeloow warning that there is a newer entry (success should still be green and show success)
+-> The export on the upgradelog should show started time, last time, old fw(current fw form the logs), FW (the new fw), and contain a summary, and a detailed view with all the log entries as well in different sheets.
+-> When reassing and there is checked devices, we should rearrange what cassia should be assigned, based on the current algorightem, and how mant there already is in queue (the status from the cassia), and when clicking add to queue, we should be asked if we should do it before adding it, and show what device is assigned to what cassia, and why so we can confirm, or use what was selected in the device-list.
+-> Rightclicking on a device, it should be possible in the main context menu be able to selct what cassia to assign a device to, that shows what rssi they have reported (devices that cant see it, should not be show)
+-> We cant show "upgraded device completed. (success)" or "done" and not 100% (now it can still show short below 100%)
 
+-> Implenet a rightclick in the queue to remove a device, or move it to another cassia (again show rssi) - need confirmation before we do more!
+-> On status signal after connect lets get a full devicelist, and add a button to clear all we know, and get a new device-list
 
-AccessAPP – New MQTT Features Documentation
-===========================================
+NEW MQTT COMMANDS – AccessAPP
 
-This document describes the newly added MQTT commands and telemetry
-introduced to extend queue visibility, programming status, and runtime
-control of parallel programmers.
+1) Remove device(s) from upgrade queue
 
-All features are backward-compatible and do NOT change any persisted
-configuration.
+Command topic:
+{baseTopic}/{networkId}/cmd/{target}/remove-from-queue
 
-------------------------------------------------------------
-1. Get Queue List (MAC + Firmware Version)
-------------------------------------------------------------
+- target can be a cassia name (e.g. cassia-01) or "all"
+- Removes only pending queue items (does not stop active programming)
 
-Command Topic:
-  accessapp/{networkId}/cmd/{cassiaName}/get-queue-list
+Payload examples:
 
-Description:
-  Requests the current firmware upgrade queue from the Cassia instance.
+Single MAC as string:
+"10:B9:F7:11:08:3B"
 
-Telemetry Response Topic:
-  accessapp/{networkId}/tele/{cassiaName}/queue-list
+Single MAC as object:
+{ "macAddress": "10:B9:F7:11:08:3B" }
 
-Response Payload:
+Multiple MACs as object:
+{ "macAddresses": ["10:B9:F7:11:08:3B", "10:B9:F7:AA:BB:CC"] }
+
+Multiple MACs as array:
+["10:B9:F7:11:08:3B", "10:B9:F7:AA:BB:CC"]
+
+Response topic:
+{baseTopic}/{networkId}/tele/{name}/queue-remove
+
+Response example:
 {
   "success": true,
-  "message": "Queue list retrieved successfully.",
-  "count": <number of queued devices>,
-  "queueList": [
+  "removed": 1,
+  "requested": ["10:B9:F7:11:08:3B"]
+}
+
+------------------------------------------------------------
+
+2) Get full device list (single message)
+
+Command topic:
+{baseTopic}/{networkId}/cmd/{target}/get-device-list
+
+Optional payload:
+{ "requestId": "abc123" }
+
+Response topic:
+{baseTopic}/{networkId}/tele/{name}/device-list
+
+Response payload example:
+{
+  "count": 42,
+  "deviceList": [
     {
-      "mac": "10:B9:F7:11:08:3B",
+      "macAddress": "10:B9:F7:11:08:3B",
+      "rssi": -61,
       "detectorType": "P46",
-      "firmwareVersion": "v02.35"
+      "detectorFamily": "DALI",
+      "productNumber": "353-0232",
+      "name": "Detector-1",
+      "lastSeenUtc": "2026-01-15T20:59:12Z",
+      "isStale": false
     }
   ]
 }
 
 ------------------------------------------------------------
-2. Get Programming List (MAC + Firmware Version)
-------------------------------------------------------------
 
-Command Topic:
-  accessapp/{networkId}/cmd/{cassiaName}/get-programming-list
-
-Description:
-  Requests the list of devices that are currently being programmed
-  (actively upgrading firmware).
-
-Telemetry Response Topic:
-  accessapp/{networkId}/tele/{cassiaName}/programming-list
-
-Response Payload:
-{
-  "success": true,
-  "message": "Programming list retrieved successfully.",
-  "count": <number of active programmers>,
-  "programmingList": [
-    {
-      "mac": "10:B9:F7:10:39:F7",
-      "detectorType": "P48",
-      "firmwareVersion": "v02.32"
-    }
-  ]
-}
-
-------------------------------------------------------------
-3. Status Message Enhancement – Programming Count
-------------------------------------------------------------
-
-Status Topic:
-  accessapp/{networkId}/tele/{cassiaName}/status
-
-Enhancement:
-  The status payload now includes the current number of active
-  programming operations.
-
-Additional Field:
-  "programming": <current programming count>
-
-This mirrors how the queue count is already reported and allows
-dashboards to show real-time programming load per Cassia.
-
-------------------------------------------------------------
-4. Runtime Control of Parallel Programmers
-------------------------------------------------------------
-
-IMPORTANT:
-  This setting is runtime-only and is NOT persisted.
-  It resets to the default value when the application restarts.
-
-------------------------------------------------------------
-4.1 Get Number of Parallel Programmers
-------------------------------------------------------------
-
-Command Topic:
-  accessapp/{networkId}/cmd/{cassiaName}/get-parallel-programmers
-
-Telemetry Response Topic:
-  accessapp/{networkId}/tele/{cassiaName}/parallel-programmers
-
-Response Payload:
-{
-  "success": true,
-  "value": 3
-}
-
-------------------------------------------------------------
-4.2 Set Number of Parallel Programmers
-------------------------------------------------------------
-
-Command Topic:
-  accessapp/{networkId}/cmd/{cassiaName}/set-parallel-programmers
-
-Payload (either form is accepted):
-  3
-or
-{
-  "value": 3
-}
-
-Telemetry Response Topic:
-  accessapp/{networkId}/tele/{cassiaName}/parallel-programmers
-
-Response Payload:
-{
-  "success": true,
-  "value": 3
-}
-
-Effect:
-  Updates the internal parallel programming limit immediately.
-  No restart required.
-  Value is lost on application restart by design.
-
-------------------------------------------------------------
-Compatibility & Safety Notes
-------------------------------------------------------------
-
-• No existing MQTT topics or payloads were changed or removed
-• No configuration files were modified
-• No persisted settings were introduced
-• All new functionality is additive and safe for existing deployments
-
-------------------------------------------------------------
-End of Document
-------------------------------------------------------------
+Notes:
+- target = "all" broadcasts the command to all Cassia gateways
+- Device list is returned in one MQTT message (not chunked)
+- Queue removal is thread-safe and does not affect active upgrades

@@ -356,6 +356,7 @@
                     <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
                         <TextBlock Text="{Binding ProgressUiCountdownText}" Margin="0,0,14,0" Opacity="0.85"/>
                         <TextBlock Text="{Binding DiscoveredUiCountdownText}" Opacity="0.85"/>
+                        <Button Style="{StaticResource GhostButton}" Content="Refresh UI" Padding="12,6" Margin="14,0,0,0" Command="{Binding RefreshUiNowCommand}"/>
                     </StackPanel>
                 </Grid>
             </Border>
@@ -386,6 +387,18 @@
                                           IsChecked="{Binding EnableDoubleClickQueue, Mode=TwoWay}"
                                           Margin="14,0,10,0"
                                           VerticalAlignment="Center"/>
+
+                                <CheckBox Content="Hide completed"
+                                          IsChecked="{Binding HideCompletedDevices, Mode=TwoWay}"
+                                          Margin="14,0,10,0"
+                                          VerticalAlignment="Center"/>
+
+                                <Button Style="{StaticResource GhostButton}"
+                                        Content="Remove RSSI -127"
+                                        Padding="12,6"
+                                        VerticalAlignment="Center"
+                                        Margin="0,0,10,0"
+                                        Command="{Binding RemoveRssiMinus127DevicesCommand}"/>
                                 <Button Style="{StaticResource GhostButton}"
                                         Content="Clear"
                                         Padding="12,6"
@@ -570,6 +583,7 @@
                                         <Button Style="{StaticResource PrimaryButton}" Content="Update / Queue selected" Padding="12,6" Margin="0,0,8,0" Command="{Binding QueueSelectedCommand}"/>
                                         <Button Style="{StaticResource GhostButton}" Content="Clear queue" Padding="12,6" Margin="0,0,8,0" Command="{Binding ClearQueueCommand}"/>
                                         <Button Style="{StaticResource GhostButton}" Content="Default sort" Padding="12,6" Click="QueueDefaultSort_Click"/>
+                                        <Button Style="{StaticResource GhostButton}" Content="Remove completed" Padding="12,6" Margin="10,0,0,0" Command="{Binding RemoveCompletedFromQueueCommand}"/>
                                     </StackPanel>
                                 </DockPanel>
 
@@ -579,7 +593,8 @@
                                           SelectedItem="{Binding SelectedQueueItem, Mode=TwoWay}"
                                           AutoGenerateColumns="False"
                                           IsReadOnly="True"
-                                          CanUserSortColumns="True" EnableRowVirtualization="True" EnableColumnVirtualization="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.IsDeferredScrollingEnabled="True" ScrollViewer.CanContentScroll="True">
+                                          CanUserSortColumns="True" EnableRowVirtualization="True" EnableColumnVirtualization="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.IsDeferredScrollingEnabled="True" ScrollViewer.CanContentScroll="True"
+                                          Sorting="QueueGrid_Sorting">
                                     <DataGrid.Columns>
                                         <DataGridTextColumn Header="MAC" Binding="{Binding Mac}" Width="160"/>
                                         <DataGridTextColumn Header="Cassia" Binding="{Binding Cassia}" Width="110"/>
@@ -706,6 +721,23 @@
                                           ItemsSource="{Binding LogIdOptions}"
                                           SelectedItem="{Binding SelectedLogId}"
                                           Margin="0,0,8,0"/>
+
+                                <ComboBox Width="130"
+                                          ItemsSource="{Binding UpgradeLogShowOptions}"
+                                          SelectedItem="{Binding SelectedUpgradeLogShowOption}"
+                                          Margin="0,0,8,0"/>
+
+                                <CheckBox Content="Latest per MAC"
+                                          IsChecked="{Binding UpgradeLogLatestOnlyPerMac, Mode=TwoWay}"
+                                          VerticalAlignment="Center"
+                                          Margin="0,0,12,0"/>
+
+                                <Button Style="{StaticResource GhostButton}"
+                                        Content="Export"
+                                        Padding="12,6"
+                                        Command="{Binding ExportUpgradeLogToExcelCommand}"
+                                        Margin="0,0,8,0"/>
+
 
                                 <Button Style="{StaticResource PrimaryButton}"
                                         Content="Request"
