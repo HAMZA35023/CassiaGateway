@@ -16,8 +16,8 @@ namespace AccessAPP.Services
         private readonly ConcurrentDictionary<string, DateTime> _lastDevicePublishUtc = new();
         private readonly ConcurrentDictionary<string, DateTime> _lastProgressPublishUtc = new();
 
-        private static readonly TimeSpan DevicePublishInterval = TimeSpan.FromSeconds(1);
-        private static readonly TimeSpan ProgressPublishInterval = TimeSpan.FromMilliseconds(500);
+        private static readonly TimeSpan DevicePublishInterval = TimeSpan.FromSeconds(10);
+        private static readonly TimeSpan ProgressPublishInterval = TimeSpan.FromMilliseconds(1000);
 
         private readonly ConcurrentDictionary<string, RssiWindowState> _rssiState
     = new ConcurrentDictionary<string, RssiWindowState>();
@@ -25,7 +25,7 @@ namespace AccessAPP.Services
         private readonly Timer _staleTimer;
 
         private static readonly TimeSpan RssiAverageWindow = TimeSpan.FromMinutes(3);
-        private static readonly TimeSpan StaleAfter = TimeSpan.FromMinutes(5);
+        private static readonly TimeSpan StaleAfter = TimeSpan.FromMinutes(2);
         private static readonly TimeSpan StaleCheckInterval = TimeSpan.FromSeconds(30);
 
         private sealed class RssiSample
@@ -187,7 +187,7 @@ namespace AccessAPP.Services
                         if (existing.rssi != -127)
                         {
                             existing.rssi = -127;
-                            Console.WriteLine($"Device {mac} is stale (>5m no announces). RSSI set to -127.");
+                            Console.WriteLine($"Device {mac} is stale (>2m no announces). RSSI set to -127.");
                         }
                         PublishDeviceThrottled(mac, kvp.Value);
 
@@ -273,34 +273,45 @@ namespace AccessAPP.Services
 
         // ---------------- MQTT helpers ----------------
 
+        private static readonly TimeSpan GlobalMinPublishInterval = TimeSpan.FromSeconds(1);
+        private DateTime _lastGlobalDevicePublishUtc = DateTime.MinValue;
+
         private void PublishDeviceThrottled(string mac, ScannedDevicesView device)
         {
             var now = DateTime.UtcNow;
 
-            if (_lastDevicePublishUtc.TryGetValue(mac, out var last) && (now - last) < DevicePublishInterval)
+            // 🔒 Global throttle (ALL MACs)
+            if ((now - _lastGlobalDevicePublishUtc) < GlobalMinPublishInterval)
+                return;
+
+            // Optional: still keep per-MAC throttling if you want both
+            if (_lastDevicePublishUtc.TryGetValue(mac, out var last) &&
+                (now - last) < DevicePublishInterval)
                 return;
 
             _lastDevicePublishUtc[mac] = now;
+            _lastGlobalDevicePublishUtc = now;
 
             _ = SafeMqtt(async ct =>
             {
                 await _mqtt.PublishDiscoveredDevicesAsync(new DiscoveredDevicesMessage
                 {
                     Devices =
-                    {
-                        new DiscoveredDevice
-                        {
-                            Mac = mac,
-                            Rssi = device.rssi,
-                            DetectorType = device.DetectorType,
-                            DetectorFamily = device.DetectorFamily,
-                            ProductNumber = device.ProductNumber,
-                            Name = device.name
-                        }
-                    }
+            {
+                new DiscoveredDevice
+                {
+                    Mac = mac,
+                    Rssi = device.rssi,
+                    DetectorType = device.DetectorType,
+                    DetectorFamily = device.DetectorFamily,
+                    ProductNumber = device.ProductNumber,
+                    Name = device.name
+                }
+            }
                 }, ct);
             });
         }
+
 
         private void PublishProgressThrottled(string mac, double progress, string status)
         {
