@@ -1669,6 +1669,8 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
                             AddUpgradeLogEntryFromLine(cassia, line);
                             // Harvest Current FW + completion success for UI fields (safe for saved log playback)
                             ApplyStatusFromUpgradeLogLine(cassia, line);
+                            ApplyLiveProcessStatusFromUpgradeLogLine(cassia, line);
+
 
                         }
 
@@ -2000,18 +2002,23 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
                 var qi = QueueItems.FirstOrDefault(q => q.Mac.Equals(mac, StringComparison.OrdinalIgnoreCase));
                 if (qi != null)
                 {
-                    qi.Cassia = cassia;
-                        qi.Status = text.Trim();
-                        if (LooksLikeFirmwareVersion(fw))
-                            qi.FirmwareVersion = fw;
-                        qi.LastUpdateUtc = tsUtc;
+                    if (qi.LastUpdateUtc != default && tsUtc < qi.LastUpdateUtc)
+                        return;
 
-                        // Keep sorting helpers fresh
-                        RequestQueueRefresh();
-                    }
+                    qi.Cassia = cassia;
+                    qi.Status = text.Trim();
+                    if (LooksLikeFirmwareVersion(fw))
+                        qi.FirmwareVersion = fw;
+                    qi.LastUpdateUtc = tsUtc;
+
+                    RequestQueueRefresh();
+                }
 
                 // Cache + device list mirror (without creating devices from logs)
                 var cs = GetOrCreateCache(mac);
+                if (cs.LastUpdateUtc != default && tsUtc < cs.LastUpdateUtc)
+                    return;
+
                 cs.ProcessCassia = cassia;
                 cs.ProcessStatus = text.Trim();
                 if (LooksLikeFirmwareVersion(fw))
@@ -2760,27 +2767,6 @@ private void RequestUpgradeLogTextRefresh()
             try { RequestQueueRefresh(); } catch { }
         }
 
-        // Keep Cassia cards updated (total devices seen is updated elsewhere; here we at least keep queue/programming counts moving)
-        try { UpdateCassiaCountsFromQueue(); } catch { }
-    }
-
-    private void UpdateCassiaCountsFromQueue()
-    {
-        // queue/programming derived from queue items; devicesSeen remains based on discovered tracking
-        foreach (var gw in CassiaGateways)
-        {
-            var name = gw.Name ?? "";
-            if (string.IsNullOrWhiteSpace(name)) continue;
-
-            var q = QueueItems.Count(x => x.Cassia.Equals(name, StringComparison.OrdinalIgnoreCase) &&
-                                          !((x.Status ?? "").Contains("Programming", StringComparison.OrdinalIgnoreCase)));
-            var prog = QueueItems.Count(x => x.Cassia.Equals(name, StringComparison.OrdinalIgnoreCase) &&
-                                             ((x.Status ?? "").Contains("Programming", StringComparison.OrdinalIgnoreCase) ||
-                                              (x.Progress > 0 && x.Progress < 100)));
-
-            gw.Queue = q;
-            gw.Programming = prog;
-        }
     }
 
 }
