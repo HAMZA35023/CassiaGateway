@@ -1,9 +1,12 @@
 <Window x:Class="AccessAppMqttWpf.SpeedGraphWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Cassia Speed Graph"
-        Height="520" Width="900"
-        WindowStartupLocation="CenterOwner">
+        Title="AccessAPP - Speed Graph"
+        Height="600" Width="1040"
+        WindowStartupLocation="CenterOwner"
+        MinHeight="420" MinWidth="780"
+        Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}">
+
     <Grid Margin="12">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -11,36 +14,125 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <StackPanel Orientation="Horizontal" Grid.Row="0" Margin="0,0,0,10">
-            <TextBlock Text="Gateway:" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"/>
-            <ComboBox Width="220"
-                      ItemsSource="{Binding SpeedGraphGateways}"
-                      DisplayMemberPath="Name"
-                      SelectedItem="{Binding SelectedSpeedGateway, Mode=TwoWay}"/>
-            <TextBlock Text="  (max 1 hour history)" VerticalAlignment="Center" Margin="10,0,0,0"
-                       Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"/>
-        </StackPanel>
-
-        <Border Grid.Row="1" BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" BorderThickness="1" CornerRadius="8" Padding="10">
+        <!-- Top toolbar -->
+        <Border Grid.Row="0"
+                CornerRadius="10"
+                BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+                BorderThickness="1"
+                Background="{DynamicResource {x:Static SystemColors.ControlLightLightBrushKey}}"
+                Padding="10"
+                SnapsToDevicePixels="True">
             <Grid>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="*"/>
-                    <RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
 
-                <Canvas x:Name="ChartCanvas" Background="White" Grid.Row="0"/>
+                <!-- LEFT: Graph name + averages -->
+                <StackPanel Grid.Column="0" Orientation="Vertical">
+                    <TextBlock x:Name="GraphTitleText"
+                               Text="Speed"
+                               FontSize="16"
+                               FontWeight="SemiBold"
+                               Foreground="#222"/>
 
-                <DockPanel Grid.Row="1" Margin="0,10,0,0">
-                    <TextBlock DockPanel.Dock="Left"
-                               Text="{Binding ElementName=ChartCanvas, Path=Tag}"
-                               Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"/>
-                    <Button DockPanel.Dock="Right" Content="Close" Width="90" IsCancel="True"/>
-                </DockPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                        <TextBlock Text="Avg 15m:"
+                                   Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                                   Margin="0,0,6,0"/>
+                        <TextBlock x:Name="Avg15Text"
+                                   FontWeight="SemiBold"
+                                   Margin="0,0,14,0"/>
+
+                        <TextBlock Text="Avg 30m:"
+                                   Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                                   Margin="0,0,6,0"/>
+                        <TextBlock x:Name="Avg30Text"
+                                   FontWeight="SemiBold"
+                                   Margin="0,0,14,0"/>
+
+                        <TextBlock Text="Range:"
+                                   Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                                   Margin="0,0,6,0"/>
+                        <TextBlock x:Name="RangeText"
+                                   FontWeight="SemiBold"/>
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- RIGHT: selectors + buttons -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="Gateway:"
+                               VerticalAlignment="Center"
+                               Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                               Margin="0,0,6,0"/>
+                    <ComboBox x:Name="GatewayCombo"
+                              Width="260"
+                              DisplayMemberPath="Name"
+                              SelectedItem="{Binding SelectedGatewayOption, RelativeSource={RelativeSource AncestorType=Window}}"
+                              SelectionChanged="GatewayCombo_SelectionChanged"
+                              VerticalAlignment="Center"
+                              Margin="0,0,14,0"/>
+
+                    <TextBlock Text="Timeframe:"
+                               VerticalAlignment="Center"
+                               Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                               Margin="0,0,6,0"/>
+                    <ComboBox x:Name="TimeframeCombo"
+                              Width="150"
+                              VerticalAlignment="Center"
+                              SelectionChanged="TimeframeCombo_SelectionChanged"
+                              Margin="0,0,14,0">
+                        <ComboBoxItem Content="15 min" Tag="00:15:00"/>
+                        <ComboBoxItem Content="30 min" Tag="00:30:00"/>
+                        <ComboBoxItem Content="1 hour" Tag="01:00:00" IsSelected="True"/>
+                        <ComboBoxItem Content="2 hours" Tag="02:00:00"/>
+                        <ComboBoxItem Content="6 hours" Tag="06:00:00"/>
+                        <ComboBoxItem Content="12 hours" Tag="12:00:00"/>
+                        <ComboBoxItem Content="Custom (drag)" Tag="CUSTOM"/>
+                    </ComboBox>
+
+                    <Button Content="Reset zoom"
+                            Width="110"
+                            Margin="0,0,8,0"
+                            Click="ResetZoom_Click"/>
+                    <Button Content="Close"
+                            Width="90"
+                            IsCancel="True"/>
+                </StackPanel>
             </Grid>
         </Border>
 
-        <TextBlock Grid.Row="2" Margin="0,10,0,0"
-                   Text="Note: the Cassia gateways do not provide history; this chart is built from live status updates while this app is running."
-                   Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"/>
+        <!-- Chart area -->
+        <Border Grid.Row="1"
+                CornerRadius="14"
+                BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+                BorderThickness="1"
+                Background="White"
+                Padding="12"
+                SnapsToDevicePixels="True"
+                Margin="0,10,0,0">
+            <Grid>
+                <Canvas x:Name="ChartCanvas"
+                        Background="Transparent"
+                        SnapsToDevicePixels="True" />
+
+                <Canvas x:Name="OverlayCanvas"
+                        Background="Transparent"
+                        MouseLeftButtonDown="OverlayCanvas_MouseLeftButtonDown"
+                        MouseMove="OverlayCanvas_MouseMove"
+                        MouseLeftButtonUp="OverlayCanvas_MouseLeftButtonUp"/>
+            </Grid>
+        </Border>
+
+        <!-- Footer -->
+        <DockPanel Grid.Row="2" Margin="0,10,0,0">
+            <TextBlock DockPanel.Dock="Left"
+                       Text="{Binding ElementName=ChartCanvas, Path=Tag}"
+                       Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                       TextTrimming="CharacterEllipsis"/>
+            <TextBlock DockPanel.Dock="Right"
+                       Text="Tip: drag on the chart to zoom (Custom). Double-click or Reset zoom to restore."
+                       Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"/>
+        </DockPanel>
     </Grid>
 </Window>
