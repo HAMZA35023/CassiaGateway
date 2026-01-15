@@ -20,6 +20,19 @@ public partial class UpgradeLogEntry : ObservableObject
 
     [ObservableProperty] private string line = "";
 
+    [ObservableProperty] private bool hasNewerEntry;
+
+
+    public bool IsCompletionSuccess =>
+        !string.IsNullOrWhiteSpace(Stage) &&
+        Stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase) &&
+        !string.IsNullOrWhiteSpace(Status) &&
+        Status.Trim().Equals("Success", StringComparison.OrdinalIgnoreCase);
+
+    // NOTE: "newer entry exists" warnings are shown on the MAC-group header only,
+    // not on individual log lines inside a group.
+    public string DisplayStatus => Status ?? "";
+
     public string TimeLocalText =>
         TimeLocal == DateTimeOffset.MinValue ? "" : TimeLocal.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
 }

@@ -312,4 +312,146 @@ public partial class MainWindow : Window
             ApplyQueueDefaultSort();
     }
 
+    private void DevicesContextMenu_Opened(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (DataContext is not MainViewModel vm) return;
+            if (sender is not ContextMenu cm) return;
+
+            var device = (cm.PlacementTarget as FrameworkElement)?.DataContext as DiscoveredDevice;
+            var assignRoot = cm.Items.OfType<MenuItem>().FirstOrDefault(mi => (mi.Tag as string) == "AssignCassia");
+            if (assignRoot == null) return;
+
+            assignRoot.Items.Clear();
+
+            if (device == null || device.CassiaRssi.Count == 0)
+            {
+                assignRoot.IsEnabled = false;
+                return;
+            }
+
+            assignRoot.IsEnabled = true;
+
+            foreach (var kv in device.CassiaRssi.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                var cassia = (kv.Key ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(cassia)) continue;
+
+                var mi = new MenuItem
+                {
+                    Header = $"{cassia} ({kv.Value})",
+                    IsCheckable = true,
+                    IsChecked = cassia.Equals((device.AssignedCassia ?? "").Trim(), StringComparison.OrdinalIgnoreCase)
+                };
+
+                mi.Click += (_, __) => vm.AssignDeviceToCassia(device, cassia);
+                assignRoot.Items.Add(mi);
+            }
+        }
+        catch { }
+    }
+
+    // Build the device context menu right before it opens.
+    // Using ContextMenuOpening on the row is more reliable than ContextMenu.Opened in the designer.
+    private void DevicesRow_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        try
+        {
+            if (sender is not DataGridRow row) return;
+            if (row.ContextMenu == null) return;
+            DevicesContextMenu_Opened(row.ContextMenu, new RoutedEventArgs());
+        }
+        catch { }
+    }
+
+    // Same pattern as DevicesRow_ContextMenuOpening: avoids XAML designer errors when using ContextMenu.Opened.
+    private void QueueRow_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        try
+        {
+            if (sender is not DataGridRow row) return;
+            if (row.ContextMenu == null) return;
+            QueueContextMenu_Opened(row.ContextMenu, new RoutedEventArgs());
+        }
+        catch { }
+    }
+
+    private void QueueContextMenu_Opened(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (DataContext is not MainViewModel vm) return;
+            if (sender is not ContextMenu cm) return;
+
+            var qi = (cm.PlacementTarget as FrameworkElement)?.DataContext as QueueItem;
+            if (qi == null || string.IsNullOrWhiteSpace(qi.Mac)) return;
+
+            // Rebuild menu each time to avoid duplicate click handlers.
+            cm.Items.Clear();
+
+            var remove = new MenuItem { Header = "Remove from queue" };
+            remove.Click += async (_, __) =>
+            {
+                var nl = Environment.NewLine;
+                var res = MessageBox.Show($"Remove {qi.Mac} from pending queue?{nl}{nl}(This does not stop active programming.)", "Remove from queue", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                if (res != MessageBoxResult.Yes) return;
+
+                // Prefer sending to the cassia the item is currently assigned to; fall back to all.
+                var target = string.IsNullOrWhiteSpace(qi.Cassia) ? "all" : qi.Cassia;
+                try
+                {
+                    qi.Status = "Remove requested";
+                    await vm.RemoveFromQueueAsync(target, new[] { qi.Mac }).ConfigureAwait(false);
+                }
+                catch { }
+            };
+            cm.Items.Add(remove);
+
+            var move = new MenuItem { Header = "Move to Cassia" };
+            cm.Items.Add(move);
+
+            // Only show Cassias that can see the device (RSSI known).
+            var dev = vm.Devices.FirstOrDefault(d => d != null && qi.Mac.Equals((d.Mac ?? "").Trim(), StringComparison.OrdinalIgnoreCase));
+            if (dev == null || dev.CassiaRssi.Count == 0)
+            {
+                move.IsEnabled = false;
+                return;
+            }
+
+            foreach (var kv in dev.CassiaRssi.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                var cassia = (kv.Key ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(cassia)) continue;
+                if (!string.IsNullOrWhiteSpace(qi.Cassia) && cassia.Equals(qi.Cassia, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var mi = new MenuItem { Header = $"{cassia} ({kv.Value})" };
+                mi.Click += async (_, __) =>
+                {
+                    var nl = Environment.NewLine;
+                    var res = MessageBox.Show(
+                        $"Move {qi.Mac} from {qi.Cassia} to {cassia}?{nl}{nl}" +
+                        $"Step 1: remove from pending queue{nl}" +
+                        $"Step 2: add to queue on new Cassia{nl}{nl}" +
+                        $"RSSI to {cassia}: {kv.Value}",
+                        "Move queue item",
+                        MessageBoxButton.YesNo,
+                        MessageBoxImage.Question);
+                    if (res != MessageBoxResult.Yes) return;
+
+                    try
+                    {
+                        await vm.MoveQueueItemToCassiaAsync(qi, cassia).ConfigureAwait(false);
+                    }
+                    catch { }
+                };
+                move.Items.Add(mi);
+            }
+
+            move.IsEnabled = move.Items.Count > 0;
+        }
+        catch { }
+    }
+
 }

@@ -6,6 +6,8 @@ namespace AccessAPP.Services
 {
     public class DeviceStorageService
     {
+        private static DeviceStorageService? _ownInstance;
+
         // Thread-safe dictionary to store devices by their MAC address
         private readonly ConcurrentDictionary<string, ScannedDevicesView> _deviceList = new();
         private readonly ConcurrentDictionary<string, FirmwareProgressStatus> _progressStatus = new();
@@ -47,6 +49,7 @@ namespace AccessAPP.Services
         public DeviceStorageService(IMqttService mqtt)
         {
             _mqtt = mqtt;
+            _ownInstance = this;
             _staleTimer = new Timer(_ =>
             {
                 try
@@ -63,6 +66,57 @@ namespace AccessAPP.Services
         public void Dispose()
         {
             _staleTimer?.Dispose();
+            if (ReferenceEquals(_ownInstance, this))
+                _ownInstance = null;
+        }
+
+        /// <summary>
+        /// Returns the full device list snapshot in a single, serialization-friendly DTO.
+        /// Intended for MQTT "get-device-list".
+        /// </summary>
+        public static IReadOnlyList<DeviceListItem> GetDeviceListSnapshot()
+        {
+            var inst = _ownInstance;
+            if (inst is null)
+                return Array.Empty<DeviceListItem>();
+
+            var now = DateTimeOffset.UtcNow;
+
+            // NOTE: values are mutable objects; copy fields into a DTO.
+            return inst._deviceList
+                .Select(kvp =>
+                {
+                    var mac = kvp.Key;
+                    var d = kvp.Value;
+
+                    DateTimeOffset lastSeenUtc = DateTimeOffset.MinValue;
+                    int avgRssi = d?.rssi ?? -127;
+
+                    if (inst._rssiState.TryGetValue(mac, out var state))
+                    {
+                        lock (state.Gate)
+                        {
+                            lastSeenUtc = state.LastSeenUtc;
+                            avgRssi = state.LastAverageRssi;
+                        }
+                    }
+
+                    bool isStale = lastSeenUtc != DateTimeOffset.MinValue && (now - lastSeenUtc) > StaleAfter;
+
+                    return new DeviceListItem
+                    {
+                        MacAddress = mac,
+                        Rssi = avgRssi,
+                        DetectorType = d?.DetectorType,
+                        DetectorFamily = d?.DetectorFamily,
+                        ProductNumber = d?.ProductNumber,
+                        Name = d?.name,
+                        LastSeenUtc = lastSeenUtc,
+                        IsStale = isStale
+                    };
+                })
+                .OrderBy(x => x.MacAddress, StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
 
         // Add or update devices based on MAC address and filter by RSSI

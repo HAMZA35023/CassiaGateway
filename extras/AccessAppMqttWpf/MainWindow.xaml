@@ -405,6 +405,13 @@
                                         VerticalAlignment="Center"
                                         Click="ClearDevices_Click"/>
 
+                                <Button Style="{StaticResource GhostButton}"
+                                        Content="Clear + Reload"
+                                        Padding="12,6"
+                                        VerticalAlignment="Center"
+                                        Margin="10,0,0,0"
+                                        Command="{Binding ClearAndReloadDeviceListCommand}"/>
+
                                 <Button Style="{StaticResource PrimaryButton}"
                                         Content="Check all"
                                         Padding="12,6"
@@ -446,6 +453,7 @@
                                 <!-- NOTE: ContextMenu is not in the visual tree; we stash the VM on the row Tag to bind commands reliably. -->
                                 <DataGrid.RowStyle>
                                     <Style TargetType="DataGridRow">
+                                        <EventSetter Event="ContextMenuOpening" Handler="DevicesRow_ContextMenuOpening"/>
                                         <Setter Property="Tag" Value="{Binding DataContext, RelativeSource={RelativeSource AncestorType=DataGrid}}"/>
                                         <Setter Property="ContextMenu">
                                             <Setter.Value>
@@ -456,6 +464,7 @@
                                                     <MenuItem Header="Disconnect"
                                                               Command="{Binding PlacementTarget.Tag.DisconnectDeviceCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                                               CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                                    <MenuItem Header="Assign to Cassia" Tag="AssignCassia"/>
                                                     <Separator/>
                                                     <MenuItem Header="Write-Read…"
                                                               Command="{Binding PlacementTarget.Tag.OpenWriteReadCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
@@ -654,6 +663,20 @@
                                   IsReadOnly="True"
                                   CanUserSortColumns="True"
                                   Sorting="QueueGrid_Sorting" EnableRowVirtualization="True" EnableColumnVirtualization="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.IsDeferredScrollingEnabled="True" ScrollViewer.CanContentScroll="True">
+                            <DataGrid.RowStyle>
+                                <Style TargetType="DataGridRow">
+                                    <EventSetter Event="ContextMenuOpening" Handler="QueueRow_ContextMenuOpening"/>
+                                    <Setter Property="Tag" Value="{Binding DataContext, RelativeSource={RelativeSource AncestorType=DataGrid}}"/>
+                                    <Setter Property="ContextMenu">
+                                        <Setter.Value>
+                                            <ContextMenu>
+                                                <MenuItem Header="Remove from queue" Tag="RemoveFromQueue"/>
+                                                <MenuItem Header="Move to Cassia" Tag="MoveToCassia"/>
+                                            </ContextMenu>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </DataGrid.RowStyle>
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="MAC" Binding="{Binding Mac}" Width="160"/>
                                 <DataGridTextColumn Header="Cassia" Binding="{Binding Cassia}" Width="110"/>
@@ -762,7 +785,7 @@
                                                 Padding="10"
                                                 Margin="0,0,0,10"
                                                 CornerRadius="10"
-                                                BorderBrush="{Binding LatestStatus, Converter={StaticResource StatusToBrush}}">
+                                                BorderBrush="{Binding DisplayBadgeStatus, Converter={StaticResource StatusToBrush}}">
                                             <Expander IsExpanded="False" Loaded="UpgradeLogExpander_Loaded" Expanded="UpgradeLogExpander_Expanded" Collapsed="UpgradeLogExpander_Collapsed">
                                                 
                                                 <Expander.Resources>
@@ -795,8 +818,8 @@
                                                                     Padding="8,2"
                                                                     CornerRadius="10"
                                                                     VerticalAlignment="Center"
-                                                                    Background="{Binding LatestStatus, Converter={StaticResource StatusToBrush}}">
-                                                                <TextBlock Text="{Binding LatestStatus}"
+                                                                    Background="{Binding DisplayBadgeStatus, Converter={StaticResource StatusToBrush}}">
+                                                                <TextBlock Text="{Binding DisplayBadgeStatus}"
                                                                            FontWeight="SemiBold"
                                                                            Foreground="White"/>
                                                             </Border>

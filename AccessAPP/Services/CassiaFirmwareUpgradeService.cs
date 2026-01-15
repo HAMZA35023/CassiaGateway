@@ -1495,6 +1495,10 @@ public static int GetProgrammingCount()
         private readonly ConcurrentDictionary<string, byte> _queuedMacs = new(); // pending membership set
         private readonly object _upgradeQueueGate = new();
 
+        // Guards mutations of the underlying ConcurrentQueue when we need
+        // stronger-than-eventual-consistency operations (e.g. remove single item).
+        private readonly object _queueEditGate = new();
+
         // Wake-up signal for worker when new items arrive
         private readonly SemaphoreSlim _queueSignal = new(0, int.MaxValue);
 
@@ -1546,7 +1550,10 @@ public static int GetProgrammingCount()
 
                 dev.MacAddress = mac;
 
-                _upgradeQueue.Enqueue(dev);
+                lock (_queueEditGate)
+                {
+                    _upgradeQueue.Enqueue(dev);
+                }
                 inQueue = _upgradeQueue.Count;
                 queued++;
 
@@ -1604,8 +1611,14 @@ public static int GetProgrammingCount()
                 while (true)
                 {
                     // Fill capacity immediately from FIFO
-                    while (running.Count < numbersOfThreadsInParallel && _upgradeQueue.TryDequeue(out var dev))
+                    while (running.Count < numbersOfThreadsInParallel)
                     {
+                        UpgradeProgress? dev;
+                        lock (_queueEditGate)
+                        {
+                            if (!_upgradeQueue.TryDequeue(out dev))
+                                break;
+                        }
                         inQueue = _upgradeQueue.Count;
                         var mac = NormalizeMac(dev?.MacAddress);
                         if (!string.IsNullOrWhiteSpace(mac))
@@ -1704,16 +1717,80 @@ public static int GetProgrammingCount()
         {
             int removed = 0;
 
-            while (_upgradeQueue.TryDequeue(out var dev))
+            lock (_queueEditGate)
             {
-                removed++;
-                var mac = NormalizeMac(dev?.MacAddress);
-                if (!string.IsNullOrWhiteSpace(mac))
-                    _queuedMacs.TryRemove(mac, out _);
+                while (_upgradeQueue.TryDequeue(out var dev))
+                {
+                    removed++;
+                    var mac = NormalizeMac(dev?.MacAddress);
+                    if (!string.IsNullOrWhiteSpace(mac))
+                        _queuedMacs.TryRemove(mac, out _);
+                }
             }
             inQueue = _upgradeQueue.Count;
             Console.WriteLine($"[UPGRADE QUEUE] Cleared {removed} queued device(s). Pending now: {_upgradeQueue.Count}");
             return removed;
+        }
+
+        /// <summary>
+        /// Removes a single MAC from the pending FIFO queue (does not cancel in-progress upgrades).
+        /// Returns 1 if removed, 0 if not found/pending.
+        /// </summary>
+        public int RemoveFromUpgradeQueue(string mac)
+        {
+            mac = NormalizeMac(mac);
+            if (string.IsNullOrWhiteSpace(mac)) return 0;
+
+            int removed = 0;
+
+            lock (_queueEditGate)
+            {
+                // Quick exit if it isn't marked as queued
+                if (!_queuedMacs.ContainsKey(mac))
+                    return 0;
+
+                var items = new List<UpgradeProgress>(capacity: Math.Max(16, _upgradeQueue.Count));
+                while (_upgradeQueue.TryDequeue(out var dev))
+                {
+                    if (dev is null)
+                        continue;
+
+                    var m = NormalizeMac(dev.MacAddress);
+                    if (string.Equals(m, mac, StringComparison.OrdinalIgnoreCase) && removed == 0)
+                    {
+                        removed = 1;
+                        // do not re-enqueue
+                        continue;
+                    }
+
+                    items.Add(dev);
+                }
+
+                _queuedMacs.Clear();
+
+                foreach (var dev in items)
+                {
+                    var m = NormalizeMac(dev.MacAddress);
+                    if (!string.IsNullOrWhiteSpace(m))
+                        _queuedMacs.TryAdd(m, 0);
+                    _upgradeQueue.Enqueue(dev);
+                }
+
+                if (removed == 1)
+                    _queuedMacs.TryRemove(mac, out _);
+            }
+
+            inQueue = _upgradeQueue.Count;
+            if (removed == 1)
+                Console.WriteLine($"[UPGRADE QUEUE] Removed pending device: {mac}. Pending now: {_upgradeQueue.Count}");
+
+            return removed;
+        }
+
+        public static int RemoveFromUpgradeQueuePending(string mac)
+        {
+            var inst = _ownInstance;
+            return inst is null ? 0 : inst.RemoveFromUpgradeQueue(mac);
         }
 
         public List<(string Mac, string DetectorType, string TargetFw)> GetUpgradeQueueSnapshot()

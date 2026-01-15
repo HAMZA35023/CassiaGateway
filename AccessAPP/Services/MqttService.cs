@@ -408,8 +408,9 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 return Task.CompletedTask;
             }
 
-            // Strongly recommended: only accept commands for THIS gateway
-            if (!string.Equals(target, CurrentOptions.Name, StringComparison.OrdinalIgnoreCase))
+            // Accept commands for THIS gateway, and optionally broadcast target "all".
+            if (!string.Equals(target, CurrentOptions.Name, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(target, "all", StringComparison.OrdinalIgnoreCase))
             {
                 Log("HandleCommandAsync: ignored (target mismatch)");
                 return Task.CompletedTask;
@@ -568,6 +569,145 @@ if (string.Equals(command, "get-programming-list", StringComparison.OrdinalIgnor
     };
 
     return PublishJsonAsync(TeleTopic("programming-list"), resp, retain: false, CancellationToken.None);
+}
+
+if (string.Equals(command, "get-device-list", StringComparison.OrdinalIgnoreCase))
+{
+    Log("HandleCommandAsync: dispatch get-device-list");
+
+    string? requestId = null;
+    try
+    {
+        if (!string.IsNullOrWhiteSpace(payload))
+        {
+            using var doc = JsonDocument.Parse(payload);
+            if (doc.RootElement.ValueKind == JsonValueKind.Object &&
+                doc.RootElement.TryGetProperty("requestId", out var rid) &&
+                rid.ValueKind == JsonValueKind.String)
+                requestId = rid.GetString();
+        }
+    }
+    catch { /* ignore */ }
+
+    var items = DeviceStorageService.GetDeviceListSnapshot();
+
+    var resp = new
+    {
+        success = true,
+        message = "Device list retrieved successfully.",
+        requestId,
+        name = CurrentOptions.Name,
+        networkId = CurrentOptions.NetworkId,
+        time = DateTimeOffset.UtcNow,
+        count = items.Count,
+        deviceList = items
+    };
+
+    // One single message with full list.
+    return PublishJsonAsync(TeleTopic("device-list"), resp, retain: false, CancellationToken.None);
+}
+
+if (string.Equals(command, "remove-from-queue", StringComparison.OrdinalIgnoreCase))
+{
+    Log("HandleCommandAsync: dispatch remove-from-queue");
+
+    // Accept payload as:
+    //  - "10:B9:F7:..."
+    //  - {"macAddress":"..."} / {"mac":"..."}
+    //  - {"macAddresses":["...","..."]} / {"macs":[...]}
+    //  - ["...","..."]
+    var macs = new List<string>();
+
+    try
+    {
+        if (!string.IsNullOrWhiteSpace(payload))
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+
+            if (root.ValueKind == JsonValueKind.String)
+            {
+                var m = root.GetString();
+                if (!string.IsNullOrWhiteSpace(m)) macs.Add(m);
+            }
+            else if (root.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var el in root.EnumerateArray())
+                {
+                    if (el.ValueKind == JsonValueKind.String)
+                    {
+                        var m = el.GetString();
+                        if (!string.IsNullOrWhiteSpace(m)) macs.Add(m);
+                    }
+                }
+            }
+            else if (root.ValueKind == JsonValueKind.Object)
+            {
+                if (root.TryGetProperty("macAddress", out var ma) && ma.ValueKind == JsonValueKind.String)
+                {
+                    var m = ma.GetString();
+                    if (!string.IsNullOrWhiteSpace(m)) macs.Add(m);
+                }
+                if (root.TryGetProperty("mac", out var mac) && mac.ValueKind == JsonValueKind.String)
+                {
+                    var m = mac.GetString();
+                    if (!string.IsNullOrWhiteSpace(m)) macs.Add(m);
+                }
+
+                if (root.TryGetProperty("macAddresses", out var arr) && arr.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var el in arr.EnumerateArray())
+                    {
+                        if (el.ValueKind == JsonValueKind.String)
+                        {
+                            var m = el.GetString();
+                            if (!string.IsNullOrWhiteSpace(m)) macs.Add(m);
+                        }
+                    }
+                }
+                if (root.TryGetProperty("macs", out var arr2) && arr2.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var el in arr2.EnumerateArray())
+                    {
+                        if (el.ValueKind == JsonValueKind.String)
+                        {
+                            var m = el.GetString();
+                            if (!string.IsNullOrWhiteSpace(m)) macs.Add(m);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    catch
+    {
+        // If parsing fails, treat it as raw string
+        if (!string.IsNullOrWhiteSpace(payload))
+            macs.Add(payload.Trim('"', ' ', '\t', '\r', '\n'));
+    }
+
+    macs = macs
+        .Where(m => !string.IsNullOrWhiteSpace(m))
+        .Select(m => m.Trim())
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    int removed = 0;
+    foreach (var m in macs)
+        removed += CassiaFirmwareUpgradeService.RemoveFromUpgradeQueuePending(m);
+
+    var resp = new
+    {
+        success = true,
+        message = removed > 0 ? "Removed device(s) from pending queue." : "No matching pending devices found in queue.",
+        name = CurrentOptions.Name,
+        networkId = CurrentOptions.NetworkId,
+        time = DateTimeOffset.UtcNow,
+        requested = macs,
+        removed
+    };
+
+    return PublishJsonAsync(TeleTopic("queue-remove"), resp, retain: false, CancellationToken.None);
 }
 
 if (string.Equals(command, "get-parallel-programmers", StringComparison.OrdinalIgnoreCase))

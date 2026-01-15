@@ -98,3 +98,18 @@ public sealed class StatusMessage
 
     public double totalSpeedpct { get; set; }
     }
+
+/// <summary>
+/// DTO used by MQTT "get-device-list" so the full device list can be returned in ONE message.
+/// </summary>
+public sealed class DeviceListItem
+{
+    public string MacAddress { get; set; } = "";
+    public int Rssi { get; set; }
+    public string? DetectorType { get; set; }
+    public string? DetectorFamily { get; set; }
+    public string? ProductNumber { get; set; }
+    public string? Name { get; set; }
+    public DateTimeOffset LastSeenUtc { get; set; }
+    public bool IsStale { get; set; }
+}

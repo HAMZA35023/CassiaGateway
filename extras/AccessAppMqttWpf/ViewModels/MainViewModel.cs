@@ -44,11 +44,16 @@ public partial class MainViewModel : ObservableObject
     private readonly HashSet<string> _fwManifestRequestedForGw = new(StringComparer.OrdinalIgnoreCase);
     // After each connect we request queue/programming/parallel-programmers once per gateway.
     private readonly HashSet<string> _runtimeStateRequestedForGw = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _deviceListRequestedForGw = new(StringComparer.OrdinalIgnoreCase);
+    private bool _deviceListRequestedAfterConnect;
     private DateTimeOffset _connectedAtUtc = DateTimeOffset.MinValue;
 
 
     private readonly ObservableCollection<DiscoveredDevice> _devices = new();
     private readonly Dictionary<string, DiscoveredDevice> _deviceByMac = new(StringComparer.OrdinalIgnoreCase);
+
+    // Raw discovered devices collection (useful for code-behind context menus)
+    public ObservableCollection<DiscoveredDevice> Devices => _devices;
 
     public ICollectionView FilteredDevices { get; }
 
@@ -95,6 +100,29 @@ public partial class MainViewModel : ObservableObject
 
     private DiscoveredDevice? FindDiscoveredDevice(string mac) =>
         _devices.FirstOrDefault(d => d.Mac.Equals(mac, StringComparison.OrdinalIgnoreCase));
+
+    // Hook per-device property changes so we can initialize AssignedCassia from BestCassia
+    // (but never overwrite a user/manual assignment).
+    private void WireDeviceAssignmentHooks(DiscoveredDevice dev)
+    {
+        if (dev == null) return;
+
+        // If the device is first seen and has no assignment yet, seed it from BestCassia when available.
+        void EnsureSeed()
+        {
+            if (!string.IsNullOrWhiteSpace(dev.AssignedCassia)) return;
+            if (string.IsNullOrWhiteSpace(dev.BestCassia)) return;
+            dev.AssignedCassia = dev.BestCassia;
+        }
+
+        EnsureSeed();
+
+        dev.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(DiscoveredDevice.BestCassia))
+                EnsureSeed();
+        };
+    }
 
     private CachedDeviceStatus GetOrCreateCache(string mac)
     {
@@ -525,6 +553,25 @@ partial void OnUpgradeLogSearchTextChanged(string value)
                 _latestUpgradeLogIdByMac[mac] = g.LogId;
             }
 
+            // Mark groups that have a newer group for the same MAC (yellow "newer entry" badge)
+            foreach (var g in UpgradeLogGroups)
+            {
+                if (g == null) continue;
+                var mac = (g.Mac ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(mac))
+                {
+                    g.HasNewerForMac = false;
+                    continue;
+                }
+
+                if (_latestUpgradeLogIdByMac.TryGetValue(mac, out var latestId))
+                    g.HasNewerForMac = !string.Equals(latestId, g.LogId, StringComparison.OrdinalIgnoreCase);
+                else
+                    g.HasNewerForMac = false;
+
+                g.NotifyHeaderChanged();
+            }
+
             _latestUpgradeLogMapDirty = false;
         }
     }
@@ -698,6 +745,10 @@ partial void OnSensorFilterChanged(string value)
             {
                 await _mqtt.DisconnectAsync();
                 _requestedUpgradeLogCassias.Clear();
+                _fwManifestRequestedForGw.Clear();
+                _runtimeStateRequestedForGw.Clear();
+                _deviceListRequestedForGw.Clear();
+                _deviceListRequestedAfterConnect = false;
                 return;
             }
 
@@ -710,6 +761,12 @@ partial void OnSensorFilterChanged(string value)
                 IgnoreTlsErrors,
                 MqttTopic,
                 _appCts.Token);
+
+            _connectedAtUtc = DateTimeOffset.UtcNow;
+            _fwManifestRequestedForGw.Clear();
+            _runtimeStateRequestedForGw.Clear();
+            _deviceListRequestedForGw.Clear();
+            _deviceListRequestedAfterConnect = false;
 
             // Ensure we also receive telemetry responses (many backends publish connect/write-read replies on tele/*).
             // If the user configured a narrow subscription like accessapp/<net>/cmd/#, we still want tele/#.
@@ -813,6 +870,27 @@ partial void OnSensorFilterChanged(string value)
         }
     }
 
+    [RelayCommand]
+    private async Task ClearAndReloadDeviceList()
+    {
+        // Clear local discovered devices (does NOT stop running upgrades on the Cassias).
+        _devices.Clear();
+        _deviceByMac.Clear();
+        _gwSeenMacs.Clear();
+
+        // Keep queue/progress cache so queued/programming still shows if devices come back.
+        // But reset per-device assignment counts.
+        foreach (var gw in CassiaGateways)
+        {
+            gw.AssignedP41 = gw.AssignedP42 = gw.AssignedP46 = gw.AssignedP47 = gw.AssignedP48 = 0;
+        }
+
+        RequestDevicesRefresh();
+
+        // Request full device list from all gateways.
+        await RequestDeviceListAsync("all").ConfigureAwait(false);
+    }
+
 [RelayCommand]
     private void ClearQueue() => QueueItems.Clear();
 
@@ -832,13 +910,57 @@ partial void OnSensorFilterChanged(string value)
         if (selected.Count == 0 && SelectedDevice != null)
             selected.Add(SelectedDevice);
 
+        if (selected.Count == 0) return;
+
+        var nl = Environment.NewLine;
+
+        // Build a preview of what will be queued and where.
+        var previewLines = new List<string>();
+        foreach (var d in selected)
+        {
+            var (suggested, reason) = SuggestCassiaForDevice(d);
+            if (string.IsNullOrWhiteSpace(suggested)) suggested = (d.BestCassia ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(suggested)) suggested = "(none)";
+
+            var why = string.IsNullOrWhiteSpace(reason) ? "" : $" — {reason}";
+            previewLines.Add($"{d.Mac}  =>  {suggested}{why}");
+        }
+
+        var previewText = string.Join(nl, previewLines.Take(30));
+        if (previewLines.Count > 30)
+            previewText += nl + $"... ({previewLines.Count - 30} more)";
+
+        var prompt =
+            "Reassign before adding to queue?" + nl + nl +
+            "Yes = recompute assignment using RSSI + current Cassia load (queue+programming)" + nl +
+            "No  = use the assignment selected in the device list (or auto if empty)" + nl +
+            "Cancel = abort" + nl + nl +
+            "Planned assignments:" + nl + previewText;
+
+        var res = MessageBox.Show(prompt, "Add to queue", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
+        if (res == MessageBoxResult.Cancel) return;
+
+        if (res == MessageBoxResult.Yes)
+        {
+            foreach (var d in selected)
+            {
+                if (d == null) continue;
+                if (IsDeviceInWork(d)) continue;
+                var (suggested, _) = SuggestCassiaForDevice(d);
+                if (!string.IsNullOrWhiteSpace(suggested))
+                    d.AssignedCassia = suggested;
+            }
+            RecalculateAssignmentCounts();
+            RequestDevicesRefresh();
+        }
+
         foreach (var d in selected)
         {
             await QueueDeviceAndRequestAsync(d);
-            // After queueing, uncheck in device list as requested.
             d.IsSelected = false;
         }
     }
+
 
     // ---------------------------------------------------------------------
     // Device context actions (Connect / Disconnect / Write-Read)
@@ -1021,6 +1143,14 @@ partial void OnSensorFilterChanged(string value)
     /// </summary>
     
     // ---------------- Assignment helpers ----------------
+    private int GetGatewayLoad(string cassia)
+    {
+        if (string.IsNullOrWhiteSpace(cassia)) return 0;
+        var gw = CassiaGateways.FirstOrDefault(g => g.Name.Equals(cassia, StringComparison.OrdinalIgnoreCase));
+        if (gw == null) return 0;
+        return Math.Max(0, gw.Queue) + Math.Max(0, gw.Programming);
+    }
+
     private bool IsDeviceInWork(DiscoveredDevice d)
     {
         if (d == null) return false;
@@ -1115,7 +1245,8 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
             var modelCounts = GetCurrentModelCounts(model);
 
             chosen = eligible
-                .OrderBy(c => groupCounts.TryGetValue(c, out var gc) ? gc : 0)
+                .OrderBy(c => GetGatewayLoad(c))
+                .ThenBy(c => groupCounts.TryGetValue(c, out var gc) ? gc : 0)
                 .ThenBy(c => modelCounts.TryGetValue(c, out var mc) ? mc : 0)
                 .ThenByDescending(c => d.CassiaRssi.TryGetValue(c, out var r) ? r : int.MinValue)
                 .ThenBy(c => c, StringComparer.OrdinalIgnoreCase)
@@ -1123,6 +1254,57 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
         }
 
         d.AssignedCassia = chosen;
+    }
+
+
+    private (string cassia, string reason) SuggestCassiaForDevice(DiscoveredDevice d)
+    {
+        if (d == null) return ("", "no device");
+        if (d.CassiaRssi.Count == 0) return ("", "no RSSI");
+
+        var best = d.CassiaRssi.OrderByDescending(kv => kv.Value).First();
+        var bestCassia = (best.Key ?? "").Trim();
+        var bestRssi = best.Value;
+        if (string.IsNullOrWhiteSpace(bestCassia)) return ("", "no Cassia");
+
+        // Eligible cassias = within slack of the best RSSI
+        var eligible = d.CassiaRssi
+            .Where(kv => !string.IsNullOrWhiteSpace(kv.Key) && kv.Value >= bestRssi - AssignmentRssiSlack)
+            .OrderByDescending(kv => kv.Value)
+            .Select(kv => kv.Key)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (eligible.Count == 0)
+            eligible.Add(bestCassia);
+
+        var model = (d.SensorModel ?? "").Trim().ToUpperInvariant();
+        var group = GetGroupForModel(model);
+
+        string chosen = bestCassia;
+        if (group == 0)
+        {
+            chosen = bestCassia;
+        }
+        else
+        {
+            var groupCounts = GetCurrentGroupCounts(group);
+            var modelCounts = GetCurrentModelCounts(model);
+
+            chosen = eligible
+                .OrderBy(c => GetGatewayLoad(c))
+                .ThenBy(c => groupCounts.TryGetValue(c, out var gc) ? gc : 0)
+                .ThenBy(c => modelCounts.TryGetValue(c, out var mc) ? mc : 0)
+                .ThenByDescending(c => d.CassiaRssi.TryGetValue(c, out var r) ? r : int.MinValue)
+                .ThenBy(c => c, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault() ?? bestCassia;
+        }
+
+        var chosenRssi = d.CassiaRssi.TryGetValue(chosen, out var rr) ? rr : bestRssi;
+        var reason = $"rssi={chosenRssi}, load={GetGatewayLoad(chosen)}";
+        if (!chosen.Equals(bestCassia, StringComparison.OrdinalIgnoreCase))
+            reason += $", best={bestCassia}({bestRssi})";
+        return (chosen, reason);
     }
 
     private Dictionary<string, int> GetCurrentGroupCounts(int group)
@@ -1190,15 +1372,19 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
     [RelayCommand]
     private void ReassignDevices()
     {
-        // Clear and re-run assignment algorithm. (Still sticky until next manual reassign.)
-        foreach (var dev in _devices)
+        // If some devices are checked, only reassign those. Otherwise reassign all.
+        var checkedDevices = _devices.Where(d => d != null && d.IsSelected).ToList();
+        var targets = checkedDevices.Count > 0 ? checkedDevices : _devices.ToList();
+
+        // Clear assignment for targets (except devices already queued/programming).
+        foreach (var dev in targets)
         {
-            // Keep assignment for devices already queued/programming.
+            if (dev == null) continue;
             if (IsDeviceInWork(dev)) continue;
             dev.AssignedCassia = "";
         }
 
-        foreach (var dev in _devices.OrderBy(d => d.SensorModel).ThenBy(d => d.Mac, StringComparer.OrdinalIgnoreCase))
+        foreach (var dev in targets.OrderBy(d => d.SensorModel).ThenBy(d => d.Mac, StringComparer.OrdinalIgnoreCase))
             EnsureStickyAssignment(dev);
 
         RecalculateAssignmentCounts();
@@ -1548,6 +1734,8 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
                     // Also request runtime snapshot (queue / programming / parallel programmers) so the UI can reconnect mid-run.
                     MaybeAutoRequestRuntimeStateAfterStatus(gw);
 
+                    MaybeAutoRequestDeviceListAfterStatus(gw);
+
                     MaybeAutoRequestUpgradeLogAfterStatus(gw);
 
                 });
@@ -1565,6 +1753,18 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
         if (kind == "tele" && leaf == "fw-manifest")
         {
             HandleFwManifestTele(cassia, payload);
+            return;
+        }
+
+        if (kind == "tele" && leaf == "device-list")
+        {
+            HandleDeviceListTele(cassia, payload);
+            return;
+        }
+
+        if (kind == "tele" && leaf == "queue-remove")
+        {
+            HandleQueueRemoveTele(cassia, payload);
             return;
         }
 
@@ -2495,6 +2695,103 @@ private void RequestUpgradeLogTextRefresh()
         _ = RequestParallelProgrammersAsync(gw.Name);
     }
 
+
+
+    private void MaybeAutoRequestDeviceListAfterStatus(CassiaGateway gw)
+    {
+        if (!IsConnected) return;
+        if (!string.Equals(gw.StateLower, "online", StringComparison.OrdinalIgnoreCase)) return;
+        if (string.IsNullOrWhiteSpace(gw.Name)) return;
+
+        // Only request once per connection.
+        if (_deviceListRequestedAfterConnect) return;
+
+        // Wait until we have at least one status after connect.
+        if (_connectedAtUtc != DateTimeOffset.MinValue && (DateTimeOffset.UtcNow - _connectedAtUtc) > TimeSpan.FromMinutes(10))
+            return;
+
+        _deviceListRequestedAfterConnect = true;
+        _ = RequestDeviceListAsync("all");
+    }
+
+    private Task RequestDeviceListAsync(string target)
+        => _mqtt.PublishJsonAsync(BuildCmdTopic(target, "get-device-list"), new { requestId = Guid.NewGuid().ToString("N") }, retain: false, qos: 1, ct: _appCts.Token);
+
+    public Task RemoveFromQueueAsync(string target, IEnumerable<string> macAddresses)
+    {
+        if (string.IsNullOrWhiteSpace(target)) target = "all";
+        var macs = (macAddresses ?? Array.Empty<string>()).Where(m => !string.IsNullOrWhiteSpace(m)).Select(m => m.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (macs.Length == 0) return Task.CompletedTask;
+
+        // Backend accepts many payload shapes; we always use the object form.
+        object payload = macs.Length == 1
+            ? new { macAddress = macs[0] }
+            : new { macAddresses = macs };
+
+        return _mqtt.PublishJsonAsync(BuildCmdTopic(target, "remove-from-queue"), payload, retain: false, qos: 1, ct: _appCts.Token);
+    }
+
+
+    public async Task MoveQueueItemToCassiaAsync(QueueItem qi, string newCassia)
+    {
+        if (qi == null) return;
+        var mac = (qi.Mac ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(mac)) return;
+        newCassia = (newCassia ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(newCassia)) return;
+
+        // Step 1: remove from pending queue on the current Cassia (best effort)
+        var fromCassia = string.IsNullOrWhiteSpace(qi.Cassia) ? "all" : qi.Cassia.Trim();
+        await RemoveFromQueueAsync(fromCassia, new[] { mac }).ConfigureAwait(false);
+
+        // Step 2: queue on the new Cassia
+        var model = (qi.DetectorType ?? "").Trim();
+        var fw = (qi.FirmwareVersion ?? "").Trim();
+
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            qi.Cassia = newCassia;
+            qi.Status = "Requested update";
+            qi.Progress = 0;
+            qi.Notes = "";
+            qi.LastUpdateUtc = DateTimeOffset.UtcNow;
+            MirrorQueueToDevice(qi);
+            RequestQueueRefresh();
+        });
+
+        await PublishStartUpdateAsync(newCassia, mac, model, fw).ConfigureAwait(false);
+    }
+
+    private Task PublishStartUpdateAsync(string cassia, string mac, string model, string fw)
+    {
+        var topic = CommandTopicTemplate
+            .Replace("{networkId}", NetworkId)
+            .Replace("{cassia}", cassia)
+            .Replace("{command}", DefaultCommand);
+
+        var payload = new[]
+        {
+            new
+            {
+                DetectorType = model,
+                FirmwareVersion = fw,
+                MacAddress = mac,
+                Pincode = ""
+            }
+        };
+
+        return _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token);
+    }
+
+    public void AssignDeviceToCassia(DiscoveredDevice device, string cassia)
+    {
+        if (device == null) return;
+        if (string.IsNullOrWhiteSpace(cassia)) return;
+        device.AssignedCassia = cassia.Trim();
+        RecalculateAssignmentCounts();
+        RequestDevicesRefresh();
+    }
+
     private Task RequestQueueListAsync(string cassiaName)
         => _mqtt.PublishJsonAsync(BuildCmdTopic(cassiaName, "get-queue-list"), new { }, retain: false, qos: 1, ct: _appCts.Token);
 
@@ -2623,6 +2920,133 @@ private void RequestUpgradeLogTextRefresh()
         {
             // ignore malformed payloads
         }
+    }
+
+
+    private void HandleDeviceListTele(string cassia, string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return;
+
+            if (!root.TryGetProperty("deviceList", out var listEl) || listEl.ValueKind != JsonValueKind.Array)
+                return;
+
+            var now = DateTimeOffset.UtcNow;
+
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                foreach (var devEl in listEl.EnumerateArray())
+                {
+                    if (devEl.ValueKind != JsonValueKind.Object) continue;
+
+                    var mac = devEl.TryGetProperty("macAddress", out var macEl) ? (macEl.GetString() ?? "") : "";
+                    if (string.IsNullOrWhiteSpace(mac))
+                        mac = devEl.TryGetProperty("mac", out var macEl2) ? (macEl2.GetString() ?? "") : "";
+
+                    if (string.IsNullOrWhiteSpace(mac)) continue;
+                    mac = mac.Trim();
+
+                    int rssi = int.MinValue;
+                    if (devEl.TryGetProperty("rssi", out var rssiEl))
+                    {
+                        if (rssiEl.ValueKind == JsonValueKind.Number) rssi = rssiEl.GetInt32();
+                        else if (rssiEl.ValueKind == JsonValueKind.String && int.TryParse(rssiEl.GetString(), out var rv)) rssi = rv;
+                    }
+
+                    var detectorType = devEl.TryGetProperty("detectorType", out var dtEl) ? (dtEl.GetString() ?? "") : "";
+                    var detectorFamily = devEl.TryGetProperty("detectorFamily", out var dfEl) ? (dfEl.GetString() ?? "") : "";
+                    var productNumber = devEl.TryGetProperty("productNumber", out var pnEl) ? (pnEl.GetString() ?? "") : "";
+                    var name = devEl.TryGetProperty("name", out var nEl) ? (nEl.GetString() ?? "") : "";
+                    var lastSeenUtc = now;
+                    if (devEl.TryGetProperty("lastSeenUtc", out var lsEl) && lsEl.ValueKind == JsonValueKind.String && DateTimeOffset.TryParse(lsEl.GetString(), out var dto))
+                        lastSeenUtc = dto;
+
+                    if (!_deviceByMac.TryGetValue(mac, out var d))
+                    {
+                        d = new DiscoveredDevice { Mac = mac };
+                        WireDeviceAssignmentHooks(d);
+                        _deviceByMac[mac] = d;
+                        _devices.Add(d);
+                    }
+
+                    d.Name = string.IsNullOrWhiteSpace(name) ? d.Name : name;
+                    d.ProductNumber = string.IsNullOrWhiteSpace(productNumber) ? d.ProductNumber : productNumber;
+                    d.DetectorFamily = string.IsNullOrWhiteSpace(detectorFamily) ? d.DetectorFamily : detectorFamily;
+                    d.DetectorType = string.IsNullOrWhiteSpace(detectorType) ? d.DetectorType : detectorType;
+
+                    // SensorModel: prefer detectorType if it looks like Pxx
+                    if (!string.IsNullOrWhiteSpace(detectorType) && detectorType.Trim().StartsWith("P", StringComparison.OrdinalIgnoreCase))
+                        d.SensorModel = detectorType.Trim().ToUpperInvariant();
+                    else if (!string.IsNullOrWhiteSpace(d.ProductNumber) && _productToModel.TryGetValue(d.ProductNumber, out var m))
+                        d.SensorModel = m;
+
+                    if (rssi != int.MinValue)
+                        d.UpdateFromCassia(cassia, rssi, lastSeenUtc);
+                    else
+                        d.LastSeenUtc = lastSeenUtc;
+
+                    ApplyCachedStatusToDevice(d);
+                    EnsureStickyAssignment(d);
+                }
+
+                RecalculateAssignmentCounts();
+                RequestDevicesRefresh();
+            });
+        }
+        catch { }
+    }
+
+    private void HandleQueueRemoveTele(string cassia, string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return;
+
+            var success = root.TryGetProperty("success", out var sEl) && sEl.ValueKind == JsonValueKind.True;
+            if (!success) return;
+
+            var requested = new List<string>();
+            if (root.TryGetProperty("requested", out var reqEl) && reqEl.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var x in reqEl.EnumerateArray())
+                    if (x.ValueKind == JsonValueKind.String)
+                        requested.Add(x.GetString() ?? "");
+            }
+
+            if (requested.Count == 0) return;
+
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                foreach (var macRaw in requested)
+                {
+                    var mac = (macRaw ?? "").Trim();
+                    if (string.IsNullOrWhiteSpace(mac)) continue;
+
+                    var qi = QueueItems.FirstOrDefault(q => q != null && mac.Equals((q.Mac ?? "").Trim(), StringComparison.OrdinalIgnoreCase));
+                    if (qi != null)
+                        QueueItems.Remove(qi);
+
+                    if (_deviceByMac.TryGetValue(mac, out var dev))
+                    {
+                        dev.IsInQueue = false;
+                        if (dev.ProcessProgress == 0)
+                            dev.ProcessStatus = "";
+                    }
+
+                    var cs = GetOrCreateCache(mac);
+                    cs.IsInQueue = false;
+                }
+
+                RequestQueueRefresh();
+                RequestDevicesRefresh();
+            });
+        }
+        catch { }
     }
 
     private void HandleQueueListTele(string cassia, string payload)
@@ -3052,7 +3476,7 @@ private void RequestUpgradeLogTextRefresh()
     {
         try
         {
-            // Build export list from CURRENT VIEW (what the operator sees)
+            // Export from CURRENT VIEW (what the operator sees)
             var groups = UpgradeLogGroupsView.Cast<object>()
                 .OfType<UpgradeLogGroup>()
                 .OrderByDescending(g => g.LastTimeLocal)
@@ -3075,36 +3499,51 @@ private void RequestUpgradeLogTextRefresh()
 
             using var wb = new ClosedXML.Excel.XLWorkbook();
 
-            var ws1 = wb.Worksheets.Add("Groups");
+            // ---------------- Summary ----------------
+            var ws1 = wb.Worksheets.Add("Summary");
             ws1.Cell(1, 1).Value = "Cassia";
             ws1.Cell(1, 2).Value = "MAC";
             ws1.Cell(1, 3).Value = "LogId";
-            ws1.Cell(1, 4).Value = "Last time";
-            ws1.Cell(1, 5).Value = "Latest stage";
-            ws1.Cell(1, 6).Value = "Latest status";
+            ws1.Cell(1, 4).Value = "Started time";
+            ws1.Cell(1, 5).Value = "Last time";
+            ws1.Cell(1, 6).Value = "Old FW";
+            ws1.Cell(1, 7).Value = "FW (target)";
+            ws1.Cell(1, 8).Value = "Latest stage";
+            ws1.Cell(1, 9).Value = "Latest status";
+            ws1.Cell(1, 10).Value = "Has newer entry";
+            ws1.Cell(1, 11).Value = "Summary";
 
             for (int i = 0; i < groups.Count; i++)
             {
                 var g = groups[i];
-                ws1.Cell(i + 2, 1).Value = g.Cassia;
-                ws1.Cell(i + 2, 2).Value = g.Mac;
-                ws1.Cell(i + 2, 3).Value = g.LogId;
-                ws1.Cell(i + 2, 4).Value = g.LastTimeLocalText;
-                ws1.Cell(i + 2, 5).Value = g.LatestStage;
-                ws1.Cell(i + 2, 6).Value = g.LatestStatus;
+                var r = i + 2;
+                ws1.Cell(r, 1).Value = g.Cassia;
+                ws1.Cell(r, 2).Value = g.Mac;
+                ws1.Cell(r, 3).Value = g.LogId;
+                ws1.Cell(r, 4).Value = g.StartedAtLocalText;
+                ws1.Cell(r, 5).Value = g.LastTimeLocalText;
+                ws1.Cell(r, 6).Value = g.OldFirmwareText;
+                ws1.Cell(r, 7).Value = g.TargetFirmware;
+                ws1.Cell(r, 8).Value = g.LatestStage;
+                ws1.Cell(r, 9).Value = g.LatestStatus;
+                ws1.Cell(r, 10).Value = g.HasNewerForMac ? "Yes" : "No";
+                ws1.Cell(r, 11).Value = g.LatestSummary;
             }
 
             ws1.Columns().AdjustToContents();
+            ws1.Column(11).Width = 80;
 
-            var ws2 = wb.Worksheets.Add("Entries");
+            // ---------------- Details ----------------
+            var ws2 = wb.Worksheets.Add("Details");
             ws2.Cell(1, 1).Value = "Cassia";
             ws2.Cell(1, 2).Value = "MAC";
             ws2.Cell(1, 3).Value = "LogId";
             ws2.Cell(1, 4).Value = "Time";
             ws2.Cell(1, 5).Value = "Stage";
             ws2.Cell(1, 6).Value = "Status";
-            ws2.Cell(1, 7).Value = "Firmware";
-            ws2.Cell(1, 8).Value = "Line";
+            ws2.Cell(1, 7).Value = "Display status";
+            ws2.Cell(1, 8).Value = "Firmware";
+            ws2.Cell(1, 9).Value = "Line";
 
             int row = 2;
             foreach (var g in groups)
@@ -3117,14 +3556,15 @@ private void RequestUpgradeLogTextRefresh()
                     ws2.Cell(row, 4).Value = e.TimeLocalText;
                     ws2.Cell(row, 5).Value = e.Stage;
                     ws2.Cell(row, 6).Value = e.Status;
-                    ws2.Cell(row, 7).Value = e.Firmware;
-                    ws2.Cell(row, 8).Value = e.Line;
+                    ws2.Cell(row, 7).Value = e.DisplayStatus;
+                    ws2.Cell(row, 8).Value = e.Firmware;
+                    ws2.Cell(row, 9).Value = e.Line;
                     row++;
                 }
             }
 
-            ws2.Columns(1, 7).AdjustToContents();
-            ws2.Column(8).Width = 120;
+            ws2.Columns(1, 8).AdjustToContents();
+            ws2.Column(9).Width = 120;
 
             wb.SaveAs(dlg.FileName);
 

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace AccessAppMqttWpf.Models;
 
@@ -12,6 +13,8 @@ public partial class UpgradeLogGroup : ObservableObject
     [ObservableProperty] private string cassia = "";
     [ObservableProperty] private string logId = "";
     [ObservableProperty] private string mac = "";
+
+    [ObservableProperty] private bool hasNewerForMac;
 
     public ObservableCollection<UpgradeLogEntry> Entries { get; } = new();
 
@@ -49,6 +52,11 @@ public partial class UpgradeLogGroup : ObservableObject
             return last.Status ?? "";
         }
     }
+
+    public string DisplayBadgeStatus =>
+        (HasNewerForMac && !string.Equals(LatestStatus, "Success", StringComparison.OrdinalIgnoreCase))
+            ? "Warn: newer entry"
+            : LatestStatus;
 
     public string LatestFirmware =>
         Entries.OrderByDescending(e => e.TimeLocal).FirstOrDefault()?.Firmware ?? "";
@@ -97,6 +105,21 @@ public partial class UpgradeLogGroup : ObservableObject
         }
     }
 
+    public string OldFirmwareText
+    {
+        get
+        {
+            // best effort: find earliest "Current FW Version" stage and parse Sensor App
+            var e = Entries.OrderBy(x => x.TimeLocal).FirstOrDefault(x => (x.Stage ?? "").Contains("Current FW Version", StringComparison.OrdinalIgnoreCase));
+            if (e == null) return "";
+            var s = e.Status ?? "";
+            var m = Regex.Match(s, @"Sensor:\s*App:\s*(?<app>[^\s|]+)");
+            return m.Success ? m.Groups["app"].Value : s;
+        }
+    }
+
+    public string TargetFirmware => Entries.OrderByDescending(e => e.TimeLocal).FirstOrDefault()?.Firmware ?? "";
+
     public string StartedAtLocalText =>
         StartedAtLocal == DateTimeOffset.MinValue ? "" : StartedAtLocal.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
 
@@ -113,6 +136,9 @@ public partial class UpgradeLogGroup : ObservableObject
 
         Entries.Insert(0, e); // newest on top
 
+        // NOTE: "newer entry exists" warnings are shown on the MAC-group header only,
+        // not on individual log lines inside the group.
+
         // Keep group-level MAC filled (helps searching/headers)
         if (string.IsNullOrWhiteSpace(Mac) && !string.IsNullOrWhiteSpace(e.Mac))
             Mac = e.Mac;
@@ -126,11 +152,15 @@ public partial class UpgradeLogGroup : ObservableObject
         OnPropertyChanged(nameof(LastTimeLocalText));
         OnPropertyChanged(nameof(LatestStage));
         OnPropertyChanged(nameof(LatestStatus));
+        OnPropertyChanged(nameof(HasNewerForMac));
+        OnPropertyChanged(nameof(DisplayBadgeStatus));
         OnPropertyChanged(nameof(LatestFirmware));
         OnPropertyChanged(nameof(LatestMac));
         OnPropertyChanged(nameof(LatestSummary));
         OnPropertyChanged(nameof(LogIdMacPart));
         OnPropertyChanged(nameof(StartedAtLocal));
         OnPropertyChanged(nameof(StartedAtLocalText));
+        OnPropertyChanged(nameof(OldFirmwareText));
+        OnPropertyChanged(nameof(TargetFirmware));
     }
 }
