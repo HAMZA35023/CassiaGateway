@@ -19,7 +19,9 @@ public sealed class SshCassiaDeployer
         _opt = opt;
         _log = log;
 
-        if (string.IsNullOrWhiteSpace(_opt.Password))
+        // For single-device deploy, allow auto-filling password from currently connected Wi-Fi SSID.
+        // For bulk Wi-Fi deploy, password is set per SSID during iteration.
+        if (!_opt.BulkWifiDeploy && string.IsNullOrWhiteSpace(_opt.Password))
         {
             var ssid = GetConnectedWifiSsidLower();
 
@@ -81,9 +83,29 @@ public sealed class SshCassiaDeployer
 
     public void Run()
     {
+        // Build/publish once, then deploy to one or many targets.
         BuildAndPublish();
 
-        var conn = new PasswordConnectionInfo(_opt.Host, _opt.Port, _opt.User, _opt.Password)
+        if (_opt.BulkWifiDeploy)
+        {
+            RunBulkWifiDeploy();
+            return;
+        }
+
+        DeployToTarget(_opt.Host, _opt.Port, _opt.User, _opt.Password, label: _opt.Host);
+    }
+
+    private void DeployToTarget(string host, int port, string user, string password, string label)
+    {
+        // IMPORTANT:
+        // Many operations (service stop/start, sshd hardening, chown, etc.) use RunSudo(),
+        // which relies on _opt.Password. In single-device mode _opt.Password may be auto-filled.
+        // In bulk mode we pass the per-SSID password into DeployToTarget(), so we must also
+        // update _opt.Password for the duration of this deployment.
+        var prevPassword = _opt.Password;
+        _opt.Password = password;
+
+        var conn = new PasswordConnectionInfo(host, port, user, password)
         {
             Timeout = TimeSpan.FromSeconds(20)
         };
@@ -91,7 +113,7 @@ public sealed class SshCassiaDeployer
         using var ssh = new SshClient(conn);
         using var sftp = new SftpClient(conn);
 
-        _log.Info("Connecting to device...");
+        _log.Info($"Connecting to device ({label})...");
         ssh.Connect();
         sftp.Connect();
         _log.Info("Connected.");
@@ -147,7 +169,305 @@ public sealed class SshCassiaDeployer
         {
             if (sftp.IsConnected) sftp.Disconnect();
             if (ssh.IsConnected) ssh.Disconnect();
+
+            // restore
+            _opt.Password = prevPassword;
         }
+    }
+
+    // ------------------------------------------------------------
+    // BULK WI-FI DEPLOY (iterate Cassia AP SSIDs)
+    // ------------------------------------------------------------
+    private void RunBulkWifiDeploy()
+    {
+        var prefix = (_opt.BulkWifiSsidPrefix ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(prefix)) prefix = "cassia-e4";
+
+        _log.Info($"Bulk Wi-Fi deploy enabled. Scanning for SSIDs with prefix '{prefix}'...");
+
+        var ssids = ListWifiSsids()
+            .Where(s => s.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (_opt.BulkWifiMaxCount > 0)
+            ssids = ssids.Take(_opt.BulkWifiMaxCount).ToList();
+
+        if (ssids.Count == 0)
+        {
+            _log.Error("No matching Cassia SSIDs found.");
+            return;
+        }
+
+        _log.Info($"Found {ssids.Count} matching networks:");
+        foreach (var s in ssids) _log.Info($"  - {s}");
+
+        int ok = 0, fail = 0;
+        foreach (var ssid in ssids)
+        {
+            try
+            {
+                _log.Info("");
+                _log.Info($"=== [{ssid}] Connecting Wi-Fi ===");
+
+                // Connect Wi-Fi (and optionally create a temporary profile if missing)
+                // NOTE: Cassia AP password is required to be LOWERCASE, while the SSID is not.
+                var ssidPasswordLower = ssid.ToLowerInvariant();
+                ConnectWifi(ssid, password: ssidPasswordLower, _opt.BulkWifiAutoCreateProfile, _opt.BulkWifiConnectTimeoutSeconds);
+
+                // Per your existing convention: password defaults to SSID when not explicitly set.
+                // In bulk mode, if no explicit password is provided, use the LOWERCASE SSID password.
+                var pwd = string.IsNullOrWhiteSpace(_opt.Password) ? ssidPasswordLower : _opt.Password;
+
+                _log.Info($"=== [{ssid}] Deploying to {_opt.Host}:{_opt.Port} ===");
+                DeployToTarget(_opt.Host, _opt.Port, _opt.User, pwd, label: ssid);
+                ok++;
+            }
+            catch (Exception ex)
+            {
+                fail++;
+                _log.Error($"[{ssid}] FAILED: {ex.Message}");
+            }
+        }
+
+        _log.Info("");
+        _log.Info($"Bulk deploy finished. Success={ok}, Failed={fail}");
+    }
+
+    private static List<string> ListWifiSsids()
+    {
+        // Requires Windows. Output example includes:
+        //   SSID 1 : cassia-E4ABCD
+        var psi = new ProcessStartInfo
+        {
+            FileName = "netsh",
+            Arguments = "wlan show networks mode=bssid",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        using var proc = Process.Start(psi);
+        if (proc == null) return new List<string>();
+
+        var output = proc.StandardOutput.ReadToEnd();
+        proc.WaitForExit(5000);
+
+        var ssids = new List<string>();
+        foreach (var raw in output.Split('\n'))
+        {
+            var line = raw.Trim();
+            if (!line.StartsWith("SSID ", StringComparison.OrdinalIgnoreCase)) continue;
+            if (line.StartsWith("SSID name", StringComparison.OrdinalIgnoreCase)) continue;
+
+            // "SSID 1 : ..."
+            var parts = line.Split(':', 2);
+            if (parts.Length != 2) continue;
+            var ssid = parts[1].Trim();
+            if (string.IsNullOrWhiteSpace(ssid)) continue;
+            if (ssid.Equals("<hidden>", StringComparison.OrdinalIgnoreCase)) continue;
+
+            ssids.Add(ssid);
+        }
+
+        return ssids;
+    }
+
+    private void ConnectWifi(string ssid, string password, bool autoCreateProfile, int timeoutSeconds)
+    {
+        // If already connected, do nothing.
+        var current = GetConnectedWifiSsidLower();
+        if (!string.IsNullOrWhiteSpace(current) && current.Equals(ssid, StringComparison.OrdinalIgnoreCase))
+        {
+            _log.Info($"Already connected to {ssid}");
+            return;
+        }
+
+        if (autoCreateProfile)
+        {
+            // Create a temporary WPA2-PSK profile (common for Cassia AP SSIDs)
+            // Profile name = SSID
+            // IMPORTANT: If a Wi-Fi profile already exists (including All User / GPO scope),
+            // netsh will refuse to overwrite it. In that case we must re-use the existing profile.
+            if (WifiProfileExists(ssid))
+            {
+                _log.Info($"Wi-Fi profile already exists for {ssid} – reusing it");
+            }
+            else
+            {
+                // Verbatim interpolated string: use "" for quotes (NOT backslash-escaped quotes).
+            var profileXml = $@"<?xml version=""1.0""?>
+<WLANProfile xmlns=""http://www.microsoft.com/networking/WLAN/profile/v1"">
+  <name>{SecurityElementEscape(ssid)}</name>
+  <SSIDConfig>
+    <SSID>
+      <name>{SecurityElementEscape(ssid)}</name>
+    </SSID>
+  </SSIDConfig>
+  <connectionType>ESS</connectionType>
+  <connectionMode>auto</connectionMode>
+  <MSM>
+    <security>
+      <authEncryption>
+        <authentication>WPA2PSK</authentication>
+        <encryption>AES</encryption>
+        <useOneX>false</useOneX>
+      </authEncryption>
+      <sharedKey>
+        <keyType>passPhrase</keyType>
+        <protected>false</protected>
+        <keyMaterial>{SecurityElementEscape(password)}</keyMaterial>
+      </sharedKey>
+    </security>
+  </MSM>
+</WLANProfile>";
+
+                var tmp = Path.Combine(Path.GetTempPath(), $"cassia_{SanitizeFileName(ssid)}.xml");
+                File.WriteAllText(tmp, profileXml, Encoding.UTF8);
+
+                try
+                {
+                    RunLocal("netsh", $"wlan add profile filename=\"{tmp}\" user=current");
+                }
+                catch (Exception ex)
+                {
+                    // If the profile exists in another scope (All User / Group Policy), netsh refuses overwrite.
+                    // In that case, continue and just connect using the existing profile.
+                    var msg = ex.Message ?? string.Empty;
+                    if (msg.Contains("already exists", StringComparison.OrdinalIgnoreCase) ||
+                        msg.Contains("cannot be overwritten", StringComparison.OrdinalIgnoreCase) ||
+                        msg.Contains("group policy", StringComparison.OrdinalIgnoreCase) ||
+                        msg.Contains("different user scope", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _log.Info($"Wi-Fi profile already exists for {ssid} (non-overwritable scope) – reusing it");
+                    }
+                    else
+                    {
+                        throw;
+                    }
+                }
+                finally
+                {
+                    try { if (File.Exists(tmp)) File.Delete(tmp); } catch { /* ignore */ }
+                }
+            }
+        }
+
+        RunLocal("netsh", $"wlan connect name=\"{ssid}\" ssid=\"{ssid}\"");
+
+        var until = DateTime.UtcNow.AddSeconds(Math.Max(5, timeoutSeconds));
+        while (DateTime.UtcNow < until)
+        {
+            Thread.Sleep(500);
+            var now = GetConnectedWifiSsidLower();
+            if (!string.IsNullOrWhiteSpace(now) && now.Equals(ssid, StringComparison.OrdinalIgnoreCase))
+            {
+                _log.Info($"Connected to {ssid}");
+                return;
+            }
+        }
+
+        throw new TimeoutException($"Timed out waiting to connect to Wi-Fi '{ssid}'.");
+    }
+
+    private static void RunLocal(string exe, string args)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = exe,
+            Arguments = args,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        using var proc = Process.Start(psi);
+        if (proc == null)
+            throw new InvalidOperationException($"Failed to start process: {exe} {args}");
+
+        var stdout = proc.StandardOutput.ReadToEnd();
+        var stderr = proc.StandardError.ReadToEnd();
+        proc.WaitForExit();
+
+        if (proc.ExitCode != 0)
+            throw new InvalidOperationException($"Command failed ({proc.ExitCode}): {exe} {args}\n{stdout}\n{stderr}");
+    }
+
+    private static string RunLocalCapture(string exe, string args)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = exe,
+            Arguments = args,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        using var proc = Process.Start(psi);
+        if (proc == null)
+            throw new InvalidOperationException($"Failed to start process: {exe} {args}");
+
+        var stdout = proc.StandardOutput.ReadToEnd();
+        var stderr = proc.StandardError.ReadToEnd();
+        proc.WaitForExit();
+
+        if (proc.ExitCode != 0)
+            throw new InvalidOperationException($"Command failed ({proc.ExitCode}): {exe} {args}\n{stdout}\n{stderr}");
+
+        return stdout + "\n" + stderr;
+    }
+
+    private bool WifiProfileExists(string ssid)
+    {
+        // netsh output varies depending on scope:
+        //   All User Profile     : <name>
+        //   User Profile         : <name>
+        // Group policy / other scope can show up in sections that still include ": <name>".
+        // We treat ANY profile name match as existing, regardless of scope.
+
+        var output = RunLocalCapture("netsh", "wlan show profiles");
+        foreach (var raw in output.Split('\n'))
+        {
+            var line = raw.Trim();
+            if (string.IsNullOrWhiteSpace(line)) continue;
+
+            // Common forms: "All User Profile     : SSID", "User Profile         : SSID"
+            // Less common: "Profile : SSID" (seen in some locales/versions)
+            if (line.Contains(':'))
+            {
+                var parts = line.Split(':', 2);
+                if (parts.Length == 2)
+                {
+                    var right = parts[1].Trim();
+                    if (right.Equals(ssid, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+            }
+
+            // Fallback: some outputs list names indented without a label.
+            // Avoid false positives by requiring the whole trimmed line to match.
+            if (line.Equals(ssid, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static string SecurityElementEscape(string s)
+        => s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;").Replace("'", "&apos;");
+
+    private static string SanitizeFileName(string name)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var sb = new StringBuilder(name.Length);
+        foreach (var ch in name)
+            sb.Append(invalid.Contains(ch) ? '_' : ch);
+        return sb.ToString();
     }
 
     // ------------------------------------------------------------
@@ -806,7 +1126,13 @@ exit 0
     {
         // One-liner only. Execute through sh -lc so pipes/redirects work.
         var escaped = command.Replace("'", "'\"'\"'");
-        RunCommand(ssh, $"echo {_opt.Password} | sudo -S sh -lc '{escaped}'");
+
+        // IMPORTANT:
+        // - Bulk deploy sets the per-SSID password via DeployToTarget() -> _opt.Password
+        // - Quote the password so special chars can't break the shell
+        // - Use -p '' so sudo doesn't print interactive prompts into STDERR
+        var pwd = _opt.Password ?? "";
+        RunCommand(ssh, $"printf '%s\\n' {ShEscape(pwd)} | sudo -S -p '' sh -lc '{escaped}'");
     }
 
     // ------------------------------------------------------------

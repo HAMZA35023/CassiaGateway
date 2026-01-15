@@ -47,10 +47,33 @@ public sealed class DeployOptions
     public string LocalSshPublicKeyPath { get; set; } = @"C:\Users\PLO\.ssh\id_ed25519.pub";
 
     // If true, sets PasswordAuthentication no (recommended once key auth works)
-    public bool DisablePasswordAuthentication { get; set; } = false;
+    public bool DisablePasswordAuthentication { get; set; } = true;
 
     // If true, restarts ssh/sshd after updating sshd_config
     public bool RestartSshServiceAfterConfig { get; set; } = true;
+
+    // ---------- Bulk Wi-Fi deploy (Cassia AP mode) ----------
+    // If enabled, the deployer will:
+    //  1) Build+publish once
+    //  2) Enumerate nearby Wi-Fi networks and match SSIDs by prefix (default: "cassia-e4")
+    //  3) Connect to each SSID one-by-one
+    //  4) Deploy to the default Cassia AP IP (Host) using the SSID as password (unless Password is set)
+    //
+    // This is intended for provisioning many Cassias in AP mode quickly.
+    public bool BulkWifiDeploy { get; set; } = false;
+
+    // SSID prefix to match (case-insensitive). For "cassia-E4*", set "cassia-e4".
+    public string BulkWifiSsidPrefix { get; set; } = "cassia-e4";
+
+    // Optional: limit how many SSIDs to process (0 = no limit)
+    public int BulkWifiMaxCount { get; set; } = 0;
+
+    // How long to wait for Windows to report we're connected to the target SSID
+    public int BulkWifiConnectTimeoutSeconds { get; set; } = 25;
+
+    // If true, attempts to create a temporary Wi-Fi profile for each SSID before connecting
+    // (useful when the profile doesn't already exist).
+    public bool BulkWifiAutoCreateProfile { get; set; } = true;
 
     // ---------- JSON loading ----------
 
