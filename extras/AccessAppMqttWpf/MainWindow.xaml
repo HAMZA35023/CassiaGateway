@@ -342,7 +342,26 @@
         </Border>
 
         <!-- ================= RIGHT PANEL ================= -->
-        <TabControl Grid.Column="2" Style="{StaticResource TabControlStyle}">
+        <DockPanel Grid.Column="2">
+            <!-- Throttled UI update cadence indicator -->
+            <Border DockPanel.Dock="Top" Style="{StaticResource Card}" Margin="0,0,0,10">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Text="UI update cadence" FontWeight="SemiBold" Opacity="0.85"/>
+
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                        <TextBlock Text="{Binding ProgressUiCountdownText}" Margin="0,0,14,0" Opacity="0.85"/>
+                        <TextBlock Text="{Binding DiscoveredUiCountdownText}" Opacity="0.85"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <TabControl Style="{StaticResource TabControlStyle}">
+
 
             <!-- ===== Devices ===== -->
             <TabItem Header="Devices">
@@ -408,7 +427,7 @@
                                       AutoGenerateColumns="False"
                                       MouseDoubleClick="DevicesGrid_MouseDoubleClick"
                                       IsReadOnly="False"
-                                      CanUserSortColumns="True">
+                                      CanUserSortColumns="True" EnableRowVirtualization="True" EnableColumnVirtualization="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.IsDeferredScrollingEnabled="True" ScrollViewer.CanContentScroll="True">
 
                                 <!-- Right-click device actions (Connect / Disconnect / Write-Read) -->
                                 <!-- NOTE: ContextMenu is not in the visual tree; we stash the VM on the row Tag to bind commands reliably. -->
@@ -560,7 +579,7 @@
                                           SelectedItem="{Binding SelectedQueueItem, Mode=TwoWay}"
                                           AutoGenerateColumns="False"
                                           IsReadOnly="True"
-                                          CanUserSortColumns="True">
+                                          CanUserSortColumns="True" EnableRowVirtualization="True" EnableColumnVirtualization="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.IsDeferredScrollingEnabled="True" ScrollViewer.CanContentScroll="True">
                                     <DataGrid.Columns>
                                         <DataGridTextColumn Header="MAC" Binding="{Binding Mac}" Width="160"/>
                                         <DataGridTextColumn Header="Cassia" Binding="{Binding Cassia}" Width="110"/>
@@ -619,7 +638,7 @@
                                   AutoGenerateColumns="False"
                                   IsReadOnly="True"
                                   CanUserSortColumns="True"
-                                  Sorting="QueueGrid_Sorting">
+                                  Sorting="QueueGrid_Sorting" EnableRowVirtualization="True" EnableColumnVirtualization="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.IsDeferredScrollingEnabled="True" ScrollViewer.CanContentScroll="True">
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="MAC" Binding="{Binding Mac}" Width="160"/>
                                 <DataGridTextColumn Header="Cassia" Binding="{Binding Cassia}" Width="110"/>
@@ -768,7 +787,7 @@
                                                           CanUserAddRows="False"
                                                           CanUserResizeRows="False"
                                                           CanUserSortColumns="False"
-                                                          GridLinesVisibility="None">
+                                                          GridLinesVisibility="None" EnableRowVirtualization="True" EnableColumnVirtualization="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.IsDeferredScrollingEnabled="True" ScrollViewer.CanContentScroll="True">
                                                     <DataGrid.Columns>
                                                         <DataGridTextColumn Header="Time" Binding="{Binding TimeLocalText}" Width="170"/>
                                                         <DataGridTextColumn Header="Stage" Binding="{Binding Stage}" Width="*"/>
@@ -796,5 +815,6 @@
             </TabItem>
 
         </TabControl>
+        </DockPanel>
     </Grid>
 </Window>

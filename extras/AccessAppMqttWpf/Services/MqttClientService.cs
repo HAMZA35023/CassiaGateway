@@ -1,6 +1,7 @@
 using MQTTnet;
 using MQTTnet.Client;
 using System;
+using System.Collections.Concurrent;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -13,7 +14,27 @@ namespace AccessAppMqttWpf.Services;
 
 public sealed class MqttClientService : IDisposable
 {
+    private static bool IsLeaf(string topic, string leaf)
+    {
+        if (string.IsNullOrWhiteSpace(topic) || string.IsNullOrWhiteSpace(leaf)) return false;
+        var parts = topic.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0) return false;
+        return string.Equals(parts[^1], leaf, StringComparison.OrdinalIgnoreCase);
+    }
+
+
     private readonly IMqttClient _client;
+
+    // --- High-frequency topic coalescing (UI throttling) ---
+    // We receive up to a few thousand messages/min. The UI does not need per-message updates for these topics.
+    // We keep only the latest payload per topic and emit at a fixed cadence.
+    private readonly ConcurrentDictionary<string, string> _latestProgressByTopicMac = new(StringComparer.OrdinalIgnoreCase); // key = topic|mac
+    private readonly ConcurrentDictionary<string, string> _latestDiscoveredDeviceByTopicMac = new(StringComparer.OrdinalIgnoreCase); // key = topic|mac, value = device json
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _latestDiscoveredTimeByTopic = new(StringComparer.OrdinalIgnoreCase);
+
+    private readonly Timer _progressFlushTimer;
+    private readonly Timer _discoveredFlushTimer;
+
     private readonly MqttFactory _factory = new();
     private CancellationTokenSource? _cts;
 
@@ -25,6 +46,11 @@ public sealed class MqttClientService : IDisposable
     public MqttClientService()
     {
         _client = _factory.CreateMqttClient();
+
+        // Flush coalesced high-frequency topics on a fixed cadence.
+        _progressFlushTimer = new Timer(_ => FlushProgress(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+        _discoveredFlushTimer = new Timer(_ => FlushDiscovered(), null, TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(15));
+
 
         _client.ConnectedAsync += _ =>
         {
@@ -46,13 +72,34 @@ public sealed class MqttClientService : IDisposable
                     ? string.Empty
                     : Encoding.UTF8.GetString(e.ApplicationMessage.PayloadSegment);
 
-                Message?.Invoke(e.ApplicationMessage.Topic, payload);
+                var topic = e.ApplicationMessage.Topic ?? string.Empty;
+
+                // Coalesce chatty topics (progress/discovered) so the UI doesn't get hammered.
+                // IMPORTANT: we still parse EVERY message. We coalesce PER MAC (not per topic), so we don't drop updates
+                // for different devices. For the same MAC, only the latest state in the interval is rendered.
+                if (IsLeaf(topic, "progress"))
+                {
+                    var mac = TryExtractMacFromProgress(payload);
+                    if (!string.IsNullOrWhiteSpace(mac))
+                        _latestProgressByTopicMac[$"{topic}|{mac}"] = payload;
+                    else
+                        Message?.Invoke(topic, payload); // unknown shape, pass through
+                }
+                else if (IsLeaf(topic, "discovered"))
+                {
+                    TryBufferDiscoveredPerMac(topic, payload);
+                }
+                else
+                {
+                    Message?.Invoke(topic, payload);
+                }
             }
             catch { /* ignore */ }
 
             return Task.CompletedTask;
         };
     }
+    
 
     public async Task ConnectAsync(
         string host,
@@ -218,7 +265,135 @@ public sealed class MqttClientService : IDisposable
 
         await _client.PublishAsync(msg, ct).ConfigureAwait(false);
     }
-    public async Task PublishAsync(string topic, string payload, bool retain = false)
+    
+    private static string NormalizeMac(string mac)
+        => (mac ?? "").Trim();
+
+    private static string TryExtractMacFromProgress(string payload)
+    {
+        if (string.IsNullOrWhiteSpace(payload)) return "";
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return "";
+            if (root.TryGetProperty("mac", out var macEl) && macEl.ValueKind == JsonValueKind.String)
+                return NormalizeMac(macEl.GetString() ?? "");
+            if (root.TryGetProperty("MacAddress", out var macEl2) && macEl2.ValueKind == JsonValueKind.String)
+                return NormalizeMac(macEl2.GetString() ?? "");
+        }
+        catch { }
+        return "";
+    }
+
+    private void TryBufferDiscoveredPerMac(string topic, string payload)
+    {
+        if (string.IsNullOrWhiteSpace(topic) || string.IsNullOrWhiteSpace(payload)) return;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return;
+
+            // keep last timestamp per topic (if present)
+            var ts = DateTimeOffset.UtcNow;
+            if (root.TryGetProperty("time", out var tEl))
+            {
+                if (tEl.ValueKind == JsonValueKind.String && DateTimeOffset.TryParse(tEl.GetString(), out var dto))
+                    ts = dto;
+                else if (tEl.TryGetDateTimeOffset(out var dto2))
+                    ts = dto2;
+            }
+            _latestDiscoveredTimeByTopic[topic] = ts;
+
+            if (!root.TryGetProperty("devices", out var arr) || arr.ValueKind != JsonValueKind.Array)
+                return;
+
+            foreach (var dev in arr.EnumerateArray())
+            {
+                if (dev.ValueKind != JsonValueKind.Object) continue;
+
+                var mac =
+                    (dev.TryGetProperty("mac", out var macEl) && macEl.ValueKind == JsonValueKind.String) ? (macEl.GetString() ?? "") :
+                    (dev.TryGetProperty("MacAddress", out var macEl2) && macEl2.ValueKind == JsonValueKind.String) ? (macEl2.GetString() ?? "") :
+                    "";
+
+                mac = NormalizeMac(mac);
+                if (string.IsNullOrWhiteSpace(mac)) continue;
+
+                _latestDiscoveredDeviceByTopicMac[$"{topic}|{mac}"] = dev.GetRawText();
+            }
+        }
+        catch
+        {
+            // If payload isn't JSON, pass through (better to show something than drop it)
+            Message?.Invoke(topic, payload);
+        }
+    }
+
+    private void FlushProgress()
+    {
+        try
+        {
+            if (_latestProgressByTopicMac.IsEmpty) return;
+
+            // Snapshot & clear so we don't block the receive thread.
+            var items = _latestProgressByTopicMac.ToArray();
+            _latestProgressByTopicMac.Clear();
+
+            foreach (var kv in items)
+            {
+                var key = kv.Key;
+                var payload = kv.Value;
+
+                var sep = key.IndexOf('|');
+                var topic = sep > 0 ? key.Substring(0, sep) : key;
+
+                Message?.Invoke(topic, payload);
+            }
+        }
+        catch { }
+    }
+
+    private void FlushDiscovered()
+    {
+        try
+        {
+            if (_latestDiscoveredDeviceByTopicMac.IsEmpty) return;
+
+            var items = _latestDiscoveredDeviceByTopicMac.ToArray();
+            _latestDiscoveredDeviceByTopicMac.Clear();
+
+            // group by topic
+            var groups = items
+                .Select(kv =>
+                {
+                    var key = kv.Key;
+                    var sep = key.IndexOf('|');
+                    var topic = sep > 0 ? key.Substring(0, sep) : key;
+                    return (topic, devJson: kv.Value);
+                })
+                .GroupBy(x => x.topic, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var g in groups)
+            {
+                var topic = g.Key;
+
+                // build JSON in the SAME shape MainViewModel already expects:
+                // { time: "...", devices: [ ... ] }
+                var ts = _latestDiscoveredTimeByTopic.TryGetValue(topic, out var dto) ? dto : DateTimeOffset.UtcNow;
+
+                var devicesJson = string.Join(",", g.Select(x => x.devJson));
+                var outPayload = $"{{\"time\":\"{ts:O}\",\"devices\":[{devicesJson}]}}";
+
+                Message?.Invoke(topic, outPayload);
+            }
+        }
+        catch { }
+    }
+
+public async Task PublishAsync(string topic, string payload, bool retain = false)
     {
         if (_client == null || !_client.IsConnected) return;
 
@@ -233,6 +408,9 @@ public sealed class MqttClientService : IDisposable
     }
     public void Dispose()
     {
+        try { _progressFlushTimer?.Dispose(); } catch { }
+        try { _discoveredFlushTimer?.Dispose(); } catch { }
+
         _cts?.Cancel();
         _cts?.Dispose();
         _client?.Dispose();

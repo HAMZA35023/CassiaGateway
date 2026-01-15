@@ -23,6 +23,17 @@ public partial class MainViewModel : ObservableObject
     private readonly MqttClientService _mqtt = new();
     private readonly SettingsStore _store = new();
 
+    // ---- UI update cadence (throttled at MQTT client level) ----
+    // Progress updates are emitted every 5 seconds, discovered every 15 seconds.
+    // We show countdowns so users understand why numbers/statuses are not "live" per message.
+    private readonly DispatcherTimer _uiCountdownTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+    private int _progressCountdownSec = 5;
+    private int _discoveredCountdownSec = 15;
+
+    [ObservableProperty] private string progressUiCountdownText = "Progress UI update in 5s";
+    [ObservableProperty] private string discoveredUiCountdownText = "Discovered UI update in 15s";
+
+
     // ---- Firmware manifest (tele/.../fw-manifest) ----
     private readonly DispatcherTimer _fwManifestValidateTimer = new() { Interval = TimeSpan.FromSeconds(1.5) };
     private readonly DispatcherTimer _fwManifestTimeoutTimer = new() { Interval = TimeSpan.FromSeconds(6) };
@@ -291,6 +302,20 @@ private readonly System.Windows.Threading.DispatcherTimer _gatewayStaleTimer;
         };
 
         _mqtt.Message += OnMqttMessage;
+        // Countdown labels for throttled UI updates (progress/discovered).
+        _uiCountdownTimer.Tick += (_, _) =>
+        {
+            _progressCountdownSec--;
+            if (_progressCountdownSec <= 0) _progressCountdownSec = 5;
+            ProgressUiCountdownText = $"Progress UI update in {_progressCountdownSec}s";
+
+            _discoveredCountdownSec--;
+            if (_discoveredCountdownSec <= 0) _discoveredCountdownSec = 15;
+            DiscoveredUiCountdownText = $"Discovered UI update in {_discoveredCountdownSec}s";
+        };
+        _uiCountdownTimer.Start();
+
+
 
         // Speed graph options: keep a separate list with virtual items.
         CassiaGateways.CollectionChanged += (_, __) => RebuildSpeedGraphGateways();
@@ -1107,7 +1132,7 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
         // Mirror into discovered list immediately
         MirrorQueueToDevice(qi);
 
-        QueueView.Refresh();
+        RequestQueueRefresh();
 
         // Publish request
         var topic = CommandTopicTemplate
@@ -1133,7 +1158,7 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
             // Keep "Requested update" until we see tele/progress for that MAC.
             qi.LastUpdateUtc = DateTimeOffset.UtcNow;
             MirrorQueueToDevice(qi);
-            QueueView.Refresh();
+            RequestQueueRefresh();
         }
         catch (Exception ex)
         {
@@ -1141,7 +1166,7 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
             qi.Notes = "Publish failed: " + ex.Message;
             qi.LastUpdateUtc = DateTimeOffset.UtcNow;
             MirrorQueueToDevice(qi);
-            QueueView.Refresh();
+            RequestQueueRefresh();
         }
     }
 
@@ -1982,7 +2007,7 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
                         qi.LastUpdateUtc = tsUtc;
 
                         // Keep sorting helpers fresh
-                        QueueView?.Refresh();
+                        RequestQueueRefresh();
                     }
 
                 // Cache + device list mirror (without creating devices from logs)
@@ -2172,6 +2197,7 @@ private void RequestUpgradeLogTextRefresh()
     }
 
     private bool _pendingDevicesRefresh;
+    private bool _pendingQueueRefresh;
 
     private void RequestDevicesRefresh()
     {
@@ -2192,6 +2218,27 @@ private void RequestUpgradeLogTextRefresh()
                 SelectedDevice = _devices.FirstOrDefault(d => d.Mac.Equals(selectedMac, StringComparison.OrdinalIgnoreCase));
         });
     }
+    void RequestQueueRefresh()
+    {
+        if (_pendingQueueRefresh) return;
+        _pendingQueueRefresh = true;
+
+        Application.Current.Dispatcher.InvokeAsync(async () =>
+        {
+            await Task.Delay(250); // throttle
+            _pendingQueueRefresh = false;
+
+            // preserve selection
+            var selectedMac = SelectedQueueItem?.Mac;
+
+            try { RequestQueueRefresh(); } catch { }
+
+            if (!string.IsNullOrWhiteSpace(selectedMac))
+                SelectedQueueItem = QueueItems.FirstOrDefault(d => d.Mac.Equals(selectedMac, StringComparison.OrdinalIgnoreCase));
+        });
+    }
+
+
 
     private void MaybeAutoRequestUpgradeLogAfterStatus(CassiaGateway gw)
     {
@@ -2710,7 +2757,7 @@ private void RequestUpgradeLogTextRefresh()
 
         if (anyQueueChanged)
         {
-            try { QueueView?.Refresh(); } catch { }
+            try { RequestQueueRefresh(); } catch { }
         }
 
         // Keep Cassia cards updated (total devices seen is updated elsewhere; here we at least keep queue/programming counts moving)
