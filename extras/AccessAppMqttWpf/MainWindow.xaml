@@ -356,7 +356,7 @@
                     <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
                         <TextBlock Text="{Binding ProgressUiCountdownText}" Margin="0,0,14,0" Opacity="0.85"/>
                         <TextBlock Text="{Binding DiscoveredUiCountdownText}" Opacity="0.85"/>
-                        <Button Style="{StaticResource GhostButton}" Content="Refresh UI" Padding="12,6" Margin="14,0,0,0" Command="{Binding RefreshUiNowCommand}"/>
+                        <Button Style="{StaticResource GhostButton}" Content="Refresh UI" Padding="12,6" Margin="14,0,0,0" Command="{Binding RefreshUiNowCommand}" Visibility="Collapsed"/>
                     </StackPanel>
                 </Grid>
             </Border>
@@ -370,69 +370,116 @@
                     <DockPanel>
 
                         <!-- TOP controls -->
-                        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
-    <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+                            <!-- TOP controls -->
+                            <Grid DockPanel.Dock="Top" Margin="0,0,0,10">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
 
-                            <TextBlock Text="Devices" FontSize="18" FontWeight="SemiBold"/>
-                            <TextBlock Text="  "/>
-                            <TextBlock Text="{Binding DevicesSubtitle}" Foreground="{StaticResource MutedBrush}"/>
+                                <!-- ROW 0: Left title + subtitle + status, Right filters/buttons -->
+                                <Grid Grid.Row="0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
 
-                                </StackPanel>
-    <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" HorizontalAlignment="Right">
+                                    <!-- Left header -->
+                                    <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock Text="Devices" FontSize="18" FontWeight="SemiBold"/>
 
-                                <TextBox Width="280" Text="{Binding DeviceFilter, UpdateSourceTrigger=PropertyChanged}" Margin="18,0,10,0"/>
-                                <ComboBox Width="120" ItemsSource="{Binding SensorFilterOptions}" SelectedItem="{Binding SensorFilter}"/>
-                                <CheckBox x:Name="EnableDoubleClickQueueCheckBox"
-                                          Content="Double-click to queue"
-                                          IsChecked="{Binding EnableDoubleClickQueue, Mode=TwoWay}"
-                                          Margin="14,0,10,0"
-                                          VerticalAlignment="Center"/>
+                                        <!-- Subtitle (existing) -->
+                                        <TextBlock Text="  "/>
+                                        <TextBlock Text="{Binding DevicesSubtitle}" Foreground="{StaticResource MutedBrush}"/>
+                                    </StackPanel>
 
-                                <CheckBox Content="Hide completed"
-                                          IsChecked="{Binding HideCompletedDevices, Mode=TwoWay}"
-                                          Margin="14,0,10,0"
-                                          VerticalAlignment="Center"/>
+                                    <!-- Right top line (unchanged layout, as you said top line is ok) -->
+                                    <StackPanel Grid.Column="1"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Center">
 
-                                <Button Style="{StaticResource GhostButton}"
-                                        Content="Remove RSSI -127"
-                                        Padding="12,6"
-                                        VerticalAlignment="Center"
-                                        Margin="0,0,10,0"
-                                        Command="{Binding RemoveRssiMinus127DevicesCommand}"/>
-                                <Button Style="{StaticResource GhostButton}"
-                                        Content="Clear"
-                                        Padding="12,6"
-                                        VerticalAlignment="Center"
-                                        Click="ClearDevices_Click"/>
+                                        <TextBox Width="280"
+                     Text="{Binding DeviceFilter, UpdateSourceTrigger=PropertyChanged}"
+                     Margin="18,0,10,0"/>
 
-                                <Button Style="{StaticResource GhostButton}"
-                                        Content="Clear + Reload"
-                                        Padding="12,6"
-                                        VerticalAlignment="Center"
-                                        Margin="10,0,0,0"
-                                        Command="{Binding ClearAndReloadDeviceListCommand}"/>
+                                        <ComboBox Width="120"
+                      ItemsSource="{Binding SensorFilterOptions}"
+                      SelectedItem="{Binding SensorFilter}"/>
 
-                                <Button Style="{StaticResource PrimaryButton}"
-                                        Content="Check all"
-                                        Padding="12,6"
-                                        VerticalAlignment="Center"
-                                        Margin="10,0,0,0"
-                                        Command="{Binding CheckAllDevicesCommand}"/>
+                                        <Button Style="{StaticResource GhostButton}"
+                    Content="Remove out of range"
+                    Padding="12,6"
+                    VerticalAlignment="Center"
+                    Margin="10,0,0,0"
+                    Command="{Binding RemoveRssiMinus127DevicesCommand}"/>
 
-                                <Button Style="{StaticResource PrimaryButton}"
-                                        Content="Reassign"
-                                        Padding="12,6"
-                                        VerticalAlignment="Center"
-                                        Margin="10,0,0,0"
-                                        ToolTip="Re-balance sticky Cassia assignments (will not change again until you press this)."
-                                        Command="{Binding ReassignDevicesCommand}"/>
-                            
-                        
+                                        <Button Style="{StaticResource GhostButton}"
+                    Content="Clear"
+                    Padding="12,6"
+                    VerticalAlignment="Center"
+                    Visibility="Collapsed"
+                    Click="ClearDevices_Click"/>
 
-                            </StackPanel>
-</DockPanel>
+                                        <Button Style="{StaticResource GhostButton}"
+                    Content="Clear + Reload"
+                    Padding="12,6"
+                    VerticalAlignment="Center"
+                    Margin="10,0,0,0"
+                    Command="{Binding ClearAndReloadDeviceListCommand}"/>
+                                    </StackPanel>
+                                </Grid>
 
-<Grid>
+                                <!-- ROW 1: Check all left | checkboxes right-aligned | Reassign right -->
+                                <Grid Grid.Row="1" Margin="0,6,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <!-- Left: Check all -->
+                                    <Button Grid.Column="0"
+                Style="{StaticResource PrimaryButton}"
+                Content="Check all"
+                Padding="12,6"
+                VerticalAlignment="Center"
+                MinWidth="110"
+                Command="{Binding CheckAllDevicesCommand}"/>
+
+                                    <!-- Middle: checkboxes (RIGHT aligned, sits next to Reassign) -->
+                                    <StackPanel Grid.Column="1"
+                    Orientation="Horizontal"
+                    VerticalAlignment="Center"
+                    HorizontalAlignment="Right"
+                    Margin="0,0,10,0">
+
+                                        <CheckBox x:Name="EnableDoubleClickQueueCheckBox"
+                      Content="Double-click to queue"
+                      IsChecked="{Binding EnableDoubleClickQueue, Mode=TwoWay}"
+                      Margin="0,0,10,0"
+                      VerticalAlignment="Center"/>
+
+                                        <CheckBox Content="Hide completed"
+                      IsChecked="{Binding HideCompletedDevices, Mode=TwoWay}"
+                      Margin="14,0,0,0"
+                      VerticalAlignment="Center"/>
+                                    </StackPanel>
+
+                                    <!-- Right: Reassign (fully right) -->
+                                    <Button Grid.Column="2"
+                Style="{StaticResource PrimaryButton}"
+                Content="Reassign"
+                Padding="12,6"
+                VerticalAlignment="Center"
+                Margin="10,0,0,0"
+                MinWidth="110"
+                ToolTip="Re-balance sticky Cassia assignments (will not change again until you press this)."
+                Command="{Binding ReassignDevicesCommand}"/>
+                                </Grid>
+                            </Grid>
+
+                            <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="*"/>
                                 <RowDefinition Height="5"/>
@@ -749,17 +796,12 @@
 
                             <!-- UPDATED: add (LogId dropdown) + keep existing gateway dropdown + request/clear buttons -->
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="18,0,0,0">
-                                <ComboBox Width="160"
+                                    <ComboBox Width="160"
                                           ItemsSource="{Binding LogGatewayOptions}"
                                           SelectedItem="{Binding SelectedLogGatewayName}"
                                           Margin="0,0,8,0"/>
 
-                                <ComboBox Width="260"
-                                          ItemsSource="{Binding LogIdOptions}"
-                                          SelectedItem="{Binding SelectedLogId}"
-                                          Margin="0,0,8,0"/>
-
-                                <ComboBox Width="130"
+                                    <ComboBox Width="130"
                                           ItemsSource="{Binding UpgradeLogShowOptions}"
                                           SelectedItem="{Binding SelectedUpgradeLogShowOption}"
                                           Margin="0,0,8,0"/>
