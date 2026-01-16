@@ -289,10 +289,4 @@
 	  </Content>
 	</ItemGroup>
 
-	<ItemGroup>
-	  <Content Update="mqtt.json">
-	    <CopyToOutputDirectory>Never</CopyToOutputDirectory>
-	  </Content>
-	</ItemGroup>
-
 </Project>

@@ -29,6 +29,9 @@ namespace AccessAPP.Services
         private static readonly TimeSpan RssiAverageWindow = TimeSpan.FromMinutes(3);
         private static readonly TimeSpan StaleAfter = TimeSpan.FromMinutes(2);
         private static readonly TimeSpan StaleCheckInterval = TimeSpan.FromSeconds(30);
+        // After this, the device is removed from the device list entirely (not just marked stale).
+        // This prevents "get-device-list" from showing devices that are no longer available.
+        private static readonly TimeSpan RemoveAfter = TimeSpan.FromMinutes(10);
 
         private sealed class RssiSample
         {
@@ -54,11 +57,11 @@ namespace AccessAPP.Services
             {
                 try
                 {
-                    MarkStaleDevices();
+                    PruneStaleDevices();
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[DeviceStorage] MarkStaleDevices error: {ex.Message}");
+                    Console.WriteLine($"[DeviceStorage] PruneStaleDevices error: {ex.Message}");
                 }
             }, null, dueTime: StaleCheckInterval, period: StaleCheckInterval);
         }
@@ -79,6 +82,11 @@ namespace AccessAPP.Services
             var inst = _ownInstance;
             if (inst is null)
                 return Array.Empty<DeviceListItem>();
+
+            // Ensure the snapshot does not include devices that have not been seen for a while.
+            // (We already do this on a timer, but doing it here guarantees freshness even if
+            //  the caller asks right before the next timer tick.)
+            inst.PruneStaleDevices();
 
             var now = DateTimeOffset.UtcNow;
 
@@ -215,6 +223,12 @@ namespace AccessAPP.Services
 
         private void MarkStaleDevices()
         {
+            // Timer tick: mark stale (RSSI=-127) and remove very old devices.
+            PruneStaleDevices();
+        }
+
+        private void PruneStaleDevices()
+        {
             var now = DateTimeOffset.UtcNow;
 
             foreach (var kvp in _deviceList)
@@ -224,32 +238,42 @@ namespace AccessAPP.Services
                 if (!_rssiState.TryGetValue(mac, out var state))
                     continue;
 
-                bool isStale;
+                DateTimeOffset lastSeen;
                 lock (state.Gate)
                 {
-                    isStale = (now - state.LastSeenUtc) > StaleAfter;
+                    lastSeen = state.LastSeenUtc;
                 }
 
-                if (!isStale)
+                if (lastSeen == DateTimeOffset.MinValue)
                     continue;
 
-                // Set RSSI to -127 if stale (do NOT remove)
-                _deviceList.AddOrUpdate(mac,
-                    _ => kvp.Value, // should not happen often, but safe
-                    (_, existing) =>
-                    {
-                        if (existing.rssi != -127)
+                // 1) Mark as stale after StaleAfter
+                if ((now - lastSeen) > StaleAfter)
+                {
+                    _deviceList.AddOrUpdate(mac,
+                        _ => kvp.Value,
+                        (_, existing) =>
                         {
-                            existing.rssi = -127;
-                            Console.WriteLine($"Device {mac} is stale (>2m no announces). RSSI set to -127.");
-                        }
-                        PublishDeviceThrottled(mac, kvp.Value);
+                            if (existing.rssi != -127)
+                            {
+                                existing.rssi = -127;
+                                Console.WriteLine($"Device {mac} is stale (>{StaleAfter.TotalMinutes:0}m no announces). RSSI set to -127.");
+                            }
+                            PublishDeviceThrottled(mac, existing);
+                            return existing;
+                        });
+                }
 
-                        return existing;
-                    });
-
-                // Optional: publish stale update (if you want)
-                //PublishDeviceThrottled(mac, kvp.Value);
+                // 2) Remove entirely after RemoveAfter
+                if ((now - lastSeen) > RemoveAfter)
+                {
+                    if (_deviceList.TryRemove(mac, out _))
+                    {
+                        _rssiState.TryRemove(mac, out _);
+                        _lastDevicePublishUtc.TryRemove(mac, out _);
+                        Console.WriteLine($"Device {mac} removed from device-list (>{RemoveAfter.TotalMinutes:0}m not seen).");
+                    }
+                }
             }
         }
 

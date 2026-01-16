@@ -914,17 +914,12 @@ partial void OnSensorFilterChanged(string value)
 
         var nl = Environment.NewLine;
 
-        // Build a preview of what will be queued and where.
-        var previewLines = new List<string>();
-        foreach (var d in selected)
-        {
-            var (suggested, reason) = SuggestCassiaForDevice(d);
-            if (string.IsNullOrWhiteSpace(suggested)) suggested = (d.BestCassia ?? "").Trim();
-            if (string.IsNullOrWhiteSpace(suggested)) suggested = "(none)";
-
-            var why = string.IsNullOrWhiteSpace(reason) ? "" : $" — {reason}";
-            previewLines.Add($"{d.Mac}  =>  {suggested}{why}");
-        }
+        // Build a preview of what will be queued and where (batch-aware load balancing).
+        var plan = ComputeBatchAssignmentPlan(selected);
+        var previewLines = plan
+            .OrderBy(x => x.Mac, StringComparer.OrdinalIgnoreCase)
+            .Select(x => $"{x.Mac}  =>  {x.Cassia}{(string.IsNullOrWhiteSpace(x.Reason) ? "" : " — " + x.Reason)}")
+            .ToList();
 
         var previewText = string.Join(nl, previewLines.Take(30));
         if (previewLines.Count > 30)
@@ -942,13 +937,14 @@ partial void OnSensorFilterChanged(string value)
 
         if (res == MessageBoxResult.Yes)
         {
-            foreach (var d in selected)
+            // Apply plan
+            foreach (var p in plan)
             {
+                var d = selected.FirstOrDefault(x => (x.Mac ?? "").Trim().Equals(p.Mac, StringComparison.OrdinalIgnoreCase));
                 if (d == null) continue;
                 if (IsDeviceInWork(d)) continue;
-                var (suggested, _) = SuggestCassiaForDevice(d);
-                if (!string.IsNullOrWhiteSpace(suggested))
-                    d.AssignedCassia = suggested;
+                if (!string.IsNullOrWhiteSpace(p.Cassia))
+                    d.AssignedCassia = p.Cassia;
             }
             RecalculateAssignmentCounts();
             RequestDevicesRefresh();
@@ -1307,6 +1303,122 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
         return (chosen, reason);
     }
 
+    private sealed record AssignmentPlanItem(string Mac, string Cassia, string Reason);
+
+    /// <summary>
+    /// Computes a batch-aware assignment plan for the given devices.
+    /// Rules:
+    ///  - If best RSSI is strong (>= -65), always pick the best RSSI Cassia.
+    ///  - If very strong (>= -55), allow sharing/balancing among eligible Cassias.
+    ///  - Otherwise, load-balance across eligible Cassias.
+    /// Eligible = within AssignmentRssiSlack dB of best.
+    /// Load = Cassia status (queue+programming) + already planned assignments in this batch.
+    /// </summary>
+    private List<AssignmentPlanItem> ComputeBatchAssignmentPlan(IReadOnlyList<DiscoveredDevice> devices)
+    {
+        var result = new List<AssignmentPlanItem>();
+        if (devices == null || devices.Count == 0) return result;
+
+        // Base load from Cassia status snapshot
+        var baseLoad = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var gw in CassiaGateways)
+        {
+            if (gw == null || string.IsNullOrWhiteSpace(gw.Name)) continue;
+            baseLoad[gw.Name.Trim()] = Math.Max(0, gw.Queue) + Math.Max(0, gw.Programming);
+        }
+
+        // Incremental load as we assign within this plan
+        var planned = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        int EffectiveLoad(string cassia)
+        {
+            cassia = (cassia ?? "").Trim();
+            if (cassia.Length == 0) return int.MaxValue;
+            var b = baseLoad.TryGetValue(cassia, out var v) ? v : 0;
+            var p = planned.TryGetValue(cassia, out var pv) ? pv : 0;
+            return b + p;
+        }
+
+        void AddPlanned(string cassia)
+        {
+            cassia = (cassia ?? "").Trim();
+            if (cassia.Length == 0) return;
+            planned[cassia] = planned.TryGetValue(cassia, out var v) ? v + 1 : 1;
+        }
+
+        // Deterministic order: assign strong-lock devices first so balancing doesn't steal them.
+        foreach (var d in devices
+                     .Where(x => x != null)
+                     .OrderByDescending(x => x.CassiaRssi.Count == 0 ? int.MinValue : x.CassiaRssi.Max(kv => kv.Value))
+                     .ThenBy(x => x.Mac, StringComparer.OrdinalIgnoreCase))
+        {
+            var mac = (d.Mac ?? "").Trim();
+            if (mac.Length == 0) continue;
+
+            if (d.CassiaRssi.Count == 0)
+            {
+                var fallback = (d.AssignedCassia ?? d.BestCassia ?? "").Trim();
+                result.Add(new AssignmentPlanItem(mac, fallback, "no RSSI"));
+                AddPlanned(fallback);
+                continue;
+            }
+
+            var best = d.CassiaRssi.OrderByDescending(kv => kv.Value).First();
+            var bestCassia = (best.Key ?? "").Trim();
+            var bestRssi = best.Value;
+
+            // Eligible = within slack of best
+            var eligible = d.CassiaRssi
+                .Where(kv => !string.IsNullOrWhiteSpace(kv.Key) && kv.Value >= bestRssi - AssignmentRssiSlack)
+                .Select(kv => kv.Key.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (eligible.Count == 0 && bestCassia.Length > 0)
+                eligible.Add(bestCassia);
+
+            string chosen;
+            string reason;
+
+            // Rules:
+            //  - Very strong (>= -55): allow balancing among eligible Cassias.
+            //  - Strong (>= -65) but not very strong: always pick best RSSI Cassia.
+            //  - Weak (< -65): load-balance among eligible Cassias.
+
+            if (bestRssi >= -55)
+            {
+                chosen = eligible
+                    .OrderBy(c => EffectiveLoad(c))
+                    .ThenByDescending(c => d.CassiaRssi.TryGetValue(c, out var r) ? r : int.MinValue)
+                    .ThenBy(c => c, StringComparer.OrdinalIgnoreCase)
+                    .FirstOrDefault() ?? bestCassia;
+
+                var chosenRssi = d.CassiaRssi.TryGetValue(chosen, out var rr) ? rr : bestRssi;
+                reason = $"strong RSSI (>= -55): balance, chose={chosen}:{chosenRssi}, load={EffectiveLoad(chosen)}";
+            }
+            else if (bestRssi >= -65 && bestCassia.Length > 0)
+            {
+                chosen = bestCassia;
+                reason = $"best RSSI {bestRssi} (>= -65)";
+            }
+            else
+            {
+                chosen = eligible
+                    .OrderBy(c => EffectiveLoad(c))
+                    .ThenByDescending(c => d.CassiaRssi.TryGetValue(c, out var r) ? r : int.MinValue)
+                    .ThenBy(c => c, StringComparer.OrdinalIgnoreCase)
+                    .FirstOrDefault() ?? bestCassia;
+
+                var chosenRssi = d.CassiaRssi.TryGetValue(chosen, out var rr) ? rr : bestRssi;
+                reason = $"weak RSSI: balance (best={bestCassia}:{bestRssi}), chose={chosen}:{chosenRssi}, load={EffectiveLoad(chosen)}";
+            }
+
+            result.Add(new AssignmentPlanItem(mac, chosen, reason));
+            AddPlanned(chosen);
+        }
+
+        return result;
+    }
+
     private Dictionary<string, int> GetCurrentGroupCounts(int group)
     {
         var dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -1493,6 +1605,19 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
             qi.LastUpdateUtc = DateTimeOffset.UtcNow;
             MirrorQueueToDevice(qi);
             RequestQueueRefresh();
+
+            // IMPORTANT: ask the Cassia for its queue/programming snapshot shortly after queuing.
+            // This is the authoritative "accepted" confirmation (tele/queue-list & tele/programming-list).
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(600, _appCts.Token).ConfigureAwait(false);
+                    await RequestQueueListAsync(cassia).ConfigureAwait(false);
+                    await RequestProgrammingListAsync(cassia).ConfigureAwait(false);
+                }
+                catch { }
+            });
         }
         catch (Exception ex)
         {
@@ -2181,7 +2306,74 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
 
         g.AddEntry(entry);
         MarkLatestUpgradeLogMapDirty();
+        // IMPORTANT: Device "green" (IsUpgradeSuccess) must only be true when the latest
+        // logId grouping for a MAC contains a successful "Device Upgrade Completed." entry.
+        RefreshUpgradeSuccessFromLatestGroups();
         UpgradeLogGroupsView.Refresh();
+    }
+
+    /// <summary>
+    /// Recomputes per-MAC upgrade success based on the *latest* UpgradeLogGroup for that MAC.
+    /// This prevents an older successful run from keeping the device green when a newer run exists.
+    /// </summary>
+    private void RefreshUpgradeSuccessFromLatestGroups()
+    {
+        // Determine latest group per MAC across ALL groups (do not depend on UI filters).
+        var latestByMac = new Dictionary<string, UpgradeLogGroup>(StringComparer.OrdinalIgnoreCase);
+        foreach (var g in UpgradeLogGroups)
+        {
+            if (g == null) continue;
+            var mac = (g.Mac ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(mac)) continue;
+
+            if (!latestByMac.TryGetValue(mac, out var existing) || g.LastTimeLocal > existing.LastTimeLocal)
+                latestByMac[mac] = g;
+        }
+
+        foreach (var kvp in latestByMac)
+        {
+            var mac = kvp.Key;
+            var g = kvp.Value;
+            var isSuccess = g.ContainsCompletionSuccess;
+
+            var cs = GetOrCreateCache(mac);
+            cs.IsUpgradeSuccess = isSuccess;
+            // Use the group's completion timestamp if present.
+            if (isSuccess)
+            {
+                var t = g.Entries
+                    .Where(e =>
+                        !string.IsNullOrWhiteSpace(e.Stage)
+                        && e.Stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase)
+                        && !string.IsNullOrWhiteSpace(e.Status)
+                        && e.Status.Trim().Equals("Success", StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(e => e.TimeLocal)
+                    .FirstOrDefault()?.TimeLocal ?? DateTimeOffset.MinValue;
+
+                if (t != DateTimeOffset.MinValue)
+                    cs.LastUpgradeSuccessUtc = t.ToUniversalTime();
+
+                if (!string.IsNullOrWhiteSpace(g.LatestFirmware))
+                    cs.LastTargetFw = g.LatestFirmware;
+            }
+
+            var dev = FindDiscoveredDevice(mac);
+            if (dev != null)
+            {
+                dev.IsUpgradeSuccess = isSuccess;
+                dev.LastUpgradeSuccessUtc = cs.LastUpgradeSuccessUtc;
+                dev.LastTargetFw = cs.LastTargetFw;
+            }
+        }
+
+        // For MACs that are present in cache/devices but have no groups at all, ensure we don't
+        // leave a stale green state.
+        foreach (var dev in _devices)
+        {
+            if (dev == null || string.IsNullOrWhiteSpace(dev.Mac)) continue;
+            if (latestByMac.ContainsKey(dev.Mac)) continue;
+            dev.IsUpgradeSuccess = false;
+        }
     }
 
     private static DateTimeOffset ParseLocalTime(string? timeStr)
@@ -2304,7 +2496,6 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
                 // Only accept if newer than previous success record
                 if (!cs.LastUpgradeSuccessUtc.HasValue || tsUtc >= cs.LastUpgradeSuccessUtc.Value)
                 {
-                    cs.IsUpgradeSuccess = true;
                     cs.LastUpgradeSuccessUtc = tsUtc;
 
                     var fwm = LogLineFwRx.Match(line);
@@ -2329,7 +2520,8 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
             var dev = FindDiscoveredDevice(mac);
             if (dev != null)
             {
-                dev.IsUpgradeSuccess = cs.IsUpgradeSuccess;
+                // Do NOT mark device as success here.
+                // Success/green is computed from the latest UpgradeLogGroup per MAC.
                 dev.LastUpgradeSuccessUtc = cs.LastUpgradeSuccessUtc;
                 dev.LastTargetFw = cs.LastTargetFw ?? "";
                 dev.CurrentFw = cs.CurrentFw ?? "";
@@ -2402,6 +2594,8 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
 
                     qi.Cassia = cassia;
                     qi.Status = queueText.Trim();
+                    if (isCompletedSuccess)
+                        qi.Progress = 100;
                     if (LooksLikeFirmwareVersion(fw))
                         qi.FirmwareVersion = fw;
                     qi.LastUpdateUtc = tsUtc;

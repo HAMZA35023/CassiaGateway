@@ -345,7 +345,37 @@ public partial class MainWindow : Window
                     IsChecked = cassia.Equals((device.AssignedCassia ?? "").Trim(), StringComparison.OrdinalIgnoreCase)
                 };
 
-                mi.Click += (_, __) => vm.AssignDeviceToCassia(device, cassia);
+                mi.Click += (_, __) =>
+                {
+                    try
+                    {
+                        // If the user has multiple devices selected in the grid, apply to all of them.
+                        // Fall back to the row that was right-clicked.
+                        var selected = new List<DiscoveredDevice>();
+
+                        if (DevicesGrid?.SelectedItems != null)
+                            selected.AddRange(DevicesGrid.SelectedItems.OfType<DiscoveredDevice>());
+
+                        // Also include checkbox-selected rows (IsSelected) if nothing is selected via DataGrid selection.
+                        if (selected.Count == 0 && vm != null)
+                            selected.AddRange(vm.Devices.Where(d => d != null && d.IsSelected));
+
+                        if (selected.Count == 0 && device != null)
+                            selected.Add(device);
+
+                        foreach (var dev in selected.Distinct())
+                        {
+                            if (dev == null) continue;
+                            // Only assign if this Cassia can see the device (RSSI known)
+                            if (dev.CassiaRssi != null && dev.CassiaRssi.ContainsKey(cassia))
+                                vm.AssignDeviceToCassia(dev, cassia);
+                        }
+                    }
+                    catch
+                    {
+                        // ignore
+                    }
+                };
                 assignRoot.Items.Add(mi);
             }
         }
@@ -360,6 +390,9 @@ public partial class MainWindow : Window
         {
             if (sender is not DataGridRow row) return;
             if (row.ContextMenu == null) return;
+            // Ensure PlacementTarget is available even though we're building the menu during ContextMenuOpening.
+            // Without this, cm.PlacementTarget may be null and the "Assign to Cassia" submenu becomes disabled.
+            row.ContextMenu.PlacementTarget = row;
             DevicesContextMenu_Opened(row.ContextMenu, new RoutedEventArgs());
         }
         catch { }
@@ -372,6 +405,8 @@ public partial class MainWindow : Window
         {
             if (sender is not DataGridRow row) return;
             if (row.ContextMenu == null) return;
+            // Same as devices: make sure PlacementTarget is set so we can resolve the QueueItem.
+            row.ContextMenu.PlacementTarget = row;
             QueueContextMenu_Opened(row.ContextMenu, new RoutedEventArgs());
         }
         catch { }
@@ -426,7 +461,13 @@ public partial class MainWindow : Window
                 if (!string.IsNullOrWhiteSpace(qi.Cassia) && cassia.Equals(qi.Cassia, StringComparison.OrdinalIgnoreCase))
                     continue;
 
-                var mi = new MenuItem { Header = $"{cassia} ({kv.Value})" };
+                var gw = vm.CassiaGateways.FirstOrDefault(g =>
+                    g != null && (g.Name ?? "").Trim().Equals(cassia, StringComparison.OrdinalIgnoreCase));
+                var qCount = gw?.Queue ?? 0;
+                var pCount = gw?.Programming ?? 0;
+
+                // Requirement: show RSSI + programming + queue counts.
+                var mi = new MenuItem { Header = $"{cassia} (RSSI {kv.Value}, P {pCount}, Q {qCount})" };
                 mi.Click += async (_, __) =>
                 {
                     var nl = Environment.NewLine;
@@ -434,7 +475,7 @@ public partial class MainWindow : Window
                         $"Move {qi.Mac} from {qi.Cassia} to {cassia}?{nl}{nl}" +
                         $"Step 1: remove from pending queue{nl}" +
                         $"Step 2: add to queue on new Cassia{nl}{nl}" +
-                        $"RSSI to {cassia}: {kv.Value}",
+                        $"RSSI: {kv.Value}{nl}Programming: {pCount}{nl}Queue: {qCount}",
                         "Move queue item",
                         MessageBoxButton.YesNo,
                         MessageBoxImage.Question);

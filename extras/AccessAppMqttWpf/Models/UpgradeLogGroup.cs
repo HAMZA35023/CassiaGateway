@@ -53,6 +53,17 @@ public partial class UpgradeLogGroup : ObservableObject
         }
     }
 
+    /// <summary>
+    /// True if this logId group contains a successful completion entry.
+    /// The last entry may be informational, so we scan the group.
+    /// </summary>
+    public bool ContainsCompletionSuccess =>
+        Entries.Any(e =>
+            !string.IsNullOrWhiteSpace(e.Stage)
+            && e.Stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(e.Status)
+            && e.Status.Trim().Equals("Success", StringComparison.OrdinalIgnoreCase));
+
     public string DisplayBadgeStatus =>
         (HasNewerForMac && !string.Equals(LatestStatus, "Success", StringComparison.OrdinalIgnoreCase))
             ? "Warn: newer entry"

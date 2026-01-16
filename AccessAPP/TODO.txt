@@ -1,8 +1,9 @@
 AccessApp Cassia backend:
 
 MAJOR:
--> Implement an remove from queue function via MQTT message
--> Implement a cmd to get the full device-list via MQTT message in one message
+-> Device updates need to be limited - only send event when something really changes - rssi should change with more than 4dBm to trigger event, or name change etc.
+-> Process updates need to be rate limited - e.g. only every 5 seconds at most - to avoid flooding the app with events - always send 100% final state.
+-> When getting a device-list, it shows devices that not avaliable anymore - make sure we remove devices from that list if thay have not been seen for a while. (there is a place we already do this)
 
 
 MINOR:

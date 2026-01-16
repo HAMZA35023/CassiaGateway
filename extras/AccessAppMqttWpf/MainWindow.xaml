@@ -604,6 +604,20 @@
                                           IsReadOnly="True"
                                           CanUserSortColumns="True" EnableRowVirtualization="True" EnableColumnVirtualization="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.IsDeferredScrollingEnabled="True" ScrollViewer.CanContentScroll="True"
                                           Sorting="QueueGrid_Sorting">
+                                    <DataGrid.RowStyle>
+                                        <Style TargetType="DataGridRow">
+                                            <EventSetter Event="ContextMenuOpening" Handler="QueueRow_ContextMenuOpening"/>
+                                            <Setter Property="Tag" Value="{Binding DataContext, RelativeSource={RelativeSource AncestorType=DataGrid}}"/>
+                                            <Setter Property="ContextMenu">
+                                                <Setter.Value>
+                                                    <ContextMenu>
+                                                        <MenuItem Header="Remove from queue" Tag="RemoveFromQueue"/>
+                                                        <MenuItem Header="Move to Cassia" Tag="MoveToCassia"/>
+                                                    </ContextMenu>
+                                                </Setter.Value>
+                                            </Setter>
+                                        </Style>
+                                    </DataGrid.RowStyle>
                                     <DataGrid.Columns>
                                         <DataGridTextColumn Header="MAC" Binding="{Binding Mac}" Width="160"/>
                                         <DataGridTextColumn Header="Cassia" Binding="{Binding Cassia}" Width="110"/>
