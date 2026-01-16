@@ -48,6 +48,9 @@ public partial class MainViewModel : ObservableObject
     private bool _deviceListRequestedAfterConnect;
     private DateTimeOffset _connectedAtUtc = DateTimeOffset.MinValue;
 
+    // Track last subscribed NetworkId to avoid duplicate resubscribe spam.
+    private string _lastSubscribedNetworkId = "";
+
 
     private readonly ObservableCollection<DiscoveredDevice> _devices = new();
     private readonly Dictionary<string, DiscoveredDevice> _deviceByMac = new(StringComparer.OrdinalIgnoreCase);
@@ -352,6 +355,13 @@ public partial class MainViewModel : ObservableObject
                 _connectedAtUtc = DateTimeOffset.UtcNow;
                 _fwManifestRequestedForGw.Clear();
                 _runtimeStateRequestedForGw.Clear();
+                _deviceListRequestedForGw.Clear();
+                _deviceListRequestedAfterConnect = false;
+            }
+            else
+            {
+                // Keep the last subscriptions remembered; next connect/resync will subscribe again.
+                // (We don't force-clear UI on disconnect; user asked for re-sync on reconnect.)
             }
         };
 
@@ -744,13 +754,12 @@ partial void OnSensorFilterChanged(string value)
             if (IsConnected)
             {
                 await _mqtt.DisconnectAsync();
-                _requestedUpgradeLogCassias.Clear();
-                _fwManifestRequestedForGw.Clear();
-                _runtimeStateRequestedForGw.Clear();
-                _deviceListRequestedForGw.Clear();
-                _deviceListRequestedAfterConnect = false;
                 return;
             }
+
+            // Always start a fresh session when connecting (clears UI + internal caches)
+            // so reconnect behaves the same as a "clean" connect.
+            ClearAllUiAndState();
 
             await _mqtt.ConnectAsync(
                 MqttHost,
@@ -762,48 +771,8 @@ partial void OnSensorFilterChanged(string value)
                 MqttTopic,
                 _appCts.Token);
 
-            _connectedAtUtc = DateTimeOffset.UtcNow;
-            _fwManifestRequestedForGw.Clear();
-            _runtimeStateRequestedForGw.Clear();
-            _deviceListRequestedForGw.Clear();
-            _deviceListRequestedAfterConnect = false;
-
-            // Ensure we also receive telemetry responses (many backends publish connect/write-read replies on tele/*).
-            // If the user configured a narrow subscription like accessapp/<net>/cmd/#, we still want tele/#.
-            if (!string.IsNullOrWhiteSpace(NetworkId))
-            {
-                await _mqtt.SubscribeAsync($"accessapp/{NetworkId}/tele/#").ConfigureAwait(false);
-                await _mqtt.SubscribeAsync($"accessapp/{NetworkId}/cmd/#").ConfigureAwait(false);
-
-                // If we already know some gateways (from a previous run), request snapshots immediately.
-                try
-                {
-                    foreach (var gw in CassiaGateways.ToList())
-                    {
-                        if (string.IsNullOrWhiteSpace(gw?.Name)) continue;
-                        MaybeAutoRequestRuntimeStateAfterStatus(gw);
-                    }
-                }
-                catch { }
-
-
-            // Auto-gather saved upgrade logs on connect (per gateway).
-            // We request for every gateway we currently know, and also auto-request when new gateways announce status.
-            try
-            {
-                foreach (var gw in CassiaGateways.ToList())
-                {
-                    if (string.IsNullOrWhiteSpace(gw?.Name)) continue;
-                    if (_requestedUpgradeLogCassias.Contains(gw.Name)) continue;
-
-                    _requestedUpgradeLogCassias.Add(gw.Name);
-                    _ = RequestUpgradeLogForCassiaAsync(gw.Name);
-                }
-            }
-            catch { }
-}
-
-            ConnectionStatus = "Connected";
+            // Full clean re-sync (subscribe + request snapshots).
+            await ResyncCoreAsync().ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -812,7 +781,7 @@ partial void OnSensorFilterChanged(string value)
     }
 
     [RelayCommand]
-    private void SaveSettings()
+    private async Task SaveSettings()
     {
         _store.Save(new AppSettings
         {
@@ -835,6 +804,10 @@ partial void OnSensorFilterChanged(string value)
         });
 
         ConnectionStatus = "Saved appsettings.json";
+
+        // If we are connected, immediately re-sync to reflect the new NetworkId/topic scope.
+        if (IsConnected)
+            await ResyncCoreAsync().ConfigureAwait(false);
     }
 
     [RelayCommand]
@@ -3291,9 +3264,110 @@ private void RequestUpgradeLogTextRefresh()
 
                     MirrorQueueToDevice(qi);
                 }
+
+                RequestQueueRefresh();
+                RequestDevicesRefresh();
             });
+
         }
         catch { }
+    }
+
+    [RelayCommand]
+    private async Task ResyncAsync()
+    {
+        if (!IsConnected)
+        {
+            // Still clear the UI so user starts from a clean slate.
+            ClearAllUiAndState();
+            ConnectionStatus = "Not connected";
+            return;
+        }
+
+        await ResyncCoreAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Clears all UI collections and internal caches.
+    /// </summary>
+    private void ClearAllUiAndState()
+    {
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            // Devices
+            _devices.Clear();
+            _deviceByMac.Clear();
+            _cachedStatusByMac.Clear();
+
+            // Queue / programming
+            QueueItems.Clear();
+
+            // Gateways + dropdowns
+            CassiaGateways.Clear();
+            CassiaNameOptions.Clear();
+
+            // Upgrade log views
+            UpgradeLogLines.Clear();
+            UpgradeLogGroups.Clear();
+            UpgradeLogText = "";
+            _upgradeLogSb.Clear();
+            UpgradeLogReceivedLines = 0;
+            UpgradeLogTotalLines = 0;
+            UpgradeLogStatus = "";
+
+            // Filters/selections that commonly keep stale selection pointers
+            SelectedDevice = null;
+            SelectedQueueItem = null;
+            //SelectedCassia = null;
+        });
+
+        // Internal trackers
+        _latestUpgradeLogIdByMac.Clear();
+        _progressByMac.Clear();
+        _gwSeenMacs.Clear();
+        _deviceAssignmentWired.Clear();
+        _requestedUpgradeLogCassias.Clear();
+
+        _fwManifestRequestedForGw.Clear();
+        _runtimeStateRequestedForGw.Clear();
+        _deviceListRequestedForGw.Clear();
+        _deviceListRequestedAfterConnect = false;
+        _connectedAtUtc = DateTimeOffset.UtcNow;
+
+        _lastFwManifestMissingHash = "";
+        _fwManifestTimeoutArmed = false;
+    }
+
+    /// <summary>
+    /// Clears UI/state and requests fresh snapshots the same way as on a new connect.
+    /// </summary>
+    private async Task ResyncCoreAsync()
+    {
+        ClearAllUiAndState();
+
+        // Ensure subscriptions exist for the current NetworkId.
+        try
+        {
+            var net = (NetworkId ?? "").Trim();
+            if (!string.IsNullOrWhiteSpace(net) && !string.Equals(_lastSubscribedNetworkId, net, StringComparison.OrdinalIgnoreCase))
+            {
+                await _mqtt.SubscribeAsync($"accessapp/{net}/tele/#").ConfigureAwait(false);
+                await _mqtt.SubscribeAsync($"accessapp/{net}/cmd/#").ConfigureAwait(false);
+                _lastSubscribedNetworkId = net;
+            }
+        }
+        catch
+        {
+            // best effort
+        }
+
+        // Kick off a full device-list request immediately (backend supports target="all").
+        try { _ = RequestDeviceListAsync("all"); } catch { }
+
+        // The rest of the snapshots are auto-requested when we receive each gateway's status:
+        // - FW manifest
+        // - queue/programming/parallel programmers
+        // - upgrade log
     }
 
     private void HandleProgrammingListTele(string cassia, string payload)
