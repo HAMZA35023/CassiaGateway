@@ -114,8 +114,12 @@ public sealed class SshCassiaDeployer
         using var sftp = new SftpClient(conn);
 
         _log.Info($"Connecting to device ({label})...");
-        ssh.Connect();
-        sftp.Connect();
+        ConnectSshAndSftpWithRetry(
+            ssh,
+            sftp,
+            label,
+            attempts: Math.Max(1, _opt.SshConnectAttempts),
+            retryDelayMs: Math.Max(0, _opt.SshConnectRetryDelayMs));
         _log.Info("Connected.");
 
         try
@@ -175,6 +179,43 @@ public sealed class SshCassiaDeployer
         }
     }
 
+    private void ConnectSshAndSftpWithRetry(SshClient ssh, SftpClient sftp, string label, int attempts, int retryDelayMs)
+    {
+        Exception? lastEx = null;
+
+        for (int attempt = 1; attempt <= attempts; attempt++)
+        {
+            try
+            {
+                if (attempt > 1)
+                    _log.Warn($"SSH connect retry {attempt}/{attempts} for {label}...");
+
+                if (ssh.IsConnected) ssh.Disconnect();
+                if (sftp.IsConnected) sftp.Disconnect();
+
+                ssh.Connect();
+                sftp.Connect();
+                return;
+            }
+            catch (Exception ex)
+            {
+                lastEx = ex;
+
+                try
+                {
+                    if (ssh.IsConnected) ssh.Disconnect();
+                    if (sftp.IsConnected) sftp.Disconnect();
+                }
+                catch { /* ignore */ }
+
+                if (attempt < attempts && retryDelayMs > 0)
+                    Thread.Sleep(retryDelayMs);
+            }
+        }
+
+        throw new InvalidOperationException($"Failed to connect via SSH to {label} after {attempts} attempts.", lastEx);
+    }
+
     // ------------------------------------------------------------
     // BULK WI-FI DEPLOY (iterate Cassia AP SSIDs)
     // ------------------------------------------------------------
@@ -185,7 +226,11 @@ public sealed class SshCassiaDeployer
 
         _log.Info($"Bulk Wi-Fi deploy enabled. Scanning for SSIDs with prefix '{prefix}'...");
 
-        var ssids = ListWifiSsids()
+        // Extended Wi-Fi scan: do multiple passes and union results.
+        // This helps discover Cassias that appear/disappear during scanning.
+        var ssids = ListWifiSsidsExtended(
+                scanPasses: Math.Max(1, _opt.BulkWifiScanPasses),
+                scanDelayMs: Math.Max(0, _opt.BulkWifiScanDelayMs))
             .Where(s => s.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
@@ -214,7 +259,13 @@ public sealed class SshCassiaDeployer
                 // Connect Wi-Fi (and optionally create a temporary profile if missing)
                 // NOTE: Cassia AP password is required to be LOWERCASE, while the SSID is not.
                 var ssidPasswordLower = ssid.ToLowerInvariant();
-                ConnectWifi(ssid, password: ssidPasswordLower, _opt.BulkWifiAutoCreateProfile, _opt.BulkWifiConnectTimeoutSeconds);
+                ConnectWifiWithRetry(
+                    ssid,
+                    password: ssidPasswordLower,
+                    autoCreateProfile: _opt.BulkWifiAutoCreateProfile,
+                    timeoutSeconds: _opt.BulkWifiConnectTimeoutSeconds,
+                    attempts: Math.Max(1, _opt.BulkWifiConnectAttempts),
+                    retryDelayMs: Math.Max(0, _opt.BulkWifiConnectRetryDelayMs));
 
                 // Per your existing convention: password defaults to SSID when not explicitly set.
                 // In bulk mode, if no explicit password is provided, use the LOWERCASE SSID password.
@@ -273,6 +324,31 @@ public sealed class SshCassiaDeployer
         }
 
         return ssids;
+    }
+
+    private List<string> ListWifiSsidsExtended(int scanPasses, int scanDelayMs)
+    {
+        var all = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        for (int pass = 1; pass <= scanPasses; pass++)
+        {
+            try
+            {
+                // netsh triggers a scan; repeating it increases discovery reliability.
+                var ssids = ListWifiSsids();
+                foreach (var s in ssids)
+                    all.Add(s);
+            }
+            catch
+            {
+                // Ignore transient scan failures
+            }
+
+            if (pass < scanPasses && scanDelayMs > 0)
+                Thread.Sleep(scanDelayMs);
+        }
+
+        return all.OrderBy(s => s, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     private void ConnectWifi(string ssid, string password, bool autoCreateProfile, int timeoutSeconds)
@@ -370,6 +446,36 @@ public sealed class SshCassiaDeployer
         }
 
         throw new TimeoutException($"Timed out waiting to connect to Wi-Fi '{ssid}'.");
+    }
+
+    private void ConnectWifiWithRetry(string ssid, string password, bool autoCreateProfile, int timeoutSeconds, int attempts, int retryDelayMs)
+    {
+        Exception? lastEx = null;
+
+        for (int attempt = 1; attempt <= attempts; attempt++)
+        {
+            try
+            {
+                if (attempt > 1)
+                    _log.Warn($"Wi-Fi connect retry {attempt}/{attempts} for {ssid}...");
+
+                // Best-effort disconnect before retry to force Windows to re-evaluate profiles.
+                if (attempt > 1)
+                {
+                    try { RunLocal("netsh", "wlan disconnect"); } catch { /* ignore */ }
+                    Thread.Sleep(Math.Max(0, retryDelayMs));
+                }
+
+                ConnectWifi(ssid, password, autoCreateProfile, timeoutSeconds);
+                return;
+            }
+            catch (Exception ex)
+            {
+                lastEx = ex;
+            }
+        }
+
+        throw new InvalidOperationException($"Failed to connect to Wi-Fi '{ssid}' after {attempts} attempts.", lastEx);
     }
 
     private static void RunLocal(string exe, string args)

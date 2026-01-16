@@ -71,9 +71,27 @@ public sealed class DeployOptions
     // How long to wait for Windows to report we're connected to the target SSID
     public int BulkWifiConnectTimeoutSeconds { get; set; } = 25;
 
+    // How many times to attempt Wi-Fi connect per SSID (at least 3 recommended)
+    public int BulkWifiConnectAttempts { get; set; } = 3;
+
+    // Delay between Wi-Fi connect attempts
+    public int BulkWifiConnectRetryDelayMs { get; set; } = 1500;
+
     // If true, attempts to create a temporary Wi-Fi profile for each SSID before connecting
     // (useful when the profile doesn't already exist).
     public bool BulkWifiAutoCreateProfile { get; set; } = true;
+
+    // How many Wi-Fi scan passes to perform to find as many Cassias as possible
+    public int BulkWifiScanPasses { get; set; } = 4;
+
+    // Delay between Wi-Fi scan passes
+    public int BulkWifiScanDelayMs { get; set; } = 1500;
+
+    // How many times to attempt SSH connect per target (at least 3 recommended)
+    public int SshConnectAttempts { get; set; } = 3;
+
+    // Delay between SSH connect attempts
+    public int SshConnectRetryDelayMs { get; set; } = 1500;
 
     // ---------- JSON loading ----------
 

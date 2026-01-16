@@ -34,5 +34,11 @@
   "BulkWifiSsidPrefix": "cassia-e4",
   "BulkWifiMaxCount": 0,
   "BulkWifiConnectTimeoutSeconds": 25,
+  "BulkWifiConnectAttempts": 3,
+  "BulkWifiConnectRetryDelayMs": 1500,
+  "BulkWifiScanPasses": 4,
+  "BulkWifiScanDelayMs": 1500,
+  "SshConnectAttempts": 3,
+  "SshConnectRetryDelayMs": 1500,
   "BulkWifiAutoCreateProfile": true
 }
