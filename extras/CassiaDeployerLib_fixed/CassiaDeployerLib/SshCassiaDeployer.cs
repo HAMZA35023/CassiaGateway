@@ -946,6 +946,17 @@ exit 0
         foreach (var file in Directory.EnumerateFiles(localDir, "*", SearchOption.AllDirectories))
         {
             var rel = NormalizeRel(Path.GetRelativePath(localDir, file));
+
+            // SAFETY: Never deploy (overwrite/replace) mqtt.json.
+            // This file is device-specific configuration and must be preserved on the target.
+            // By excluding it from the sync set, we guarantee it is never uploaded nor recorded in the manifest.
+            var fileName = Path.GetFileName(file);
+            if (string.Equals(fileName, "mqtt.json", StringComparison.OrdinalIgnoreCase))
+            {
+                _log.Warn($"Skipping protected file: {rel}");
+                continue;
+            }
+
             var fi = new FileInfo(file);
             var mtimeSec = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds();
             localEntries.Add((rel, fi.Length, mtimeSec, file));
