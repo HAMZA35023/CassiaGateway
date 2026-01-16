@@ -309,7 +309,7 @@ public partial class MainViewModel : ObservableObject
     private static readonly TimeSpan GatewayOfflineAfter = TimeSpan.FromMinutes(1);
 
     public string ConnectButtonText => IsConnected ? "Disconnect" : "Connect";
-    public string DevicesSubtitle => $"{_devices.Count} unique device(s) • model: {SensorFilter} • filter: {DeviceFilter}";
+    public string DevicesSubtitle => $"{FilteredDevices.Cast<object>().Count()} device(s) • model: {SensorFilter} • filter: {DeviceFilter}";
 
     private readonly System.Collections.Generic.Dictionary<string, System.Collections.Generic.HashSet<string>> _gwSeenMacs
     = new(StringComparer.OrdinalIgnoreCase);
