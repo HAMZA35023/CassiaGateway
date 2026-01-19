@@ -85,6 +85,19 @@
         </Setter>
     </Style>
 
+    <!-- Semantic buttons (non-primary) -->
+    <Style x:Key="SuccessButton" TargetType="Button" BasedOn="{StaticResource PrimaryButton}">
+        <Setter Property="Background" Value="{StaticResource GoodBrush}"/>
+    </Style>
+
+    <Style x:Key="WarningButton" TargetType="Button" BasedOn="{StaticResource PrimaryButton}">
+        <Setter Property="Background" Value="{StaticResource WarnBrush}"/>
+    </Style>
+
+    <Style x:Key="DangerButton" TargetType="Button" BasedOn="{StaticResource PrimaryButton}">
+        <Setter Property="Background" Value="{StaticResource BadBrush}"/>
+    </Style>
+
     <Style x:Key="GhostButton" TargetType="Button">
         <Setter Property="Background" Value="White"/>
         <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>

@@ -715,9 +715,10 @@
                                 <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
                                     <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
                                         <Button Style="{StaticResource PrimaryButton}" Content="Update / Queue selected" Padding="12,6" Margin="0,0,8,0" Command="{Binding QueueSelectedCommand}"/>
-                                        <Button Style="{StaticResource GhostButton}" Content="Clear queue" Padding="12,6" Margin="0,0,8,0" Command="{Binding ClearQueueCommand}"/>
+                                        <Button Style="{StaticResource DangerButton}" Content="Clear queue" Padding="12,6" Margin="0,0,8,0" Command="{Binding ClearQueueCommand}"/>
                                         <Button Style="{StaticResource GhostButton}" Content="Default sort" Padding="12,6" Click="QueueDefaultSort_Click"/>
-                                        <Button Style="{StaticResource GhostButton}" Content="Remove completed" Padding="12,6" Margin="10,0,0,0" Command="{Binding RemoveCompletedFromQueueCommand}"/>
+                                        <Button Style="{StaticResource WarningButton}" Content="Rebalance" Padding="12,6" Margin="8,0,0,0" Command="{Binding RebalanceQueuedItemsCommand}"/>
+                                        <Button Style="{StaticResource DangerButton}" Content="Remove completed" Padding="12,6" Margin="10,0,0,0" Command="{Binding RemoveCompletedFromQueueCommand}"/>
                                     </StackPanel>
                                 </DockPanel>
 

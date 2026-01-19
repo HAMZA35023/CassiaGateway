@@ -1,0 +1,116 @@
+<Window x:Class="AccessAppMqttWpf.AssignmentPlanWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:models="clr-namespace:AccessAppMqttWpf.Models"
+        mc:Ignorable="d"
+        Title="Assignment plan" Height="640" Width="980"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource BgBrush}">
+
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <Border Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="12" Padding="12" Margin="0,0,0,12">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Left">
+                    <TextBlock Text="{Binding HeaderTitle}" FontSize="18" FontWeight="SemiBold"/>
+                    <TextBlock Text="{Binding HeaderSubtitle}" Foreground="{StaticResource MutedBrush}" Margin="0,4,0,0"/>
+                </StackPanel>
+
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding ChangesCountText}" Foreground="{StaticResource MutedBrush}" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                    <Button Style="{StaticResource GhostButton}" Content="Copy" Padding="12,6" Command="{Binding CopyCommand}"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- Main content -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="360"/>
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="12" Padding="12" Margin="0,0,12,0">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
+                        <TextBlock Text="Proposed changes" FontWeight="SemiBold"/>
+                        <TextBlock Text="  " />
+                        <CheckBox Content="Show unchanged" IsChecked="{Binding ShowUnchanged}" VerticalAlignment="Center"/>
+                    </StackPanel>
+
+                    <DataGrid ItemsSource="{Binding RowsView}"
+                              AutoGenerateColumns="False"
+                              IsReadOnly="True"
+                              CanUserSortColumns="True"
+                              EnableRowVirtualization="True"
+                              EnableColumnVirtualization="True"
+                              VirtualizingPanel.IsVirtualizing="True"
+                              VirtualizingPanel.VirtualizationMode="Recycling"
+                              ScrollViewer.IsDeferredScrollingEnabled="True"
+                              ScrollViewer.CanContentScroll="True">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsChange}" Value="True">
+                                        <Setter Property="Background" Value="{StaticResource Card2Brush}"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="MAC" Binding="{Binding Mac}" Width="160"/>
+                            <DataGridTextColumn Header="Closest" Binding="{Binding ClosestCassia}" Width="120"/>
+                            <DataGridTextColumn Header="RSSI" Binding="{Binding ClosestRssi}" Width="60"/>
+                            <DataGridTextColumn Header="Current" Binding="{Binding CurrentAssigned}" Width="120"/>
+                            <DataGridTextColumn Header="Suggested" Binding="{Binding SuggestedAssigned}" Width="120"/>
+                            <DataGridTextColumn Header="RSSI" Binding="{Binding SuggestedRssi}" Width="60"/>
+                            <DataGridTextColumn Header="Why" Binding="{Binding Reason}" Width="*"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </DockPanel>
+            </Border>
+
+            <Border Grid.Column="1" Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="12" Padding="12">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top" Text="Load summary (Queue + Programming)" FontWeight="SemiBold" Margin="0,0,0,8"/>
+
+                    <DataGrid ItemsSource="{Binding LoadRows}"
+                              AutoGenerateColumns="False"
+                              IsReadOnly="True"
+                              HeadersVisibility="Column"
+                              CanUserSortColumns="True"
+                              Margin="0,0,0,8">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Cassia" Binding="{Binding Cassia}" Width="*"/>
+                            <DataGridTextColumn Header="Before" Binding="{Binding BeforeLoad}" Width="70"/>
+                            <DataGridTextColumn Header="After" Binding="{Binding AfterLoad}" Width="70"/>
+                            <DataGridTextColumn Header="Δ" Binding="{Binding Delta}" Width="50"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <TextBlock Text="{Binding NotesText}" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                </DockPanel>
+            </Border>
+        </Grid>
+
+        <!-- Footer -->
+        <DockPanel Grid.Row="2" Margin="0,12,0,0">
+            <TextBlock DockPanel.Dock="Left" Text="{Binding FooterText}" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"/>
+
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button Style="{StaticResource GhostButton}" Content="Cancel" Padding="14,8" MinWidth="100" Margin="0,0,8,0" IsCancel="True" Command="{Binding CancelCommand}"/>
+                <Button Style="{StaticResource GhostButton}" Content="Keep current" Padding="14,8" MinWidth="120" Margin="0,0,8,0"
+                        Visibility="{Binding KeepButtonVisibility}" Command="{Binding KeepCommand}"/>
+                <Button Style="{StaticResource PrimaryButton}" Content="Apply" Padding="14,8" MinWidth="120" IsDefault="True" Command="{Binding ApplyCommand}"/>
+            </StackPanel>
+        </DockPanel>
+    </Grid>
+</Window>
