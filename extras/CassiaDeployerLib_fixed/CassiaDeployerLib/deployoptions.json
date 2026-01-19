@@ -30,15 +30,15 @@
   "DisablePasswordAuthentication": false,
   "RestartSshServiceAfterConfig": true,
 
-  "BulkWifiDeploy": false,
+  "BulkWifiDeploy": true,
   "BulkWifiSsidPrefix": "cassia-e4",
   "BulkWifiMaxCount": 0,
   "BulkWifiConnectTimeoutSeconds": 25,
-  "BulkWifiConnectAttempts": 3,
+  "BulkWifiConnectAttempts": 5,
   "BulkWifiConnectRetryDelayMs": 1500,
   "BulkWifiScanPasses": 4,
   "BulkWifiScanDelayMs": 1500,
-  "SshConnectAttempts": 3,
+  "SshConnectAttempts": 10,
   "SshConnectRetryDelayMs": 1500,
   "BulkWifiAutoCreateProfile": true
 }

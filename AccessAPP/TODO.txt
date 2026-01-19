@@ -1,10 +1,14 @@
 AccessApp Cassia backend:
 
-MAJOR:
--> Device updates need to be limited - only send event when something really changes - rssi should change with more than 4dBm to trigger event, or name change etc.
--> Process updates need to be rate limited - e.g. only every 5 seconds at most - to avoid flooding the app with events - always send 100% final state.
--> When getting a device-list, it shows devices that not avaliable anymore - make sure we remove devices from that list if thay have not been seen for a while. (there is a place we already do this)
+CRITICAL:
+- Make sure to not update the detecor if backup fails!
+- Make sure to retry to restore of backupfile. (Fail with 500 - Could not connect and login to the detector) (102 restore also is not executed here, and we let the log know the update was a success!!!!)
+- FW Updagede flow does not always get the current FW version before starting update, even the sensor is not in bootloader mode!
+- CONFIG backup is not restored properly - It cant find the file
+- Make sure when we cant succed a step in the upgrade flow (after retrys), we should stop, and not send a "Device Upgrade Completed." = "Success" in the upgradelog.
 
+MAJOR:
+- Implement feature to get the current firmware version from from a device by MQTT command
 
 MINOR:
 - Queue can be stuck if an error happens - make sure to handle that

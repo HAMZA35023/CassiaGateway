@@ -1,8 +1,6 @@
--> the rightclick in the queue should also work in the queue under the devicelist. (also does not look like it on rightclick loads the latest data for cassias and rssi)
--> The queued response is not updated in the device-list and queue, that confirms the cassia has accepted it.
--> The rightclick in device-list, assign to cassia, does not work (is read only) - when multiple is selected, it should do the same for all of them.
 
 
+FIXED, But needs to be verified in the field that is works as expected.
 -> The auto-assing when adding to queue does not work as expected - it should load-balance it between cassiaes, and take programming and queued devices in to account, so each device hadles even amount if possibe. - if a device has a rssi over -65, is should always be assigned to the device with best rssi. - under -55, the devices can share them even.
--> State done, can still show under 100% in the queue-list
+++ -> 
 

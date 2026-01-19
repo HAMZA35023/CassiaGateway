@@ -1082,14 +1082,14 @@ public static int GetProgrammingCount()
 
                 if (DetectorType == "P48" || DetectorType == "P47")
                 {
-                    await Task.Delay(10000).ConfigureAwait(false);
+                    await Task.Delay(15000).ConfigureAwait(false);
 
                     Console.WriteLine($"Starting settings restore for {macAddress} - trying to connect and login");
 
                     var cl = await ConnectAndLoginWithRetryAsync(
                         _gatewayIpAddress, 80, macAddress, pincode, logId, FirmwareVersion,
-                        maxAttempts: 1,
-                        delayBetweenAttemptsMs: 3000).ConfigureAwait(false);
+                        maxAttempts: 3,
+                        delayBetweenAttemptsMs: 5000).ConfigureAwait(false);
 
                     if (!cl.Success)
                     {
@@ -1119,7 +1119,7 @@ public static int GetProgrammingCount()
                             }
                         }
 
-                        if (Restore102DBAfterUpgrade)
+                        if (true)
                         {
                             Console.WriteLine($"Starting settings restore for {macAddress} - upload config");
 
@@ -1198,7 +1198,7 @@ public static int GetProgrammingCount()
                 response.StatusCode = 200;
                 response.Message = "Sensor and actor upgrades completed successfully.";
 
-                UpgradeLogger.Log(logId, macAddress, $"Device Upgrade Done.", "Success");
+                UpgradeLogger.Log(logId, macAddress, $"Device Upgrade Done.", "Success"); //TODO: Make sure we not return success if there has been a warning we could not recover from.
 
                 return response;
             }
