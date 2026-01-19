@@ -34,6 +34,48 @@ namespace AccessAPP.Services
             return Path.Combine(_rootDir, $"{safeMac}_settings.json");
         }
 
+
+        private string ResolveBackupPath(string macAddress, string? backupFilePath)
+        {
+            // 1) If provided path exists, keep it.
+            if (!string.IsNullOrWhiteSpace(backupFilePath) && File.Exists(backupFilePath))
+                return backupFilePath;
+
+            var safeMac = (macAddress ?? "unknown").Trim().Replace(":", "").Replace("-", "").Replace(" ", "");
+
+            // 2) If a relative path was provided, try under rootDir.
+            if (!string.IsNullOrWhiteSpace(backupFilePath) && !Path.IsPathRooted(backupFilePath))
+            {
+                try
+                {
+                    var candidate = Path.Combine(_rootDir, backupFilePath);
+                    if (File.Exists(candidate))
+                        return candidate;
+                }
+                catch { /* ignore */ }
+            }
+
+            // 3) Default expected filename for this MAC.
+            try
+            {
+                var candidate = Path.Combine(_rootDir, $"{safeMac}_settings.json");
+                if (File.Exists(candidate))
+                    return candidate;
+            }
+            catch { /* ignore */ }
+
+            // 4) As last resort, search for any backup matching MAC.
+            try
+            {
+                var matches = Directory.GetFiles(_rootDir, $"{safeMac}*_settings.json", SearchOption.TopDirectoryOnly);
+                if (matches != null && matches.Length > 0)
+                    return matches.OrderByDescending(File.GetLastWriteTimeUtc).First();
+            }
+            catch { /* ignore */ }
+
+            return backupFilePath ?? string.Empty;
+        }
+
         public async Task<(string filePath, DeviceSettingsSnapshot snapshot)> BackupToFileAsync(
             string macAddress,
             string pincode, // kept in interface for your earlier calls; not used here
@@ -84,6 +126,10 @@ namespace AccessAPP.Services
             Console.WriteLine($"[Restore] START");
             Console.WriteLine($"[Restore] MAC={macAddress}, Detector={detectorType}, FW={firmwareVersion}, LogId={logId}");
             Console.WriteLine($"[Restore] BackupFile={backupFilePath}");
+
+            
+            // Resolve backup path robustly (absolute/relative, fallback by MAC)
+            backupFilePath = ResolveBackupPath(macAddress, backupFilePath);
 
             if (string.IsNullOrWhiteSpace(backupFilePath) || !File.Exists(backupFilePath))
             {

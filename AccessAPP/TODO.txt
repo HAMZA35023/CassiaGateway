@@ -1,11 +1,7 @@
 AccessApp Cassia backend:
 
 CRITICAL:
-- Make sure to not update the detecor if backup fails!
-- Make sure to retry to restore of backupfile. (Fail with 500 - Could not connect and login to the detector) (102 restore also is not executed here, and we let the log know the update was a success!!!!)
-- FW Updagede flow does not always get the current FW version before starting update, even the sensor is not in bootloader mode!
-- CONFIG backup is not restored properly - It cant find the file
-- Make sure when we cant succed a step in the upgrade flow (after retrys), we should stop, and not send a "Device Upgrade Completed." = "Success" in the upgradelog.
+
 
 MAJOR:
 - Implement feature to get the current firmware version from from a device by MQTT command
