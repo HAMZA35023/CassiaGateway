@@ -905,9 +905,42 @@ public static int GetProgrammingCount()
                 //Get FW Version:
                 Console.WriteLine($"Getting current FW Verison if possible {macAddress}");
 
+                //Lets check if the sensor is in boot mode first
+                var conn = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, macAddress);
+                if (conn.Status != HttpStatusCode.OK)
+                {
+                    UpgradeLogger.Log(logId, macAddress, "Connected", "Failed", FirmwareVersion);
+                }
+                else
+                {
+                    conn = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, macAddress);
+                    if (!conn.Status.ToString().Equals("OK"))
+                    {
+                        UpgradeLogger.Log(logId, macAddress, "Connected", "Failed", FirmwareVersion);
+                        response.Success = false;
+                        response.StatusCode = (int)conn.Status;
+                        response.Message = "Failed to connect to device.";
+                        dev.LastFailureReason = response.Message;
+                        dev.RetryCount++;
+                        return response;
+                    }
+                } 
+                    
+                    var isInBoot = CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress);
+
+                if (isInBoot)
+                {
+                    Console.WriteLine($"Device is in boot mode, skipping FW version check: {macAddress}");
+                    UpgradeLogger.Log(logId, macAddress, "Device in boot mode, skipping FW version check", "Info", FirmwareVersion);
+                }
+                else
+                {
+                    Console.WriteLine($"Device is in application mode, checking FW version: {macAddress}");
+                    UpgradeLogger.Log(logId, macAddress, "Device in application mode, checking FW version", "Info", FirmwareVersion);
+                }
 
                 // --- NEW: Backup settings at start (best-effort) ---
-                if (RestoreSettingsAfterUpgrade)
+                if (RestoreSettingsAfterUpgrade && !isInBoot)
                 {
                     if (DetectorType == "P48" || DetectorType == "P47")
                     {
@@ -945,6 +978,7 @@ public static int GetProgrammingCount()
                                 response.StatusCode = cl.StatusCode;
                                 response.Message = $"Settings backup blocked upgrade: {cl.Message}";
                                 dev.LastFailureReason = response.Message;
+                                dev.RetryCount++;
                                 return response;
 
                             }
@@ -978,7 +1012,9 @@ public static int GetProgrammingCount()
                                 response.Message = $"Settings backup failed (file missing): {settingsBackupPath}";
                                 UpgradeLogger.Log(logId, macAddress, response.Message, "Failed", FirmwareVersion);
                                 dev.LastFailureReason = response.Message;
-                                return response;
+                                    dev.RetryCount++;
+
+                                    return response;
                             }
 
                             Console.WriteLine($"[INFO] Settings backup saved for {macAddress} to: {settingsBackupPath}");
@@ -1003,7 +1039,9 @@ public static int GetProgrammingCount()
                             UpgradeLogger.Log(logId, macAddress, response.Message, "Failed", FirmwareVersion);
                             Console.WriteLine($"[ERROR] Settings backup failed for {macAddress}: {ex}");
                             dev.LastFailureReason = response.Message;
-                            return response;
+                                dev.RetryCount++;
+
+                                return response;
                         }
 
                     }
@@ -1018,7 +1056,7 @@ public static int GetProgrammingCount()
                 // Step 2: Upgrade the actor / bootloader / sensor
                 var stopwatch = new Stopwatch();
 
-                if (upgradeActor && !disable_update)
+                if (upgradeActor && !disable_update && !isInBoot) //Cant update actor first if in bootloader mode
                 {
                     Console.WriteLine($"Starting actor upgrade for {macAddress}");
                     dev.RetryCountActor++;
@@ -1054,6 +1092,7 @@ public static int GetProgrammingCount()
                         response.StatusCode = bootladerUpgradeResult.StatusCode;
                         response.Message = $"bootloader upgrade failed: {bootladerUpgradeResult.Message}";
                         dev.BootloaderSuccess = false;
+
                         return response;
                     }
 
@@ -1081,6 +1120,7 @@ public static int GetProgrammingCount()
                         response.StatusCode = sensorUpgradeResult.StatusCode;
                         response.Message = $"Sensor upgrade failed: {sensorUpgradeResult.Message}";
                         dev.SensorSuccess = false;
+
                         return response;
                     }
 
@@ -1108,6 +1148,7 @@ public static int GetProgrammingCount()
                             response.Success = false;
                             response.StatusCode = actorUpgradeResult.StatusCode;
                             response.Message = $"Actor upgrade failed again after sensor application completed: {actorUpgradeResult.Message}";
+
                             return response;
                         }
 
@@ -1161,7 +1202,7 @@ public static int GetProgrammingCount()
                             // Use the previously captured backup path if this attempt did not create a new backup
                             settingsBackupPath ??= dev.SettingsBackupPath;
 
-                            if (!string.IsNullOrWhiteSpace(settingsBackupPath))
+                            if (!string.IsNullOrWhiteSpace(settingsBackupPath) && !isInBoot)
                             {
                                 try
                                 {
@@ -1194,13 +1235,18 @@ public static int GetProgrammingCount()
 
                                     dev.isConfigRestored = restore.Success;
 
-                                    if (!restore.Success && dev.requiresConfigRestore)
+                                    if (!restore.Success && dev.requiresConfigRestore && !isInBoot) // Dont fail restore if we was in boot mode when we started
                                     {
                                         response.Success = false;
                                         response.StatusCode = restore.StatusCode;
                                         response.Message = $"Settings restore failed after retries: {restore.Message}";
                                         dev.LastFailureReason = response.Message;
                                         return response;
+                                    }
+                                    else if (!restore.Success && dev.requiresConfigRestore && isInBoot)
+                                    {
+                                        UpgradeLogger.Log(logId, macAddress, "Settings restore skipped (device was in boot mode at start)", "Info", FirmwareVersion);
+                                        Console.WriteLine($"[INFO] Settings restore skipped for {macAddress} - device was in boot mode at start");
                                     }
                                 }
                                 catch (Exception ex)
@@ -1220,15 +1266,24 @@ public static int GetProgrammingCount()
                             }
                             else
                             {
-                                UpgradeLogger.Log(logId, macAddress, "Settings restore skipped (no backup file available)", "Failed", FirmwareVersion);
-                                Console.WriteLine($"[ERROR] Settings restore skipped for {macAddress} - no backup file available");
-                                if (dev.requiresConfigRestore)
+                                if (isInBoot)
                                 {
-                                    response.Success = false;
-                                    response.StatusCode = 404;
-                                    response.Message = "Settings restore failed: backup file path missing";
-                                    dev.LastFailureReason = response.Message;
-                                    return response;
+                                    UpgradeLogger.Log(logId, macAddress, "Settings restore skipped (device was in boot mode at start)", "Info", FirmwareVersion);
+                                    Console.WriteLine($"[INFO] Settings restore skipped for {macAddress} - device was in boot mode at start");
+                                    dev.isConfigRestored = false;
+                                }
+                                else
+                                {
+                                    UpgradeLogger.Log(logId, macAddress, "Settings restore skipped (no backup file available)", "Failed", FirmwareVersion);
+                                    Console.WriteLine($"[ERROR] Settings restore skipped for {macAddress} - no backup file available");
+                                    if (dev.requiresConfigRestore)
+                                    {
+                                        response.Success = false;
+                                        response.StatusCode = 404;
+                                        response.Message = "Settings restore failed: backup file path missing";
+                                        dev.LastFailureReason = response.Message;
+                                        return response;
+                                    }
                                 }
                             }
                         }
@@ -1239,7 +1294,7 @@ public static int GetProgrammingCount()
                         Console.WriteLine($"Rebooting device {macAddress} to apply restored settings");
                         await RebootDeviceAsync(macAddress);
                         UpgradeLogger.Log(logId, macAddress, "Device rebooted after settings restore", "Success", FirmwareVersion);
-                        await Task.Delay(5000).ConfigureAwait(false);
+                        await Task.Delay(10000).ConfigureAwait(false);
 
                         await ConnectAndLoginWithRetryAsync(
                             _gatewayIpAddress, _gatewayPort, macAddress, pincode, logId, FirmwareVersion,
@@ -1290,7 +1345,11 @@ public static int GetProgrammingCount()
 
                 if (response.Success)
                 {
-                    UpgradeLogger.Log(logId, macAddress, $"Device Upgrade Done.", "Success");
+                    UpgradeLogger.Log(logId, macAddress, $"Device Upgrade Done.", "Success", FirmwareVersion);
+                }
+                else if (!dev.isConfigRestored && (DetectorType == "P48" || DetectorType == "P47"))
+                {
+                    UpgradeLogger.Log(logId, macAddress, $"Device Upgrade Done - Settings not restored.", "Warn", FirmwareVersion);
                 }
                 else
                 {
