@@ -96,6 +96,12 @@ namespace AccessAPP.Services
 private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string DetectorType, string FirmwareVersion)> _programmingTargets
     = new(StringComparer.OrdinalIgnoreCase);
 
+// Tracks which firmware "type" is currently being programmed per MAC so that
+// progress notifications can be published with the right stage.
+// Values: "actor" | "sensor" | "bootloader".
+private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _programmingStageByMac
+    = new(StringComparer.OrdinalIgnoreCase);
+
 public static int GetParallelProgrammers()
     => Volatile.Read(ref GlobalnumberOfParallelThreads);
 
@@ -104,7 +110,27 @@ public static int SetParallelProgrammers(int value)
     // Only lives until restart (not persisted). Guard against silly values.
     var v = Math.Clamp(value, 1, 32);
     Volatile.Write(ref GlobalnumberOfParallelThreads, v);
+
+    // Wake the live queue worker so an increase in parallelism takes effect
+    // immediately (otherwise it may wait for an in-flight device to complete).
+    _ownInstance?.OnParallelismChanged(v);
     return v;
+}
+
+private void OnParallelismChanged(int newValue)
+{
+    try
+    {
+        // Release a few tokens so the worker wakes and can refill capacity.
+        // (No harm if no worker is running.)
+        var n = Math.Clamp(newValue, 1, 32);
+        for (int i = 0; i < n; i++)
+            _queueSignal.Release();
+    }
+    catch
+    {
+        // ignore
+    }
 }
 
 public static IReadOnlyList<(string Mac, string DetectorType, string FirmwareVersion)> GetQueueListSnapshot()
@@ -1903,6 +1929,25 @@ public static int GetProgrammingCount()
             return "";
         }
 
+        /// <summary>
+        /// Disconnect a device from the Cassia gateway (best-effort).
+        /// Intended for MQTT command "disconnect-devices".
+        /// </summary>
+        public async Task<bool> DisconnectDeviceAsync(string macAddress)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(macAddress)) return false;
+                var resp = await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress.Trim(), 0).ConfigureAwait(false);
+                // resp.Status is HttpStatusCode (non-nullable); avoid null-propagation on value type.
+                return resp != null && resp.Status == HttpStatusCode.OK;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         // ---------- QUEUE STATE ----------
         private readonly ConcurrentQueue<UpgradeProgress> _upgradeQueue = new();
         private readonly ConcurrentDictionary<string, byte> _queuedMacs = new(); // pending membership set
@@ -1994,13 +2039,14 @@ public static int GetProgrammingCount()
 
                 _upgradeQueueWorkerRunning = true;
 
-                int threads = numbersOfThreadsInParallel == -1
-                    ? GlobalnumberOfParallelThreads
-                    : numbersOfThreadsInParallel;
+                // Pass -1 to indicate "follow GlobalnumberOfParallelThreads dynamically".
+                // If a caller provides a fixed value, keep it fixed for the run.
+                int threadsParam = numbersOfThreadsInParallel;
+                int threadsEffective = threadsParam == -1 ? GlobalnumberOfParallelThreads : threadsParam;
 
-                Console.WriteLine($"[UPGRADE QUEUE] Worker START (threads={threads})");
+                Console.WriteLine($"[UPGRADE QUEUE] Worker START (threads={threadsEffective})");
 
-                _upgradeQueueWorkerTask = Task.Run(() => UpgradeQueueWorkerLiveAsync(threads));
+                _upgradeQueueWorkerTask = Task.Run(() => UpgradeQueueWorkerLiveAsync(threadsParam));
                 return _upgradeQueueWorkerTask;
             }
         }
@@ -2017,14 +2063,27 @@ public static int GetProgrammingCount()
             int totalDevicesProcessed = 0;
 
             var summaries = new ConcurrentBag<DeviceUpgradeSummary>();
-            var running = new List<Task>(capacity: numbersOfThreadsInParallel);
+
+            // If the worker was started with a fixed value, keep it fixed.
+            // If started with a value derived from GlobalnumberOfParallelThreads (normal case),
+            // allow runtime changes to take effect.
+            bool fixedParallel = numbersOfThreadsInParallel != -1;
+
+            int CurrentMaxThreads()
+            {
+                if (fixedParallel) return Math.Max(1, numbersOfThreadsInParallel);
+                return Math.Max(1, Volatile.Read(ref GlobalnumberOfParallelThreads));
+            }
+
+            var running = new List<Task>(capacity: Math.Max(1, CurrentMaxThreads()));
 
             try
             {
                 while (true)
                 {
                     // Fill capacity immediately from FIFO
-                    while (running.Count < numbersOfThreadsInParallel)
+                    var maxThreads = CurrentMaxThreads();
+                    while (running.Count < maxThreads)
                     {
                         UpgradeProgress? dev;
                         lock (_queueEditGate)
@@ -2091,7 +2150,14 @@ public static int GetProgrammingCount()
                     // We must never block on the signal if the queue already contains items,
                     // because the signal tokens can be consumed earlier while we were at capacity.
                     // In that case, relying on the signal would stall the worker even though work is queued.
-                    if (running.Count > 0)
+					// If we have queued work AND available worker capacity, start it immediately.
+					// This is critical when multiple items were enqueued while we were at capacity,
+					// because the signal tokens can be consumed earlier. We must not stall here.
+					var maxNow = CurrentMaxThreads();
+					if (!_upgradeQueue.IsEmpty && running.Count < maxNow)
+						continue;
+
+					if (running.Count > 0)
                     {
                         Task completion = Task.WhenAny(running);
                         Task signal = _queueSignal.WaitAsync();
@@ -2118,7 +2184,9 @@ public static int GetProgrammingCount()
                 Console.WriteLine($"[UPGRADE QUEUE] Worker STOP (run complete). wall={globalSw.Elapsed.TotalSeconds:F2}s, processed={totalDevicesProcessed}, pending={_upgradeQueue.Count}");
 
                 // Optional: print run summary at end (same style as before)
-                PrintUpgradeRunSummary(summaries, totalDevicesProcessed, totalDeviceMs, numbersOfThreadsInParallel, globalSw);
+                // Use current (dynamic) configured threads for summary readability.
+                var finalThreads = fixedParallel ? numbersOfThreadsInParallel : Math.Max(1, Volatile.Read(ref GlobalnumberOfParallelThreads));
+                PrintUpgradeRunSummary(summaries, totalDevicesProcessed, totalDeviceMs, finalThreads, globalSw);
             }
         }
 
@@ -2665,6 +2733,14 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             Console.WriteLine($"Actor is going to be programmed? : {bActor}");
             try
             {
+                // Remember what we are programming so ProgressUpdate can include the stage
+                // in MQTT progress messages.
+                if (_ownInstance != null)
+                {
+                    var stage = bActor ? "actor" : (isBootloader ? "bootloader" : "sensor");
+                    _ownInstance._programmingStageByMac[nodeMac] = stage;
+                }
+
                 InitializeNotificationSubscription(nodeMac, cassiaNotificationService);
                 MacAddress = nodeMac;
 
@@ -2745,6 +2821,8 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             }
             finally
             {
+                // Clear stage mapping when this programming call finishes (success or fail)
+                _ownInstance?._programmingStageByMac.TryRemove(nodeMac, out _);
                 //UnsubscribeNotification(nodeMac, cassiaNotificationService);
             }
         }
@@ -3335,7 +3413,11 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                     $"{Pad("Avg:", 6)} {globalAvgAfterPurge,7:F2}%/min (10s avg)"
                 );
 
-                _deviceStorageService.UpdateFirmwareProgress(macContext, 100.0);
+                var stage = _ownInstance?._programmingStageByMac.TryGetValue(macContext, out var s1) == true
+                    ? s1
+                    : "";
+                var msg = string.IsNullOrWhiteSpace(stage) ? "Programming" : $"Programming {stage}";
+                _deviceStorageService.UpdateFirmwareProgress(macContext, 100.0, msg);
                 totalSpeed = Math.Round(globalTotalAfterPurge, 2);
                 return;
             }
@@ -3367,7 +3449,11 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                 $"{Pad("Avg:", 6)} {globalAvgRatePerMin,7:F2}%/min (10s avg)"
             );
 
-            _deviceStorageService.UpdateFirmwareProgress(macContext, progress);
+            var stage2 = _ownInstance?._programmingStageByMac.TryGetValue(macContext, out var s2) == true
+                ? s2
+                : "";
+            var msg2 = string.IsNullOrWhiteSpace(stage2) ? "Programming" : $"Programming {stage2}";
+            _deviceStorageService.UpdateFirmwareProgress(macContext, progress, msg2);
             totalSpeed = Math.Round(globalTotalRatePerMin, 2);
 
         }

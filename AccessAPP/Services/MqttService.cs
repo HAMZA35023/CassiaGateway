@@ -33,6 +33,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
     public event Func<StartUpdateCommand, Task>? StartUpdateRequested;
     public event Func<GetFwVersionCommand, Task>? GetFwVersionRequested;
+    public event Func<DisconnectDevicesCommand, Task>? DisconnectDevicesRequested;
 
     // NEW
     public event Func<GetFirmwareManifestCommand, Task>? GetFirmwareManifestRequested;
@@ -203,6 +204,13 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     public async Task PublishRespAsync(string msg, CancellationToken ct = default)
     {
         await PublishJsonAsync(TeleTopic("resp"), msg, retain: false, ct).ConfigureAwait(false);
+    }
+
+    public async Task PublishTeleJsonAsync(string leaf, object payload, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(leaf))
+            leaf = "resp";
+        await PublishJsonAsync(TeleTopic(leaf), payload, retain: false, ct).ConfigureAwait(false);
     }
 
     public async ValueTask DisposeAsync()
@@ -447,6 +455,32 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 Log("HandleCommandAsync: dispatch get-fw-version");
                 var dto = JsonSerializer.Deserialize<GetFwVersionCommand>(payload, JsonOptions) ?? new GetFwVersionCommand();
                 return GetFwVersionRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "disconnect-devices", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "disconnect", StringComparison.OrdinalIgnoreCase))
+            {
+                Log("HandleCommandAsync: dispatch disconnect-devices");
+
+                DisconnectDevicesCommand dto;
+                try
+                {
+                    // Accept: "AA:BB"  |  ["AA",... ]  |  {"sensors":[...]}
+                    if (string.IsNullOrWhiteSpace(payload))
+                        dto = new DisconnectDevicesCommand();
+                    else if (payload.TrimStart().StartsWith("["))
+                        dto = new DisconnectDevicesCommand { Sensors = JsonSerializer.Deserialize<List<string>>(payload, JsonOptions) ?? new List<string>() };
+                    else if (payload.TrimStart().StartsWith("\""))
+                        dto = new DisconnectDevicesCommand { Sensors = new List<string> { JsonSerializer.Deserialize<string>(payload, JsonOptions) ?? payload.Trim('"') } };
+                    else
+                        dto = JsonSerializer.Deserialize<DisconnectDevicesCommand>(payload, JsonOptions) ?? new DisconnectDevicesCommand();
+                }
+                catch
+                {
+                    dto = new DisconnectDevicesCommand();
+                }
+
+                return DisconnectDevicesRequested?.Invoke(dto) ?? Task.CompletedTask;
             }
 
             if (string.Equals(command, "send-upgrade-log", StringComparison.OrdinalIgnoreCase))

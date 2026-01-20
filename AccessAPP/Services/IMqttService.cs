@@ -26,9 +26,15 @@ public interface IMqttService : IAsyncDisposable
     // Existing: generic response
     Task PublishRespAsync(string msg, CancellationToken ct = default);
 
+    // Generic telemetry publisher for structured responses (used by command handlers).
+    Task PublishTeleJsonAsync(string leaf, object payload, CancellationToken ct = default);
+
     // Events when commands arrive
     event Func<StartUpdateCommand, Task>? StartUpdateRequested;
     event Func<GetFwVersionCommand, Task>? GetFwVersionRequested;
+
+    // Disconnect devices via MQTT (single or list)
+    event Func<DisconnectDevicesCommand, Task>? DisconnectDevicesRequested;
 
     // New: FW manifest request command
     event Func<GetFirmwareManifestCommand, Task>? GetFirmwareManifestRequested;

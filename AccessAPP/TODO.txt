@@ -2,13 +2,14 @@ AccessApp Cassia backend:
 
 CRITICAL:
 ->	When 3 threads has been programming firmware to sensors at the same time, and only one is running - when adding 2 more, the queue does not start processing them.
--> Add a public directory that the notification service can use, so it reports programming [actor|sensor|bootloader] progress to the mqtt broker.
+-> Make sure notification service can see what firmware type we are getting notifications for, so it reports programming [actor|sensor|bootloader] progress to the mqtt broker.
 
 MAJOR:
 -> Always send stale device notifications when a device goes offline.
 -> Always send when a device comes back online.
-
+-> Always send progress 100% when programming is done.
+-> Implement a disconnect command for devices via MQTT (single or list)
 
 MINOR:
--> Implement feature to get the current firmware version from from a device by MQTT command
+-> Implement feature to get the current firmware version from from a device by MQTT command (single or list), and returng the version via MQTT response.
 

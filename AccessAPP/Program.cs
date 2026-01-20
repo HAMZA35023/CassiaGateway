@@ -100,11 +100,88 @@ using (var scope = app.Services.CreateScope())
 
     mqttService.GetFwVersionRequested += async cmd =>
     {
-        foreach (var mac in cmd.Sensors)
+        var macs = (cmd.Sensors ?? new List<string>())
+            .Where(m => !string.IsNullOrWhiteSpace(m))
+            .Select(m => m.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var pincode = cmd.Pincode ?? "";
+
+        var results = new List<object>();
+        var failed = new List<object>();
+
+        foreach (var mac in macs)
         {
-           
-            await mqttService.PublishRespAsync("FW version: DUMMY TEST");
+            try
+            {
+                var v = await firmwareUpgradeService.GetFwVersion(mac, pincode);
+                if (string.IsNullOrWhiteSpace(v))
+                    failed.Add(new { mac, error = "Could not retrieve FW version" });
+                else
+                    results.Add(new { mac, version = v });
+            }
+            catch (Exception ex)
+            {
+                failed.Add(new { mac, error = ex.Message });
+            }
         }
+
+        var resp = new
+        {
+            success = failed.Count == 0,
+            message = "FW version query completed",
+            name = mqttService.CurrentOptions.Name,
+            networkId = mqttService.CurrentOptions.NetworkId,
+            time = DateTimeOffset.UtcNow,
+            requested = macs,
+            pincode = string.IsNullOrWhiteSpace(pincode) ? null : "(provided)",
+            results,
+            failed
+        };
+
+        await mqttService.PublishTeleJsonAsync("fw-version", resp);
+    };
+
+    mqttService.DisconnectDevicesRequested += async cmd =>
+    {
+        var macs = (cmd.Sensors ?? new List<string>())
+            .Where(m => !string.IsNullOrWhiteSpace(m))
+            .Select(m => m.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var results = new List<object>();
+
+        bool allOk = true;
+
+        foreach (var mac in macs)
+        {
+            try
+            {
+                var ok = await firmwareUpgradeService.DisconnectDeviceAsync(mac);
+                if (!ok) allOk = false;
+                results.Add(new { mac, success = ok });
+            }
+            catch (Exception ex)
+            {
+                allOk = false;
+                results.Add(new { mac, success = false, error = ex.Message });
+            }
+        }
+
+        var resp = new
+        {
+            success = allOk,
+            message = "Disconnect command processed",
+            name = mqttService.CurrentOptions.Name,
+            networkId = mqttService.CurrentOptions.NetworkId,
+            time = DateTimeOffset.UtcNow,
+            requested = macs,
+            results
+        };
+
+        await mqttService.PublishTeleJsonAsync("disconnect", resp);
     };
 
     mqttService.GetFirmwareManifestRequested += async cmd =>

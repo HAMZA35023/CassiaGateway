@@ -36,6 +36,14 @@ public sealed class StartUpdateRequest
 public sealed class GetFwVersionCommand
 {
     public List<string> Sensors { get; set; } = new();
+
+    // Optional: if your devices require a pincode for Connect+Login.
+    public string? Pincode { get; set; }
+}
+
+public sealed class DisconnectDevicesCommand
+{
+    public List<string> Sensors { get; set; } = new();
 }
 
 public sealed class DiscoveredDevicesMessage
