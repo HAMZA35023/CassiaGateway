@@ -495,288 +495,288 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 return GetFirmwareManifestRequested?.Invoke(dto) ?? Task.CompletedTask;
             }
 
-            
-if (string.Equals(command, "get-queue-list", StringComparison.OrdinalIgnoreCase))
-{
-    Log("HandleCommandAsync: dispatch get-queue-list");
 
-    // payload can be {} / empty / include requestId, but we keep it tolerant
-    string? requestId = null;
-    try
-    {
-        if (!string.IsNullOrWhiteSpace(payload))
-        {
-            using var doc = JsonDocument.Parse(payload);
-            if (doc.RootElement.ValueKind == JsonValueKind.Object &&
-                doc.RootElement.TryGetProperty("requestId", out var rid) &&
-                rid.ValueKind == JsonValueKind.String)
-                requestId = rid.GetString();
-        }
-    }
-    catch { /* ignore */ }
-
-    var items = CassiaFirmwareUpgradeService.GetQueueListSnapshot()
-        .Select(x => new { mac = x.Mac, detectorType = x.DetectorType, firmwareVersion = x.FirmwareVersion })
-        .ToList();
-
-    var resp = new
-    {
-        success = true,
-        message = "Queue list retrieved successfully.",
-        requestId,
-        name = CurrentOptions.Name,
-        networkId = CurrentOptions.NetworkId,
-        time = DateTimeOffset.UtcNow,
-        count = items.Count,
-        queueList = items
-    };
-
-    return PublishJsonAsync(TeleTopic("queue-list"), resp, retain: false, CancellationToken.None);
-}
-
-if (string.Equals(command, "get-programming-list", StringComparison.OrdinalIgnoreCase))
-{
-    Log("HandleCommandAsync: dispatch get-programming-list");
-
-    string? requestId = null;
-    try
-    {
-        if (!string.IsNullOrWhiteSpace(payload))
-        {
-            using var doc = JsonDocument.Parse(payload);
-            if (doc.RootElement.ValueKind == JsonValueKind.Object &&
-                doc.RootElement.TryGetProperty("requestId", out var rid) &&
-                rid.ValueKind == JsonValueKind.String)
-                requestId = rid.GetString();
-        }
-    }
-    catch { /* ignore */ }
-
-    var items = CassiaFirmwareUpgradeService.GetProgrammingListSnapshot()
-        .Select(x => new { mac = x.Mac, detectorType = x.DetectorType, firmwareVersion = x.FirmwareVersion })
-        .ToList();
-
-    var resp = new
-    {
-        success = true,
-        message = "Programming list retrieved successfully.",
-        requestId,
-        name = CurrentOptions.Name,
-        networkId = CurrentOptions.NetworkId,
-        time = DateTimeOffset.UtcNow,
-        count = items.Count,
-        programmingList = items
-    };
-
-    return PublishJsonAsync(TeleTopic("programming-list"), resp, retain: false, CancellationToken.None);
-}
-
-if (string.Equals(command, "get-device-list", StringComparison.OrdinalIgnoreCase))
-{
-    Log("HandleCommandAsync: dispatch get-device-list");
-
-    string? requestId = null;
-    try
-    {
-        if (!string.IsNullOrWhiteSpace(payload))
-        {
-            using var doc = JsonDocument.Parse(payload);
-            if (doc.RootElement.ValueKind == JsonValueKind.Object &&
-                doc.RootElement.TryGetProperty("requestId", out var rid) &&
-                rid.ValueKind == JsonValueKind.String)
-                requestId = rid.GetString();
-        }
-    }
-    catch { /* ignore */ }
-
-    var items = DeviceStorageService.GetDeviceListSnapshot();
-
-    var resp = new
-    {
-        success = true,
-        message = "Device list retrieved successfully.",
-        requestId,
-        name = CurrentOptions.Name,
-        networkId = CurrentOptions.NetworkId,
-        time = DateTimeOffset.UtcNow,
-        count = items.Count,
-        deviceList = items
-    };
-
-    // One single message with full list.
-    return PublishJsonAsync(TeleTopic("device-list"), resp, retain: false, CancellationToken.None);
-}
-
-if (string.Equals(command, "remove-from-queue", StringComparison.OrdinalIgnoreCase))
-{
-    Log("HandleCommandAsync: dispatch remove-from-queue");
-
-    // Accept payload as:
-    //  - "10:B9:F7:..."
-    //  - {"macAddress":"..."} / {"mac":"..."}
-    //  - {"macAddresses":["...","..."]} / {"macs":[...]}
-    //  - ["...","..."]
-    var macs = new List<string>();
-
-    try
-    {
-        if (!string.IsNullOrWhiteSpace(payload))
-        {
-            using var doc = JsonDocument.Parse(payload);
-            var root = doc.RootElement;
-
-            if (root.ValueKind == JsonValueKind.String)
+            if (string.Equals(command, "get-queue-list", StringComparison.OrdinalIgnoreCase))
             {
-                var m = root.GetString();
-                if (!string.IsNullOrWhiteSpace(m)) macs.Add(m);
-            }
-            else if (root.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var el in root.EnumerateArray())
+                Log("HandleCommandAsync: dispatch get-queue-list");
+
+                // payload can be {} / empty / include requestId, but we keep it tolerant
+                string? requestId = null;
+                try
                 {
-                    if (el.ValueKind == JsonValueKind.String)
+                    if (!string.IsNullOrWhiteSpace(payload))
                     {
-                        var m = el.GetString();
-                        if (!string.IsNullOrWhiteSpace(m)) macs.Add(m);
+                        using var doc = JsonDocument.Parse(payload);
+                        if (doc.RootElement.ValueKind == JsonValueKind.Object &&
+                            doc.RootElement.TryGetProperty("requestId", out var rid) &&
+                            rid.ValueKind == JsonValueKind.String)
+                            requestId = rid.GetString();
                     }
                 }
-            }
-            else if (root.ValueKind == JsonValueKind.Object)
-            {
-                if (root.TryGetProperty("macAddress", out var ma) && ma.ValueKind == JsonValueKind.String)
-                {
-                    var m = ma.GetString();
-                    if (!string.IsNullOrWhiteSpace(m)) macs.Add(m);
-                }
-                if (root.TryGetProperty("mac", out var mac) && mac.ValueKind == JsonValueKind.String)
-                {
-                    var m = mac.GetString();
-                    if (!string.IsNullOrWhiteSpace(m)) macs.Add(m);
-                }
+                catch { /* ignore */ }
 
-                if (root.TryGetProperty("macAddresses", out var arr) && arr.ValueKind == JsonValueKind.Array)
+                var items = CassiaFirmwareUpgradeService.GetQueueListSnapshot()
+                    .Select(x => new { mac = x.Mac, detectorType = x.DetectorType, firmwareVersion = x.FirmwareVersion })
+                    .ToList();
+
+                var resp = new
                 {
-                    foreach (var el in arr.EnumerateArray())
+                    success = true,
+                    message = "Queue list retrieved successfully.",
+                    requestId,
+                    name = CurrentOptions.Name,
+                    networkId = CurrentOptions.NetworkId,
+                    time = DateTimeOffset.UtcNow,
+                    count = items.Count,
+                    queueList = items
+                };
+
+                return PublishJsonAsync(TeleTopic("queue-list"), resp, retain: false, CancellationToken.None);
+            }
+
+            if (string.Equals(command, "get-programming-list", StringComparison.OrdinalIgnoreCase))
+            {
+                Log("HandleCommandAsync: dispatch get-programming-list");
+
+                string? requestId = null;
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(payload))
                     {
-                        if (el.ValueKind == JsonValueKind.String)
+                        using var doc = JsonDocument.Parse(payload);
+                        if (doc.RootElement.ValueKind == JsonValueKind.Object &&
+                            doc.RootElement.TryGetProperty("requestId", out var rid) &&
+                            rid.ValueKind == JsonValueKind.String)
+                            requestId = rid.GetString();
+                    }
+                }
+                catch { /* ignore */ }
+
+                var items = CassiaFirmwareUpgradeService.GetProgrammingListSnapshot()
+                    .Select(x => new { mac = x.Mac, detectorType = x.DetectorType, firmwareVersion = x.FirmwareVersion })
+                    .ToList();
+
+                var resp = new
+                {
+                    success = true,
+                    message = "Programming list retrieved successfully.",
+                    requestId,
+                    name = CurrentOptions.Name,
+                    networkId = CurrentOptions.NetworkId,
+                    time = DateTimeOffset.UtcNow,
+                    count = items.Count,
+                    programmingList = items
+                };
+
+                return PublishJsonAsync(TeleTopic("programming-list"), resp, retain: false, CancellationToken.None);
+            }
+
+            if (string.Equals(command, "get-device-list", StringComparison.OrdinalIgnoreCase))
+            {
+                Log("HandleCommandAsync: dispatch get-device-list");
+
+                string? requestId = null;
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(payload))
+                    {
+                        using var doc = JsonDocument.Parse(payload);
+                        if (doc.RootElement.ValueKind == JsonValueKind.Object &&
+                            doc.RootElement.TryGetProperty("requestId", out var rid) &&
+                            rid.ValueKind == JsonValueKind.String)
+                            requestId = rid.GetString();
+                    }
+                }
+                catch { /* ignore */ }
+
+                var items = DeviceStorageService.GetDeviceListSnapshot();
+
+                var resp = new
+                {
+                    success = true,
+                    message = "Device list retrieved successfully.",
+                    requestId,
+                    name = CurrentOptions.Name,
+                    networkId = CurrentOptions.NetworkId,
+                    time = DateTimeOffset.UtcNow,
+                    count = items.Count,
+                    deviceList = items
+                };
+
+                // One single message with full list.
+                return PublishJsonAsync(TeleTopic("device-list"), resp, retain: false, CancellationToken.None);
+            }
+
+            if (string.Equals(command, "remove-from-queue", StringComparison.OrdinalIgnoreCase))
+            {
+                Log("HandleCommandAsync: dispatch remove-from-queue");
+
+                // Accept payload as:
+                //  - "10:B9:F7:..."
+                //  - {"macAddress":"..."} / {"mac":"..."}
+                //  - {"macAddresses":["...","..."]} / {"macs":[...]}
+                //  - ["...","..."]
+                var macs = new List<string>();
+
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(payload))
+                    {
+                        using var doc = JsonDocument.Parse(payload);
+                        var root = doc.RootElement;
+
+                        if (root.ValueKind == JsonValueKind.String)
                         {
-                            var m = el.GetString();
+                            var m = root.GetString();
                             if (!string.IsNullOrWhiteSpace(m)) macs.Add(m);
+                        }
+                        else if (root.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var el in root.EnumerateArray())
+                            {
+                                if (el.ValueKind == JsonValueKind.String)
+                                {
+                                    var m = el.GetString();
+                                    if (!string.IsNullOrWhiteSpace(m)) macs.Add(m);
+                                }
+                            }
+                        }
+                        else if (root.ValueKind == JsonValueKind.Object)
+                        {
+                            if (root.TryGetProperty("macAddress", out var ma) && ma.ValueKind == JsonValueKind.String)
+                            {
+                                var m = ma.GetString();
+                                if (!string.IsNullOrWhiteSpace(m)) macs.Add(m);
+                            }
+                            if (root.TryGetProperty("mac", out var mac) && mac.ValueKind == JsonValueKind.String)
+                            {
+                                var m = mac.GetString();
+                                if (!string.IsNullOrWhiteSpace(m)) macs.Add(m);
+                            }
+
+                            if (root.TryGetProperty("macAddresses", out var arr) && arr.ValueKind == JsonValueKind.Array)
+                            {
+                                foreach (var el in arr.EnumerateArray())
+                                {
+                                    if (el.ValueKind == JsonValueKind.String)
+                                    {
+                                        var m = el.GetString();
+                                        if (!string.IsNullOrWhiteSpace(m)) macs.Add(m);
+                                    }
+                                }
+                            }
+                            if (root.TryGetProperty("macs", out var arr2) && arr2.ValueKind == JsonValueKind.Array)
+                            {
+                                foreach (var el in arr2.EnumerateArray())
+                                {
+                                    if (el.ValueKind == JsonValueKind.String)
+                                    {
+                                        var m = el.GetString();
+                                        if (!string.IsNullOrWhiteSpace(m)) macs.Add(m);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
-                if (root.TryGetProperty("macs", out var arr2) && arr2.ValueKind == JsonValueKind.Array)
+                catch
                 {
-                    foreach (var el in arr2.EnumerateArray())
+                    // If parsing fails, treat it as raw string
+                    if (!string.IsNullOrWhiteSpace(payload))
+                        macs.Add(payload.Trim('"', ' ', '\t', '\r', '\n'));
+                }
+
+                macs = macs
+                    .Where(m => !string.IsNullOrWhiteSpace(m))
+                    .Select(m => m.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                int removed = 0;
+                foreach (var m in macs)
+                    removed += CassiaFirmwareUpgradeService.RemoveFromUpgradeQueuePending(m);
+
+                var resp = new
+                {
+                    success = true,
+                    message = removed > 0 ? "Removed device(s) from pending queue." : "No matching pending devices found in queue.",
+                    name = CurrentOptions.Name,
+                    networkId = CurrentOptions.NetworkId,
+                    time = DateTimeOffset.UtcNow,
+                    requested = macs,
+                    removed
+                };
+
+                return PublishJsonAsync(TeleTopic("queue-remove"), resp, retain: false, CancellationToken.None);
+            }
+
+            if (string.Equals(command, "get-parallel-programmers", StringComparison.OrdinalIgnoreCase))
+            {
+                Log("HandleCommandAsync: dispatch get-parallel-programmers");
+
+                var current = CassiaFirmwareUpgradeService.GetParallelProgrammers();
+                var resp = new
+                {
+                    success = true,
+                    message = "Parallel programmers value retrieved successfully.",
+                    name = CurrentOptions.Name,
+                    networkId = CurrentOptions.NetworkId,
+                    time = DateTimeOffset.UtcNow,
+                    value = current
+                };
+
+                return PublishJsonAsync(TeleTopic("parallel-programmers"), resp, retain: false, CancellationToken.None);
+            }
+
+            if (string.Equals(command, "set-parallel-programmers", StringComparison.OrdinalIgnoreCase))
+            {
+                Log("HandleCommandAsync: dispatch set-parallel-programmers");
+
+                int? requested = null;
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(payload))
                     {
-                        if (el.ValueKind == JsonValueKind.String)
-                        {
-                            var m = el.GetString();
-                            if (!string.IsNullOrWhiteSpace(m)) macs.Add(m);
-                        }
+                        using var doc = JsonDocument.Parse(payload);
+                        if (doc.RootElement.ValueKind == JsonValueKind.Number &&
+                            doc.RootElement.TryGetInt32(out var v1))
+                            requested = v1;
+                        else if (doc.RootElement.ValueKind == JsonValueKind.Object &&
+                            doc.RootElement.TryGetProperty("value", out var v2) &&
+                            v2.ValueKind == JsonValueKind.Number &&
+                            v2.TryGetInt32(out var vObj))
+                            requested = vObj;
                     }
                 }
+                catch { /* ignore */ }
+
+                if (requested is null)
+                {
+                    var bad = new
+                    {
+                        success = false,
+                        message = "Missing integer value. Send payload like {\"value\":3} or just 3."
+                    };
+                    return PublishJsonAsync(TeleTopic("parallel-programmers"), bad, retain: false, CancellationToken.None);
+                }
+
+                var setTo = CassiaFirmwareUpgradeService.SetParallelProgrammers(requested.Value);
+
+                var resp = new
+                {
+                    success = true,
+                    message = "Parallel programmers value updated (runtime only; resets on restart).",
+                    name = CurrentOptions.Name,
+                    networkId = CurrentOptions.NetworkId,
+                    time = DateTimeOffset.UtcNow,
+                    requested = requested.Value,
+                    value = setTo
+                };
+
+                return PublishJsonAsync(TeleTopic("parallel-programmers"), resp, retain: false, CancellationToken.None);
             }
-        }
-    }
-    catch
-    {
-        // If parsing fails, treat it as raw string
-        if (!string.IsNullOrWhiteSpace(payload))
-            macs.Add(payload.Trim('"', ' ', '\t', '\r', '\n'));
-    }
 
-    macs = macs
-        .Where(m => !string.IsNullOrWhiteSpace(m))
-        .Select(m => m.Trim())
-        .Distinct(StringComparer.OrdinalIgnoreCase)
-        .ToList();
-
-    int removed = 0;
-    foreach (var m in macs)
-        removed += CassiaFirmwareUpgradeService.RemoveFromUpgradeQueuePending(m);
-
-    var resp = new
-    {
-        success = true,
-        message = removed > 0 ? "Removed device(s) from pending queue." : "No matching pending devices found in queue.",
-        name = CurrentOptions.Name,
-        networkId = CurrentOptions.NetworkId,
-        time = DateTimeOffset.UtcNow,
-        requested = macs,
-        removed
-    };
-
-    return PublishJsonAsync(TeleTopic("queue-remove"), resp, retain: false, CancellationToken.None);
-}
-
-if (string.Equals(command, "get-parallel-programmers", StringComparison.OrdinalIgnoreCase))
-{
-    Log("HandleCommandAsync: dispatch get-parallel-programmers");
-
-    var current = CassiaFirmwareUpgradeService.GetParallelProgrammers();
-    var resp = new
-    {
-        success = true,
-        message = "Parallel programmers value retrieved successfully.",
-        name = CurrentOptions.Name,
-        networkId = CurrentOptions.NetworkId,
-        time = DateTimeOffset.UtcNow,
-        value = current
-    };
-
-    return PublishJsonAsync(TeleTopic("parallel-programmers"), resp, retain: false, CancellationToken.None);
-}
-
-if (string.Equals(command, "set-parallel-programmers", StringComparison.OrdinalIgnoreCase))
-{
-    Log("HandleCommandAsync: dispatch set-parallel-programmers");
-
-    int? requested = null;
-    try
-    {
-        if (!string.IsNullOrWhiteSpace(payload))
-        {
-            using var doc = JsonDocument.Parse(payload);
-            if (doc.RootElement.ValueKind == JsonValueKind.Number &&
-                doc.RootElement.TryGetInt32(out var v1))
-                requested = v1;
-            else if (doc.RootElement.ValueKind == JsonValueKind.Object &&
-                doc.RootElement.TryGetProperty("value", out var v2) &&
-                v2.ValueKind == JsonValueKind.Number &&
-                v2.TryGetInt32(out var vObj))
-                requested = vObj;
-        }
-    }
-    catch { /* ignore */ }
-
-    if (requested is null)
-    {
-        var bad = new
-        {
-            success = false,
-            message = "Missing integer value. Send payload like {\"value\":3} or just 3."
-        };
-        return PublishJsonAsync(TeleTopic("parallel-programmers"), bad, retain: false, CancellationToken.None);
-    }
-
-    var setTo = CassiaFirmwareUpgradeService.SetParallelProgrammers(requested.Value);
-
-    var resp = new
-    {
-        success = true,
-        message = "Parallel programmers value updated (runtime only; resets on restart).",
-        name = CurrentOptions.Name,
-        networkId = CurrentOptions.NetworkId,
-        time = DateTimeOffset.UtcNow,
-        requested = requested.Value,
-        value = setTo
-    };
-
-    return PublishJsonAsync(TeleTopic("parallel-programmers"), resp, retain: false, CancellationToken.None);
-}
-
-if (string.Equals(command, "clear-upgrade-log", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(command, "clear-upgrade-log", StringComparison.OrdinalIgnoreCase))
             {
                 Log("HandleCommandAsync: dispatch clear-upgrade-log");
 
@@ -804,6 +804,56 @@ if (string.Equals(command, "clear-upgrade-log", StringComparison.OrdinalIgnoreCa
 
                 }
             }
+
+            if (string.Equals(command, "clear-device-settings-backups", StringComparison.OrdinalIgnoreCase))
+            {
+                Log("HandleCommandAsync: dispatch clear-device-settings-backups");
+
+                var currentDir = Directory.GetCurrentDirectory();
+                Console.WriteLine("Current Directory: " + currentDir);
+
+                var backupsDir = Path.Combine(currentDir, "device-settings-backups");
+
+                if (!Directory.Exists(backupsDir))
+                {
+                    Log("No device-settings-backups directory to clear.");
+                    return Task.CompletedTask;
+                }
+
+                try
+                {
+                    var files = Directory.GetFiles(backupsDir);
+
+                    if (files.Length == 0)
+                    {
+                        Log("device-settings-backups is already empty.");
+                        return Task.CompletedTask;
+                    }
+
+                    foreach (var file in files)
+                    {
+                        try
+                        {
+                            System.IO.File.Delete(file);
+                            Log($"Deleted backup file: {Path.GetFileName(file)}");
+                        }
+                        catch (Exception ex)
+                        {
+                            Log($"Failed to delete backup file '{file}': {ex.Message}");
+                        }
+                    }
+
+                    Log("Device settings backups cleared successfully.");
+                    return Task.CompletedTask;
+                }
+                catch (Exception ex)
+                {
+                    Log($"Error clearing device settings backups: {ex.Message}");
+                    return Task.CompletedTask;
+                }
+            }
+
+
             Log($"HandleCommandAsync: ignored (unknown command '{command}')");
             return Task.CompletedTask;
         }

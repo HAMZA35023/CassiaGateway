@@ -1,5 +1,6 @@
 ﻿using AccessAPP.Models;
 using AccessAPP.Services.HelperClasses;
+using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Concurrent;
@@ -952,13 +953,14 @@ public static int GetProgrammingCount()
                             UpgradeLogger.Log(logId, macAddress, "Settings backup skipped (no FW steps in this attempt)", "Info", FirmwareVersion);
                             Console.WriteLine($"Skipping settings backup for {macAddress} - no FW steps in this attempt");
                         }
-                        else if (!string.IsNullOrWhiteSpace(settingsBackupPath) && File.Exists(settingsBackupPath))
-                        {
-                            UpgradeLogger.Log(logId, macAddress, $"Settings backup already exists: {settingsBackupPath}", "Info", FirmwareVersion);
-                            Console.WriteLine($"Settings backup already exists for {macAddress}: {settingsBackupPath}");
-                        }
                         else
                         {
+                            if (!string.IsNullOrWhiteSpace(settingsBackupPath) && File.Exists(settingsBackupPath))
+                            {
+                                UpgradeLogger.Log(logId, macAddress, $"Settings backup already exists: {settingsBackupPath}", "Info", FirmwareVersion);
+                                Console.WriteLine($"Settings backup already exists for {macAddress}: {settingsBackupPath}");
+                            }
+
                             Console.WriteLine($"Starting settings backup for {macAddress}");
 
                         try
@@ -1012,7 +1014,7 @@ public static int GetProgrammingCount()
                                 response.Message = $"Settings backup failed (file missing): {settingsBackupPath}";
                                 UpgradeLogger.Log(logId, macAddress, response.Message, "Failed", FirmwareVersion);
                                 dev.LastFailureReason = response.Message;
-                                    dev.RetryCount++;
+                                dev.shouldRetry = false;
 
                                     return response;
                             }
@@ -1039,7 +1041,7 @@ public static int GetProgrammingCount()
                             UpgradeLogger.Log(logId, macAddress, response.Message, "Failed", FirmwareVersion);
                             Console.WriteLine($"[ERROR] Settings backup failed for {macAddress}: {ex}");
                             dev.LastFailureReason = response.Message;
-                                dev.RetryCount++;
+                            dev.shouldRetry = false;
 
                                 return response;
                         }
@@ -1125,6 +1127,9 @@ public static int GetProgrammingCount()
                     }
 
                     dev.SensorSuccess = true;
+
+                    await Task.Delay(20000).ConfigureAwait(false); // FIXED: must await
+
                 }
 
                 if (dev.ActorSuccess != true && dev.isActorUpgradeNeeded)
@@ -1260,6 +1265,7 @@ public static int GetProgrammingCount()
                                         response.StatusCode = 500;
                                         response.Message = $"Settings restore exception: {ex.Message}";
                                         dev.LastFailureReason = response.Message;
+                                        dev.shouldRetry = false;
                                         return response;
                                     }
                                 }
@@ -1271,6 +1277,8 @@ public static int GetProgrammingCount()
                                     UpgradeLogger.Log(logId, macAddress, "Settings restore skipped (device was in boot mode at start)", "Info", FirmwareVersion);
                                     Console.WriteLine($"[INFO] Settings restore skipped for {macAddress} - device was in boot mode at start");
                                     dev.isConfigRestored = false;
+                                    dev.shouldRetry = false;
+                                    dev.finalUpgradeResult = "Warn";
                                 }
                                 else
                                 {
@@ -1282,6 +1290,7 @@ public static int GetProgrammingCount()
                                         response.StatusCode = 404;
                                         response.Message = "Settings restore failed: backup file path missing";
                                         dev.LastFailureReason = response.Message;
+                                        dev.shouldRetry = false;
                                         return response;
                                     }
                                 }
@@ -1321,6 +1330,7 @@ public static int GetProgrammingCount()
                             response.StatusCode = 500;
                             response.Message = "DALI Restore 102 Database failed after retries";
                             dev.LastFailureReason = response.Message;
+                            dev.shouldRetry = false;
                             return response;
                         }
 
@@ -1342,6 +1352,7 @@ public static int GetProgrammingCount()
                 response.Success = true;
                 response.StatusCode = 200;
                 response.Message = "Sensor and actor upgrades completed successfully.";
+                dev.finalUpgradeResult = "Success";
 
                 if (response.Success)
                 {
@@ -2056,7 +2067,7 @@ try
                     bool sensorOk =
                         dev.SensorSuccess || dev.RetryCountSensor < maxRetriesPerComponent;
 
-                    return actorOk && bootOk && sensorOk;
+                    return actorOk && bootOk && sensorOk && dev.shouldRetry;
                 }
 
                 while (!dev.IsFullyUpgraded)
@@ -2133,7 +2144,7 @@ try
                     Status = "OK"
                 });
 
-                UpgradeLogger.Log(logId, mac, "Device Upgrade Completed.", dev.IsFullyUpgraded ? "Success" : "Failed");
+                UpgradeLogger.Log(logId, mac, "Device Upgrade Completed.", dev.finalUpgradeResult);
             }
             catch (Exception ex)
             {
@@ -3319,6 +3330,9 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
         public bool requiresConfigRestore = false;
         public bool requires102Restore = false;
         public bool restore102Success = false;
+        public bool shouldRetry = true;
+
+        public string finalUpgradeResult = "Failed";
 
         public bool IsFullyUpgraded
             => (!isActorUpgradeNeeded || ActorSuccess)

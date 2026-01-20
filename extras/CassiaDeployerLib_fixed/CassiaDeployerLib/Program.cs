@@ -45,9 +45,9 @@ internal static class Program
 
         // Auto-close after 5 seconds
         Console.WriteLine();
-        Console.WriteLine("Window will close in 5 seconds...");
+        Console.WriteLine("Press a button to exit...");
         Thread.Sleep(TimeSpan.FromSeconds(5));
-
+        Console.ReadKey(true);
         return exitCode;
     }
 
