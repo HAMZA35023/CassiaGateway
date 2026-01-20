@@ -1,0 +1,44 @@
+{
+  "Host": "192.168.40.1",
+  "Port": 20022,
+  "User": "cassia",
+  "Password": "",
+
+  "ProjectDir": "C:\\Users\\PLO\\source\\repos\\CassiaGateway\\AccessAPP",
+  "ProjectFile": "C:\\Users\\PLO\\source\\repos\\CassiaGateway\\AccessAPP\\AccessAPP.csproj",
+
+  "LocalPublishDir": "C:\\Users\\PLO\\source\\repos\\CassiaGateway\\AccessAPP\\publish",
+
+  "RemoteDir": "/home/cassia/FWUpgrade",
+  "RemoteExeName": "AccessAPP",
+  "ServiceName": "accessapp",
+
+  "SkipUnchanged": true,
+  "ManageService": true,
+  "InstallServiceIfMissing": true,
+  "UnmaskServiceIfMasked": true,
+
+  "ExtraChmod755Path": "/home/cassia/FWUpgrade/libBootloaderUtilMultiThread.so",
+  "RemoteManifestPath": "/home/cassia/FWUpgrade/.deploy_manifest.txt",
+
+  "PublishConfiguration": "Release",
+  "PublishRuntime": "linux-arm",
+  "SelfContained": true,
+
+  "EnsureSshKeyLogin": true,
+  "LocalSshPublicKeyPath": "C:\\Users\\PLO\\.ssh\\id_ed25519.pub",
+  "DisablePasswordAuthentication": false,
+  "RestartSshServiceAfterConfig": true,
+
+  "BulkWifiDeploy": true,
+  "BulkWifiSsidPrefix": "cassia-e4",
+  "BulkWifiMaxCount": 0,
+  "BulkWifiConnectTimeoutSeconds": 25,
+  "BulkWifiConnectAttempts": 5,
+  "BulkWifiConnectRetryDelayMs": 1500,
+  "BulkWifiScanPasses": 4,
+  "BulkWifiScanDelayMs": 1500,
+  "SshConnectAttempts": 10,
+  "SshConnectRetryDelayMs": 1500,
+  "BulkWifiAutoCreateProfile": true
+}

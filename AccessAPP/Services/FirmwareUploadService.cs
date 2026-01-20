@@ -9,6 +9,9 @@ namespace AccessAPP.Services
         private readonly ILogger<FirmwareUploadService> _logger;
         private readonly string _firmwareBasePath;
 
+        // Toggle: allow branch-prefixed tokens like B238 in underscore format
+        // (keep false for production if you don't want beta/branch builds)
+        const bool allowBranchToken = true;
         public FirmwareUploadService(ILogger<FirmwareUploadService> logger, IConfiguration configuration)
         {
             _logger = logger;
@@ -134,82 +137,140 @@ namespace AccessAPP.Services
         {
             try
             {
-                // Remove .zip extension for pattern matching
                 var filenameWithoutExt = Path.GetFileNameWithoutExtension(filename);
-                
-                // Pattern: 353PK2A238A238A2380604A238A238A238
-                // We need to:
-                // 1. Check if it contains "PK" (not "PD")
-                // 2. Extract the repeating version pattern
-                
-                if (!filenameWithoutExt.Contains("PK"))
-                {
-                    return new FirmwareValidationResult 
-                    { 
-                        IsValid = false, 
-                        ErrorMessage = "Invalid firmware type. Only PK firmware packages are supported (found PD or other type)." 
-                    };
-                }
 
-                if (filenameWithoutExt.Contains("PD"))
+                // Must be PK, and must NOT be PD
+                if (filenameWithoutExt.Contains("PD", StringComparison.OrdinalIgnoreCase))
                 {
-                    return new FirmwareValidationResult 
-                    { 
-                        IsValid = false, 
-                        ErrorMessage = "PD firmware type is not supported. Please upload PK firmware packages only." 
-                    };
-                }
-
-                // Extract version using regex pattern
-                // Looking for pattern like: 353PK2{version}{version}{version}0604{version}{version}{version}
-                var match = Regex.Match(filenameWithoutExt, @"353PK\d([A-Z]\d{3})(\1)(\1)\d{4}(\1)(\1)(\1)");
-                
-                if (!match.Success)
-                {
-                    // Try alternative pattern matching for version extraction
-                    var versionMatches = Regex.Matches(filenameWithoutExt, @"[A-Z]\d{3}");
-                    if (versionMatches.Count >= 3)
+                    return new FirmwareValidationResult
                     {
-                        var firstVersion = versionMatches[0].Value;
-                        // Check if the first version appears multiple times
-                        var occurrences = versionMatches.Cast<Match>().Count(m => m.Value == firstVersion);
-                        
-                        if (occurrences >= 3)
-                        {
-                            return new FirmwareValidationResult 
-                            { 
-                                IsValid = true, 
-                                ExtractedVersion = firstVersion,
-                                IsPKType = true
-                            };
-                        }
-                    }
-                    
-                    return new FirmwareValidationResult 
-                    { 
-                        IsValid = false, 
-                        ErrorMessage = $"Invalid firmware filename pattern. Expected pattern like '353PK2A238A238A2380604A238A238A238.zip' but got '{filename}'." 
+                        IsValid = false,
+                        ErrorMessage = "PD firmware type is not supported. Please upload PK firmware packages only."
                     };
                 }
 
-                var extractedVersion = match.Groups[1].Value;
-                
-                return new FirmwareValidationResult 
-                { 
-                    IsValid = true, 
-                    ExtractedVersion = extractedVersion,
-                    IsPKType = true
+                if (!filenameWithoutExt.Contains("PK", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new FirmwareValidationResult
+                    {
+                        IsValid = false,
+                        ErrorMessage = "Invalid firmware type. Only PK firmware packages are supported."
+                    };
+                }
+
+
+
+                // ----------------------------
+                // Format B: 353PK2_0234_0604_0105
+                // Optional: 353PK2_B238_0604_0105 (if allowBranchToken==true)
+                // ----------------------------
+                // Token rules:
+                //  - numeric: 4 digits (e.g. 0234)
+                //  - branch : B + 3 digits (e.g. B238) [optional]
+                string mainTokenPattern = allowBranchToken ? @"(?:\d{4}|B\d{3})" : @"(?:\d{4})";
+
+                var underscorePattern = $"^353PK\\d+_({mainTokenPattern})_(\\d{{4}})_(\\d{{4}})$";
+                var underscoreMatch = Regex.Match(filenameWithoutExt, underscorePattern, RegexOptions.IgnoreCase);
+
+                if (underscoreMatch.Success)
+                {
+                    var mainVersion = underscoreMatch.Groups[1].Value;
+
+                    // If branch tokens are disallowed, provide a precise message
+                    if (!allowBranchToken && mainVersion.Length == 4 && char.IsLetter(mainVersion[0]))
+                    {
+                        return new FirmwareValidationResult
+                        {
+                            IsValid = false,
+                            ErrorMessage =
+                                $"Invalid firmware filename pattern: branch-prefixed versions like '{mainVersion}' are not supported. " +
+                                $"Use numeric versions like '0234' (e.g. '353PK2_0234_0604_0105.zip')."
+                        };
+                    }
+
+                    return new FirmwareValidationResult
+                    {
+                        IsValid = true,
+                        ExtractedVersion = mainVersion,
+                        IsPKType = true
+                    };
+                }
+
+                // Special-case: looks like underscore format but fails because of Bxxx (or other token)
+                // e.g. 353PK2_B238_0604_0105
+                var looksLikeUnderscore = Regex.Match(
+                    filenameWithoutExt,
+                    @"^353PK\d+_([^_]+)_(\d{4})_(\d{4})$",
+                    RegexOptions.IgnoreCase);
+
+                if (looksLikeUnderscore.Success)
+                {
+                    var token = looksLikeUnderscore.Groups[1].Value;
+
+                    if (Regex.IsMatch(token, @"^[A-Za-z]\d{3}$") && !allowBranchToken)
+                    {
+                        return new FirmwareValidationResult
+                        {
+                            IsValid = false,
+                            ErrorMessage =
+                                $"Invalid firmware filename pattern: '{token}' looks like a branch/beta token. " +
+                                $"Branch-prefixed versions (e.g. 'B238') are not supported. " +
+                                $"Supported examples: '353PK2_0234_0604_0105.zip' or '353PK2A238A238A2380604A238A238A238.zip'."
+                        };
+                    }
+
+                    return new FirmwareValidationResult
+                    {
+                        IsValid = false,
+                        ErrorMessage =
+                            $"Invalid firmware filename pattern: expected main version token '{(allowBranchToken ? "NNNN or BNNN" : "NNNN")}', " +
+                            $"but got '{token}'. Supported examples: '353PK2_0234_0604_0105.zip' or '353PK2A238A238A2380604A238A238A238.zip'."
+                    };
+                }
+
+                // ----------------------------
+                // Format A: 353PK2A238A238A2380604A238A238A238
+                // - 3x token, then 0604, then 3x token
+                // - token is letter + 3 digits, and must repeat
+                // ----------------------------
+                var repeatingMatch = Regex.Match(
+                    filenameWithoutExt,
+                    @"^353PK\d+([A-Z]\d{3})(\1)(\1)\d{4}(\1)(\1)(\1)$",
+                    RegexOptions.IgnoreCase);
+
+                if (repeatingMatch.Success)
+                {
+                    var extractedVersion = repeatingMatch.Groups[1].Value;
+
+                    return new FirmwareValidationResult
+                    {
+                        IsValid = true,
+                        ExtractedVersion = extractedVersion,
+                        IsPKType = true
+                    };
+                }
+
+                // No more "loose fallback" acceptance — fail with a clear message
+                return new FirmwareValidationResult
+                {
+                    IsValid = false,
+                    ErrorMessage =
+                        $"Invalid firmware filename pattern. Supported examples: " +
+                        $"'353PK2A238A238A2380604A238A238A238.zip' or '353PK2_0234_0604_0105.zip' " +
+                        $"but got '{filename}'."
                 };
             }
             catch (Exception ex)
             {
-                return new FirmwareValidationResult 
-                { 
-                    IsValid = false, 
-                    ErrorMessage = $"Error validating filename pattern: {ex.Message}" 
+                return new FirmwareValidationResult
+                {
+                    IsValid = false,
+                    ErrorMessage = $"Error validating filename pattern: {ex.Message}"
                 };
             }
         }
+
+
 
         private async Task<ExtractResult> ExtractAndValidateArchive(ZipArchive archive, string targetDirectory)
         {

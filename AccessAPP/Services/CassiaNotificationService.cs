@@ -4,6 +4,10 @@ using AccessAPP.Services;
 
 public class CassiaNotificationService : IDisposable
 {
+
+    const bool _DEBUG = false;
+    const bool _VERBOSE = false;
+
     private static readonly HttpClient _httpClient = new HttpClient();
     private readonly ConcurrentDictionary<string, EventHandler<string>> _eventHandlers;
     private readonly ConcurrentDictionary<string, string> _lastEventData;
@@ -66,6 +70,7 @@ public class CassiaNotificationService : IDisposable
 
                     if (line.StartsWith("data:"))
                     {
+                        if (_DEBUG)
                         Console.WriteLine("SSE Raw data: " + line);
                         line = line.Substring("data:".Length).Trim();
                         Task.Run(() => InvokeHandlers(line));

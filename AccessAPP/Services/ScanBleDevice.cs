@@ -1,6 +1,7 @@
 ﻿using AccessAPP.Models;
 using AccessAPP.Services;
 using AccessAPP.Services.HelperClasses;
+using System.Collections.Concurrent;
 using System.Text.Json;
 
 public class ScanBleDevice : IDisposable
@@ -18,6 +19,10 @@ public class ScanBleDevice : IDisposable
     private static bool _buttonPressed = false; // Track if the button has been pressed
     private CassiaFirmwareUpgradeService _firmUpgradeService;
 
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _lastProcessedPerMac
+    = new ConcurrentDictionary<string, DateTimeOffset>();
+
+    private static readonly TimeSpan PerMacParseInterval = TimeSpan.FromSeconds(10);
     public ScanBleDevice(HttpClient httpClient, IConfiguration configuration, ILogger<ScanBleDevice> logger, CassiaConnectService connectService, DeviceStorageService deviceStorageService, CassiaFirmwareUpgradeService firmUpgradeService)
     {
         _connectService = connectService;
@@ -29,7 +34,7 @@ public class ScanBleDevice : IDisposable
         string gatewayIpAddress = configuration.GetValue<string>("GatewayConfiguration:IpAddress");
         int gatewayPort = configuration.GetValue<int>("GatewayConfiguration:Port");
 
-        _scanSourceUrl = $"http://{gatewayIpAddress}:{gatewayPort}/gap/nodes?event=1&filter_duplicates=1&filter_mac={_targetMacAddress}&active=1";
+        _scanSourceUrl = $"http://{gatewayIpAddress}:{gatewayPort}/gap/nodes?event=1&filter_duplicates=0&filter_mac={_targetMacAddress}&active=1";
 
         StartScanListener();
     }
@@ -51,8 +56,8 @@ public class ScanBleDevice : IDisposable
         {
             if (_firmUpgradeService.UpgradeDevicesInProgress > 0)
             {
-                await Task.Delay(10000); // Retry delay
-                continue;
+                //await Task.Delay(10000); // Retry delay
+                //continue;
             }
 
             try
@@ -67,7 +72,7 @@ public class ScanBleDevice : IDisposable
                 {
                     if (_firmUpgradeService.UpgradeDevicesInProgress > 0)
                     {
-                        break;
+                        //break;
                     }
 
                     string line = await reader.ReadLineAsync();
@@ -116,6 +121,18 @@ public class ScanBleDevice : IDisposable
 
             if (!string.IsNullOrEmpty(eventData.scanData))
             {
+
+                var now = DateTimeOffset.UtcNow;
+
+                // ---- PER-MAC 10s DEBOUNCE ----
+                if (_lastProcessedPerMac.TryGetValue(mac, out var lastTs) &&
+                    now - lastTs < PerMacParseInterval)
+                {
+                    return;
+                }
+
+                _lastProcessedPerMac[mac] = now;
+
                 productNumber = ScanDataParser.ExtractProductNumber(eventData.scanData);
                 if (eventData.scanData.Length >= 50)
                 {
@@ -159,7 +176,7 @@ public class ScanBleDevice : IDisposable
             if (!string.IsNullOrEmpty(eventData.scanData))
             {
                 _deviceStorageService.AddOrUpdateDevice(enrichedDevice, enrichedDevice.rssi);
-                _logger.LogInformation($"Device MAC={mac}, Locked={isLocked}, Product={productNumber}");
+                //_logger.LogInformation($"Device MAC={mac}, Locked={isLocked}, Product={productNumber}");
             }
         }
         catch (Exception ex)

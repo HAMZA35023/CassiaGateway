@@ -1,0 +1,13 @@
+AccessApp Cassia backend:
+
+CRITICAL:
+
+
+MAJOR:
+- Implement feature to get the current firmware version from from a device by MQTT command
+
+MINOR:
+- Queue can be stuck if an error happens - make sure to handle that
+
+- On error make sure to disconnect from sensor again!
+        -> HAVE made sure the while loop can exit efter retry limit reached - to test!
