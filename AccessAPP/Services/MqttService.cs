@@ -776,7 +776,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 return PublishJsonAsync(TeleTopic("parallel-programmers"), resp, retain: false, CancellationToken.None);
             }
 
-            if (string.Equals(command, "clear-upgrade-log", StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(command, "clear-upgrade-log", StringComparison.OrdinalIgnoreCase))
             {
                 Log("HandleCommandAsync: dispatch clear-upgrade-log");
 
@@ -810,46 +810,71 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 Log("HandleCommandAsync: dispatch clear-device-settings-backups");
 
                 var currentDir = Directory.GetCurrentDirectory();
-                Console.WriteLine("Current Directory: " + currentDir);
-
                 var backupsDir = Path.Combine(currentDir, "device-settings-backups");
 
                 if (!Directory.Exists(backupsDir))
                 {
-                    Log("No device-settings-backups directory to clear.");
-                    return Task.CompletedTask;
+                    var bad = new
+                    {
+                        success = false,
+                        message = "device-settings-backups directory does not exist."
+                    };
+
+                    return PublishJsonAsync(
+                        TeleTopic("clear-device-settings-backups"),
+                        bad,
+                        retain: false,
+                        CancellationToken.None);
                 }
 
                 try
                 {
                     var files = Directory.GetFiles(backupsDir);
-
-                    if (files.Length == 0)
-                    {
-                        Log("device-settings-backups is already empty.");
-                        return Task.CompletedTask;
-                    }
+                    int deleted = 0;
+                    int failed = 0;
 
                     foreach (var file in files)
                     {
                         try
                         {
                             System.IO.File.Delete(file);
-                            Log($"Deleted backup file: {Path.GetFileName(file)}");
+                            deleted++;
                         }
-                        catch (Exception ex)
+                        catch
                         {
-                            Log($"Failed to delete backup file '{file}': {ex.Message}");
+                            failed++;
                         }
                     }
 
-                    Log("Device settings backups cleared successfully.");
-                    return Task.CompletedTask;
+                    var ok = new
+                    {
+                        success = true,
+                        message = $"Device settings backups cleared. Deleted={deleted}, Failed={failed}."
+                    };
+
+                    Log(ok.message);
+
+                    return PublishJsonAsync(
+                        TeleTopic("clear-device-settings-backups"),
+                        ok,
+                        retain: false,
+                        CancellationToken.None);
                 }
                 catch (Exception ex)
                 {
-                    Log($"Error clearing device settings backups: {ex.Message}");
-                    return Task.CompletedTask;
+                    var bad = new
+                    {
+                        success = false,
+                        message = $"Error clearing device settings backups: {ex.Message}"
+                    };
+
+                    Log(bad.message);
+
+                    return PublishJsonAsync(
+                        TeleTopic("clear-device-settings-backups"),
+                        bad,
+                        retain: false,
+                        CancellationToken.None);
                 }
             }
 

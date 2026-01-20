@@ -422,16 +422,20 @@ public static int GetProgrammingCount()
             return resp;
         }
 
-        public async Task<ServiceResponse> UpgradeSensorAsync(string nodeMac, string pincode, bool bActor, bool isBootloader, string DetectorType, string FirmwareVersion, string logId = null)
+        public async Task<ServiceResponse> UpgradeSensorAsync(
+            string nodeMac,
+            string pincode,
+            bool bActor,
+            bool isBootloader,
+            string DetectorType,
+            string FirmwareVersion,
+            string logId = null)
         {
-
-            // Step 1: Connect to the device
             ServiceResponse response = new ServiceResponse();
             sensorType = DetectorType;
-            if (logId == "")
-            {
+
+            if (string.IsNullOrWhiteSpace(logId))
                 logId = $"{nodeMac.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
-            }
 
             UpgradeLogger.Log(
                 logId,
@@ -441,175 +445,395 @@ public static int GetProgrammingCount()
                 DetectorType
             );
 
-            var connectionResult = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
-            if (connectionResult.Status != HttpStatusCode.OK)
+            // ----------------------------
+            // Local helpers (no new deps)
+            // ----------------------------
+
+            const int connectMaxAttempts = 5;
+            const int loginMaxAttempts = 3;
+            const int bootJumpMaxAttempts = 5;
+
+            async Task<bool> ConnectWithRetryAsync(string stepName)
             {
-                UpgradeLogger.Log(logId, nodeMac, "Connected", "Failed");
+                for (int attempt = 1; attempt <= connectMaxAttempts; attempt++)
+                {
+                    try
+                    {
+                        var cr = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
+                        if (cr.Status == HttpStatusCode.OK)
+                        {
+                            UpgradeLogger.Log(logId, nodeMac, stepName, $"Success (attempt {attempt}/{connectMaxAttempts})");
+                            return true;
+                        }
+
+                        UpgradeLogger.Log(logId, nodeMac, stepName, $"Failed (attempt {attempt}/{connectMaxAttempts})");
+                    }
+                    catch (Exception ex)
+                    {
+                        UpgradeLogger.Log(logId, nodeMac, stepName, $"Exception (attempt {attempt}/{connectMaxAttempts}): {ex.Message}");
+                    }
+
+                    // Backoff (fast -> slower)
+                    int delay = attempt switch
+                    {
+                        1 => 1500,
+                        2 => 3000,
+                        3 => 5000,
+                        _ => 8000
+                    };
+                    await Task.Delay(delay);
+                }
+
+                return false;
+            }
+
+            async Task<bool> LoginWithRetryAsync()
+            {
+                for (int attempt = 1; attempt <= loginMaxAttempts; attempt++)
+                {
+                    try
+                    {
+                        var loginResult = await _connectService.AttemptLogin(_gatewayIpAddress, nodeMac);
+
+                        bool pinReq = loginResult.ResponseBody.PincodeRequired;
+                        if (pinReq && !string.IsNullOrEmpty(pincode))
+                        {
+                            var check = await _cassiaPinCodeService.CheckPincode(_gatewayIpAddress, nodeMac, pincode);
+                            loginResult.ResponseBody = check.ResponseBody;
+                            loginResult.ResponseBody.PincodeRequired = pinReq;
+                        }
+
+                        // NOTE: you previously commented out the "fail if not accepted".
+                        // Keep your behavior: log success and continue.
+                        UpgradeLogger.Log(logId, nodeMac, "LoggedIn", $"Success (attempt {attempt}/{loginMaxAttempts})");
+                        return true;
+                    }
+                    catch (Exception ex)
+                    {
+                        UpgradeLogger.Log(logId, nodeMac, "Login", $"Exception (attempt {attempt}/{loginMaxAttempts}): {ex.Message}");
+                    }
+
+                    await Task.Delay(2000);
+                }
+                return false;
+            }
+
+            async Task<bool> EnsureBootModeAsync()
+            {
+                // Quick check first
+                if (CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac))
+                {
+                    UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
+                    return true;
+                }
+
+                // Try to jump multiple times, each time reconnect and verify
+                for (int attempt = 1; attempt <= bootJumpMaxAttempts; attempt++)
+                {
+                    bool jumpOk = false;
+                    try
+                    {
+                        jumpOk = await SendJumpToBootloader(_gatewayIpAddress, nodeMac, bActor);
+                    }
+                    catch (Exception ex)
+                    {
+                        UpgradeLogger.Log(logId, nodeMac, "JumpToBootloader", $"Exception (attempt {attempt}/{bootJumpMaxAttempts}): {ex.Message}");
+                    }
+
+                    if (!jumpOk)
+                    {
+                        UpgradeLogger.Log(logId, nodeMac, "JumpToBootloader", $"Failed (attempt {attempt}/{bootJumpMaxAttempts})");
+                        await Task.Delay(3000);
+                        continue;
+                    }
+
+                    UpgradeLogger.Log(logId, nodeMac, "JumpToBootloader", $"Sent (attempt {attempt}/{bootJumpMaxAttempts})");
+
+                    // Give device time to switch to bootloader
+                    await Task.Delay(10000);
+
+                    // Reconnect after jump (robust)
+                    if (!await ConnectWithRetryAsync("Connect After JumpToBoot"))
+                    {
+                        UpgradeLogger.Log(logId, nodeMac, "Connect After JumpToBoot", $"Failed (attempt {attempt}/{bootJumpMaxAttempts})");
+                        await Task.Delay(3000);
+                        continue;
+                    }
+
+                    // Verify boot mode (sometimes needs multiple checks)
+                    for (int verify = 1; verify <= 5; verify++)
+                    {
+                        bool isBoot = false;
+                        try
+                        {
+                            isBoot = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
+                        }
+                        catch (Exception ex)
+                        {
+                            UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", $"Check exception (verify {verify}/5): {ex.Message}");
+                        }
+
+                        if (isBoot)
+                        {
+                            UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Achieved");
+                            Console.WriteLine($"Device entered boot mode after {attempt} jump attempts.");
+                            return true;
+                        }
+
+                        UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", $"NotYet (verify {verify}/5, attempt {attempt}/{bootJumpMaxAttempts})");
+                        await Task.Delay(1500);
+                    }
+
+                    // Try again
+                    await Task.Delay(3000);
+                }
+
+                UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Failed");
+                return false;
+            }
+
+            // ----------------------------
+            // Step 1: Connect (robust)
+            // ----------------------------
+            if (!await ConnectWithRetryAsync("Connected"))
+            {
                 response.Success = false;
-                response.StatusCode = (int)connectionResult.Status;
+                response.StatusCode = 500;
                 response.Message = "Failed to connect to device.";
                 return response;
             }
-            UpgradeLogger.Log(logId, nodeMac, "Connected", "Success");
+
             Console.WriteLine($"Connected to device...{nodeMac}");
 
-            bool isAlreadyInBootMode = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
-            if (isAlreadyInBootMode)
+            // If already in boot mode, skip login/jump and go directly to processing
+            if (CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac))
             {
                 Console.WriteLine($"Device is already in boot mode. -> {nodeMac}");
                 UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
                 await Task.Delay(3000);
-                var serviceResponse = await ProcessingSensorUpgrade(nodeMac, bActor, isBootloader, DetectorType, FirmwareVersion, logId);
-                return serviceResponse;
+
+                return await ProcessingSensorUpgrade(nodeMac, bActor, isBootloader, DetectorType, FirmwareVersion, logId);
             }
-            else
+
+            // ----------------------------
+            // Step 2: Login (robust)
+            // ----------------------------
+            if (!await LoginWithRetryAsync())
             {
-                // Step 2: Attempt login if needed
-                var loginResult = await _connectService.AttemptLogin(_gatewayIpAddress, nodeMac);
-                bool pincodereq = loginResult.ResponseBody.PincodeRequired;
-                if (loginResult.ResponseBody.PincodeRequired && !string.IsNullOrEmpty(pincode))
-                {
-                    var checkPincodeResponse = await _cassiaPinCodeService.CheckPincode(_gatewayIpAddress, nodeMac, pincode);
-                    loginResult.ResponseBody = checkPincodeResponse.ResponseBody;
-                    loginResult.ResponseBody.PincodeRequired = pincodereq;
-                }
-
-                //if (loginResult.ResponseBody.PincodeRequired && !loginResult.ResponseBody.PinCodeAccepted)
-                //{
-                //    UpgradeLogger.Log(logId, nodeMac, "Login", "Failed");
-                //    response.Success = false;
-                //    response.StatusCode = 401; // Unauthorized
-                //    response.Message = "Failed to login to the device.";
-                //    return response;
-                //}
-                UpgradeLogger.Log(logId, nodeMac, "LoggedIn", "Success");
-                Console.WriteLine($"Logged into device...{nodeMac}");
-
-                // Send Jump to Bootloader telegram repeatedly until successful
-                const int maxAttempts = 5;
-                bool bootModeAchieved = false;
-                bool isBootModeAchieved = false;
-                for (int attempt = 0; attempt < maxAttempts; attempt++)
-                {
-                    bootModeAchieved = await SendJumpToBootloader(_gatewayIpAddress, nodeMac, bActor);
-                    await Task.Delay(10000);
-                    var CR = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
-                    if (CR.Status != HttpStatusCode.OK)
-                    {
-                        UpgradeLogger.Log(logId, nodeMac, "Connected", "Failed");
-                        response.Success = false;
-                        response.StatusCode = (int)CR.Status;
-                        response.Message = "Failed to connect to device.";
-                        return response;
-                    }
-                    UpgradeLogger.Log(logId, nodeMac, "Connected", "Success");
-                    Console.WriteLine($"Connected to device...{nodeMac}");
-
-                    isBootModeAchieved = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
-                    if (isBootModeAchieved)
-                    {
-                        UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Achieved");
-                        Console.WriteLine($"Device entered boot mode after {attempt + 1} attempts.");
-                        break;
-                    }
-                    Console.WriteLine($"Attempt {attempt + 1} to enter boot mode failed. Retrying...");
-                    await Task.Delay(3000); // Delay between attempts
-                }
-
-                if (!isBootModeAchieved)
-                {
-                    UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Failed");
-                    response.Success = false;
-                    response.StatusCode = 417; // Expectation Failed
-                    response.Message = "Failed to enter boot mode.";
-                    return response;
-                }
-
-                // Disconnect and prepare for the upgrade process
-                Console.WriteLine("device disconnected and will reconnect after 3s");
-                var isDisconnected = await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0);
-                UpgradeLogger.Log(logId, nodeMac, "Disconnected", "Success");
-                await Task.Delay(3000);
-
-                var serviceResponse = await ProcessingSensorUpgrade(nodeMac, bActor, isBootloader, DetectorType, FirmwareVersion, logId);
-                return serviceResponse;
+                response.Success = false;
+                response.StatusCode = 401;
+                response.Message = "Failed to login to the device.";
+                UpgradeLogger.Log(logId, nodeMac, "Login", "Failed");
+                return response;
             }
+
+            Console.WriteLine($"Logged into device...{nodeMac}");
+
+            // ----------------------------
+            // Step 3: Jump to bootloader + verify (robust)
+            // ----------------------------
+            if (!await EnsureBootModeAsync())
+            {
+                response.Success = false;
+                response.StatusCode = 417;
+                response.Message = "Failed to enter boot mode.";
+                return response;
+            }
+
+            // ----------------------------
+            // Disconnect and prepare for upgrade process
+            // ----------------------------
+            try
+            {
+                Console.WriteLine("device disconnected and will reconnect after 3s");
+                await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0);
+                UpgradeLogger.Log(logId, nodeMac, "Disconnected", "Success");
+            }
+            catch (Exception ex)
+            {
+                UpgradeLogger.Log(logId, nodeMac, "Disconnected", $"Exception: {ex.Message}");
+                // continue anyway (device might already have dropped)
+            }
+
+            await Task.Delay(3000);
+
+            // Now do the actual programming flow
+            return await ProcessingSensorUpgrade(nodeMac, bActor, isBootloader, DetectorType, FirmwareVersion, logId);
         }
-        public async Task<ServiceResponse> UpgradeActorAsync(string nodeMac, string pincode, bool bActor, string DetectorType, string FirmwareVersion, string logId)
+        public async Task<ServiceResponse> UpgradeActorAsync(
+            string nodeMac,
+            string pincode,
+            bool bActor,
+            string DetectorType,
+            string FirmwareVersion,
+            string logId)
         {
             UpgradeLogger.Log(logId, nodeMac, "Process Start Actor Upgrade", "Success");
             ServiceResponse response = new();
-            var connectionResult = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
-            if (connectionResult.Status != HttpStatusCode.OK)
+
+            const int connectMaxAttempts = 5;
+            const int loginMaxAttempts = 3;
+            const int bootJumpMaxAttempts = 3;
+
+            async Task<bool> ConnectWithRetryAsync(string stepName)
             {
-                UpgradeLogger.Log(logId, nodeMac, "Connected", "Failed");
+                for (int attempt = 1; attempt <= connectMaxAttempts; attempt++)
+                {
+                    try
+                    {
+                        var cr = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
+                        if (cr.Status == HttpStatusCode.OK)
+                        {
+                            UpgradeLogger.Log(logId, nodeMac, stepName, $"Success (attempt {attempt}/{connectMaxAttempts})");
+                            return true;
+                        }
+
+                        UpgradeLogger.Log(logId, nodeMac, stepName, $"Failed (attempt {attempt}/{connectMaxAttempts})");
+                    }
+                    catch (Exception ex)
+                    {
+                        UpgradeLogger.Log(logId, nodeMac, stepName, $"Exception (attempt {attempt}/{connectMaxAttempts}): {ex.Message}");
+                    }
+
+                    int delay = attempt switch
+                    {
+                        1 => 1500,
+                        2 => 3000,
+                        3 => 5000,
+                        _ => 8000
+                    };
+                    await Task.Delay(delay);
+                }
+
+                return false;
+            }
+
+            async Task<bool> LoginWithRetryAsync()
+            {
+                for (int attempt = 1; attempt <= loginMaxAttempts; attempt++)
+                {
+                    try
+                    {
+                        var loginResult = await _connectService.AttemptLogin(_gatewayIpAddress, nodeMac);
+
+                        if (loginResult.ResponseBody.PincodeRequired && !string.IsNullOrEmpty(pincode))
+                        {
+                            var check = await _cassiaPinCodeService.CheckPincode(_gatewayIpAddress, nodeMac, pincode);
+                            loginResult.ResponseBody = check.ResponseBody;
+                        }
+
+                        // For actor you DO enforce pincode accepted (keeps your original behavior)
+                        if (loginResult.ResponseBody.PincodeRequired && !loginResult.ResponseBody.PinCodeAccepted)
+                        {
+                            UpgradeLogger.Log(logId, nodeMac, "Login", $"Failed (attempt {attempt}/{loginMaxAttempts})");
+                            await Task.Delay(2000);
+                            continue;
+                        }
+
+                        UpgradeLogger.Log(logId, nodeMac, "LoggedIn", $"Success (attempt {attempt}/{loginMaxAttempts})");
+                        return true;
+                    }
+                    catch (Exception ex)
+                    {
+                        UpgradeLogger.Log(logId, nodeMac, "Login", $"Exception (attempt {attempt}/{loginMaxAttempts}): {ex.Message}");
+                    }
+
+                    await Task.Delay(2000);
+                }
+
+                return false;
+            }
+
+            async Task<bool> JumpActorToBootModeAsync()
+            {
+                for (int attempt = 1; attempt <= bootJumpMaxAttempts; attempt++)
+                {
+                    bool jumpOk = false;
+                    try
+                    {
+                        jumpOk = await SendJumpToBootloader(_gatewayIpAddress, nodeMac, bActor);
+                    }
+                    catch (Exception ex)
+                    {
+                        UpgradeLogger.Log(logId, nodeMac, "Actor BootMode", $"Jump exception (attempt {attempt}/{bootJumpMaxAttempts}): {ex.Message}");
+                    }
+
+                    if (jumpOk)
+                    {
+                        UpgradeLogger.Log(logId, nodeMac, "Actor BootMode", $"JumpSent (attempt {attempt}/{bootJumpMaxAttempts})");
+                        return true;
+                    }
+
+                    UpgradeLogger.Log(logId, nodeMac, "Actor BootMode", $"JumpFailed (attempt {attempt}/{bootJumpMaxAttempts})");
+                    await Task.Delay(5000);
+                }
+
+                return false;
+            }
+
+            // ----------------------------
+            // Step 1: Connect (robust)
+            // ----------------------------
+            if (!await ConnectWithRetryAsync("Connected"))
+            {
                 response.Success = false;
-                response.StatusCode = (int)connectionResult.Status;
+                response.StatusCode = 500;
                 response.Message = "Failed to connect to device.";
                 return response;
             }
-            UpgradeLogger.Log(logId, nodeMac, "Connected", "Success");
+
             Console.WriteLine($"Connected to device...{nodeMac}");
 
-            bool isAlreadyInBootMode = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
-            if (isAlreadyInBootMode)
+            // If sensor is already in boot mode -> actor upgrade cannot proceed
+            if (CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac))
             {
                 UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
+
                 response.Success = false;
-                response.StatusCode = 409; // Conflict
+                response.StatusCode = 409;
                 response.Message = "Sensor is already in boot mode. It needs to be in Application mode.";
-                
+
                 UpgradeLogger.Log(logId, nodeMac, "Disconnected as sensor is in bootmode", "Info");
 
-                await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0);
+                try
+                {
+                    await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0);
+                }
+                catch { /* ignore */ }
 
                 await Task.Delay(5000);
                 return response;
             }
-            else
+
+            // ----------------------------
+            // Step 2: Login (robust)
+            // ----------------------------
+            if (!await LoginWithRetryAsync())
             {
-                UpgradeLogger.Log(logId, nodeMac, "LoggedIn", "Success");
-                Console.WriteLine($"Login to device...{nodeMac}");
-                //Step 2: Attempt login if needed
-                var loginResult = await _connectService.AttemptLogin(_gatewayIpAddress, nodeMac);
-                if (loginResult.ResponseBody.PincodeRequired && !string.IsNullOrEmpty(pincode))
-                {
-                    var checkPincodeResponse = await _cassiaPinCodeService.CheckPincode(_gatewayIpAddress, nodeMac, pincode);
-                    loginResult.ResponseBody = checkPincodeResponse.ResponseBody;
-                }
-
-                if (loginResult.ResponseBody.PincodeRequired && !loginResult.ResponseBody.PinCodeAccepted)
-                {
-                    response.Success = false;
-                    response.StatusCode = 401; // Unauthorized
-                    response.Message = "Failed to login to the device.";
-                    return response;
-                }
-
-                Console.WriteLine($"Logged into device...{nodeMac}");
-
-
-                // Send Jump to Bootloader telegram
-                bool jumpToBootResponse = await SendJumpToBootloader(_gatewayIpAddress, nodeMac, bActor);
-                if (!jumpToBootResponse)
-                {
-                    UpgradeLogger.Log(logId, nodeMac, "Actor BootMode", "Failed");
-                    response.Success = false;
-                    response.StatusCode = 417; // Expectation Failed
-                    response.Message = "Failed to enter boot mode.";
-                    return response;
-                }
-                UpgradeLogger.Log(logId, nodeMac, "Actor BootMode", "Achieved");
-                Console.WriteLine(jumpToBootResponse);
-
-                // Delays for 3 seconds (3000 milliseconds) before connecting to device again
-                //var isDisConnected = await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0);
-                //await Task.Delay(3000);
-                var serviceResponse = await ProcessingActorUpgrade(nodeMac, bActor, DetectorType, FirmwareVersion, logId);
-
-                return serviceResponse;
-
+                response.Success = false;
+                response.StatusCode = 401;
+                response.Message = "Failed to login to the device.";
+                return response;
             }
+
+            Console.WriteLine($"Logged into device...{nodeMac}");
+
+            // ----------------------------
+            // Step 3: Jump actor to bootloader (robust)
+            // ----------------------------
+            if (!await JumpActorToBootModeAsync())
+            {
+                UpgradeLogger.Log(logId, nodeMac, "Actor BootMode", "Failed");
+                response.Success = false;
+                response.StatusCode = 417;
+                response.Message = "Failed to enter boot mode.";
+                return response;
+            }
+
+            UpgradeLogger.Log(logId, nodeMac, "Actor BootMode", "Achieved");
+
+            // Proceed to programming step (existing flow)
+            return await ProcessingActorUpgrade(nodeMac, bActor, DetectorType, FirmwareVersion, logId);
         }
 
         public async Task<ServiceResponse> BulkUpgradeActorsAsync(List<BulkUpgradeRequest> requests)
@@ -893,41 +1117,93 @@ public static int GetProgrammingCount()
         {
             var response = new ServiceResponse();
 
-            bool disable_update = false; //used to test restore config without updating firmware
+            bool disable_update = false; // used to test restore config without updating firmware
 
             // NEW: Backup/restore settings (hex strings) to a file before/after upgrade
             string? settingsBackupPath = dev.SettingsBackupPath;
+
+            // ---- Local helper: Connect only (robust) ----
+            async Task<(bool ok, HttpStatusCode code, string msg)> ConnectOnlyWithRetryAsync(
+                int maxAttempts,
+                int delayMs,
+                string stageName,
+                bool logSuccess = true)
+            {
+                HttpStatusCode last = 0;
+                string lastMsg = "Connect failed";
+
+                for (int attempt = 1; attempt <= maxAttempts; attempt++)
+                {
+                    try
+                    {
+                        var cr = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, macAddress).ConfigureAwait(false);
+                        last = cr.Status;
+
+                        if (cr.Status == HttpStatusCode.OK)
+                        {
+                            if (logSuccess)
+                                UpgradeLogger.Log(logId, macAddress, stageName, $"Success (attempt {attempt}/{maxAttempts})", FirmwareVersion);
+                            return (true, cr.Status, "OK");
+                        }
+
+                        UpgradeLogger.Log(logId, macAddress, stageName, $"Failed (attempt {attempt}/{maxAttempts})", FirmwareVersion);
+                        lastMsg = $"Connect failed ({cr.Status})";
+                    }
+                    catch (Exception ex)
+                    {
+                        UpgradeLogger.Log(logId, macAddress, stageName, $"Exception (attempt {attempt}/{maxAttempts}): {ex.Message}", FirmwareVersion);
+                        lastMsg = ex.Message;
+                    }
+
+                    // extra cooldown for 417 right after boot transitions
+                    if ((int)last == 417)
+                        await Task.Delay(delayMs + 4000).ConfigureAwait(false);
+                    else
+                        await Task.Delay(delayMs).ConfigureAwait(false);
+                }
+
+                return (false, last, lastMsg);
+            }
 
             try
             {
                 UpgradeLogger.Log(logId, macAddress, "Process Start Device Async", "Success", FirmwareVersion);
 
-
-                //Get FW Version:
+                // --------------------------------------------------------------------
+                // 0) Determine boot/application mode early (best-effort + robust connect)
+                // --------------------------------------------------------------------
                 Console.WriteLine($"Getting current FW Verison if possible {macAddress}");
 
-                //Lets check if the sensor is in boot mode first
-                var conn = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, macAddress);
-                if (conn.Status != HttpStatusCode.OK)
+                // IMPORTANT FIX:
+                // Your original connect logic was wrong (connect -> if OK connect again -> else block inverted).
+                // Replace with a clean connect-only attempt.
+                var connProbe = await ConnectOnlyWithRetryAsync(
+                    maxAttempts: 3,
+                    delayMs: 2000,
+                    stageName: "Connected (probe)",
+                    logSuccess: false).ConfigureAwait(false);
+
+                if (!connProbe.ok)
                 {
                     UpgradeLogger.Log(logId, macAddress, "Connected", "Failed", FirmwareVersion);
+                    response.Success = false;
+                    response.StatusCode = (int)(connProbe.code == 0 ? HttpStatusCode.ServiceUnavailable : connProbe.code);
+                    response.Message = "Failed to connect to device.";
+                    dev.LastFailureReason = response.Message;
+                    dev.RetryCount++;
+                    return response;
                 }
-                else
+
+                // NOTE: if CheckIfDeviceInBootMode relies on Cassia state, this is now safer.
+                var isInBoot = false;
+                try
                 {
-                    conn = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, macAddress);
-                    if (!conn.Status.ToString().Equals("OK"))
-                    {
-                        UpgradeLogger.Log(logId, macAddress, "Connected", "Failed", FirmwareVersion);
-                        response.Success = false;
-                        response.StatusCode = (int)conn.Status;
-                        response.Message = "Failed to connect to device.";
-                        dev.LastFailureReason = response.Message;
-                        dev.RetryCount++;
-                        return response;
-                    }
-                } 
-                    
-                    var isInBoot = CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress);
+                    isInBoot = CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress);
+                }
+                catch (Exception ex)
+                {
+                    UpgradeLogger.Log(logId, macAddress, $"BootMode check exception: {ex.Message}", "Warn", FirmwareVersion);
+                }
 
                 if (isInBoot)
                 {
@@ -940,14 +1216,15 @@ public static int GetProgrammingCount()
                     UpgradeLogger.Log(logId, macAddress, "Device in application mode, checking FW version", "Info", FirmwareVersion);
                 }
 
-                // --- NEW: Backup settings at start (best-effort) ---
+                // --------------------------------------------------------------------
+                // 1) Settings backup (best-effort but CRITICAL gating before FW update)
+                //    (optimized based on logs: more retries + skip when file already exists)
+                // --------------------------------------------------------------------
                 if (RestoreSettingsAfterUpgrade && !isInBoot)
                 {
                     if (DetectorType == "P48" || DetectorType == "P47")
                     {
-
                         // Only take backup when we will actually update firmware, and only once per device
-                        // (on retries where only restore/102 is needed, we re-use the previous backup file).
                         if (!upgradeActor && !upgradeBootloader && !upgradeSensor)
                         {
                             UpgradeLogger.Log(logId, macAddress, "Settings backup skipped (no FW steps in this attempt)", "Info", FirmwareVersion);
@@ -955,137 +1232,142 @@ public static int GetProgrammingCount()
                         }
                         else
                         {
+                            // If backup already exists, reuse it and DO NOT block upgrade on connect/login here.
                             if (!string.IsNullOrWhiteSpace(settingsBackupPath) && File.Exists(settingsBackupPath))
                             {
                                 UpgradeLogger.Log(logId, macAddress, $"Settings backup already exists: {settingsBackupPath}", "Info", FirmwareVersion);
                                 Console.WriteLine($"Settings backup already exists for {macAddress}: {settingsBackupPath}");
                             }
-
-                            Console.WriteLine($"Starting settings backup for {macAddress}");
-
-                        try
-                        {
-                            var cl = await ConnectAndLoginWithRetryAsync(
-                            _gatewayIpAddress, 80, macAddress, pincode, logId, FirmwareVersion,
-                            maxAttempts: 2,
-                            delayBetweenAttemptsMs: 2000).ConfigureAwait(false);
-
-                            if (!cl.Success)
-                            {
-                                UpgradeLogger.Log(logId, macAddress, $"[1] Connect+login failed: {cl.Message}", "Warn", FirmwareVersion);
-                                Console.WriteLine($"[WARN] [1] Connect+login failed for {macAddress}: {cl.Message}");
-                                
-                                // CRITICAL: Do NOT start firmware update if backup cannot be taken.
-                                response.Success = false;
-                                response.StatusCode = cl.StatusCode;
-                                response.Message = $"Settings backup blocked upgrade: {cl.Message}";
-                                dev.LastFailureReason = response.Message;
-                                dev.RetryCount++;
-                                return response;
-
-                            }
                             else
                             {
-                                if (AutoSetSysFailLevelUnderUpdate)
+                                Console.WriteLine($"Starting settings backup for {macAddress}");
+
+                                try
                                 {
-                                    if (await DaliSetDeviceSysFailLevelAsync(macAddress, 0xFF))
+                                    // IMPORTANT: increased retries + delays, because logs show 417 after boot transitions.
+                                    var cl = await ConnectAndLoginWithRetryAsync(
+                                        _gatewayIpAddress, 80, macAddress, pincode, logId, FirmwareVersion,
+                                        maxAttempts: 3,
+                                        delayBetweenAttemptsMs: 5000).ConfigureAwait(false);
+
+                                    if (!cl.Success)
                                     {
-                                        Console.WriteLine($"DALI SysFail Level set to 0xFF for {macAddress}");
-                                        UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set to 0xFF", "Success", FirmwareVersion);
+                                        UpgradeLogger.Log(logId, macAddress, $"[1] Connect+login failed: {cl.Message}", "Warn", FirmwareVersion);
+                                        Console.WriteLine($"[WARN] [1] Connect+login failed for {macAddress}: {cl.Message}");
+
+                                        // CRITICAL: Do NOT start firmware update if backup cannot be taken.
+                                        response.Success = false;
+                                        response.StatusCode = cl.StatusCode;
+                                        response.Message = $"Settings backup blocked upgrade: {cl.Message}";
+                                        dev.LastFailureReason = response.Message;
+                                        dev.shouldRetry = false;
+                                        return response;
                                     }
-                                    else
+
+                                    if (AutoSetSysFailLevelUnderUpdate)
                                     {
-                                        Console.WriteLine($"Failed to set DALI SysFail Level for {macAddress}");
-                                        UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set failed", "Warn", FirmwareVersion);
+                                        if (await DaliSetDeviceSysFailLevelAsync(macAddress, 0xFF))
+                                        {
+                                            Console.WriteLine($"DALI SysFail Level set to 0xFF for {macAddress}");
+                                            UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set to 0xFF", "Success", FirmwareVersion);
+                                        }
+                                        else
+                                        {
+                                            Console.WriteLine($"Failed to set DALI SysFail Level for {macAddress}");
+                                            UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set failed", "Warn", FirmwareVersion);
+                                        }
+                                    }
+
+                                    var backup = await _settingsBackup
+                                        .BackupToFileAsync(macAddress, pincode, DetectorType, FirmwareVersion, logId)
+                                        .ConfigureAwait(false);
+
+                                    settingsBackupPath = backup.filePath;
+
+                                    UpgradeLogger.Log(logId, macAddress, "Settings backup saved", "Success", FirmwareVersion);
+                                    if (string.IsNullOrWhiteSpace(settingsBackupPath) || !File.Exists(settingsBackupPath))
+                                    {
+                                        response.Success = false;
+                                        response.StatusCode = 500;
+                                        response.Message = $"Settings backup failed (file missing): {settingsBackupPath}";
+                                        UpgradeLogger.Log(logId, macAddress, response.Message, "Failed", FirmwareVersion);
+                                        dev.LastFailureReason = response.Message;
+                                        dev.shouldRetry = false;
+                                        return response;
+                                    }
+
+                                    Console.WriteLine($"[INFO] Settings backup saved for {macAddress} to: {settingsBackupPath}");
+                                    dev.SettingsBackupPath = settingsBackupPath;
+
+                                    if (_VERBOSE)
+                                    {
+                                        Console.WriteLine(
+                                            $"[VERBOSE] Settings backup snapshot for {macAddress}:\n" +
+                                            System.Text.Json.JsonSerializer.Serialize(
+                                                backup.snapshot,
+                                                new System.Text.Json.JsonSerializerOptions { WriteIndented = true }
+                                            )
+                                        );
                                     }
                                 }
-                            }
-                            var backup = await _settingsBackup
-                                .BackupToFileAsync(macAddress, pincode, DetectorType, FirmwareVersion, logId)
-                                .ConfigureAwait(false);
-
-                            settingsBackupPath = backup.filePath;
-
-                            UpgradeLogger.Log(logId, macAddress, "Settings backup saved", "Success", FirmwareVersion);
-                            if (string.IsNullOrWhiteSpace(settingsBackupPath) || !File.Exists(settingsBackupPath))
-                            {
-                                response.Success = false;
-                                response.StatusCode = 500;
-                                response.Message = $"Settings backup failed (file missing): {settingsBackupPath}";
-                                UpgradeLogger.Log(logId, macAddress, response.Message, "Failed", FirmwareVersion);
-                                dev.LastFailureReason = response.Message;
-                                dev.shouldRetry = false;
-
+                                catch (Exception ex)
+                                {
+                                    response.Success = false;
+                                    response.StatusCode = 500;
+                                    response.Message = $"Settings backup failed: {ex.Message}";
+                                    UpgradeLogger.Log(logId, macAddress, response.Message, "Failed", FirmwareVersion);
+                                    Console.WriteLine($"[ERROR] Settings backup failed for {macAddress}: {ex}");
+                                    dev.LastFailureReason = response.Message;
+                                    dev.shouldRetry = false;
                                     return response;
-                            }
-
-                            Console.WriteLine($"[INFO] Settings backup saved for {macAddress} to: {settingsBackupPath}");
-                            dev.SettingsBackupPath = settingsBackupPath;
-
-                            if (_VERBOSE)
-                            {
-                                Console.WriteLine(
-                                    $"[VERBOSE] Settings backup snapshot for {macAddress}:\n" +
-                                    System.Text.Json.JsonSerializer.Serialize(
-                                        backup.snapshot,
-                                        new System.Text.Json.JsonSerializerOptions { WriteIndented = true }
-                                    )
-                                );
+                                }
                             }
                         }
-                        catch (Exception ex)
-                        {
-                            response.Success = false;
-                            response.StatusCode = 500;
-                            response.Message = $"Settings backup failed: {ex.Message}";
-                            UpgradeLogger.Log(logId, macAddress, response.Message, "Failed", FirmwareVersion);
-                            Console.WriteLine($"[ERROR] Settings backup failed for {macAddress}: {ex}");
-                            dev.LastFailureReason = response.Message;
-                            dev.shouldRetry = false;
-
-                                return response;
-                        }
-
                     }
-                        }
-
                     else
                     {
                         UpgradeLogger.Log(logId, macAddress, "Settings backup skipped (not P47 or P48)", "Info", FirmwareVersion);
                     }
                 }
 
-                // Step 2: Upgrade the actor / bootloader / sensor
+                // --------------------------------------------------------------------
+                // 2) Upgrade steps (keep your flow, but add cooldown when switching modes)
+                // --------------------------------------------------------------------
                 var stopwatch = new Stopwatch();
-
-                if (upgradeActor && !disable_update && !isInBoot) //Cant update actor first if in bootloader mode
+                
+                //No need to do this anymore, as we do it after the sensor application, and then reboots the sensor.
+                
+                /*
+                if (upgradeActor && !disable_update && !isInBoot) // can't update actor first if in bootloader mode
                 {
                     Console.WriteLine($"Starting actor upgrade for {macAddress}");
                     dev.RetryCountActor++;
 
                     stopwatch.Restart();
                     var actorUpgradeResult = await UpgradeActorAsync(macAddress, pincode, true, DetectorType, FirmwareVersion, logId)
-                                                .ConfigureAwait(false);
+                        .ConfigureAwait(false);
                     stopwatch.Stop();
 
                     Console.WriteLine($"Actor upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds - result: {actorUpgradeResult.Success}");
-
                     dev.ActorSuccess = actorUpgradeResult.Success;
 
-                    await Task.Delay(10000).ConfigureAwait(false); // FIXED: must await
+                    await Task.Delay(20000).ConfigureAwait(false);
                 }
+                */
 
                 if (upgradeBootloader && !disable_update)
                 {
                     dev.RetryCountBootloader++;
-
                     Console.WriteLine($"Starting bootloader upgrade for {macAddress}");
+
+                    // cooldown before bootloader step often helps after actor step
+                    await Task.Delay(5000).ConfigureAwait(false);
+
                     stopwatch.Restart();
-
                     var bootladerUpgradeResult = await UpgradeSensorAsync(macAddress, pincode, false, true, DetectorType, FirmwareVersion, logId)
-                                                    .ConfigureAwait(false);
-
+                        .ConfigureAwait(false);
                     stopwatch.Stop();
+
                     Console.WriteLine($"Bootloader upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds - result: {bootladerUpgradeResult.Success}");
 
                     if (!bootladerUpgradeResult.Success)
@@ -1094,13 +1376,11 @@ public static int GetProgrammingCount()
                         response.StatusCode = bootladerUpgradeResult.StatusCode;
                         response.Message = $"bootloader upgrade failed: {bootladerUpgradeResult.Message}";
                         dev.BootloaderSuccess = false;
-
                         return response;
                     }
 
                     dev.BootloaderSuccess = true;
-
-                    await Task.Delay(20000).ConfigureAwait(false); // FIXED: must await
+                    await Task.Delay(20000).ConfigureAwait(false);
                 }
 
                 if (upgradeSensor && !disable_update)
@@ -1108,12 +1388,14 @@ public static int GetProgrammingCount()
                     Console.WriteLine($"Starting Sensor upgrade for {macAddress}");
                     dev.RetryCountSensor++;
 
+                    // IMPORTANT: after JumpToBootloader, Cassia often needs a longer cool-down before next Connect+Login
+                    await Task.Delay(8000).ConfigureAwait(false);
+
                     stopwatch.Restart();
-
                     var sensorUpgradeResult = await UpgradeSensorAsync(macAddress, pincode, false, false, DetectorType, FirmwareVersion, logId)
-                                                .ConfigureAwait(false);
-
+                        .ConfigureAwait(false);
                     stopwatch.Stop();
+
                     Console.WriteLine($"Sensor upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds - result: {sensorUpgradeResult.Success}");
 
                     if (!sensorUpgradeResult.Success)
@@ -1122,14 +1404,11 @@ public static int GetProgrammingCount()
                         response.StatusCode = sensorUpgradeResult.StatusCode;
                         response.Message = $"Sensor upgrade failed: {sensorUpgradeResult.Message}";
                         dev.SensorSuccess = false;
-
                         return response;
                     }
 
                     dev.SensorSuccess = true;
-
-                    await Task.Delay(20000).ConfigureAwait(false); // FIXED: must await
-
+                    await Task.Delay(20000).ConfigureAwait(false);
                 }
 
                 if (dev.ActorSuccess != true && dev.isActorUpgradeNeeded)
@@ -1141,11 +1420,10 @@ public static int GetProgrammingCount()
 
                         stopwatch.Restart();
                         var actorUpgradeResult = await UpgradeActorAsync(macAddress, pincode, true, DetectorType, FirmwareVersion, logId)
-                                                    .ConfigureAwait(false);
+                            .ConfigureAwait(false);
                         stopwatch.Stop();
 
                         Console.WriteLine($"Retry Actor upgrade after sensor application completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds - result: {actorUpgradeResult.Success}");
-
                         dev.ActorSuccess = actorUpgradeResult.Success;
 
                         if (!actorUpgradeResult.Success)
@@ -1153,24 +1431,27 @@ public static int GetProgrammingCount()
                             response.Success = false;
                             response.StatusCode = actorUpgradeResult.StatusCode;
                             response.Message = $"Actor upgrade failed again after sensor application completed: {actorUpgradeResult.Message}";
-
                             return response;
                         }
 
-                        await Task.Delay(10000).ConfigureAwait(false); // FIXED: must await
+                        await Task.Delay(1000).ConfigureAwait(false);
                     }
                 }
 
+                // --------------------------------------------------------------------
+                // 3) Restore settings (optimized retries + better failure reporting)
+                // --------------------------------------------------------------------
                 if (DetectorType == "P48" || DetectorType == "P47")
                 {
-                    await Task.Delay(15000).ConfigureAwait(false);
+                    await Task.Delay(10000).ConfigureAwait(false);
 
                     Console.WriteLine($"Starting settings restore for {macAddress} - trying to connect and login");
 
+                    // IMPORTANT: more retries and longer delay based on your log timing
                     var cl = await ConnectAndLoginWithRetryAsync(
                         _gatewayIpAddress, 80, macAddress, pincode, logId, FirmwareVersion,
-                        maxAttempts: 3,
-                        delayBetweenAttemptsMs: 5000).ConfigureAwait(false);
+                        maxAttempts: 4,
+                        delayBetweenAttemptsMs: 6000).ConfigureAwait(false);
 
                     if (!cl.Success)
                     {
@@ -1182,126 +1463,102 @@ public static int GetProgrammingCount()
                         response.Message = "Could not connect and login to detector!";
                         return response;
                     }
-                    else
-                    {
 
-                        //Lets make sure the luminares stays at the same level.
-                        if (AutoSetSysFailLevelUnderUpdate)
+                    if (AutoSetSysFailLevelUnderUpdate)
+                    {
+                        if (await DaliSetDeviceSysFailLevelAsync(macAddress, 0xFE))
                         {
-                            if (await DaliSetDeviceSysFailLevelAsync(macAddress, 0xFE))
+                            Console.WriteLine($"DALI SysFail Level set to 0xFE for {macAddress}");
+                            UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set to 0xFE", "Success", FirmwareVersion);
+                        }
+                        else
+                        {
+                            Console.WriteLine($"Failed to set DALI SysFail Level for {macAddress}");
+                            UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set failed", "Warn", FirmwareVersion);
+                        }
+                    }
+
+                    Console.WriteLine($"Starting settings restore for {macAddress} - upload config");
+
+                    settingsBackupPath ??= dev.SettingsBackupPath;
+
+                    if (!string.IsNullOrWhiteSpace(settingsBackupPath))
+                    {
+                        try
+                        {
+                            ServiceResponse restore = new ServiceResponse { Success = false, StatusCode = 500, Message = "Restore not attempted" };
+                            for (int attempt = 1; attempt <= 3; attempt++)
                             {
-                                Console.WriteLine($"DALI SysFail Level set to 0xFE for {macAddress}");
-                                UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set to 0xFE", "Success", FirmwareVersion);
+                                restore = await _settingsBackup.RestoreFromFileAsync(
+                                        macAddress,
+                                        pincode,
+                                        DetectorType,
+                                        FirmwareVersion,
+                                        settingsBackupPath,
+                                        logId)
+                                    .ConfigureAwait(false);
+
+                                UpgradeLogger.Log(
+                                    logId,
+                                    macAddress,
+                                    $"Settings restore attempt {attempt}/3: {(restore.Success ? "Success" : "Fail")} - {restore.Message}",
+                                    restore.Success ? "Success" : "Failed",
+                                    FirmwareVersion);
+
+                                Console.WriteLine($"[INFO] Settings restore attempt {attempt}/3 for {macAddress} - result: {restore.Success} - {restore.Message}");
+
+                                if (restore.Success)
+                                    break;
+
+                                await Task.Delay(4000).ConfigureAwait(false);
                             }
-                            else
+
+                            dev.isConfigRestored = restore.Success;
+
+                            if (!restore.Success && dev.requiresConfigRestore)
                             {
-                                Console.WriteLine($"Failed to set DALI SysFail Level for {macAddress}");
-                                UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set failed", "Warn", FirmwareVersion);
+                                response.Success = false;
+                                response.StatusCode = restore.StatusCode;
+                                response.Message = $"Settings restore failed after retries: {restore.Message}";
+                                dev.LastFailureReason = response.Message;
+                                dev.shouldRetry = false;
+                                return response;
                             }
                         }
-
-                        if (true)
+                        catch (Exception ex)
                         {
-                            Console.WriteLine($"Starting settings restore for {macAddress} - upload config");
+                            UpgradeLogger.Log(logId, macAddress, $"Settings restore failed: {ex.Message}", "Failed", FirmwareVersion);
+                            Console.WriteLine($"[ERROR] Settings restore failed for {macAddress}: {ex}");
+                            dev.isConfigRestored = false;
 
-                            // Use the previously captured backup path if this attempt did not create a new backup
-                            settingsBackupPath ??= dev.SettingsBackupPath;
-
-                            if (!string.IsNullOrWhiteSpace(settingsBackupPath) && !isInBoot)
+                            if (dev.requiresConfigRestore)
                             {
-                                try
-                                {
-                                    ServiceResponse restore = new ServiceResponse { Success = false, StatusCode = 500, Message = "Restore not attempted" };
-                                    for (int attempt = 1; attempt <= 3; attempt++)
-                                    {
-                                        restore = await _settingsBackup.RestoreFromFileAsync(
-                                                macAddress,
-                                                pincode,
-                                                DetectorType,
-                                                FirmwareVersion,
-                                                settingsBackupPath,
-                                                logId)
-                                            .ConfigureAwait(false);
-
-                                        UpgradeLogger.Log(
-                                            logId,
-                                            macAddress,
-                                            $"Settings restore attempt {attempt}/3: {(restore.Success ? "Success" : "Fail")} - {restore.Message}",
-                                            restore.Success ? "Success" : "Failed",
-                                            FirmwareVersion);
-
-                                        Console.WriteLine($"[INFO] Settings restore attempt {attempt}/3 for {macAddress} - result: {restore.Success} - {restore.Message}");
-
-                                        if (restore.Success)
-                                            break;
-
-                                        await Task.Delay(3000).ConfigureAwait(false);
-                                    }
-
-                                    dev.isConfigRestored = restore.Success;
-
-                                    if (!restore.Success && dev.requiresConfigRestore && !isInBoot) // Dont fail restore if we was in boot mode when we started
-                                    {
-                                        response.Success = false;
-                                        response.StatusCode = restore.StatusCode;
-                                        response.Message = $"Settings restore failed after retries: {restore.Message}";
-                                        dev.LastFailureReason = response.Message;
-                                        return response;
-                                    }
-                                    else if (!restore.Success && dev.requiresConfigRestore && isInBoot)
-                                    {
-                                        UpgradeLogger.Log(logId, macAddress, "Settings restore skipped (device was in boot mode at start)", "Info", FirmwareVersion);
-                                        Console.WriteLine($"[INFO] Settings restore skipped for {macAddress} - device was in boot mode at start");
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    UpgradeLogger.Log(logId, macAddress, $"Settings restore failed: {ex.Message}", "Failed", FirmwareVersion);
-                                    Console.WriteLine($"[ERROR] Settings restore failed for {macAddress}: {ex}");
-                                    dev.isConfigRestored = false;
-                                    if (dev.requiresConfigRestore)
-                                    {
-                                        response.Success = false;
-                                        response.StatusCode = 500;
-                                        response.Message = $"Settings restore exception: {ex.Message}";
-                                        dev.LastFailureReason = response.Message;
-                                        dev.shouldRetry = false;
-                                        return response;
-                                    }
-                                }
+                                response.Success = false;
+                                response.StatusCode = 500;
+                                response.Message = $"Settings restore exception: {ex.Message}";
+                                dev.LastFailureReason = response.Message;
+                                dev.shouldRetry = false;
+                                dev.finalUpgradeResult = "Warn";
+                                return response;
                             }
-                            else
-                            {
-                                if (isInBoot)
-                                {
-                                    UpgradeLogger.Log(logId, macAddress, "Settings restore skipped (device was in boot mode at start)", "Info", FirmwareVersion);
-                                    Console.WriteLine($"[INFO] Settings restore skipped for {macAddress} - device was in boot mode at start");
-                                    dev.isConfigRestored = false;
-                                    dev.shouldRetry = false;
-                                    dev.finalUpgradeResult = "Warn";
-                                }
-                                else
-                                {
-                                    UpgradeLogger.Log(logId, macAddress, "Settings restore skipped (no backup file available)", "Failed", FirmwareVersion);
-                                    Console.WriteLine($"[ERROR] Settings restore skipped for {macAddress} - no backup file available");
-                                    if (dev.requiresConfigRestore)
-                                    {
-                                        response.Success = false;
-                                        response.StatusCode = 404;
-                                        response.Message = "Settings restore failed: backup file path missing";
-                                        dev.LastFailureReason = response.Message;
-                                        dev.shouldRetry = false;
-                                        return response;
-                                    }
-                                }
-                            }
+                        }
+                    }
+                    else
+                    {
+                        UpgradeLogger.Log(logId, macAddress, "Settings restore skipped (no backup file available)", "Failed", FirmwareVersion);
+                        Console.WriteLine($"[ERROR] Settings restore skipped for {macAddress} - no backup file available");
+
+                        if (dev.requiresConfigRestore)
+                        {
+                            dev.shouldRetry = false;
+                            dev.finalUpgradeResult = "Warn";
                         }
                     }
 
                     if (RebootDetectorAfterUpgrade)
                     {
                         Console.WriteLine($"Rebooting device {macAddress} to apply restored settings");
-                        await RebootDeviceAsync(macAddress);
+                        await RebootDeviceAsync(macAddress).ConfigureAwait(false);
                         UpgradeLogger.Log(logId, macAddress, "Device rebooted after settings restore", "Success", FirmwareVersion);
                         await Task.Delay(10000).ConfigureAwait(false);
 
@@ -1310,13 +1567,13 @@ public static int GetProgrammingCount()
                             maxAttempts: 3,
                             delayBetweenAttemptsMs: 2000).ConfigureAwait(false);
                     }
+
                     if (Restore102DBAfterUpgrade)
                     {
-                        // Restore 102 DB after update, and then disconnect
                         bool resp = false;
                         for (int attempt = 1; attempt <= 3; attempt++)
                         {
-                            resp = await DaliRestore102Database(macAddress);
+                            resp = await DaliRestore102Database(macAddress).ConfigureAwait(false);
                             Console.WriteLine($"Dali Restore 102 Database attempt {attempt}/3 response: {resp} for {macAddress}");
                             UpgradeLogger.Log(logId, macAddress, $"Dali Restore 102 Database attempt {attempt}/3 response: {resp}", resp ? "Success" : "Failed", FirmwareVersion);
                             if (resp) break;
@@ -1331,57 +1588,46 @@ public static int GetProgrammingCount()
                             response.Message = "DALI Restore 102 Database failed after retries";
                             dev.LastFailureReason = response.Message;
                             dev.shouldRetry = false;
+                            dev.finalUpgradeResult = "Failed";
                             return response;
                         }
-
                     }
-                    // Prefer async instead of .Wait()
-                    await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0)
-                        .ConfigureAwait(false);
 
+                    await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0).ConfigureAwait(false);
                 }
                 else
                 {
                     UpgradeLogger.Log(logId, macAddress, "Settings restore skipped (not P47 or P48)", "Info", FirmwareVersion);
                 }
 
-
-
-
-                // Both upgrades successful
+                // --------------------------------------------------------------------
+                // 4) Final success
+                // --------------------------------------------------------------------
                 response.Success = true;
                 response.StatusCode = 200;
                 response.Message = "Sensor and actor upgrades completed successfully.";
-                dev.finalUpgradeResult = "Success";
+                if (dev.finalUpgradeResult != "Warn")
+                    dev.finalUpgradeResult = "Success";
 
-                if (response.Success)
-                {
-                    UpgradeLogger.Log(logId, macAddress, $"Device Upgrade Done.", "Success", FirmwareVersion);
-                }
-                else if (!dev.isConfigRestored && (DetectorType == "P48" || DetectorType == "P47"))
-                {
-                    UpgradeLogger.Log(logId, macAddress, $"Device Upgrade Done - Settings not restored.", "Warn", FirmwareVersion);
-                }
-                else
-                {
-                    UpgradeLogger.Log(logId, macAddress, $"Device Upgrade Done (FAILED): {response.Message}", "Failed", FirmwareVersion);
-                }
-
+                UpgradeLogger.Log(logId, macAddress, "Device Upgrade Task Done.", "Success", FirmwareVersion);
                 return response;
             }
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"Error during sensor and actor upgrade: {ex.Message}");
                 response.Success = false;
-                response.StatusCode = 500; // Internal Server Error
+                response.StatusCode = 500;
                 response.Message = "An unexpected error occurred during the upgrade process.";
-                UpgradeLogger.Log(logId, macAddress, $"Device Upgrade Failed: {ex.Message}", "Failed");
-
+                UpgradeLogger.Log(logId, macAddress, $"Device Upgrade Failed: {ex.Message}", "Failed", FirmwareVersion);
                 return response;
             }
+            finally
+            {
+                await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0).ConfigureAwait(false);
+                UpgradeLogger.Log(logId, macAddress, "Disconnected at the end of upgrade process", "Info", FirmwareVersion);
 
+            }
         }
-
 
 
         public async Task<List<UpgradeResponse>> UpgradeBLSensorsAsync(List<BulkUpgradeRequest> devices)
@@ -2077,7 +2323,7 @@ try
                         Console.WriteLine(
                             $"[RETRY STOP] {mac} - retries exhausted. " +
                             $"actor:{dev.RetryCountActor} boot:{dev.RetryCountBootloader} sensor:{dev.RetryCountSensor}");
-                        UpgradeLogger.Log(logId, mac, "Retries exhausted.", "Failed");
+                        UpgradeLogger.Log(logId, mac, "Retries exhausted.", "Info");
                         break;
                     }
 
