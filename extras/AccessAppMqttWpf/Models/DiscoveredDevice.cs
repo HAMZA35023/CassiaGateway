@@ -30,6 +30,9 @@ public partial class DiscoveredDevice : ObservableObject
     // Parsed from upgrade-log ("Current FW Version" lines)
     [ObservableProperty] private string currentFw = "";
 
+    // If the latest (final) upgrade-log entry for this device is Warn, we highlight the row.
+    [ObservableProperty] private bool isUpgradeWarn;
+
 
     // --- Upgrade result (from upgrade-log) ---
     [ObservableProperty] private bool isUpgradeSuccess;
@@ -40,12 +43,9 @@ public partial class DiscoveredDevice : ObservableObject
     [ObservableProperty] private bool isInQueue;
 
     
-    // For device list: when upgrade completed successfully, show the FW from log entries (LastTargetFw, like v02.xx),
-    // otherwise show the current FW (from "Current FW Version" lines).
-    public string DisplayFw =>
-        IsUpgradeSuccess && !string.IsNullOrWhiteSpace(LastTargetFw) && LastTargetFw.Trim().StartsWith("v", StringComparison.OrdinalIgnoreCase)
-            ? LastTargetFw.Trim()
-            : (CurrentFw ?? "");
+    // For device list: show the Sensor App version (from CurrentFw).
+    // When a get-fw-version request is made, CurrentFw may temporarily be set to "requested".
+    public string DisplayFw => (CurrentFw ?? "");
 public string LastUpgradeSuccessLocal => LastUpgradeSuccessUtc.HasValue
         ? LastUpgradeSuccessUtc.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
         : "";

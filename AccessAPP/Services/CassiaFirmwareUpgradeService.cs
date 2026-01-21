@@ -1217,6 +1217,7 @@ public static int GetProgrammingCount()
                     response.Message = "Failed to connect to device.";
                     dev.LastFailureReason = response.Message;
                     dev.RetryCount++;
+                    dev.shouldRetry = false;
                     return response;
                 }
 

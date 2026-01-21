@@ -15,6 +15,7 @@
         <conv:StatusToBrushConverter x:Key="StatusToBrush"/>
         <SolidColorBrush x:Key="DoneRowBrush" Color="#2A22C55E"/>
         <SolidColorBrush x:Key="QueueRowBrush" Color="#2A60A5FA"/>
+        <SolidColorBrush x:Key="WarnRowBrush" Color="#2AF59E0B"/>
 
 
         <!-- ONLINE / OFFLINE badge -->
@@ -289,6 +290,12 @@
                                         Content="Get"
                                         Command="{Binding DataContext.GetParallelProgrammersForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                         CommandParameter="{Binding Name}"/>
+                                                    <Button Style="{StaticResource WarningButton}" Padding="12,4" Margin="0,6,0,0"
+                                                            Content="Clear backups"
+                                                            ToolTip="Send cmd to clear-device-settings-backups"
+                                                            Command="{Binding DataContext.ClearDeviceSettingsBackupsForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                            CommandParameter="{Binding Name}"/>
+
                                                 </StackPanel>
                                             </StackPanel>
 
@@ -516,14 +523,22 @@
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
 
-                                    <!-- Left: Check all -->
-                                    <Button Grid.Column="0"
-                Style="{StaticResource PrimaryButton}"
-                Content="Check all"
-                Padding="12,6"
-                VerticalAlignment="Center"
-                MinWidth="110"
-                Command="{Binding CheckAllDevicesCommand}"/>
+                                    <!-- Left: bulk selection / actions -->
+                                    <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <Button Style="{StaticResource PrimaryButton}"
+                                                Content="Check all"
+                                                Padding="12,6"
+                                                VerticalAlignment="Center"
+                                                MinWidth="110"
+                                                Command="{Binding CheckAllDevicesCommand}"/>
+
+                                        <Button Style="{StaticResource GhostButton}"
+                                                Content="Get FW selected"
+                                                Padding="12,6"
+                                                VerticalAlignment="Center"
+                                                Margin="8,0,0,0"
+                                                Command="{Binding GetFwSelectedCommand}"/>
+                                    </StackPanel>
 
                                     <!-- Middle: checkboxes (RIGHT aligned, sits next to Reassign) -->
                                     <StackPanel Grid.Column="1"
@@ -600,7 +615,13 @@
                                     
 
 <Style.Triggers>
-    <!-- Completed devices are green, but queue/progress state should override (stay blue while queued) -->
+    <!-- If the latest upgrade-log entry is Warn, mark the row orange. -->
+    <DataTrigger Binding="{Binding IsUpgradeWarn}" Value="True">
+        <Setter Property="Background" Value="{StaticResource WarnRowBrush}"/>
+        <Setter Property="Foreground" Value="Black"/>
+    </DataTrigger>
+
+    <!-- Completed devices are green, but queue/progress state should override (stay blue while queued). -->
     <DataTrigger Binding="{Binding IsUpgradeSuccess}" Value="True">
         <Setter Property="Background" Value="{StaticResource DoneRowBrush}"/>
         <Setter Property="Foreground" Value="Black"/>
@@ -682,11 +703,12 @@
                                     <DataGridTextColumn Header="FW" Binding="{Binding ProcessFirmware}" Width="90" IsReadOnly="True"/>
                                     <DataGridTextColumn Header="Current FW" Binding="{Binding DisplayFw}" Width="90" IsReadOnly="True"/>
 
-                                    <DataGridTemplateColumn Header="Get FW" Width="90" CanUserSort="False"  Visibility="Collapsed">
+                                    <DataGridTemplateColumn Header="Get FW" Width="90" CanUserSort="False">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <Button Style="{StaticResource GhostButton}" Content="Get FW" Padding="10,4"
-                                                        Click="GetFw_Click"/>
+                                                        Command="{Binding DataContext.GetFwForDeviceCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        CommandParameter="{Binding}"/>
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>

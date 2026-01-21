@@ -119,6 +119,7 @@ public partial class MainViewModel : ObservableObject
 
         public string CurrentFw = "";
         public bool IsUpgradeSuccess = false;
+        public bool IsUpgradeWarn = false;
         public string LastTargetFw = "";
         public DateTimeOffset? LastUpgradeSuccessUtc = null;
 
@@ -1192,6 +1193,14 @@ partial void OnSensorFilterChanged(string value)
     private async Task DisconnectDevice(DiscoveredDevice? device)
         => await DisconnectDeviceAsync(device);
 
+    [RelayCommand]
+    private async Task GetFwForDevice(DiscoveredDevice? device)
+        => await GetFwForDeviceAsync(device);
+
+    [RelayCommand]
+    private async Task GetFwSelected()
+        => await GetFwForSelectedAsync();
+
     internal async Task ConnectDeviceAsync(DiscoveredDevice? device)
     {
         if (device == null) return;
@@ -1201,7 +1210,23 @@ partial void OnSensorFilterChanged(string value)
     internal async Task DisconnectDeviceAsync(DiscoveredDevice? device)
     {
         if (device == null) return;
-        await SendConnectOrDisconnectAsync(device, action: "disconnect");
+        await SendDisconnectAsync(new[] { device });
+    }
+
+    internal async Task DisconnectDevicesAsync(IEnumerable<DiscoveredDevice> devices)
+        => await SendDisconnectAsync(devices);
+
+    internal async Task GetFwForDeviceAsync(DiscoveredDevice? device)
+    {
+        if (device == null) return;
+        await SendGetFwVersionAsync(new[] { device });
+    }
+
+    internal async Task GetFwForSelectedAsync()
+    {
+        var selected = _devices.Where(d => d != null && d.IsSelected).ToList();
+        if (selected.Count == 0) return;
+        await SendGetFwVersionAsync(selected);
     }
 
     [RelayCommand]
@@ -1256,14 +1281,120 @@ partial void OnSensorFilterChanged(string value)
             return;
         }
 
-        var topic = BuildCmdTopic(cassia, "connect"); // same command endpoint; action differentiates
+        // Connect still uses cmd/<cassia>/connect.
+        // Disconnect is now a dedicated cmd/<cassia>/disconnect endpoint.
+        var isDisconnect = action.Equals("disconnect", StringComparison.OrdinalIgnoreCase);
+        var topic = BuildCmdTopic(cassia, isDisconnect ? "disconnect" : "connect");
 
-        object payload = action.Equals("disconnect", StringComparison.OrdinalIgnoreCase)
-            ? new { sensors = new[] { mac }, action = "disconnect" }
-            : new { sensors = new[] { mac } }; // default connect
+        object payload = isDisconnect
+            ? new { sensors = new[] { mac } }
+            : new { sensors = new[] { mac } };
 
         device.BleLink = action.Equals("disconnect", StringComparison.OrdinalIgnoreCase) ? "disconnecting…" : "connecting…";
         await _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+    }
+
+    private const string DefaultPincode = "1234";
+
+    private async Task SendGetFwVersionAsync(IEnumerable<DiscoveredDevice> devices)
+    {
+        if (!IsConnected)
+        {
+            ConnectionStatus = "Not connected";
+            return;
+        }
+
+        var list = devices?.Where(d => d != null && !string.IsNullOrWhiteSpace(d.Mac)).Distinct().ToList() ?? new();
+        if (list.Count == 0) return;
+
+        // Group by target Cassia because the topic contains the cassia name.
+        var groups = list
+            .Select(d => new
+            {
+                Dev = d,
+                Cassia = ResolveCassiaForCommand(d)
+            })
+            .Where(x => !string.IsNullOrWhiteSpace(x.Cassia))
+            .GroupBy(x => x.Cassia, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var g in groups)
+        {
+            var cassia = g.Key;
+            var macs = g.Select(x => (x.Dev.Mac ?? "").Trim()).Where(m => m.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (macs.Length == 0) continue;
+
+            // UI: show that a FW query was requested.
+            foreach (var x in g)
+            {
+                var mac = (x.Dev.Mac ?? "").Trim();
+                var cs = GetOrCreateCache(mac);
+                cs.CurrentFw = "requested";
+                x.Dev.CurrentFw = "requested";
+            }
+
+            var topic = BuildCmdTopic(cassia, "get-fw-version");
+            var payload = new { sensors = macs, pincode = DefaultPincode };
+
+            try
+            {
+                await _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                ConnectionStatus = $"get-fw-version publish failed: {ex.Message}";
+            }
+        }
+    }
+
+    private async Task SendDisconnectAsync(IEnumerable<DiscoveredDevice> devices)
+    {
+        if (!IsConnected)
+        {
+            ConnectionStatus = "Not connected";
+            return;
+        }
+
+        var list = devices?.Where(d => d != null && !string.IsNullOrWhiteSpace(d.Mac)).Distinct().ToList() ?? new();
+        if (list.Count == 0) return;
+
+        var groups = list
+            .Select(d => new { Dev = d, Cassia = ResolveCassiaForCommand(d) })
+            .Where(x => !string.IsNullOrWhiteSpace(x.Cassia))
+            .GroupBy(x => x.Cassia, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var g in groups)
+        {
+            var cassia = g.Key;
+            var macs = g.Select(x => (x.Dev.Mac ?? "").Trim()).Where(m => m.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (macs.Length == 0) continue;
+
+            foreach (var x in g)
+                x.Dev.BleLink = "disconnecting…";
+
+            var topic = BuildCmdTopic("all", "disconnect");
+            var payload = new { sensors = macs };
+
+            try
+            {
+                await _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                ConnectionStatus = $"disconnect publish failed: {ex.Message}";
+            }
+        }
+    }
+
+    private string ResolveCassiaForCommand(DiscoveredDevice d)
+    {
+        var cassia = (d.AssignedCassia ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(cassia))
+            cassia = (d.BestCassia ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(cassia))
+            cassia = CassiaGateways.FirstOrDefault(g => string.Equals(g.State, "online", StringComparison.OrdinalIgnoreCase))?.Name
+                     ?? CassiaGateways.FirstOrDefault()?.Name
+                     ?? "";
+        return cassia;
     }
 
     internal async Task SendWriteReadAsync(
@@ -2154,6 +2285,18 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
             return;
         }
 
+        if (kind == "tele" && leaf == "fw-version")
+        {
+            HandleFwVersionTele(cassia, payload);
+            return;
+        }
+
+        if (kind == "tele" && leaf == "disconnect")
+        {
+            HandleDisconnectTele(cassia, payload);
+            return;
+        }
+
 
         
 if (kind == "tele" && leaf == "progress")
@@ -2578,9 +2721,12 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
             var mac = kvp.Key;
             var g = kvp.Value;
             var isSuccess = g.ContainsCompletionSuccess;
+            var lastStatusRaw = g.Entries.OrderByDescending(e => e.TimeLocal).FirstOrDefault()?.Status ?? "";
+            var isWarn = lastStatusRaw.Trim().Equals("Warn", StringComparison.OrdinalIgnoreCase);
 
             var cs = GetOrCreateCache(mac);
             cs.IsUpgradeSuccess = isSuccess;
+            cs.IsUpgradeWarn = isWarn;
             // Use the group's completion timestamp if present.
             if (isSuccess)
             {
@@ -2604,6 +2750,7 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
             if (dev != null)
             {
                 dev.IsUpgradeSuccess = isSuccess;
+                dev.IsUpgradeWarn = isWarn;
                 dev.LastUpgradeSuccessUtc = cs.LastUpgradeSuccessUtc;
                 dev.LastTargetFw = cs.LastTargetFw;
             }
@@ -2616,6 +2763,7 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
             if (dev == null || string.IsNullOrWhiteSpace(dev.Mac)) continue;
             if (latestByMac.ContainsKey(dev.Mac)) continue;
             dev.IsUpgradeSuccess = false;
+            dev.IsUpgradeWarn = false;
         }
     }
 
@@ -3196,6 +3344,14 @@ private void RequestUpgradeLogTextRefresh()
             RequestQueueRefresh();
         });
 
+        // Before queueing: send disconnect to /all to ensure no gateway is stuck on this device.
+        try
+        {
+            await _mqtt.PublishJsonAsync(BuildCmdTopic("all", "disconnect"), new { sensors = new[] { mac } }, retain: false, qos: 1, ct: _appCts.Token)
+                      .ConfigureAwait(false);
+        }
+        catch { /* best-effort */ }
+
         await PublishStartUpdateAsync(newCassia, mac, model, fw).ConfigureAwait(false);
     }
 
@@ -3241,7 +3397,29 @@ private void RequestUpgradeLogTextRefresh()
     private Task SetParallelProgrammersAsync(string cassiaName, int value)
         => _mqtt.PublishJsonAsync(BuildCmdTopic(cassiaName, "set-parallel-programmers"), new { value }, retain: false, qos: 1, ct: _appCts.Token);
 
+    
+
     [RelayCommand]
+    private async Task ClearDeviceSettingsBackupsForCassia(string cassiaName)
+    {
+        if (!IsConnected) { ConnectionStatus = "Not connected"; return; }
+        cassiaName = (cassiaName ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(cassiaName)) return;
+
+        try
+        {
+            // cmd -> clear-device-settings-backups payload {}
+            await _mqtt.PublishJsonAsync(BuildCmdTopic(cassiaName, "clear-device-settings-backups"), new { }, retain: false, qos: 1, ct: _appCts.Token)
+                      .ConfigureAwait(false);
+            ConnectionStatus = $"Sent clear-device-settings-backups to {cassiaName}";
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = $"Clear backups failed ({cassiaName}): {ex.Message}";
+        }
+    }
+
+[RelayCommand]
     private async Task GetParallelProgrammersForCassia(string cassiaName)
     {
         if (!IsConnected) { ConnectionStatus = "Not connected"; return; }
@@ -3726,6 +3904,78 @@ private void RequestUpgradeLogTextRefresh()
 
                 gw.ParallelProgrammers = value;
                 gw.ParallelProgrammersDesired = value;
+            });
+        }
+        catch { }
+    }
+
+    private void HandleFwVersionTele(string cassia, string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("results", out var resultsEl) || resultsEl.ValueKind != JsonValueKind.Array)
+                return;
+
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                foreach (var r in resultsEl.EnumerateArray())
+                {
+                    if (r.ValueKind != JsonValueKind.Object) continue;
+                    var mac = r.TryGetProperty("mac", out var m) ? (m.GetString() ?? "") : "";
+                    var ver = r.TryGetProperty("version", out var v) ? (v.GetString() ?? "") : "";
+                    mac = (mac ?? "").Trim();
+                    if (string.IsNullOrWhiteSpace(mac)) continue;
+
+                    // Extract the Sensor App version when the backend returns a full combined string.
+                    var app = "";
+                    var mm = SensorAppFromStatusRx.Match(ver ?? "");
+                    if (mm.Success) app = mm.Groups["app"].Value;
+                    if (string.IsNullOrWhiteSpace(app))
+                        app = (ver ?? "").Trim();
+
+                    var cs = GetOrCreateCache(mac);
+                    cs.CurrentFw = app;
+
+                    var dev = FindDiscoveredDevice(mac);
+                    if (dev != null)
+                        dev.CurrentFw = app;
+                }
+            });
+        }
+        catch { }
+    }
+
+    private void HandleDisconnectTele(string cassia, string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("results", out var resultsEl) || resultsEl.ValueKind != JsonValueKind.Array)
+                return;
+
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                foreach (var r in resultsEl.EnumerateArray())
+                {
+                    if (r.ValueKind != JsonValueKind.Object) continue;
+                    var mac = r.TryGetProperty("mac", out var m) ? (m.GetString() ?? "") : "";
+                    mac = (mac ?? "").Trim();
+                    if (string.IsNullOrWhiteSpace(mac)) continue;
+
+                    var ok = true;
+                    if (r.TryGetProperty("success", out var s))
+                    {
+                        if (s.ValueKind == JsonValueKind.False) ok = false;
+                        else if (s.ValueKind == JsonValueKind.True) ok = true;
+                    }
+
+                    var dev = FindDiscoveredDevice(mac);
+                    if (dev != null)
+                        dev.BleLink = ok ? "disconnected" : "disconnect failed";
+                }
             });
         }
         catch { }
