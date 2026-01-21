@@ -663,7 +663,7 @@
     <!-- Failed devices are red, but queue/progress state should override (stay blue while queued). -->
     <DataTrigger Binding="{Binding IsUpgradeFailed}" Value="True">
         <Setter Property="Background" Value="{StaticResource FailedRowBrush}"/>
-        <Setter Property="Foreground" Value="Black"/>
+        <Setter Property="Foreground" Value="White"/>
     </DataTrigger>
 
     <DataTrigger Binding="{Binding IsInQueue}" Value="True">
@@ -1065,7 +1065,59 @@
                 </Border>
             </TabItem>
 
-        </TabControl>
+        
+            <!-- ===== Notes ===== -->
+            <TabItem Header="Notes">
+                <Border Style="{StaticResource Card}">
+                    <DockPanel>
+                        <!-- Buttons -->
+                        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10">
+                            <Button Style="{StaticResource GhostButton}" Padding="10,6" Margin="0,0,8,0" Command="{Binding CopyNotesCommand}">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="📋" FontSize="14" Margin="0,0,6,0"/>
+                                    <TextBlock Text="Copy"/>
+                                </StackPanel>
+                            </Button>
+                            <Button Style="{StaticResource GhostButton}" Padding="10,6" Margin="0,0,8,0" Command="{Binding ClearNotesCommand}">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="🧹" FontSize="14" Margin="0,0,6,0"/>
+                                    <TextBlock Text="Clear"/>
+                                </StackPanel>
+                            </Button>
+                            <Button Style="{StaticResource GhostButton}" Padding="10,6" Margin="0,0,8,0" Command="{Binding LoadNotesCommand}">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="📂" FontSize="14" Margin="0,0,6,0"/>
+                                    <TextBlock Text="Load"/>
+                                </StackPanel>
+                            </Button>
+                            <Button Style="{StaticResource GhostButton}" Padding="10,6" Margin="0,0,0,0" Command="{Binding SaveNotesCommand}">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="💾" FontSize="14" Margin="0,0,6,0"/>
+                                    <TextBlock Text="Save"/>
+                                </StackPanel>
+                            </Button>
+
+                            <TextBlock Text="  Autosaved every minute • Mac addresses added to queue are appended automatically"
+                                       Foreground="{StaticResource MutedBrush}"
+                                       VerticalAlignment="Center"
+                                       Margin="12,0,0,0"/>
+                        </StackPanel>
+
+                        <!-- Text -->
+                        <TextBox Text="{Binding NotesText, UpdateSourceTrigger=PropertyChanged}"
+                                 AcceptsReturn="True"
+                                 VerticalScrollBarVisibility="Auto"
+                                 HorizontalScrollBarVisibility="Auto"
+                                 TextWrapping="NoWrap"
+                                 FontFamily="Consolas"
+                                 FontSize="13"
+                                 Padding="10"
+                                 BorderBrush="{StaticResource BorderBrush}"
+                                 Background="White"/>
+                    </DockPanel>
+                </Border>
+            </TabItem>
+</TabControl>
         </DockPanel>
     </Grid>
 </Window>

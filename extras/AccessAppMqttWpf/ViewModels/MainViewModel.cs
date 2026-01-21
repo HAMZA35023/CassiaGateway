@@ -37,6 +37,7 @@ public partial class MainViewModel : ObservableObject
     // ---- Firmware manifest (tele/.../fw-manifest) ----
     private readonly DispatcherTimer _fwManifestValidateTimer = new() { Interval = TimeSpan.FromSeconds(1.5) };
     private readonly DispatcherTimer _fwManifestTimeoutTimer = new() { Interval = TimeSpan.FromSeconds(6) };
+    private readonly DispatcherTimer _notesAutosaveTimer = new() { Interval = TimeSpan.FromMinutes(1) };
     private bool _fwManifestTimeoutArmed;
     private string _lastFwManifestMissingHash = "";
 
@@ -266,6 +267,8 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private bool useTls;
     [ObservableProperty] private bool ignoreTlsErrors = true;
 
+    [ObservableProperty] private string notesText = "";
+
     // Runtime-only: set/get number of parallel programmers.
     // "All" value is used when pressing Set all / Get all.
     [ObservableProperty] private int parallelProgrammersAllDesired = 3;
@@ -383,6 +386,15 @@ public partial class MainViewModel : ObservableObject
         MqttPassword = s.mqtt.password;
         UseTls = s.mqtt.useTls;
         IgnoreTlsErrors = s.mqtt.ignoreTlsErrors;
+
+        // Notes: load autosaved content (survives restarts)
+        NotesText = NotesService.LoadAutoNotes();
+
+        _notesAutosaveTimer.Tick += (_, __) =>
+        {
+            NotesService.SaveAutoNotes(NotesText);
+        };
+        _notesAutosaveTimer.Start();
 
         NetworkId = s.accessapp.networkId;
         CommandTopicTemplate = s.accessapp.commandTopicTemplate;
@@ -914,6 +926,61 @@ partial void OnSensorFilterChanged(string value)
 
 [RelayCommand]
     private void ClearQueue() => QueueItems.Clear();
+
+
+    [RelayCommand]
+    private void CopyNotes()
+    {
+        try { Clipboard.SetText(NotesText ?? ""); } catch { }
+    }
+
+    [RelayCommand]
+    private void ClearNotes()
+    {
+        NotesText = "";
+        NotesService.SaveAutoNotes(NotesText);
+    }
+
+    [RelayCommand]
+    private void LoadNotes()
+    {
+        try
+        {
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*",
+                DefaultExt = ".txt",
+                CheckFileExists = true
+            };
+            if (dlg.ShowDialog() == true)
+            {
+                NotesText = NotesService.LoadFromFile(dlg.FileName);
+                NotesService.SaveAutoNotes(NotesText);
+            }
+        }
+        catch { }
+    }
+
+    [RelayCommand]
+    private void SaveNotes()
+    {
+        try
+        {
+            var dlg = new Microsoft.Win32.SaveFileDialog
+            {
+                Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*",
+                DefaultExt = ".txt",
+                FileName = "notes.txt",
+                OverwritePrompt = true
+            };
+            if (dlg.ShowDialog() == true)
+            {
+                NotesService.SaveToFile(dlg.FileName, NotesText);
+                NotesService.SaveAutoNotes(NotesText);
+            }
+        }
+        catch { }
+    }
 
     // IMPORTANT: Keep method names QueueSingle/QueueSelected so your XAML/code-behind bindings keep working.
     // These are async, so toolkit generates QueueSingleCommand/QueueSelectedCommand as IAsyncRelayCommand.
@@ -2006,7 +2073,7 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
             }
         };
 
-                // Before queueing: send disconnect to /all to ensure no gateway is stuck on this device.
+        // Before queueing: send disconnect to /all to ensure no gateway is stuck on this device.
         // Only do this if the MAC wasn't already present in our queue list (avoid spamming disconnect).
         if (!wasAlreadyInQueue)
         {
@@ -2019,7 +2086,10 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
             catch { /* best-effort */ }
         }
 
-try
+        AppendQueuedMacToNotes(d.Mac);
+
+
+        try
         {
             await _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token);
 
@@ -2067,6 +2137,23 @@ try
 
             await QueueDeviceAndRequestAsync(dev);
         }
+    }
+
+
+    private void AppendQueuedMacToNotes(string mac)
+    {
+        if (string.IsNullOrWhiteSpace(mac))
+            return;
+
+        // Always append at the end, on its own line, with timestamp.
+        // Keep whatever the user has written above intact.
+        var t = NotesText ?? string.Empty;
+
+        if (t.Length > 0 && !t.EndsWith(Environment.NewLine, StringComparison.Ordinal))
+            t += Environment.NewLine;
+
+        t += $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} -> {mac.Trim()}{Environment.NewLine}";
+        NotesText = t;
     }
 
     private DiscoveredDevice EnsureDeviceExistsForProgress(string mac)
