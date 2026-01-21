@@ -115,7 +115,7 @@ using (var scope = app.Services.CreateScope())
         {
             try
             {
-                var v = await firmwareUpgradeService.GetFwVersion(mac, pincode);
+                var v = await firmwareUpgradeService.GetFwVersion(mac, pincode, true);
                 if (string.IsNullOrWhiteSpace(v))
                     failed.Add(new { mac, error = "Could not retrieve FW version" });
                 else

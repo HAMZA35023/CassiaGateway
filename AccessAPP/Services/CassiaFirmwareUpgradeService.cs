@@ -1204,7 +1204,7 @@ public static int GetProgrammingCount()
                 // Your original connect logic was wrong (connect -> if OK connect again -> else block inverted).
                 // Replace with a clean connect-only attempt.
                 var connProbe = await ConnectOnlyWithRetryAsync(
-                    maxAttempts: 3,
+                    maxAttempts: 5,
                     delayMs: 2000,
                     stageName: "Connected (probe)",
                     logSuccess: false).ConfigureAwait(false);
@@ -1882,7 +1882,7 @@ public static int GetProgrammingCount()
             public string? Error { get; init; }
         }
 
-        public async Task<string> GetFwVersion(string macAddress, string pincode)
+        public async Task<string> GetFwVersion(string macAddress, string pincode, bool disconnect_on_finish = false)
         {
             try
             {
@@ -1926,6 +1926,13 @@ public static int GetProgrammingCount()
             catch (Exception ex)
             {
                 Console.WriteLine($"[ERROR] GetFwVersion exception for {macAddress}: {ex}");
+            }
+            finally
+            {
+                if (disconnect_on_finish)
+                {
+                    await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress);
+                }
             }
             return "";
         }
@@ -2382,7 +2389,7 @@ try
                     bool sensorOk =
                         dev.SensorSuccess || dev.RetryCountSensor < maxRetriesPerComponent;
 
-                    return actorOk && bootOk && sensorOk && dev.shouldRetry;
+                    return actorOk && bootOk && sensorOk && dev.shouldRetry && dev.RetryCount <= 10;
                 }
 
                 while (!dev.IsFullyUpgraded)

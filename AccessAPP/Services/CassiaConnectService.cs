@@ -181,7 +181,7 @@ namespace AccessAPP.Services
             }
         }
 
-        public async Task<ResponseModel> DisconnectFromBleDevice(string gatewayIpAddress, string macAddress, int retries)
+        public async Task<ResponseModel> DisconnectFromBleDevice(string gatewayIpAddress, string macAddress, int retries = 1)
         {
             try
             {
