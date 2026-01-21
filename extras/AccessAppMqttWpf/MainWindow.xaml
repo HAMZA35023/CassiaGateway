@@ -16,6 +16,7 @@
         <SolidColorBrush x:Key="DoneRowBrush" Color="#2A22C55E"/>
         <SolidColorBrush x:Key="QueueRowBrush" Color="#2A60A5FA"/>
         <SolidColorBrush x:Key="WarnRowBrush" Color="#2AF59E0B"/>
+        <SolidColorBrush x:Key="FailedRowBrush" Color="#2AE74C3C"/>
 
 
         <!-- ONLINE / OFFLINE badge -->
@@ -143,10 +144,10 @@
                             <TextBox Width="52" Margin="10,0,6,0" Padding="6,3"
                                      Text="{Binding ParallelProgrammersAllDesired, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
                             <Button Style="{StaticResource GhostButton}" Padding="12,6" Margin="0,0,6,0"
-                                    Content="Set all"
+                                    Content="⬆ Set all"
                                     Command="{Binding SetParallelProgrammersForAllCassiasCommand}"/>
                             <Button Style="{StaticResource GhostButton}" Padding="12,6" Margin="0,0,0,0"
-                                    Content="Get all"
+                                    Content="⬇ Get all"
                                     Command="{Binding GetParallelProgrammersForAllCassiasCommand}"/>
                         </StackPanel>
                     </Border>
@@ -201,7 +202,7 @@
                                     Command="{Binding DataContext.ClearDeviceSettingsBackupsForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                     CommandParameter="{Binding Name}"/>
 
-                                                <Button Style="{StaticResource CassiaBadgeButtonStyle}"
+                                                <Button Style="{StaticResource CassiaBadgeButtonStyleWarning}"
                                     Content="↻"
                                     Margin="8,0,0,0"
                                     ToolTip="Refresh firmware manifest"
@@ -320,11 +321,11 @@
 
                                                 <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
                                                     <Button Style="{StaticResource GhostButton}" Padding="12,4" Margin="0,0,6,0"
-                                        Content="Set"
+                                        Content="⬆ Set"
                                         Command="{Binding DataContext.SetParallelProgrammersForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                         CommandParameter="{Binding}"/>
                                                     <Button Style="{StaticResource GhostButton}" Padding="12,4"
-                                        Content="Get"
+                                        Content="⬇ Get"
                                         Command="{Binding DataContext.GetParallelProgrammersForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                         CommandParameter="{Binding Name}"/>
 
@@ -656,6 +657,12 @@
     <!-- Completed devices are green, but queue/progress state should override (stay blue while queued). -->
     <DataTrigger Binding="{Binding IsUpgradeSuccess}" Value="True">
         <Setter Property="Background" Value="{StaticResource DoneRowBrush}"/>
+        <Setter Property="Foreground" Value="Black"/>
+    </DataTrigger>
+
+    <!-- Failed devices are red, but queue/progress state should override (stay blue while queued). -->
+    <DataTrigger Binding="{Binding IsUpgradeFailed}" Value="True">
+        <Setter Property="Background" Value="{StaticResource FailedRowBrush}"/>
         <Setter Property="Foreground" Value="Black"/>
     </DataTrigger>
 

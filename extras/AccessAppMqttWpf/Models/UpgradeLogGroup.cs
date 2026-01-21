@@ -34,19 +34,31 @@ public partial class UpgradeLogGroup : ObservableObject
     {
         get
         {
+            // IMPORTANT:
+            // If we have a "Device Upgrade Completed." line, the group status MUST be taken from that line's Status.
+            // (Warn/Success/Failed) and not from whatever the last informational line happens to be.
+            var completion = Entries
+                .Where(e => !string.IsNullOrWhiteSpace(e.Stage)
+                            && e.Stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(e => e.TimeLocal)
+                .FirstOrDefault();
+
+            if (completion != null)
+            {
+                var st = (completion.Status ?? "").Trim();
+                if (st.Equals("Success", StringComparison.OrdinalIgnoreCase)) return "Success";
+                if (st.Equals("Warn", StringComparison.OrdinalIgnoreCase)) return "Warn";
+                if (st.Equals("Failed", StringComparison.OrdinalIgnoreCase) || st.StartsWith("Fail", StringComparison.OrdinalIgnoreCase))
+                    return "Failed";
+                return st;
+            }
+
+            // Fallback: no completion line yet. Use the last entry, but never claim "Success" unless completion exists.
             var last = Entries.OrderByDescending(e => e.TimeLocal).FirstOrDefault();
             if (last == null) return "";
 
-            // Only treat "Success" as a success status if the completion stage was reached.
-            if (!string.IsNullOrWhiteSpace(last.Stage) &&
-                last.Stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase) &&
-                !string.IsNullOrWhiteSpace(last.Status) &&
-                last.Status.Trim().Equals("Success", StringComparison.OrdinalIgnoreCase))
-                return "Success";
-
-            // If status says "Success" but the stage isn't completion, don't mark it as success in the UI.
-            if (!string.IsNullOrWhiteSpace(last.Status) &&
-                last.Status.Trim().Equals("Success", StringComparison.OrdinalIgnoreCase))
+            if (!string.IsNullOrWhiteSpace(last.Status)
+                && last.Status.Trim().Equals("Success", StringComparison.OrdinalIgnoreCase))
                 return "Info";
 
             return last.Status ?? "";
@@ -63,6 +75,21 @@ public partial class UpgradeLogGroup : ObservableObject
             && e.Stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase)
             && !string.IsNullOrWhiteSpace(e.Status)
             && e.Status.Trim().Equals("Success", StringComparison.OrdinalIgnoreCase));
+
+    public bool ContainsCompletionFailed =>
+        Entries.Any(e =>
+            !string.IsNullOrWhiteSpace(e.Stage)
+            && e.Stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(e.Status)
+            && (e.Status.Trim().Equals("Failed", StringComparison.OrdinalIgnoreCase)
+                || e.Status.Trim().StartsWith("Fail", StringComparison.OrdinalIgnoreCase)));
+
+    public bool ContainsCompletionWarn =>
+        Entries.Any(e =>
+            !string.IsNullOrWhiteSpace(e.Stage)
+            && e.Stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(e.Status)
+            && e.Status.Trim().Equals("Warn", StringComparison.OrdinalIgnoreCase));
 
     public string DisplayBadgeStatus =>
         (HasNewerForMac && !string.Equals(LatestStatus, "Success", StringComparison.OrdinalIgnoreCase))

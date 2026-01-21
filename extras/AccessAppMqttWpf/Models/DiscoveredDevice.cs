@@ -33,6 +33,9 @@ public partial class DiscoveredDevice : ObservableObject
     // If the latest (final) upgrade-log entry for this device is Warn, we highlight the row.
     [ObservableProperty] private bool isUpgradeWarn;
 
+    // If the latest (final) upgrade-log completion entry for this device is Failed, we highlight the row red.
+    [ObservableProperty] private bool isUpgradeFailed;
+
 
     // --- Upgrade result (from upgrade-log) ---
     [ObservableProperty] private bool isUpgradeSuccess;

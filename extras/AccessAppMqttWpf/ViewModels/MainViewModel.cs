@@ -120,6 +120,7 @@ public partial class MainViewModel : ObservableObject
         public string CurrentFw = "";
         public bool IsUpgradeSuccess = false;
         public bool IsUpgradeWarn = false;
+        public bool IsUpgradeFailed = false;
         public string LastTargetFw = "";
         public DateTimeOffset? LastUpgradeSuccessUtc = null;
 
@@ -187,6 +188,11 @@ public partial class MainViewModel : ObservableObject
 
         if (!string.IsNullOrWhiteSpace(cs.CurrentFw)) dev.CurrentFw = cs.CurrentFw;
 
+        // Upgrade result flags come from upgrade-log completion stage.
+        // These are independent from queue/progress UI and are overridden visually by IsInQueue.
+        dev.IsUpgradeWarn = cs.IsUpgradeWarn;
+        dev.IsUpgradeFailed = cs.IsUpgradeFailed;
+
         if (cs.IsUpgradeSuccess)
         {
             dev.IsUpgradeSuccess = true;
@@ -208,6 +214,34 @@ public partial class MainViewModel : ObservableObject
     // Example: "10:B9:F7:0F:F1:EB: connect OK" or "[info] 10:B9:..: disconnect OK".
     private static readonly Regex PlainReplyMacRx =
         new(@"(?<mac>(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex ProductNumberRx =
+        new(@"^\d{3}-\d{6}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex ProductNumberUnderscoreRx =
+        new(@"^\d{3}_\d{6}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static void ApplyDeviceNameWithGuards(DiscoveredDevice d, string? incomingName)
+    {
+        if (d == null) return;
+        var newName = (incomingName ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(newName)) return;
+
+        var cur = (d.Name ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(cur))
+        {
+            d.Name = newName;
+            return;
+        }
+
+        // If we already have a name, never overwrite it with a plain product-number name (xxx-xxxxxx).
+        // Exception: if our current name is itself a product-number variant using '_' instead of '-',
+        // allow upgrading/normalizing it.
+        if (ProductNumberRx.IsMatch(newName) && !ProductNumberUnderscoreRx.IsMatch(cur))
+            return;
+
+        d.Name = newName;
+    }
     public event Action<string, string>? PlainReplyReceived; // mac, message
 
     [ObservableProperty] private DiscoveredDevice? selectedDevice;
@@ -2423,7 +2457,7 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
                             EnsureDeviceAssignmentWiring(existing);
                             ApplyCachedStatusToDevice(existing);
 
-                            if (!string.IsNullOrWhiteSpace(dn)) existing.Name = dn;
+                            ApplyDeviceNameWithGuards(existing, dn);
                             if (!string.IsNullOrWhiteSpace(fam)) existing.DetectorFamily = fam;
                             if (!string.IsNullOrWhiteSpace(typ)) existing.DetectorType = typ;
 
@@ -2734,13 +2768,25 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
         {
             var mac = kvp.Key;
             var g = kvp.Value;
-            var isSuccess = g.ContainsCompletionSuccess;
-            var lastStatusRaw = g.Entries.OrderByDescending(e => e.TimeLocal).FirstOrDefault()?.Status ?? "";
-            var isWarn = lastStatusRaw.Trim().Equals("Warn", StringComparison.OrdinalIgnoreCase);
+            // IMPORTANT:
+            // The per-device result MUST be taken from the "Device Upgrade Completed." line (Warn/Success/Failed).
+            // Do NOT rely on the last informational line.
+            var completion = g.Entries
+                .Where(e => !string.IsNullOrWhiteSpace(e.Stage)
+                            && e.Stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(e => e.TimeLocal)
+                .FirstOrDefault();
+
+            var completionStatus = (completion?.Status ?? "").Trim();
+            var isSuccess = completionStatus.Equals("Success", StringComparison.OrdinalIgnoreCase);
+            var isWarn = completionStatus.Equals("Warn", StringComparison.OrdinalIgnoreCase);
+            var isFailed = completionStatus.Equals("Failed", StringComparison.OrdinalIgnoreCase)
+                           || completionStatus.StartsWith("Fail", StringComparison.OrdinalIgnoreCase);
 
             var cs = GetOrCreateCache(mac);
             cs.IsUpgradeSuccess = isSuccess;
             cs.IsUpgradeWarn = isWarn;
+            cs.IsUpgradeFailed = isFailed;
             // Use the group's completion timestamp if present.
             if (isSuccess)
             {
@@ -2765,6 +2811,7 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
             {
                 dev.IsUpgradeSuccess = isSuccess;
                 dev.IsUpgradeWarn = isWarn;
+                dev.IsUpgradeFailed = isFailed;
                 dev.LastUpgradeSuccessUtc = cs.LastUpgradeSuccessUtc;
                 dev.LastTargetFw = cs.LastTargetFw;
             }
@@ -2778,6 +2825,7 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
             if (latestByMac.ContainsKey(dev.Mac)) continue;
             dev.IsUpgradeSuccess = false;
             dev.IsUpgradeWarn = false;
+            dev.IsUpgradeFailed = false;
         }
     }
 
@@ -3601,7 +3649,7 @@ private void RequestUpgradeLogTextRefresh()
                         _devices.Add(d);
                     }
 
-                    d.Name = string.IsNullOrWhiteSpace(name) ? d.Name : name;
+                    ApplyDeviceNameWithGuards(d, name);
                     d.ProductNumber = string.IsNullOrWhiteSpace(productNumber) ? d.ProductNumber : productNumber;
                     d.DetectorFamily = string.IsNullOrWhiteSpace(detectorFamily) ? d.DetectorFamily : detectorFamily;
                     d.DetectorType = string.IsNullOrWhiteSpace(detectorType) ? d.DetectorType : detectorType;
