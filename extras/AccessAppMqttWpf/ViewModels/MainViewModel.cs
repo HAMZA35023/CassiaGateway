@@ -1930,6 +1930,7 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
 
         // Create/update queue item
         var qi = QueueItems.FirstOrDefault(q => q.Mac.Equals(d.Mac, StringComparison.OrdinalIgnoreCase));
+        var wasAlreadyInQueue = (qi != null);
         if (qi == null)
         {
             qi = new QueueItem
@@ -1971,7 +1972,20 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
             }
         };
 
-        try
+                // Before queueing: send disconnect to /all to ensure no gateway is stuck on this device.
+        // Only do this if the MAC wasn't already present in our queue list (avoid spamming disconnect).
+        if (!wasAlreadyInQueue)
+        {
+            try
+            {
+                await _mqtt.PublishJsonAsync(BuildCmdTopic("all", "disconnect"),
+                    new { sensors = new[] { d.Mac } },
+                    retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+            }
+            catch { /* best-effort */ }
+        }
+
+try
         {
             await _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token);
 

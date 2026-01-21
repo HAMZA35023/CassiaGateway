@@ -23,7 +23,7 @@ public partial class CassiaGateway : ObservableObject
     [ObservableProperty] private int parallelProgrammersDesired = 0;
     [ObservableProperty] private double totalSpeedpct = 1;
 
-    // Client-side speed history for graphing (max 1 hour kept)
+    // Client-side speed history for graphing (max 12 hours kept)
     public ObservableCollection<SpeedSample> SpeedHistory { get; } = new();
 
     public void AddSpeedSample(DateTimeOffset tsUtc, double speedPctPerMin)
@@ -31,8 +31,8 @@ public partial class CassiaGateway : ObservableObject
         // Append
         SpeedHistory.Add(new SpeedSample(tsUtc, speedPctPerMin));
 
-        // Prune older than 1 hour
-        var cutoff = DateTimeOffset.UtcNow - TimeSpan.FromHours(1);
+        // Prune older than 12 hours
+        var cutoff = DateTimeOffset.UtcNow - TimeSpan.FromHours(12);
         while (SpeedHistory.Count > 0 && SpeedHistory[0].TimeUtc < cutoff)
             SpeedHistory.RemoveAt(0);
     }

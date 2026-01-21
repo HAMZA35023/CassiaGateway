@@ -74,6 +74,36 @@
             </Style.Triggers>
         </Style>
 
+        <Style x:Key="CassiaBadgeButtonStyleWarning" TargetType="Button">
+            <Setter Property="Padding" Value="8,2"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="Black"/>
+            <Setter Property="Background" Value="#777"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border CornerRadius="10"
+                                Background="{TemplateBinding Background}">
+                            <ContentPresenter Margin="{TemplateBinding Padding}"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding State}" Value="online">
+                    <Setter Property="Background" Value="Orange"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding State}" Value="offline">
+                    <Setter Property="Background" Value="#E74C3C"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
         <Style x:Key="MetaLabel" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
             <Setter Property="FontSize" Value="12"/>
@@ -164,6 +194,13 @@
                                             ContentTemplate="{StaticResource CassiaStateBadge}"
                                             VerticalAlignment="Center"/>
 
+                                                <Button Style="{StaticResource CassiaBadgeButtonStyleWarning}"
+                                    Content="🧹"
+                                    Margin="6,0,0,0"
+                                    ToolTip="Clear device settings backups"
+                                    Command="{Binding DataContext.ClearDeviceSettingsBackupsForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                    CommandParameter="{Binding Name}"/>
+
                                                 <Button Style="{StaticResource CassiaBadgeButtonStyle}"
                                     Content="↻"
                                     Margin="8,0,0,0"
@@ -174,7 +211,7 @@
                                                 <Button Style="{StaticResource CassiaBadgeButtonStyle}"
                                     Content="📈"
                                     Margin="6,0,0,0"
-                                    ToolTip="Open speed graph (last 1 hour)"
+                                    ToolTip="Open speed graph (up to 12 hours)"
                                     Command="{Binding DataContext.OpenSpeedGraphCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                     CommandParameter="{Binding Name}"/>
                                             </StackPanel>
@@ -290,11 +327,6 @@
                                         Content="Get"
                                         Command="{Binding DataContext.GetParallelProgrammersForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                         CommandParameter="{Binding Name}"/>
-                                                    <Button Style="{StaticResource WarningButton}" Padding="12,4" Margin="0,6,0,0"
-                                                            Content="Clear backups"
-                                                            ToolTip="Send cmd to clear-device-settings-backups"
-                                                            Command="{Binding DataContext.ClearDeviceSettingsBackupsForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                            CommandParameter="{Binding Name}"/>
 
                                                 </StackPanel>
                                             </StackPanel>
