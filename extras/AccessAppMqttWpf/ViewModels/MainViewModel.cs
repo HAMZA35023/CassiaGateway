@@ -29,6 +29,8 @@ public partial class MainViewModel : ObservableObject
     private readonly DispatcherTimer _hostBleUiTimer = new() { Interval = TimeSpan.FromSeconds(10) };
     private readonly Dictionary<string, HostBleScanItem> _hostBleRowsByMac = new(StringComparer.OrdinalIgnoreCase);
 
+    public event Action? RequestClearHostBleSelection;
+
     // ---- UI update cadence (throttled at MQTT client level) ----
     // Progress updates are emitted every 5 seconds, discovered every 15 seconds.
     // We show countdowns so users understand why numbers/statuses are not "live" per message.
@@ -78,7 +80,7 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty] private int hostBleUiUpdateSeconds = 10;
 
-    [ObservableProperty] private bool hostBleAutoUpdate = true;
+    [ObservableProperty] private bool hostBleAutoUpdate = false;
 // Host BLE model filter
     public ObservableCollection<string> HostBleModelOptions { get; } = new(new[] { "All" });
     [ObservableProperty] private string hostBleModelFilter = "All";
@@ -720,7 +722,26 @@ partial void OnHostBleUiUpdateSecondsChanged(int value)
         // Manual refresh button.
         FlushHostBleToUi();
         ResetHostBleUiTimer();
-        
+    }
+
+    private void ScheduleHostBleUiRefresh(TimeSpan delay)
+    {
+        try
+        {
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(delay).ConfigureAwait(false);
+                try
+                {
+                    System.Windows.Application.Current?.Dispatcher?.Invoke(() =>
+                    {
+                        try { HostBleRefreshUi(); } catch { }
+                    });
+                }
+                catch { }
+            });
+        }
+        catch { }
     }
 
     public void ResetHostBleUiTimer()
@@ -783,7 +804,6 @@ partial void OnHostBleUiUpdateSecondsChanged(int value)
             {
                 row.SetCassiaRssi(d.CassiaRssi);
                 row.ClosestCassia = d.BestCassia ?? "";
-                row.AssignedCassia = d.AssignedCassia ?? "";
                 row.SensorModel = (d.SensorModel ?? "").Trim();
                 row.CurrentFw = d.DisplayFw ?? "";
 
@@ -797,7 +817,6 @@ partial void OnHostBleUiUpdateSecondsChanged(int value)
             {
                 row.SetCassiaRssi(null);
                 row.ClosestCassia = "";
-                row.AssignedCassia = row.AssignedCassia; // keep previous if any
                 row.SensorModel = row.SensorModel; // keep previous if any
                 // keep CurrentFw (so it doesn't flicker empty if host sees adv before MQTT sees device)
 
@@ -828,7 +847,6 @@ partial void OnHostBleUiUpdateSecondsChanged(int value)
             if (sel != null)
                 SelectedHostBleDevice = sel;
         }
-
 
         try { HostBleDevicesView.Refresh(); } catch { }
 
@@ -1349,6 +1367,8 @@ partial void OnSensorFilterChanged(string value)
             return;
 
         var mac = item.Mac.Trim();
+        // UX: clear selection immediately when pressing Update (even if user clicked the button on an unselected row).
+        try { RequestClearHostBleSelection?.Invoke(); } catch { }
 
         // Reuse discovered device object if present; otherwise create a minimal one.
         var dev = FindDiscoveredDevice(mac);
@@ -1415,6 +1435,9 @@ partial void OnSensorFilterChanged(string value)
 
         // Queue + request FW on the chosen/assigned Cassia
         await QueueDeviceAndRequestAsync(dev);
+        // UX: refresh Host BLE list shortly after Update so queued/assigned status & FW request results show up.
+        ScheduleHostBleUiRefresh(TimeSpan.FromSeconds(2));
+
     }
 
     [RelayCommand]
@@ -1447,7 +1470,6 @@ partial void OnSensorFilterChanged(string value)
         await SendGetFwVersionAsync(new[] { dev });
     }
 
-    [RelayCommand]
     private async Task RebalanceQueuedItems()
     {
         // Only rebalance items that are still pending in the queue (not actively programming/done).

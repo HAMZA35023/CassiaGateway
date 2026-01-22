@@ -309,6 +309,9 @@ public partial class MainWindow : Window
             if (DataContext is MainViewModel vm)
             {
                 BuildHostBleGridColumns(vm);
+                // Allow VM commands (e.g., Update) to request clearing Host BLE selection.
+                vm.RequestClearHostBleSelection -= ClearHostBleSelectionFromVm;
+                vm.RequestClearHostBleSelection += ClearHostBleSelectionFromVm;
                 vm.CassiaGateways.CollectionChanged += (_, __) => BuildHostBleGridColumns(vm);
                 vm.PropertyChanged += (_, args) =>
                 {
@@ -320,6 +323,17 @@ public partial class MainWindow : Window
         catch { }
 
     }
+
+    private void ClearHostBleSelectionFromVm()
+    {
+        Dispatcher.Invoke(() =>
+        {
+            if (HostBleGrid == null) return;
+            HostBleGrid.SelectedItem = null;
+            HostBleGrid.SelectedItems?.Clear();
+        });
+    }
+
 
     private void HostBleGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -375,13 +389,6 @@ public partial class MainWindow : Window
         var template = new DataTemplate { VisualTree = panelFactory };
         actionsCol.CellTemplate = template;
         HostBleGrid.Columns.Add(actionsCol);
-
-HostBleGrid.Columns.Add(new DataGridTextColumn
-        {
-            Header = "Assigned Cassia",
-            Binding = new Binding(nameof(HostBleScanItem.AssignedCassia)),
-            Width = new DataGridLength(120)
-        });
 
         HostBleGrid.Columns.Add(new DataGridTextColumn
         {
