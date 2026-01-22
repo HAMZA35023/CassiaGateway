@@ -887,13 +887,13 @@
                         <TextBox Text="{Binding HostBleSearchText, UpdateSourceTrigger=PropertyChanged}"
                                  Width="160" Margin="8,0,12,0" Padding="6,2"/>
 
-                        <Button Style="{StaticResource GhostButton}"
+                        <Button Style="{StaticResource SuccessButton}"
                                 Content="Refresh"
                                 Command="{Binding HostBleRefreshUiCommand}"
                                 Padding="12,6"
                                 Margin="0,0,0,0"/>
 
-                        <Button Style="{StaticResource GhostButton}"
+                        <Button Style="{StaticResource PrimaryButton}"
                                 Content="Reassign"
                                 Command="{Binding ReassignDevicesCommand}"
                                 Padding="12,6"

@@ -720,6 +720,7 @@ partial void OnHostBleUiUpdateSecondsChanged(int value)
         // Manual refresh button.
         FlushHostBleToUi();
         ResetHostBleUiTimer();
+        
     }
 
     public void ResetHostBleUiTimer()
@@ -827,6 +828,7 @@ partial void OnHostBleUiUpdateSecondsChanged(int value)
             if (sel != null)
                 SelectedHostBleDevice = sel;
         }
+
 
         try { HostBleDevicesView.Refresh(); } catch { }
 
@@ -1445,6 +1447,7 @@ partial void OnSensorFilterChanged(string value)
         await SendGetFwVersionAsync(new[] { dev });
     }
 
+    [RelayCommand]
     private async Task RebalanceQueuedItems()
     {
         // Only rebalance items that are still pending in the queue (not actively programming/done).
