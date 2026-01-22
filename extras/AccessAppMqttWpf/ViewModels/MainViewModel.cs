@@ -38,6 +38,9 @@ public partial class MainViewModel : ObservableObject
     private int _progressCountdownSec = 5;
     private int _discoveredCountdownSec = 15;
 
+
+    // Suppress repeated weak-RSSI warnings during bulk/batch queue operations
+    private bool _suppressWeakRssiPrompt;
     [ObservableProperty] private string progressUiCountdownText = "Progress UI update in 5s";
     [ObservableProperty] private string discoveredUiCountdownText = "Discovered UI update in 15s";
 
@@ -130,8 +133,12 @@ public partial class MainViewModel : ObservableObject
 
     // ---- RSSI balancing thresholds (requested to be variables at top of the class) ----
     // Note: RSSI values are negative; e.g. -60 is stronger than -80.
-    private const int RssiAllowBalancingThreshold = -70;   // >= -65: allow balancing among eligible Cassias
-    private const int RssiForceClosestThreshold = -75;     // <= -75: always use the closest Cassia (best RSSI)
+    private const int RssiAllowBalancingThreshold = -65;   // >= -65: allow balancing among eligible Cassias
+    private const int RssiWarnQueueThreshold = -70;        // < -70: show warning before queueing (still allowed)
+
+    // Weights for balancing: lower score wins. Score = (load * weight) - (rssi * 1). Since RSSI is negative, stronger (less negative) lowers score.
+    private const int AssignmentLoadWeight = 10;            // how much 1 queued/programming item counts vs 1 dB RSSI
+    private const int RssiForceClosestThreshold = -999; // unused (kept for compatibility)     // <= -75: always use the closest Cassia (best RSSI)
 
     // Balancing goal: finish fastest by keeping roughly the same amount of work per Cassia.
     // We count "assigned detectors" as part of the load, not only queue/programming, because
@@ -1292,6 +1299,40 @@ partial void OnSensorFilterChanged(string value)
 
         if (selected.Count == 0) return;
 
+        // If any selected device has very weak RSSI (< -70), warn once (device is still queueable).
+        var weak = selected
+            .Where(d => d != null && d.CassiaRssi != null && d.CassiaRssi.Count > 0)
+            .Select(d => new
+            {
+                Dev = d,
+                Best = d.CassiaRssi.Where(kv => !string.IsNullOrWhiteSpace(kv.Key)).OrderByDescending(kv => kv.Value).FirstOrDefault()
+            })
+            .Select(x => new { x.Dev, BestCassia = (x.Best.Key ?? "").Trim(), BestRssi = x.Best.Value })
+            .Where(x => x.BestRssi < RssiWarnQueueThreshold)
+            .ToList();
+
+        if (weak.Count > 0)
+        {
+            var lines = weak
+                .OrderBy(x => x.BestRssi)
+                .Take(20)
+                .Select(x => $"{x.Dev.Mac}  best={x.BestCassia}:{x.BestRssi} dBm")
+                .ToList();
+
+            var more = weak.Count > 20 ? $"\n... and {weak.Count - 20} more" : "";
+
+            var res = MessageBox.Show(
+                "Warning: Some devices have weak RSSI (< -70 dBm).\n\n" +
+                string.Join("\n", lines) + more +
+                "\n\nQueue anyway?",
+                "Weak RSSI",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+
+            if (res != MessageBoxResult.Yes)
+                return;
+        }
+
         // Build a preview of what will be queued and where (batch-aware load balancing).
         var plan = ComputeBatchAssignmentPlan(selected);
 
@@ -1301,11 +1342,11 @@ partial void OnSensorFilterChanged(string value)
 
         var dlgResult = ShowAssignmentPlanDialog(
             title: "Add to queue",
-            subtitle: "Review suggested Cassia assignment (RSSI + workload balancing) before queueing",
+            subtitle: "Review suggested Cassia assignment (RSSI + load balancing) before queueing",
             rows: dialogRows,
             loadRows: loadRows,
             footer: "Apply = use suggested assignment • Keep current = use current assignment • Cancel = abort",
-            notes: $"Rules: > {RssiAllowBalancingThreshold}: eligible Cassias are those with RSSI > {RssiAllowBalancingThreshold}; <= {RssiForceClosestThreshold}: force closest; otherwise eligible = within {AssignmentRssiSlack} dB of best RSSI.",
+            notes: $"Rules: If best RSSI < {RssiAllowBalancingThreshold} we always pick the closest Cassia. Otherwise we balance using (assigned*{AssignedDetectorsWeight} + queue + programming), preferring ONLINE gateways and using RSSI as tie-break. If best RSSI < {RssiWarnQueueThreshold}, you get a warning.",
             showKeepButton: true);
 
         if (dlgResult == AssignmentPlanDialogResult.Cancel) return;
@@ -1315,10 +1356,18 @@ partial void OnSensorFilterChanged(string value)
             ApplySuggestedAssignmentsToDevices(selected, dialogRows);
         }
 
-        foreach (var d in selected)
+        _suppressWeakRssiPrompt = true;
+        try
         {
-            await QueueDeviceAndRequestAsync(d);
-            d.IsSelected = false;
+            foreach (var d in selected)
+            {
+                await QueueDeviceAndRequestAsync(d);
+                d.IsSelected = false;
+            }
+        }
+        finally
+        {
+            _suppressWeakRssiPrompt = false;
         }
     }
 
@@ -1383,29 +1432,83 @@ partial void OnSensorFilterChanged(string value)
             _deviceByMac[mac] = dev;
         }
 
-        // Suggested Cassia = closest by RSSI (prefer MQTT derived, fallback to assigned/best).
-        var suggested = (item.ClosestCassia ?? "").Trim();
-        if (suggested.Length == 0) suggested = (dev.BestCassia ?? "").Trim();
-        if (suggested.Length == 0) suggested = (dev.AssignedCassia ?? "").Trim();
+        // IMPORTANT: Host BLE scan rows keep per-Cassia RSSIs in HostBleScanItem.CassiaRssi.
+        // The balancing algorithm uses DiscoveredDevice.CassiaRssi, so we must sync them here.
+        // Otherwise the algorithm only sees the "closest" Cassia and cannot choose a free alternative.
+        if (item.CassiaRssi != null && item.CassiaRssi.Count > 0)
+        {
+            dev.CassiaRssi.Clear();
+            foreach (var kv in item.CassiaRssi)
+            {
+                var k = (kv.Key ?? "").Trim();
+                if (k.Length == 0) continue;
+                dev.CassiaRssi[k] = kv.Value;
+            }
+
+            // Refresh best Cassia/RSSI fields.
+            var best = dev.CassiaRssi.OrderByDescending(kv => kv.Value).FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(best.Key))
+            {
+                dev.BestCassia = best.Key.Trim();
+                dev.BestRssi = best.Value;
+            }
+        }
+
+        // Suggested Cassia: use the SAME algorithm as Add-to-queue/Reassign.
+        // - If best RSSI < -65 => closest Cassia.
+        // - If best RSSI >= -65 => balance using Cassia reported Queue/Programming, but still prefer closest when similar.
+        if (!TryChooseCassiaForUpdate(dev, plannedLoad: null, out var suggested, out var suggestedReason))
+        {
+            suggested = (item.ClosestCassia ?? "").Trim();
+            if (suggested.Length == 0) suggested = (dev.BestCassia ?? "").Trim();
+            if (suggested.Length == 0) suggested = (dev.AssignedCassia ?? "").Trim();
+            suggestedReason = "closest fallback";
+        }
 
         var current = (dev.AssignedCassia ?? "").Trim();
         if (current.Length == 0) current = (dev.BestCassia ?? "").Trim();
 
-        var closestRssi = 0;
-        if (suggested.Length > 0 && dev.CassiaRssi.TryGetValue(suggested, out var rr))
-            closestRssi = rr;
+        int GetRssiNormalized(string c)
+        {
+            c = (c ?? "").Trim();
+            if (c.Length == 0) return int.MinValue;
+            foreach (var kv in dev.CassiaRssi)
+            {
+                var k = (kv.Key ?? "").Trim();
+                if (string.Equals(k, c, StringComparison.OrdinalIgnoreCase))
+                    return kv.Value;
+            }
+            return int.MinValue;
+        }
+
+        var closestCassia = (dev.BestCassia ?? suggested).Trim();
+        var closestRssi = GetRssiNormalized(closestCassia);
+        var suggestedRssi = GetRssiNormalized(suggested);
+
+        // If weak (< -70) and user hasn't suppressed warnings, warn before queueing (single-device case).
+        if (!_suppressWeakRssiPrompt && suggestedRssi != int.MinValue && suggestedRssi < RssiWarnQueueThreshold)
+        {
+            var res = MessageBox.Show(
+                $"Warning: weak RSSI (< {RssiWarnQueueThreshold} dBm) for {mac}.\n\n" +
+                $"Suggested: {suggested} @ {suggestedRssi} dBm\n\nQueue anyway?",
+                "Weak RSSI",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            if (res != MessageBoxResult.Yes)
+                return;
+        }
 
         var rows = new ObservableCollection<AssignmentChangeRow>
         {
             new AssignmentChangeRow
             {
                 Mac = mac,
-                ClosestCassia = suggested,
-                ClosestRssi = closestRssi,
+                ClosestCassia = closestCassia,
+                ClosestRssi = closestRssi == int.MinValue ? 0 : closestRssi,
                 CurrentAssigned = current,
                 SuggestedAssigned = suggested.Length == 0 ? current : suggested,
-                SuggestedRssi = closestRssi,
-                Reason = "closest Cassia (RSSI)"
+                SuggestedRssi = suggestedRssi == int.MinValue ? 0 : suggestedRssi,
+                Reason = suggestedReason
             }
         };
 
@@ -1417,7 +1520,8 @@ partial void OnSensorFilterChanged(string value)
             rows: rows,
             loadRows: loadRows,
             footer: "Apply = set suggested Cassia and queue update • Keep current = queue without changing assignment",
-            notes: "Suggestion is based on strongest RSSI. You can change it here before queueing.",
+            notes: $"Suggestion uses the same balancing rules as Add-to-queue/Reassign.\n" +
+                   $"If best RSSI < {RssiAllowBalancingThreshold}: closest Cassia. Otherwise: balance using Cassia Queue/Programming, while still preferring closest when similar.",
             showKeepButton: true);
 
         if (dlg == AssignmentPlanDialogResult.Cancel)
@@ -1502,7 +1606,7 @@ partial void OnSensorFilterChanged(string value)
             rows: rows,
             loadRows: loadRows,
             footer: "Apply = move queue items • Cancel = do nothing",
-            notes: $"Rules: > {RssiAllowBalancingThreshold}: eligible Cassias are those with RSSI > {RssiAllowBalancingThreshold}; <= {RssiForceClosestThreshold}: force closest; otherwise eligible = within {AssignmentRssiSlack} dB of best RSSI.",
+            notes: $"Rules: If best RSSI < {RssiAllowBalancingThreshold} we always pick the closest Cassia. Otherwise we balance using (assigned*{AssignedDetectorsWeight} + queue + programming), preferring ONLINE gateways and using RSSI as tie-break. If best RSSI < {RssiWarnQueueThreshold}, you get a warning.",
             showKeepButton: false);
 
         if (dlgResult != AssignmentPlanDialogResult.Apply)
@@ -1766,6 +1870,40 @@ partial void OnSensorFilterChanged(string value)
     {
         var selected = _devices.Where(d => d != null && d.IsSelected).ToList();
         if (selected.Count == 0) return;
+
+        // If any selected device has very weak RSSI (< -70), warn once (device is still queueable).
+        var weak = selected
+            .Where(d => d != null && d.CassiaRssi != null && d.CassiaRssi.Count > 0)
+            .Select(d => new
+            {
+                Dev = d,
+                Best = d.CassiaRssi.Where(kv => !string.IsNullOrWhiteSpace(kv.Key)).OrderByDescending(kv => kv.Value).FirstOrDefault()
+            })
+            .Select(x => new { x.Dev, BestCassia = (x.Best.Key ?? "").Trim(), BestRssi = x.Best.Value })
+            .Where(x => x.BestRssi < RssiWarnQueueThreshold)
+            .ToList();
+
+        if (weak.Count > 0)
+        {
+            var lines = weak
+                .OrderBy(x => x.BestRssi)
+                .Take(20)
+                .Select(x => $"{x.Dev.Mac}  best={x.BestCassia}:{x.BestRssi} dBm")
+                .ToList();
+
+            var more = weak.Count > 20 ? $"\n... and {weak.Count - 20} more" : "";
+
+            var res = MessageBox.Show(
+                "Warning: Some devices have weak RSSI (< -70 dBm).\n\n" +
+                string.Join("\n", lines) + more +
+                "\n\nQueue anyway?",
+                "Weak RSSI",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+
+            if (res != MessageBoxResult.Yes)
+                return;
+        }
         await SendGetFwVersionAsync(selected);
     }
 
@@ -2036,8 +2174,8 @@ partial void OnSensorFilterChanged(string value)
         if (string.IsNullOrWhiteSpace(cassia)) return 0;
         var gw = CassiaGateways.FirstOrDefault(g => g.Name.Equals(cassia, StringComparison.OrdinalIgnoreCase));
         if (gw == null) return 0;
-        var assigned = Math.Max(0, gw.AssignedGroupA + gw.AssignedGroupB);
-        return (assigned * AssignedDetectorsWeight) + Math.Max(0, gw.Queue) + Math.Max(0, gw.Programming);
+        // Workload must reflect what Cassia reports (queue + programming). Assigned counts are NOT used here.
+        return Math.Max(0, gw.Queue) + Math.Max(0, gw.Programming);
     }
 
     private bool IsDeviceInWork(DiscoveredDevice d)
@@ -2090,117 +2228,151 @@ partial void OnSensorFilterChanged(string value)
         return false;
     }
 
+
 private void EnsureStickyAssignment(DiscoveredDevice d)
-    {
-        if (d == null) return;
-        if (!string.IsNullOrWhiteSpace(d.AssignedCassia)) return; // already assigned (sticky)
+{
+    if (d == null) return;
+    if (!string.IsNullOrWhiteSpace(d.AssignedCassia)) return; // already assigned (sticky)
 
-        // Do not auto-assign devices that are already being worked on (queued/programming).
-        if (IsDeviceInWork(d)) return;
+    // Do not auto-assign devices that are already being worked on (queued/programming).
+    if (IsDeviceInWork(d)) return;
 
-        // Need at least one RSSI reading.
-        if (d.CassiaRssi.Count == 0)
-            return;
+    if (!TryChooseCassiaForUpdate(d, plannedLoad: null, out var chosen, out _))
+        return;
 
-        var best = d.CassiaRssi.OrderByDescending(kv => kv.Value).First();
-        var bestCassia = (best.Key ?? "").Trim();
-        var bestRssi = best.Value;
-        if (string.IsNullOrWhiteSpace(bestCassia)) return;
-
-        // Eligible cassias = within slack of the best RSSI (e.g. best=-55 => eligible >= -65)
-        var eligible = d.CassiaRssi
-            .Where(kv => !string.IsNullOrWhiteSpace(kv.Key) && kv.Value >= bestRssi - AssignmentRssiSlack)
-            .OrderByDescending(kv => kv.Value)
-            .Select(kv => kv.Key)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        if (eligible.Count == 0)
-            eligible.Add(bestCassia);
-
-        var model = (d.SensorModel ?? "").Trim().ToUpperInvariant();
-        var group = GetGroupForModel(model);
-
-        // Prefer balance within the group the user defined.
-        // Tie-break by higher RSSI, then name.
-        string chosen = bestCassia;
-        if (group == 0)
-        {
-            chosen = bestCassia;
-        }
-        else
-        {
-            var groupCounts = GetCurrentGroupCounts(group);
-            var modelCounts = GetCurrentModelCounts(model);
-
-            chosen = eligible
-                .OrderBy(c => GetGatewayLoad(c))
-                .ThenBy(c => groupCounts.TryGetValue(c, out var gc) ? gc : 0)
-                .ThenBy(c => modelCounts.TryGetValue(c, out var mc) ? mc : 0)
-                .ThenByDescending(c => d.CassiaRssi.TryGetValue(c, out var r) ? r : int.MinValue)
-                .ThenBy(c => c, StringComparer.OrdinalIgnoreCase)
-                .FirstOrDefault() ?? bestCassia;
-        }
-
-        d.AssignedCassia = chosen;
-    }
+    d.AssignedCassia = chosen;
+}
 
 
     private (string cassia, string reason) SuggestCassiaForDevice(DiscoveredDevice d)
+{
+    if (d == null) return ("", "no device");
+    if (d.CassiaRssi.Count == 0) return ("", "no RSSI");
+
+    if (!TryChooseCassiaForUpdate(d, plannedLoad: null, out var cassia, out var reason))
+        return ("", reason);
+
+    return (cassia, reason);
+}
+
+/// <summary>
+/// Chooses the best Cassia for updating a device, respecting RSSI threshold and load balancing.
+/// Rules:
+///  - Only Cassias with RSSI >= RssiAllowBalancingThreshold are eligible (e.g. -65).
+///  - Prefer ONLINE gateways when possible.
+///  - Primary sort: lowest effective load (assigned detectors + queue + programming + optional planned load).
+///  - Tie-break: higher RSSI, then name.
+/// Returns false if no eligible Cassia meets the RSSI threshold.
+/// </summary>
+private bool TryChooseCassiaForUpdate(
+    DiscoveredDevice d,
+    Dictionary<string, int>? plannedLoad,
+    out string cassia,
+    out string reason)
+{
+    cassia = "";
+    reason = "";
+
+    if (d == null)
     {
-        if (d == null) return ("", "no device");
-        if (d.CassiaRssi.Count == 0) return ("", "no RSSI");
-
-        var best = d.CassiaRssi.OrderByDescending(kv => kv.Value).First();
-        var bestCassia = (best.Key ?? "").Trim();
-        var bestRssi = best.Value;
-        if (string.IsNullOrWhiteSpace(bestCassia)) return ("", "no Cassia");
-
-        // Eligible cassias = within slack of the best RSSI
-        var eligible = d.CassiaRssi
-            .Where(kv => !string.IsNullOrWhiteSpace(kv.Key) && kv.Value >= bestRssi - AssignmentRssiSlack)
-            .OrderByDescending(kv => kv.Value)
-            .Select(kv => kv.Key)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        if (eligible.Count == 0)
-            eligible.Add(bestCassia);
-
-        var model = (d.SensorModel ?? "").Trim().ToUpperInvariant();
-        var group = GetGroupForModel(model);
-
-        string chosen = bestCassia;
-
-        // Rule: If RSSI is very weak (<= RssiForceClosestThreshold), always pick closest.
-        if (bestRssi <= RssiForceClosestThreshold)
-        {
-            chosen = bestCassia;
-        }
-        else if (group != 0)
-        {
-            var groupCounts = GetCurrentGroupCounts(group);
-            var modelCounts = GetCurrentModelCounts(model);
-
-            chosen = eligible
-                .OrderBy(c => GetGatewayLoad(c))
-                .ThenBy(c => groupCounts.TryGetValue(c, out var gc) ? gc : 0)
-                .ThenBy(c => modelCounts.TryGetValue(c, out var mc) ? mc : 0)
-                .ThenByDescending(c => d.CassiaRssi.TryGetValue(c, out var r) ? r : int.MinValue)
-                .ThenBy(c => c, StringComparer.OrdinalIgnoreCase)
-                .FirstOrDefault() ?? bestCassia;
-        }
-
-        var chosenRssi = d.CassiaRssi.TryGetValue(chosen, out var rr) ? rr : bestRssi;
-        var reason = $"rssi={chosenRssi}, load={GetGatewayLoad(chosen)}";
-        if (bestRssi <= RssiForceClosestThreshold)
-            reason = $"very weak (<= {RssiForceClosestThreshold}): force closest {bestCassia}:{bestRssi}";
-        else if (!chosen.Equals(bestCassia, StringComparison.OrdinalIgnoreCase))
-            reason += $", best={bestCassia}({bestRssi})";
-        return (chosen, reason);
+        reason = "no device";
+        return false;
     }
 
-    private sealed record AssignmentPlanItem(string Mac, string Cassia, string Reason);
+    if (d.CassiaRssi.Count == 0)
+    {
+        reason = "no RSSI";
+        return false;
+    }
+
+    // Determine the closest Cassia (best RSSI).
+    var best = d.CassiaRssi
+        .Where(kv => !string.IsNullOrWhiteSpace(kv.Key))
+        .OrderByDescending(kv => kv.Value)
+        .FirstOrDefault();
+
+    var bestCassia = (best.Key ?? "").Trim();
+    var bestRssi = best.Value;
+
+    if (string.IsNullOrWhiteSpace(bestCassia))
+    {
+        reason = "no RSSI";
+        return false;
+    }
+
+    // Rule: if the strongest RSSI is weaker than the balancing threshold, ALWAYS use the closest Cassia.
+    // This guarantees a device is always queueable and avoids "legal but weak" balancing moves.
+    if (bestRssi < RssiAllowBalancingThreshold)
+    {
+        cassia = bestCassia;
+        reason = $"rssi {bestRssi} (< {RssiAllowBalancingThreshold}): weak link, chose closest={cassia}";
+        return true;
+    }
+
+    // For strong links (>= threshold): allow balancing, but still prefer the closest when choices are otherwise equal.
+    // Eligible: RSSI >= threshold AND within slack of the closest Cassia (so we don't pick a much worse radio just for load).
+    var candidates = d.CassiaRssi
+        .Where(kv => !string.IsNullOrWhiteSpace(kv.Key))
+        .Where(kv => kv.Value >= RssiAllowBalancingThreshold)        .Select(kv => kv.Key.Trim())
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    if (candidates.Count == 0)
+    {
+        // Should not happen because bestRssi >= threshold, but keep it safe.
+        cassia = bestCassia;
+        reason = $"rssi {bestRssi} (>= {RssiAllowBalancingThreshold}): closest fallback={cassia}";
+        return true;
+    }
+
+    int EffectiveLoad(string c)
+    {
+        var baseLoad = GetGatewayLoad(c); // uses latest Cassia-reported queue/programming + assigned group counts
+        var extra = (plannedLoad != null && plannedLoad.TryGetValue(c, out var v)) ? v : 0;
+        return baseLoad + extra;
+    }
+
+    bool IsOnline(string c)
+    {
+        var gw = CassiaGateways.FirstOrDefault(g => g != null && string.Equals(g.Name, c, StringComparison.OrdinalIgnoreCase));
+        return gw != null && string.Equals(gw.State, "online", StringComparison.OrdinalIgnoreCase);
+    }
+
+    var anyOnline = candidates.Any(IsOnline);
+    var pool = anyOnline ? candidates.Where(IsOnline).ToList() : candidates;
+
+    int GetRssi(string c)
+    {
+        foreach (var kv in d.CassiaRssi)
+        {
+            var k = (kv.Key ?? "").Trim();
+            if (string.Equals(k, c, StringComparison.OrdinalIgnoreCase))
+                return kv.Value;
+        }
+        return int.MinValue;
+    }
+
+
+    // Strong-link rule (best RSSI >= threshold):
+    //   1) Always prefer the Cassia with the LOWEST *current* workload (queue + programming) (plus planned batch load)
+    //   2) If tied, prefer the closest Cassia (highest RSSI)
+    // This matches the expected field behavior: if multiple Cassias are "good enough" radio-wise, we spread work first.
+    cassia = pool
+        .OrderBy(c => EffectiveLoad(c))
+        .ThenByDescending(c => GetRssi(c))
+        .ThenBy(c => c, StringComparer.OrdinalIgnoreCase)
+        .FirstOrDefault() ?? bestCassia;
+
+    var chosenRssi = GetRssi(cassia);
+    var extraTxt = plannedLoad != null && plannedLoad.TryGetValue(cassia, out var extra) ? $"+{extra}" : "";
+    reason = $"rssi {chosenRssi} (>= {RssiAllowBalancingThreshold}): balance(load-first), chose={cassia}, load={EffectiveLoad(cassia)} (base={GetGatewayLoad(cassia)}{extraTxt})";
+    return true;
+}
+
+
+
+private sealed record AssignmentPlanItem(string Mac, string Cassia, string Reason);
+
 
     /// <summary>
     /// Computes a batch-aware assignment plan for the given devices.
@@ -2211,127 +2383,64 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
     /// Eligible = within AssignmentRssiSlack dB of best.
     /// Load = (assigned detectors * AssignedDetectorsWeight) + Cassia status (queue+programming) + already planned assignments in this batch.
     /// </summary>
-    private List<AssignmentPlanItem> ComputeBatchAssignmentPlan(IReadOnlyList<DiscoveredDevice> devices)
+    /// <summary>
+/// Computes a batch-aware assignment plan for the given devices.
+/// Rules:
+///  - Only Cassias with RSSI >= RssiAllowBalancingThreshold are eligible (e.g. -65).
+///  - We load-balance across all eligible Cassias using reported workload:
+///      load = (assigned detectors * AssignedDetectorsWeight) + queue + programming + already planned assigns in this batch.
+///  - Prefer ONLINE gateways when possible.
+///  - If no Cassia meets the RSSI threshold for a device, the plan keeps the current assignment (no suggested change).
+/// </summary>
+private List<AssignmentPlanItem> ComputeBatchAssignmentPlan(IReadOnlyList<DiscoveredDevice> devices)
+{
+    var result = new List<AssignmentPlanItem>();
+    if (devices == null || devices.Count == 0) return result;
+
+    // Planned incremental load per Cassia for this batch.
+    var planned = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+    void AddPlanned(string cassia)
     {
-        var result = new List<AssignmentPlanItem>();
-        if (devices == null || devices.Count == 0) return result;
+        cassia = (cassia ?? "").Trim();
+        if (cassia.Length == 0) return;
+        planned[cassia] = planned.TryGetValue(cassia, out var v) ? v + 1 : 1;
+    }
 
-        // Base load from Cassia snapshot.
-        // Goal: finish fastest by keeping roughly the same amount of work per Cassia.
-        // "Work" includes already-assigned detectors, because your workflow tends to keep queueing/upgrading on the assigned Cassia.
-        var baseLoad = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        foreach (var gw in CassiaGateways)
+    // Deterministic order: assign strongest devices first (more options) so later items can still balance well.
+    foreach (var d in devices
+                 .Where(x => x != null)
+                 .OrderByDescending(x => x.CassiaRssi.Count == 0 ? int.MinValue : x.CassiaRssi.Max(kv => kv.Value))
+                 .ThenBy(x => x.Mac, StringComparer.OrdinalIgnoreCase))
+    {
+        var mac = (d.Mac ?? "").Trim();
+        if (mac.Length == 0) continue;
+
+        // If we have no RSSI, keep current assignment (or best known) as "no suggestion".
+        if (d.CassiaRssi.Count == 0)
         {
-            if (gw == null || string.IsNullOrWhiteSpace(gw.Name)) continue;
-            var assigned = Math.Max(0, gw.AssignedGroupA + gw.AssignedGroupB);
-            var q = Math.Max(0, gw.Queue);
-            var p = Math.Max(0, gw.Programming);
-            baseLoad[gw.Name.Trim()] = (assigned * AssignedDetectorsWeight) + q + p;
+            var keep = (d.AssignedCassia ?? d.BestCassia ?? "").Trim();
+            result.Add(new AssignmentPlanItem(mac, keep, "no RSSI"));
+            AddPlanned(keep);
+            continue;
         }
 
-        // Incremental load as we assign within this plan
-        var planned = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-
-        int EffectiveLoad(string cassia)
+        if (TryChooseCassiaForUpdate(d, planned, out var chosen, out var reason))
         {
-            cassia = (cassia ?? "").Trim();
-            if (cassia.Length == 0) return int.MaxValue;
-            var b = baseLoad.TryGetValue(cassia, out var v) ? v : 0;
-            var p = planned.TryGetValue(cassia, out var pv) ? pv : 0;
-            return b + p;
-        }
-
-        string ExplainLoad(string cassia)
-        {
-            cassia = (cassia ?? "").Trim();
-            var gw = CassiaGateways.FirstOrDefault(g => g != null && g.Name.Equals(cassia, StringComparison.OrdinalIgnoreCase));
-            var assigned = gw == null ? 0 : Math.Max(0, gw.AssignedGroupA + gw.AssignedGroupB);
-            var q = gw == null ? 0 : Math.Max(0, gw.Queue);
-            var prog = gw == null ? 0 : Math.Max(0, gw.Programming);
-            var plan = planned.TryGetValue(cassia, out var pv) ? pv : 0;
-            var baseUnits = (assigned * AssignedDetectorsWeight) + q + prog;
-            return $"load={baseUnits}+{plan} (assigned {assigned}*{AssignedDetectorsWeight} + q {q} + p {prog})";
-        }
-
-        void AddPlanned(string cassia)
-        {
-            cassia = (cassia ?? "").Trim();
-            if (cassia.Length == 0) return;
-            planned[cassia] = planned.TryGetValue(cassia, out var v) ? v + 1 : 1;
-        }
-
-        // Deterministic order: assign strong-lock devices first so balancing doesn't steal them.
-        foreach (var d in devices
-                     .Where(x => x != null)
-                     .OrderByDescending(x => x.CassiaRssi.Count == 0 ? int.MinValue : x.CassiaRssi.Max(kv => kv.Value))
-                     .ThenBy(x => x.Mac, StringComparer.OrdinalIgnoreCase))
-        {
-            var mac = (d.Mac ?? "").Trim();
-            if (mac.Length == 0) continue;
-
-            if (d.CassiaRssi.Count == 0)
-            {
-                var fallback = (d.AssignedCassia ?? d.BestCassia ?? "").Trim();
-                result.Add(new AssignmentPlanItem(mac, fallback, "no RSSI"));
-                AddPlanned(fallback);
-                continue;
-            }
-
-            var best = d.CassiaRssi.OrderByDescending(kv => kv.Value).First();
-            var bestCassia = (best.Key ?? "").Trim();
-            var bestRssi = best.Value;
-
-            // Eligible Cassias depend on RSSI:
-            //  - bestRssi > RssiAllowBalancingThreshold: device is strong; eligible are Cassias with RSSI > threshold.
-            //  - otherwise: eligible are Cassias within slack of best.
-            var eligible = (bestRssi > RssiAllowBalancingThreshold)
-                ? d.CassiaRssi
-                    .Where(kv => !string.IsNullOrWhiteSpace(kv.Key) && kv.Value > RssiAllowBalancingThreshold)
-                    .Select(kv => kv.Key.Trim())
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToList()
-                : d.CassiaRssi
-                    .Where(kv => !string.IsNullOrWhiteSpace(kv.Key) && kv.Value >= bestRssi - AssignmentRssiSlack)
-                    .Select(kv => kv.Key.Trim())
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToList();
-            if (eligible.Count == 0 && bestCassia.Length > 0)
-                eligible.Add(bestCassia);
-
-            string chosen;
-            string reason;
-
-            // Rules:
-            //  - Very weak (<= RssiForceClosestThreshold): always pick closest Cassia.
-            //  - Strong (bestRssi > RssiAllowBalancingThreshold): balance between all Cassias that see it strong (RSSI > threshold).
-            //  - Otherwise: load-balance among Cassias within slack of best.
-
-            if (bestRssi <= RssiForceClosestThreshold && bestCassia.Length > 0)
-            {
-                chosen = bestCassia;
-                reason = $"very weak (<= {RssiForceClosestThreshold}): force closest {bestCassia}:{bestRssi}";
-            }
-            else
-            {
-                chosen = eligible
-                    .OrderBy(c => EffectiveLoad(c))
-                    .ThenByDescending(c => d.CassiaRssi.TryGetValue(c, out var r) ? r : int.MinValue)
-                    .ThenBy(c => c, StringComparer.OrdinalIgnoreCase)
-                    .FirstOrDefault() ?? bestCassia;
-
-                var chosenRssi = d.CassiaRssi.TryGetValue(chosen, out var rr) ? rr : bestRssi;
-                if (bestRssi > RssiAllowBalancingThreshold)
-                    reason = $"rssi {bestRssi} (> {RssiAllowBalancingThreshold}): strong, balance, chose={chosen}:{chosenRssi}, {ExplainLoad(chosen)}";
-                else
-                    reason = $"rssi {bestRssi} (<= {RssiAllowBalancingThreshold}): balance (slack {AssignmentRssiSlack} dB), chose={chosen}:{chosenRssi}, {ExplainLoad(chosen)}";
-            }
-
             result.Add(new AssignmentPlanItem(mac, chosen, reason));
             AddPlanned(chosen);
         }
-
-        return result;
+        else
+        {
+            // No eligible Cassia (RSSI < threshold). Keep current assignment so we don't propose illegal moves.
+            var keep = (d.AssignedCassia ?? "").Trim();
+            result.Add(new AssignmentPlanItem(mac, keep, reason));
+            AddPlanned(keep);
+        }
     }
+
+    return result;
+}
 
     private Dictionary<string, int> GetCurrentGroupCounts(int group)
     {
@@ -2451,24 +2560,89 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
         if (!string.IsNullOrWhiteSpace(fw) && !fw.Trim().StartsWith("v", StringComparison.OrdinalIgnoreCase))
             fw = "";
 
-        // Determine cassia (sticky assignment), else best RSSI, else first online cassia, else any cassia
-        var cassia = (d.AssignedCassia ?? "").Trim();
-        if (string.IsNullOrWhiteSpace(cassia))
-            cassia = (d.BestCassia ?? "").Trim();
+        
+// Determine Cassia for update:
+//  - If strongest RSSI is < RssiAllowBalancingThreshold: ALWAYS use the closest Cassia (highest RSSI).
+//  - If strongest RSSI is >= RssiAllowBalancingThreshold: allow load-balancing (queue+programming+assigned), but still prefer the closest on ties.
+//  - Device should ALWAYS be queueable. If strongest RSSI is < RssiWarnQueueThreshold: show a warning before queueing.
+var cassia = (d.AssignedCassia ?? "").Trim();
 
-        if (string.IsNullOrWhiteSpace(cassia) || cassia.Equals("auto", StringComparison.OrdinalIgnoreCase))
+string bestCassia = "";
+int bestRssi = int.MinValue;
+
+if (d.CassiaRssi.Count > 0)
+{
+    var best = d.CassiaRssi
+        .Where(kv => !string.IsNullOrWhiteSpace(kv.Key))
+        .OrderByDescending(kv => kv.Value)
+        .FirstOrDefault();
+
+    bestCassia = (best.Key ?? "").Trim();
+    bestRssi = best.Value;
+
+    if (!_suppressWeakRssiPrompt && bestRssi < RssiWarnQueueThreshold)
+    {
+        var res = MessageBox.Show(
+            $"Warning: Weak RSSI for {d.Mac} (best={bestCassia}:{bestRssi} dBm).\n\n" +
+            $"The device is below {RssiWarnQueueThreshold} dBm, which can cause failures.\n\n" +
+            "Do you still want to queue it?",
+            "Weak RSSI",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+
+        if (res != MessageBoxResult.Yes)
         {
+            ConnectionStatus = $"Not queued: {d.Mac} (weak RSSI)";
+            return;
+        }
+    }
+
+    // Under the balancing threshold -> always closest Cassia.
+    if (!string.IsNullOrWhiteSpace(bestCassia) && bestRssi < RssiAllowBalancingThreshold)
+    {
+        cassia = bestCassia;
+    }
+}
+
+// If still no cassia chosen, try to keep sticky (only if it has strong RSSI), else balance.
+if (string.IsNullOrWhiteSpace(cassia))
+{
+    // Validate sticky assignment against threshold when we have RSSI readings.
+    var sticky = (d.AssignedCassia ?? "").Trim();
+    if (!string.IsNullOrWhiteSpace(sticky) && d.CassiaRssi.Count > 0)
+    {
+        if (d.CassiaRssi.TryGetValue(sticky, out var stickyRssi) && stickyRssi >= RssiAllowBalancingThreshold)
+            cassia = sticky;
+    }
+
+    if (string.IsNullOrWhiteSpace(cassia))
+    {
+        if (d.CassiaRssi.Count > 0)
+        {
+            // Strong RSSI case: balance among eligible Cassias.
+            if (!TryChooseCassiaForUpdate(d, plannedLoad: null, out cassia, out _))
+            {
+                // Fallback: closest Cassia (if any)
+                cassia = bestCassia;
+            }
+        }
+        else
+        {
+            // Fallback: no RSSI at all -> pick first online Cassia to avoid blocking.
             cassia = CassiaGateways.FirstOrDefault(g => string.Equals(g.State, "online", StringComparison.OrdinalIgnoreCase))?.Name
                      ?? CassiaGateways.FirstOrDefault()?.Name
                      ?? "";
         }
-        if (string.IsNullOrWhiteSpace(cassia))
-        {
-            ConnectionStatus = "No Cassia gateway known yet (cannot send start-update)";
-            return;
-        }
+    }
+}
 
-        // Create/update queue item
+if (string.IsNullOrWhiteSpace(cassia))
+{
+    ConnectionStatus = "No Cassia gateway known yet (cannot send start-update)";
+    return;
+}
+
+// Create/update queue item
         var qi = QueueItems.FirstOrDefault(q => q.Mac.Equals(d.Mac, StringComparison.OrdinalIgnoreCase));
         var wasAlreadyInQueue = (qi != null);
         if (qi == null)
