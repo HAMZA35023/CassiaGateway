@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using System;
 using System.Collections.ObjectModel;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
@@ -22,6 +23,11 @@ public partial class MainViewModel : ObservableObject
 {
     private readonly MqttClientService _mqtt = new();
     private readonly SettingsStore _store = new();
+
+    private readonly HostBleScannerService _hostBleScanner = new("10:B9:F7");
+    private readonly ConcurrentDictionary<string, HostBleScannerService.HostBleUpdate> _hostBleLatest = new(StringComparer.OrdinalIgnoreCase);
+    private readonly DispatcherTimer _hostBleUiTimer = new() { Interval = TimeSpan.FromSeconds(10) };
+    private readonly Dictionary<string, HostBleScanItem> _hostBleRowsByMac = new(StringComparer.OrdinalIgnoreCase);
 
     // ---- UI update cadence (throttled at MQTT client level) ----
     // Progress updates are emitted every 5 seconds, discovered every 15 seconds.
@@ -60,6 +66,29 @@ public partial class MainViewModel : ObservableObject
     public ObservableCollection<DiscoveredDevice> Devices => _devices;
 
     public ICollectionView FilteredDevices { get; }
+
+    public ObservableCollection<HostBleScanItem> HostBleDevices { get; } = new();
+    public ICollectionView HostBleDevicesView { get; }
+
+    public ObservableCollection<int> HostRssiAverageOptions { get; } = new() { 5, 10, 20, 30, 60 };
+
+    [ObservableProperty] private int hostRssiAverageSeconds = 10;
+
+    public ObservableCollection<int> HostBleUiUpdateOptions { get; } = new() { 2, 5, 10, 20, 30, 60 };
+
+    [ObservableProperty] private int hostBleUiUpdateSeconds = 10;
+
+    [ObservableProperty] private bool hostBleAutoUpdate = true;
+// Host BLE model filter
+    public ObservableCollection<string> HostBleModelOptions { get; } = new(new[] { "All" });
+    [ObservableProperty] private string hostBleModelFilter = "All";
+
+    // Host BLE extra filters
+    [ObservableProperty] private bool hostBleHideCompleted;
+    [ObservableProperty] private bool hostBleHideInQueue;
+    [ObservableProperty] private string hostBleSearchText = "";
+
+    [ObservableProperty] private string hostBleUiStatusText = "";
 
     public ObservableCollection<CassiaGateway> CassiaGateways { get; } = new();
 
@@ -246,6 +275,7 @@ public partial class MainViewModel : ObservableObject
     public event Action<string, string>? PlainReplyReceived; // mac, message
 
     [ObservableProperty] private DiscoveredDevice? selectedDevice;
+    [ObservableProperty] private HostBleScanItem? selectedHostBleDevice;
     [ObservableProperty] private QueueItem? selectedQueueItem;
     [ObservableProperty] private string? selectedQueueMac;
 
@@ -465,6 +495,36 @@ public partial class MainViewModel : ObservableObject
         LoadFirmwareOptions();
 
         FilteredDevices = CollectionViewSource.GetDefaultView(_devices);
+
+        HostBleDevicesView = CollectionViewSource.GetDefaultView(HostBleDevices);
+        HostBleDevicesView.SortDescriptions.Add(new SortDescription(nameof(HostBleScanItem.AvgHostRssi), ListSortDirection.Descending));
+        HostBleDevicesView.SortDescriptions.Add(new SortDescription(nameof(HostBleScanItem.Mac), ListSortDirection.Ascending));
+
+        HostBleDevicesView.Filter = obj =>
+        {
+            if (obj is not HostBleScanItem r) return false;
+
+            // Search by MAC
+            var q = (HostBleSearchText ?? "").Trim();
+            if (!string.IsNullOrWhiteSpace(q))
+            {
+                if (!(r.Mac?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false))
+                    return false;
+            }
+
+            // Hide if completed / queued
+            if (HostBleHideCompleted && r.IsUpgradeSuccess)
+                return false;
+            if (HostBleHideInQueue && r.IsInQueue)
+                return false;
+
+            var filter = (HostBleModelFilter ?? "All").Trim();
+            if (filter.Length == 0 || filter.Equals("All", StringComparison.OrdinalIgnoreCase))
+                return true;
+            var m = (r.SensorModel ?? "").Trim();
+            if (m.Length == 0) m = "Unknown";
+            return m.Equals(filter, StringComparison.OrdinalIgnoreCase);
+        };
         FilteredDevices.Filter = obj =>
         {
             if (obj is not DiscoveredDevice d) return false;
@@ -559,7 +619,23 @@ if (!string.IsNullOrWhiteSpace(SensorFilter) && !SensorFilter.Equals("All", Stri
 
         CassiaNameOptions.Clear();
         CassiaNameOptions.Add("(auto)");
-    }
+    
+// --- Host BLE scanner (PC side) ---
+// We keep the BLE scanner "hot" (updates every second), but throttle UI refreshes to once per 10 seconds
+// to avoid grid churn while the user is interacting.
+_hostBleScanner.WindowSeconds = HostRssiAverageSeconds;
+_hostBleScanner.Updated += u =>
+{
+    // Just buffer latest values; UI is updated on a timer.
+    _hostBleLatest[u.Mac] = u;
+};
+
+_hostBleUiTimer.Tick += (_, _) => FlushHostBleToUi();
+UpdateHostBleUiStatus();
+if (HostBleAutoUpdate) _hostBleUiTimer.Start();
+
+_hostBleScanner.Start();
+}
 
     partial void OnSelectedLogGatewayNameChanged(string value)
     {
@@ -584,6 +660,202 @@ partial void OnUpgradeLogSearchTextChanged(string value)
     {
         MarkLatestUpgradeLogMapDirty();
         UpgradeLogGroupsView.Refresh();
+    }
+
+    partial void OnHostRssiAverageSecondsChanged(int value)
+    {
+        // Update scanner window immediately.
+        try { _hostBleScanner.WindowSeconds = value; } catch { }
+    }
+
+    partial void OnHostBleAutoUpdateChanged(bool value)
+    {
+        try
+        {
+            _hostBleUiTimer.Stop();
+            if (value)
+            {
+                _hostBleUiTimer.Interval = TimeSpan.FromSeconds(Math.Max(1, HostBleUiUpdateSeconds));
+                _hostBleUiTimer.Start();
+            }
+            UpdateHostBleUiStatus();
+        }
+        catch { }
+    }
+
+partial void OnHostBleUiUpdateSecondsChanged(int value)
+    {
+        try
+        {
+            var v = Math.Max(1, value);
+            _hostBleUiTimer.Interval = TimeSpan.FromSeconds(v);
+            ResetHostBleUiTimer();
+        }
+        catch { }
+    }
+
+    partial void OnHostBleModelFilterChanged(string value)
+    {
+        try { HostBleDevicesView.Refresh(); } catch { }
+    }
+
+    partial void OnHostBleHideCompletedChanged(bool value)
+    {
+        try { HostBleDevicesView.Refresh(); } catch { }
+    }
+
+    partial void OnHostBleHideInQueueChanged(bool value)
+    {
+        try { HostBleDevicesView.Refresh(); } catch { }
+    }
+
+    partial void OnHostBleSearchTextChanged(string value)
+    {
+        try { HostBleDevicesView.Refresh(); } catch { }
+    }
+
+    [RelayCommand]
+    private void HostBleRefreshUi()
+    {
+        // Manual refresh button.
+        FlushHostBleToUi();
+        ResetHostBleUiTimer();
+    }
+
+    public void ResetHostBleUiTimer()
+    {
+        // "Freeze" grid churn while the user clicks/reads: next refresh will be N seconds after the last click.
+        try
+        {
+            _hostBleUiTimer.Stop();
+            _hostBleUiTimer.Interval = TimeSpan.FromSeconds(Math.Max(1, HostBleUiUpdateSeconds));
+
+            if (HostBleAutoUpdate)
+                _hostBleUiTimer.Start();
+
+            UpdateHostBleUiStatus();
+        }
+        catch { }
+    }
+
+    private void UpdateHostBleUiStatus()
+    {
+        try
+        {
+            HostBleUiStatusText = HostBleAutoUpdate
+                ? ("Auto-update: " + HostBleUiUpdateSeconds + "s")
+                : "Auto-update: off";
+        }
+        catch { }
+    }
+
+
+    private void FlushHostBleToUi()
+    {
+        // Preserve selection by MAC
+        var selectedMac = SelectedHostBleDevice?.Mac;
+
+        var items = _hostBleLatest.Values
+            .OrderByDescending(x => x.AvgRssi)
+            .ThenBy(x => x.Mac, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        // Update rows in-place so selection doesn't drop and buttons work without a "first click".
+        var alive = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var u in items)
+        {
+            alive.Add(u.Mac);
+
+            if (!_hostBleRowsByMac.TryGetValue(u.Mac, out var row))
+            {
+                row = new HostBleScanItem { Mac = u.Mac };
+                _hostBleRowsByMac[u.Mac] = row;
+                HostBleDevices.Add(row);
+            }
+
+            row.AvgHostRssi = u.AvgRssi;
+            row.LastSeenUtc = u.LastSeenUtc;
+
+            // Merge Cassia RSSIs + closest + current FW from discovered device list (if present)
+            var d = FindDiscoveredDevice(u.Mac);
+            if (d != null)
+            {
+                row.SetCassiaRssi(d.CassiaRssi);
+                row.ClosestCassia = d.BestCassia ?? "";
+                row.AssignedCassia = d.AssignedCassia ?? "";
+                row.SensorModel = (d.SensorModel ?? "").Trim();
+                row.CurrentFw = d.DisplayFw ?? "";
+
+                // Coloring semantics (same as device list)
+                row.IsInQueue = d.IsInQueue;
+                row.IsUpgradeSuccess = d.IsUpgradeSuccess;
+                row.IsUpgradeWarn = d.IsUpgradeWarn;
+                row.IsUpgradeFailed = d.IsUpgradeFailed;
+            }
+            else
+            {
+                row.SetCassiaRssi(null);
+                row.ClosestCassia = "";
+                row.AssignedCassia = row.AssignedCassia; // keep previous if any
+                row.SensorModel = row.SensorModel; // keep previous if any
+                // keep CurrentFw (so it doesn't flicker empty if host sees adv before MQTT sees device)
+
+                // Default flags when unknown
+                row.IsInQueue = false;
+                row.IsUpgradeSuccess = false;
+                row.IsUpgradeWarn = false;
+                row.IsUpgradeFailed = false;
+            }
+        }
+
+        // Remove stale rows not present in latest set (keeps grid tight)
+        for (int i = HostBleDevices.Count - 1; i >= 0; i--)
+        {
+            var r = HostBleDevices[i];
+            if (r == null) continue;
+            if (!alive.Contains(r.Mac))
+            {
+                HostBleDevices.RemoveAt(i);
+                _hostBleRowsByMac.Remove(r.Mac);
+            }
+        }
+
+        // Restore selection
+        if (!string.IsNullOrWhiteSpace(selectedMac))
+        {
+            var sel = HostBleDevices.FirstOrDefault(x => string.Equals(x.Mac, selectedMac, StringComparison.OrdinalIgnoreCase));
+            if (sel != null)
+                SelectedHostBleDevice = sel;
+        }
+
+        try { HostBleDevicesView.Refresh(); } catch { }
+
+        // Refresh model filter options (All + distinct models + Unknown)
+        try
+        {
+            var models = HostBleDevices
+                .Where(x => x != null)
+                .Select(x => (x.SensorModel ?? "").Trim())
+                .Select(m => string.IsNullOrWhiteSpace(m) ? "Unknown" : m)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(m => m, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var wanted = new List<string> { "All" };
+            wanted.AddRange(models);
+
+            // keep current selection if possible
+            var current = (HostBleModelFilter ?? "All").Trim();
+
+            HostBleModelOptions.Clear();
+            foreach (var m in wanted) HostBleModelOptions.Add(m);
+
+            if (HostBleModelOptions.Any(x => x.Equals(current, StringComparison.OrdinalIgnoreCase)))
+                HostBleModelFilter = HostBleModelOptions.First(x => x.Equals(current, StringComparison.OrdinalIgnoreCase));
+            else
+                HostBleModelFilter = "All";
+        }
+        catch { }
     }
 
     private void MarkLatestUpgradeLogMapDirty()
@@ -1031,6 +1303,148 @@ partial void OnSensorFilterChanged(string value)
     }
 
     [RelayCommand]
+    private async Task IdentifyHost(HostBleScanItem? item)
+    {
+        item ??= SelectedHostBleDevice;
+        if (item == null || string.IsNullOrWhiteSpace(item.Mac))
+            return;
+
+        if (!IsConnected)
+        {
+            ConnectionStatus = "Not connected";
+            return;
+        }
+
+        var mac = item.Mac.Trim();
+        var target = string.IsNullOrWhiteSpace(item.ClosestCassia) ? "all" : item.ClosestCassia.Trim();
+
+        var topic = BuildCmdTopic(target, "identify");
+        var payload = new { sensors = new[] { mac } };
+
+        try
+        {
+            await _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token);
+            ConnectionStatus = $"Identify sent to {target} for {mac}";
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = "Identify failed: " + ex.Message;
+        }
+    }
+
+    [RelayCommand]
+    private async Task AddToQueueHost(HostBleScanItem? item)
+    {
+        // Backwards-compat command name. UI uses UpdateHost.
+        await UpdateHost(item);
+    }
+
+    [RelayCommand]
+    private async Task UpdateHost(HostBleScanItem? item)
+    {
+        item ??= SelectedHostBleDevice;
+        if (item == null || string.IsNullOrWhiteSpace(item.Mac))
+            return;
+
+        var mac = item.Mac.Trim();
+
+        // Reuse discovered device object if present; otherwise create a minimal one.
+        var dev = FindDiscoveredDevice(mac);
+        if (dev == null)
+        {
+            dev = new DiscoveredDevice
+            {
+                Mac = mac,
+                Name = "BLE (host scan)",
+            };
+            _devices.Add(dev);
+            _deviceByMac[mac] = dev;
+        }
+
+        // Suggested Cassia = closest by RSSI (prefer MQTT derived, fallback to assigned/best).
+        var suggested = (item.ClosestCassia ?? "").Trim();
+        if (suggested.Length == 0) suggested = (dev.BestCassia ?? "").Trim();
+        if (suggested.Length == 0) suggested = (dev.AssignedCassia ?? "").Trim();
+
+        var current = (dev.AssignedCassia ?? "").Trim();
+        if (current.Length == 0) current = (dev.BestCassia ?? "").Trim();
+
+        var closestRssi = 0;
+        if (suggested.Length > 0 && dev.CassiaRssi.TryGetValue(suggested, out var rr))
+            closestRssi = rr;
+
+        var rows = new ObservableCollection<AssignmentChangeRow>
+        {
+            new AssignmentChangeRow
+            {
+                Mac = mac,
+                ClosestCassia = suggested,
+                ClosestRssi = closestRssi,
+                CurrentAssigned = current,
+                SuggestedAssigned = suggested.Length == 0 ? current : suggested,
+                SuggestedRssi = closestRssi,
+                Reason = "closest Cassia (RSSI)"
+            }
+        };
+
+        var loadRows = BuildLoadSummaryForPlannedAdds(rows);
+
+        var dlg = ShowAssignmentPlanDialog(
+            title: "Update device",
+            subtitle: $"{mac} • choose Cassia assignment before queueing",
+            rows: rows,
+            loadRows: loadRows,
+            footer: "Apply = set suggested Cassia and queue update • Keep current = queue without changing assignment",
+            notes: "Suggestion is based on strongest RSSI. You can change it here before queueing.",
+            showKeepButton: true);
+
+        if (dlg == AssignmentPlanDialogResult.Cancel)
+            return;
+
+        if (dlg == AssignmentPlanDialogResult.Apply)
+        {
+            var chosen = (rows.FirstOrDefault()?.SuggestedAssigned ?? "").Trim();
+            if (chosen.Length > 0)
+            {
+                dev.BestCassia = chosen;
+                dev.AssignedCassia = chosen;
+            }
+        }
+
+        // Queue + request FW on the chosen/assigned Cassia
+        await QueueDeviceAndRequestAsync(dev);
+    }
+
+    [RelayCommand]
+    private async Task GetFirmwareHost(HostBleScanItem? item)
+    {
+        item ??= SelectedHostBleDevice;
+        if (item == null || string.IsNullOrWhiteSpace(item.Mac))
+            return;
+
+        var mac = item.Mac.Trim();
+        var dev = FindDiscoveredDevice(mac);
+        if (dev == null)
+        {
+            dev = new DiscoveredDevice
+            {
+                Mac = mac,
+                Name = "BLE (host scan)",
+            };
+            _devices.Add(dev);
+            _deviceByMac[mac] = dev;
+        }
+
+        // Ensure we use the closest Cassia (if known)
+        if (!string.IsNullOrWhiteSpace(item.ClosestCassia))
+        {
+            dev.BestCassia = item.ClosestCassia.Trim();
+            dev.AssignedCassia = item.ClosestCassia.Trim();
+        }
+
+        await SendGetFwVersionAsync(new[] { dev });
+    }
+
     private async Task RebalanceQueuedItems()
     {
         // Only rebalance items that are still pending in the queue (not actively programming/done).

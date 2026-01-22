@@ -125,6 +125,13 @@
         </Setter>
     </Style>
 
+    <!-- Compact ghost button for DataGrid row actions -->
+    <Style x:Key="TinyGhostButton" TargetType="Button" BasedOn="{StaticResource GhostButton}">
+        <Setter Property="Padding" Value="6,2"/>
+        <Setter Property="Margin" Value="0,0,6,0"/>
+        <Setter Property="MinHeight" Value="24"/>
+    </Style>
+
     <!-- Card -->
   <Style x:Key="Card" TargetType="Border">
     <Setter Property="Background" Value="{StaticResource CardBrush}"/>

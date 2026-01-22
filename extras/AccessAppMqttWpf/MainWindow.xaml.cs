@@ -303,6 +303,134 @@ public partial class MainWindow : Window
         _queueDefaultSortTimer.Tick += QueueDefaultSortTimer_Tick;
         _queueDefaultSortTimer.Start();
 
+        // Build dynamic columns for the Host BLE grid (one RSSI column per Cassia)
+        try
+        {
+            if (DataContext is MainViewModel vm)
+            {
+                BuildHostBleGridColumns(vm);
+                vm.CassiaGateways.CollectionChanged += (_, __) => BuildHostBleGridColumns(vm);
+                vm.PropertyChanged += (_, args) =>
+                {
+                    if (string.Equals(args.PropertyName, nameof(MainViewModel.HostRssiAverageSeconds), StringComparison.OrdinalIgnoreCase))
+                        BuildHostBleGridColumns(vm);
+                };
+            }
+        }
+        catch { }
+
+    }
+
+    private void HostBleGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        try
+        {
+            if (DataContext is MainViewModel vm)
+                vm.ResetHostBleUiTimer();
+        }
+        catch { }
+    }
+
+    private void BuildHostBleGridColumns(MainViewModel vm)
+    {
+        if (HostBleGrid == null) return;
+
+        HostBleGrid.Columns.Clear();
+
+        // Fixed columns
+        HostBleGrid.Columns.Add(new DataGridTextColumn
+        {
+            Header = "MAC",
+            Binding = new Binding(nameof(HostBleScanItem.Mac)),
+            Width = new DataGridLength(180)
+        });
+
+        // Actions should be right after MAC (requested)
+        var actionsCol = new DataGridTemplateColumn { Header = "", Width = new DataGridLength(210) };
+        var panelFactory = new FrameworkElementFactory(typeof(StackPanel));
+        panelFactory.SetValue(StackPanel.OrientationProperty, Orientation.Horizontal);
+
+        FrameworkElementFactory MakeButton(string caption, string commandPath)
+        {
+            var b = new FrameworkElementFactory(typeof(Button));
+            b.SetValue(Button.ContentProperty, caption);
+            b.SetValue(Button.MinWidthProperty, 58d);
+            b.SetValue(Control.FontSizeProperty, 12d);
+            b.SetValue(UIElement.FocusableProperty, false);
+            b.SetValue(FrameworkElement.StyleProperty, FindResource("TinyGhostButton"));
+
+            // Command = DataGrid.DataContext.<Command>
+            b.SetBinding(Button.CommandProperty, new Binding(commandPath)
+            {
+                RelativeSource = new RelativeSource(RelativeSourceMode.FindAncestor, typeof(DataGrid), 1)
+            });
+            b.SetBinding(Button.CommandParameterProperty, new Binding());
+            return b;
+        }
+
+        panelFactory.AppendChild(MakeButton("Identify", "DataContext.IdentifyHostCommand"));
+        panelFactory.AppendChild(MakeButton("Update", "DataContext.UpdateHostCommand"));
+        panelFactory.AppendChild(MakeButton("Get FW", "DataContext.GetFirmwareHostCommand"));
+
+        var template = new DataTemplate { VisualTree = panelFactory };
+        actionsCol.CellTemplate = template;
+        HostBleGrid.Columns.Add(actionsCol);
+
+HostBleGrid.Columns.Add(new DataGridTextColumn
+        {
+            Header = "Assigned Cassia",
+            Binding = new Binding(nameof(HostBleScanItem.AssignedCassia)),
+            Width = new DataGridLength(120)
+        });
+
+        HostBleGrid.Columns.Add(new DataGridTextColumn
+        {
+            Header = "Model",
+            Binding = new Binding(nameof(HostBleScanItem.SensorModel)),
+            Width = new DataGridLength(70)
+        });
+
+        HostBleGrid.Columns.Add(new DataGridTextColumn
+        {
+            Header = $"Host RSSI (avg {vm.HostRssiAverageSeconds}s)",
+            Binding = new Binding(nameof(HostBleScanItem.AvgHostRssi)),
+            Width = new DataGridLength(150)
+        });
+
+        HostBleGrid.Columns.Add(new DataGridTextColumn
+        {
+            Header = "Closest",
+            Binding = new Binding(nameof(HostBleScanItem.ClosestCassia)),
+            Width = new DataGridLength(110)
+        });
+
+        HostBleGrid.Columns.Add(new DataGridTextColumn
+        {
+            Header = "Current FW",
+            Binding = new Binding(nameof(HostBleScanItem.CurrentFw)),
+            Width = new DataGridLength(120)
+        });
+
+        // One column per Cassia RSSI (indexer binding: {Binding [cassia-01]})
+        foreach (var gw in vm.CassiaGateways.OrderBy(g => g.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            var name = gw?.Name;
+            if (string.IsNullOrWhiteSpace(name)) continue;
+
+            HostBleGrid.Columns.Add(new DataGridTextColumn
+            {
+                Header = name,
+                Binding = new Binding($"[{name}]"),
+                Width = new DataGridLength(80)
+            });
+        }
+
+        HostBleGrid.Columns.Add(new DataGridTextColumn
+        {
+            Header = "Last seen",
+            Binding = new Binding(nameof(HostBleScanItem.LastSeenLocal)),
+            Width = new DataGridLength(170)
+        });
     }
 
 
