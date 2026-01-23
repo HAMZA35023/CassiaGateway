@@ -35,6 +35,9 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     public event Func<GetFwVersionCommand, Task>? GetFwVersionRequested;
     public event Func<DisconnectDevicesCommand, Task>? DisconnectDevicesRequested;
 
+    // Identify device (connect/login/wait/disconnect)
+    public event Func<IdentifyCommand, Task>? IdentifyRequested;
+
     // NEW
     public event Func<GetFirmwareManifestCommand, Task>? GetFirmwareManifestRequested;
 
@@ -455,6 +458,45 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 Log("HandleCommandAsync: dispatch get-fw-version");
                 var dto = JsonSerializer.Deserialize<GetFwVersionCommand>(payload, JsonOptions) ?? new GetFwVersionCommand();
                 return GetFwVersionRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "identify", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "identify-device", StringComparison.OrdinalIgnoreCase))
+            {
+                Log("HandleCommandAsync: dispatch identify");
+
+                IdentifyCommand dto;
+                try
+                {
+                    if (string.IsNullOrWhiteSpace(payload))
+                    {
+                        dto = new IdentifyCommand();
+                    }
+                    else
+                    {
+                        // Accept: "AA:BB" | ["AA", ...] | {"sensors":[...],"pincode":"...","seconds":15,"maxConnectAttempts":1}
+                        var p = payload.Trim();
+                        if (p.StartsWith("["))
+                        {
+                            dto = new IdentifyCommand { Sensors = JsonSerializer.Deserialize<List<string>>(payload, JsonOptions) ?? new List<string>() };
+                        }
+                        else if (p.StartsWith("\""))
+                        {
+                            var mac = JsonSerializer.Deserialize<string>(payload, JsonOptions) ?? p.Trim('"');
+                            dto = new IdentifyCommand { Sensors = new List<string> { mac } };
+                        }
+                        else
+                        {
+                            dto = JsonSerializer.Deserialize<IdentifyCommand>(payload, JsonOptions) ?? new IdentifyCommand();
+                        }
+                    }
+                }
+                catch
+                {
+                    dto = new IdentifyCommand();
+                }
+
+                return IdentifyRequested?.Invoke(dto) ?? Task.CompletedTask;
             }
 
             if (string.Equals(command, "disconnect-devices", StringComparison.OrdinalIgnoreCase) ||

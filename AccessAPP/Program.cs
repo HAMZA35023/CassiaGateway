@@ -184,6 +184,59 @@ using (var scope = app.Services.CreateScope())
         await mqttService.PublishTeleJsonAsync("disconnect", resp);
     };
 
+    mqttService.IdentifyRequested += async cmd =>
+    {
+        var macs = (cmd.Sensors ?? new List<string>())
+            .Where(m => !string.IsNullOrWhiteSpace(m))
+            .Select(m => m.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var seconds = cmd.Seconds <= 0 ? 15 : cmd.Seconds;
+        var maxAttempts = cmd.MaxConnectAttempts <= 0 ? 1 : cmd.MaxConnectAttempts;
+        var pincode = cmd.Pincode ?? "";
+
+        // If caller sent a single string via tolerant parsing, it may land in Sensors empty + RequestId etc.
+        // In that case, do nothing and respond with an error.
+        if (macs.Count == 0)
+        {
+            var bad = new
+            {
+                success = false,
+                stage = "failed",
+                message = "No sensors/mac addresses provided. Send payload like {\"sensors\":[\"AA:BB:...\"],\"seconds\":15,\"maxConnectAttempts\":1}.",
+                requestId = cmd.RequestId,
+                name = mqttService.CurrentOptions.Name,
+                networkId = mqttService.CurrentOptions.NetworkId,
+                time = DateTimeOffset.UtcNow
+            };
+
+            await mqttService.PublishTeleJsonAsync("identify", bad);
+            return;
+        }
+
+        // Process sequentially to avoid colliding BLE connect/login flows.
+        foreach (var mac in macs)
+        {
+            await firmwareUpgradeService.IdentifyDeviceAsync(
+                macAddress: mac,
+                pincode: string.IsNullOrWhiteSpace(pincode) ? null : pincode,
+                secondsToStayConnected: seconds,
+                maxConnectAttempts: maxAttempts,
+                ct: CancellationToken.None,
+                report: async (stagePayload) =>
+                {
+                    await mqttService.PublishTeleJsonAsync("identify", new
+                    {
+                        name = mqttService.CurrentOptions.Name,
+                        networkId = mqttService.CurrentOptions.NetworkId,
+                        requestId = cmd.RequestId,
+                        data = stagePayload
+                    });
+                });
+        }
+    };
+
     mqttService.GetFirmwareManifestRequested += async cmd =>
     {
         var resp = manifestSvc.GetFirmwareManifest();

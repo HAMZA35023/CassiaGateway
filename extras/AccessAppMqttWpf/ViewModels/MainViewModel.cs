@@ -29,6 +29,14 @@ public partial class MainViewModel : ObservableObject
     private readonly DispatcherTimer _hostBleUiTimer = new() { Interval = TimeSpan.FromSeconds(10) };
     private readonly Dictionary<string, HostBleScanItem> _hostBleRowsByMac = new(StringComparer.OrdinalIgnoreCase);
 
+    // Identify state per MAC (driven by tele/.../identify stages).
+    // - Pending: user clicked Identify but we haven't received 'logged-in'/'login-skipped-bootmode' yet (UI pulses)
+    // - Ready: we've received 'logged-in' or 'login-skipped-bootmode' for the current request
+    // - Active: logged-in..holding.. until disconnected/failed
+    private readonly ConcurrentDictionary<string, bool> _identifyPendingByMac = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, bool> _identifyConnectedByMac = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, bool> _identifyActiveByMac = new(StringComparer.OrdinalIgnoreCase);
+
     public event Action? RequestClearHostBleSelection;
 
     // ---- UI update cadence (throttled at MQTT client level) ----
@@ -81,9 +89,9 @@ public partial class MainViewModel : ObservableObject
 
     public ObservableCollection<int> HostBleUiUpdateOptions { get; } = new() { 2, 5, 10, 20, 30, 60 };
 
-    [ObservableProperty] private int hostBleUiUpdateSeconds = 10;
+    [ObservableProperty] private int hostBleUiUpdateSeconds = 2;
 
-    [ObservableProperty] private bool hostBleAutoUpdate = false;
+    [ObservableProperty] private bool hostBleAutoUpdate = true;
 // Host BLE model filter
     public ObservableCollection<string> HostBleModelOptions { get; } = new(new[] { "All" });
     [ObservableProperty] private string hostBleModelFilter = "All";
@@ -157,6 +165,7 @@ public partial class MainViewModel : ObservableObject
         public DateTimeOffset LastUpdateUtc = DateTimeOffset.MinValue;
 
         public string CurrentFw = "";
+        public bool CurrentFwFromGetFw = false;
         public bool IsUpgradeSuccess = false;
         public bool IsUpgradeWarn = false;
         public bool IsUpgradeFailed = false;
@@ -805,6 +814,10 @@ partial void OnHostBleUiUpdateSecondsChanged(int value)
             row.AvgHostRssi = u.AvgRssi;
             row.LastSeenUtc = u.LastSeenUtc;
 
+            // Identify button state
+            row.IsIdentifyPending = _identifyPendingByMac.TryGetValue(u.Mac, out var ip) && ip;
+            row.IsIdentifying = _identifyActiveByMac.TryGetValue(u.Mac, out var ia) && ia;
+
             // Merge Cassia RSSIs + closest + current FW from discovered device list (if present)
             var d = FindDiscoveredDevice(u.Mac);
             if (d != null)
@@ -812,7 +825,11 @@ partial void OnHostBleUiUpdateSecondsChanged(int value)
                 row.SetCassiaRssi(d.CassiaRssi);
                 row.ClosestCassia = d.BestCassia ?? "";
                 row.SensorModel = (d.SensorModel ?? "").Trim();
-                row.CurrentFw = d.DisplayFw ?? "";
+
+                // Only update Host-BLE CurrentFw if it came from Get FW
+                if (_cachedStatusByMac.TryGetValue(u.Mac, out var cs) && cs.CurrentFwFromGetFw)
+                    row.CurrentFw = cs.CurrentFw ?? "";
+                // else: keep existing row.CurrentFw (do NOT overwrite from logs/identify/scan)
 
                 // Coloring semantics (same as device list)
                 row.IsInQueue = d.IsInQueue;
@@ -1387,16 +1404,39 @@ partial void OnSensorFilterChanged(string value)
         var mac = item.Mac.Trim();
         var target = string.IsNullOrWhiteSpace(item.ClosestCassia) ? "all" : item.ClosestCassia.Trim();
 
+        // New identify command (2026-01): supports pincode/seconds/maxConnectAttempts/requestId and reports stages on tele/.../identify.
+        var requestId = Guid.NewGuid().ToString("N");
         var topic = BuildCmdTopic(target, "identify");
-        var payload = new { sensors = new[] { mac } };
+        var payload = new
+        {
+            sensors = new[] { mac },
+            pincode = DefaultPincode,
+            seconds = 15,
+            maxConnectAttempts = 1,
+            requestId
+        };
 
         try
         {
+            // UI: pulse until we receive 'logged-in' (or 'login-skipped-bootmode'), then turn green until disconnected/failed.
+            _identifyPendingByMac[mac] = true;
+            _identifyConnectedByMac[mac] = false;
+            _identifyActiveByMac[mac] = false;
+
+            item.IsIdentifyPending = true;
+            item.IsIdentifying = false;
+
             await _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token);
-            ConnectionStatus = $"Identify sent to {target} for {mac}";
+            ConnectionStatus = $"Identify ({requestId}) sent to {target} for {mac}";
         }
         catch (Exception ex)
         {
+            _identifyPendingByMac[mac] = false;
+            _identifyConnectedByMac[mac] = false;
+            _identifyActiveByMac[mac] = false;
+
+            item.IsIdentifyPending = false;
+            item.IsIdentifying = false;
             ConnectionStatus = "Identify failed: " + ex.Message;
         }
     }
@@ -2008,6 +2048,7 @@ partial void OnSensorFilterChanged(string value)
                 var mac = (x.Dev.Mac ?? "").Trim();
                 var cs = GetOrCreateCache(mac);
                 cs.CurrentFw = "requested";
+                cs.CurrentFwFromGetFw = true;   // ✅ mark as Get FW sourced
                 x.Dev.CurrentFw = "requested";
             }
 
@@ -3043,6 +3084,12 @@ if (string.IsNullOrWhiteSpace(cassia))
         if (kind == "tele" && leaf == "disconnect")
         {
             HandleDisconnectTele(cassia, payload);
+            return;
+        }
+
+        if (kind == "tele" && leaf == "identify")
+        {
+            HandleIdentifyTele(cassia, payload);
             return;
         }
 
@@ -4700,6 +4747,8 @@ private void RequestUpgradeLogTextRefresh()
 
                     var cs = GetOrCreateCache(mac);
                     cs.CurrentFw = app;
+                    cs.CurrentFwFromGetFw = true;   // ✅ mark as Get FW sourced
+
 
                     var dev = FindDiscoveredDevice(mac);
                     if (dev != null)
@@ -4743,6 +4792,88 @@ private void RequestUpgradeLogTextRefresh()
         }
         catch { }
     }
+
+    private void HandleIdentifyTele(string cassia, string payload)
+{
+    // Telemetry format:
+    // {
+    //   name, networkId, requestId,
+    //   data: { stage, mac, time, errorStep?, error? }
+    // }
+    try
+    {
+        using var doc = JsonDocument.Parse(payload);
+        var root = doc.RootElement;
+        if (!root.TryGetProperty("data", out var dataEl) || dataEl.ValueKind != JsonValueKind.Object)
+            return;
+
+        var stage = dataEl.TryGetProperty("stage", out var st) ? (st.GetString() ?? "") : "";
+        var mac = dataEl.TryGetProperty("mac", out var m) ? (m.GetString() ?? "") : "";
+        mac = (mac ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(mac)) return;
+
+        var isFinished =
+            stage.Equals("disconnected", StringComparison.OrdinalIgnoreCase) ||
+            stage.Equals("failed", StringComparison.OrdinalIgnoreCase);
+
+        // We only show the button as "active/green" after the gateway reports a successful login:
+        // - logged-in
+        // - login-skipped-bootmode
+        var isLoggedIn =
+            stage.Equals("logged-in", StringComparison.OrdinalIgnoreCase) ||
+            stage.Equals("login-skipped-bootmode", StringComparison.OrdinalIgnoreCase);
+
+        if (isLoggedIn)
+        {
+            _identifyConnectedByMac[mac] = true;   // "ready" marker for this request
+            _identifyPendingByMac[mac] = false;    // stop pulsing
+            _identifyActiveByMac[mac] = true;      // turn green
+        }
+        else if (isFinished)
+        {
+            _identifyPendingByMac[mac] = false;
+            _identifyConnectedByMac[mac] = false;
+            _identifyActiveByMac[mac] = false;
+        }
+        else
+        {
+            // Still working: keep pulsing until we reach logged-in / login-skipped-bootmode
+            var readySeen = _identifyConnectedByMac.TryGetValue(mac, out var cs) && cs;
+            _identifyActiveByMac[mac] = readySeen;
+
+            if (!readySeen)
+                _identifyPendingByMac[mac] = true;
+        }
+
+        // Update Host BLE row immediately (button pulses while pending, turns green while active)
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            if (_hostBleRowsByMac.TryGetValue(mac, out var row) && row != null)
+            {
+                row.IsIdentifyPending = _identifyPendingByMac.TryGetValue(mac, out var ip) && ip;
+                row.IsIdentifying = _identifyActiveByMac.TryGetValue(mac, out var ia) && ia;
+            }
+
+            // Optional: show a brief status line
+            if (!string.IsNullOrWhiteSpace(stage))
+            {
+                var requestId = root.TryGetProperty("requestId", out var rid) ? (rid.GetString() ?? "") : "";
+                if (stage.Equals("failed", StringComparison.OrdinalIgnoreCase))
+                {
+                    var step = dataEl.TryGetProperty("errorStep", out var es) ? (es.GetString() ?? "") : "";
+                    var err = dataEl.TryGetProperty("error", out var ee) ? (ee.GetString() ?? "") : "";
+                    ConnectionStatus = $"Identify failed {mac} {(!string.IsNullOrWhiteSpace(step) ? ("(" + step + ") ") : "")} {err}".Trim();
+                }
+                else
+                {
+                    ConnectionStatus = $"Identify {mac}: {stage}{(string.IsNullOrWhiteSpace(requestId) ? "" : (" (" + requestId + ")"))}";
+                }
+            }
+        });
+    }
+    catch { }
+}
+
 
     private void ShowFwManifestTimeoutIfAny()
     {

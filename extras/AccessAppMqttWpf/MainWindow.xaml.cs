@@ -364,14 +364,14 @@ public partial class MainWindow : Window
         var panelFactory = new FrameworkElementFactory(typeof(StackPanel));
         panelFactory.SetValue(StackPanel.OrientationProperty, Orientation.Horizontal);
 
-        FrameworkElementFactory MakeButton(string caption, string commandPath)
+        FrameworkElementFactory MakeButton(string caption, string commandPath, string styleKey = "TinyGhostButton")
         {
             var b = new FrameworkElementFactory(typeof(Button));
             b.SetValue(Button.ContentProperty, caption);
             b.SetValue(Button.MinWidthProperty, 58d);
             b.SetValue(Control.FontSizeProperty, 12d);
             b.SetValue(UIElement.FocusableProperty, false);
-            b.SetValue(FrameworkElement.StyleProperty, FindResource("TinyGhostButton"));
+            b.SetValue(FrameworkElement.StyleProperty, FindResource(styleKey));
 
             // Command = DataGrid.DataContext.<Command>
             b.SetBinding(Button.CommandProperty, new Binding(commandPath)
@@ -382,7 +382,7 @@ public partial class MainWindow : Window
             return b;
         }
 
-        panelFactory.AppendChild(MakeButton("Identify", "DataContext.IdentifyHostCommand"));
+        panelFactory.AppendChild(MakeButton("Identify", "DataContext.IdentifyHostCommand", styleKey: "TinyIdentifyButton"));
         panelFactory.AppendChild(MakeButton("Update", "DataContext.UpdateHostCommand"));
         panelFactory.AppendChild(MakeButton("Get FW", "DataContext.GetFirmwareHostCommand"));
 

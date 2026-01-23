@@ -32,6 +32,12 @@ public partial class HostBleScanItem : ObservableObject
     [ObservableProperty] private bool isUpgradeWarn;
     [ObservableProperty] private bool isUpgradeFailed;
 
+    // True while an identify request is active (tele/identify stages until disconnected/failed).
+    [ObservableProperty] private bool isIdentifying;
+
+    // True after clicking Identify until we receive the first "connected" stage (UI pulses).
+    [ObservableProperty] private bool isIdentifyPending;
+
     // Cassia RSSIs by name (e.g. cassia-01 -> -53)
     public Dictionary<string, int> CassiaRssi { get; } = new(StringComparer.OrdinalIgnoreCase);
 

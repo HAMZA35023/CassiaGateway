@@ -3,7 +3,6 @@ AccessApp Cassia backend:
 CRITICAL:
 
 MAJOR:
--> Implement a identify feature to mqtt commands, that connect to a detector and make a login - after x sec, disconnect again. - Send response when connected, loggedin, and disconnected again. Seconds to be connected should be specified in the cmd, or else use 15 sec.
 
 MINOR:
 

@@ -1,8 +1,6 @@
 
 
 MINOR:
--> After reassigning in the queue, the line in the device-list & host BLE scan list is not marked blue anymore.
--> When pressing update, unselect the lines in the datagrid, and after 2 seconds auto refresh
 
 
 FIXED, But needs to be verified in the field that is works as expected.

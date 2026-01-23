@@ -132,6 +132,38 @@
         <Setter Property="MinHeight" Value="24"/>
     </Style>
 
+    <!-- Identify button:
+         - pulses (fade in/out) after clicking until we receive 'logged-in' (or 'login-skipped-bootmode')
+         - turns green while identify is active (logged-in..holding.. until disconnected/failed)
+    -->
+    <Style x:Key="TinyIdentifyButton" TargetType="Button" BasedOn="{StaticResource TinyGhostButton}">
+        <Setter Property="Opacity" Value="1"/>
+        <Style.Triggers>
+            <!-- Pending: pulse opacity until logged-in (or login-skipped-bootmode) arrives -->
+            <DataTrigger Binding="{Binding IsIdentifyPending}" Value="True">
+                <DataTrigger.EnterActions>
+                    <BeginStoryboard Name="IdentifyPulse">
+                        <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                            <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                             From="0.35" To="1.0" Duration="0:0:0.6"/>
+                        </Storyboard>
+                    </BeginStoryboard>
+                </DataTrigger.EnterActions>
+                <DataTrigger.ExitActions>
+                    <StopStoryboard BeginStoryboardName="IdentifyPulse"/>
+                </DataTrigger.ExitActions>
+            </DataTrigger>
+
+            <!-- Active: green once logged-in (or login-skipped-bootmode) -->
+            <DataTrigger Binding="{Binding IsIdentifying}" Value="True">
+                <Setter Property="Opacity" Value="1"/>
+                <Setter Property="Background" Value="{StaticResource GoodBrush}"/>
+                <Setter Property="Foreground" Value="White"/>
+                <Setter Property="BorderThickness" Value="0"/>
+            </DataTrigger>
+        </Style.Triggers>
+    </Style>
+
     <!-- Card -->
   <Style x:Key="Card" TargetType="Border">
     <Setter Property="Background" Value="{StaticResource CardBrush}"/>
