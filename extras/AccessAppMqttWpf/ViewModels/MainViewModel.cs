@@ -1573,7 +1573,8 @@ partial void OnSensorFilterChanged(string value)
 
         await SendGetFwVersionAsync(new[] { dev });
     }
-
+    
+    [RelayCommand]
     private async Task RebalanceQueuedItems()
     {
         // Only rebalance items that are still pending in the queue (not actively programming/done).
