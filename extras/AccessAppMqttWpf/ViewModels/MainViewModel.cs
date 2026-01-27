@@ -339,6 +339,12 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string selectedFirmwareP47 = "";
     [ObservableProperty] private string selectedFirmwareP48 = "";
 
+    partial void OnSelectedFirmwareP41Changed(string value) => PersistSelectedFirmware("P41", value);
+    partial void OnSelectedFirmwareP42Changed(string value) => PersistSelectedFirmware("P42", value);
+    partial void OnSelectedFirmwareP46Changed(string value) => PersistSelectedFirmware("P46", value);
+    partial void OnSelectedFirmwareP47Changed(string value) => PersistSelectedFirmware("P47", value);
+    partial void OnSelectedFirmwareP48Changed(string value) => PersistSelectedFirmware("P48", value);
+
     [ObservableProperty] private string connectionStatus = "Disconnected";
     [ObservableProperty] private bool isConnected;
 
@@ -400,6 +406,8 @@ public partial class MainViewModel : ObservableObject
     private readonly Dictionary<string, string> _latestUpgradeLogIdByMac = new(StringComparer.OrdinalIgnoreCase);
     private bool _latestUpgradeLogMapDirty = true;
 
+    private bool _isInitializing = true;
+
     
     // ---- Progress buffering (prevents UI lag / lost clicks when many % updates arrive) ----
     private readonly object _progressBufLock = new();
@@ -447,6 +455,18 @@ public partial class MainViewModel : ObservableObject
         NetworkId = s.accessapp.networkId;
         CommandTopicTemplate = s.accessapp.commandTopicTemplate;
         DefaultCommand = s.accessapp.defaultCommand;
+
+        // Firmware selections: remember across restarts/resync.
+        try
+        {
+            var fwMap = s.accessapp.selectedFirmwareByModel ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (fwMap.TryGetValue("P41", out var fw41)) SelectedFirmwareP41 = fw41 ?? "";
+            if (fwMap.TryGetValue("P42", out var fw42)) SelectedFirmwareP42 = fw42 ?? "";
+            if (fwMap.TryGetValue("P46", out var fw46)) SelectedFirmwareP46 = fw46 ?? "";
+            if (fwMap.TryGetValue("P47", out var fw47)) SelectedFirmwareP47 = fw47 ?? "";
+            if (fwMap.TryGetValue("P48", out var fw48)) SelectedFirmwareP48 = fw48 ?? "";
+        }
+        catch { /* best-effort */ }
 
         _mqtt.ConnectionChanged += (connected, status) =>
         {
@@ -653,6 +673,8 @@ UpdateHostBleUiStatus();
 if (HostBleAutoUpdate) _hostBleUiTimer.Start();
 
 _hostBleScanner.Start();
+
+        _isInitializing = false;
 }
 
     partial void OnSelectedLogGatewayNameChanged(string value)
@@ -1070,6 +1092,13 @@ partial void OnSensorFilterChanged(string value)
 
     private void LoadFirmwareOptions()
     {
+        // Preserve current selections (loaded from appsettings.json) so a resync/restart doesn't reset the dropdowns.
+        var keepP48 = SelectedFirmwareP48;
+        var keepP47 = SelectedFirmwareP47;
+        var keepP46 = SelectedFirmwareP46;
+        var keepP41 = SelectedFirmwareP41;
+        var keepP42 = SelectedFirmwareP42;
+
         FirmwareOptionsP48.Clear();
       
         FirmwareOptionsP47.Clear();
@@ -1080,11 +1109,21 @@ partial void OnSensorFilterChanged(string value)
         
         FirmwareOptionsP42.Clear();
       
-        SelectedFirmwareP48 = FirmwareOptionsP48.LastOrDefault() ?? "";
-        SelectedFirmwareP47 = FirmwareOptionsP47.LastOrDefault() ?? "";
-        SelectedFirmwareP46 = FirmwareOptionsP46.LastOrDefault() ?? "";
-        SelectedFirmwareP41 = FirmwareOptionsP41.LastOrDefault() ?? "";
-        SelectedFirmwareP42 = FirmwareOptionsP42.LastOrDefault() ?? "";
+        // Only fall back to "latest" when we don't already have a valid selection.
+        SelectedFirmwareP48 = PreserveFirmwareSelection(FirmwareOptionsP48, keepP48);
+        SelectedFirmwareP47 = PreserveFirmwareSelection(FirmwareOptionsP47, keepP47);
+        SelectedFirmwareP46 = PreserveFirmwareSelection(FirmwareOptionsP46, keepP46);
+        SelectedFirmwareP41 = PreserveFirmwareSelection(FirmwareOptionsP41, keepP41);
+        SelectedFirmwareP42 = PreserveFirmwareSelection(FirmwareOptionsP42, keepP42);
+    }
+
+    private static string PreserveFirmwareSelection(ObservableCollection<string> options, string? current)
+    {
+        var cur = (current ?? "").Trim();
+        if (options == null || options.Count == 0) return cur;
+        if (cur.Length > 0 && options.Any(o => string.Equals((o ?? "").Trim(), cur, StringComparison.OrdinalIgnoreCase)))
+            return cur;
+        return options.LastOrDefault() ?? "";
     }
 
     private void LoadProductMap()
@@ -1159,25 +1198,7 @@ partial void OnSensorFilterChanged(string value)
     [RelayCommand]
     private async Task SaveSettings()
     {
-        _store.Save(new AppSettings
-        {
-            mqtt = new MqttSettings
-            {
-                host = MqttHost,
-                port = MqttPort,
-                topic = MqttTopic,
-                username = MqttUser,
-                password = MqttPassword ?? "",
-                useTls = UseTls,
-                ignoreTlsErrors = IgnoreTlsErrors
-            },
-            accessapp = new AccessAppSettings
-            {
-                networkId = NetworkId,
-                commandTopicTemplate = CommandTopicTemplate,
-                defaultCommand = DefaultCommand
-            }
-        });
+        _store.Save(BuildSettingsSnapshot(_store.Load()));
 
         ConnectionStatus = "Saved appsettings.json";
 
@@ -1185,6 +1206,78 @@ partial void OnSensorFilterChanged(string value)
         if (IsConnected)
             await ResyncCoreAsync().ConfigureAwait(false);
     }
+
+    private AppSettings BuildSettingsSnapshot(AppSettings? baseSettings)
+    {
+        var s = baseSettings ?? new AppSettings();
+
+        s.mqtt = new MqttSettings
+        {
+            host = MqttHost,
+            port = MqttPort,
+            topic = MqttTopic,
+            username = MqttUser,
+            password = MqttPassword ?? "",
+            useTls = UseTls,
+            ignoreTlsErrors = IgnoreTlsErrors
+        };
+
+        // Preserve previous firmware selections unless we explicitly overwrite below.
+        var fwMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            if (s.accessapp?.selectedFirmwareByModel != null)
+            {
+                foreach (var kv in s.accessapp.selectedFirmwareByModel)
+                {
+                    if (!string.IsNullOrWhiteSpace(kv.Key))
+                        fwMap[kv.Key.Trim()] = kv.Value ?? "";
+                }
+            }
+        }
+        catch { }
+
+        // Always write current in-memory selections.
+        fwMap["P41"] = SelectedFirmwareP41 ?? "";
+        fwMap["P42"] = SelectedFirmwareP42 ?? "";
+        fwMap["P46"] = SelectedFirmwareP46 ?? "";
+        fwMap["P47"] = SelectedFirmwareP47 ?? "";
+        fwMap["P48"] = SelectedFirmwareP48 ?? "";
+
+        s.accessapp = new AccessAppSettings
+        {
+            networkId = NetworkId,
+            commandTopicTemplate = CommandTopicTemplate,
+            defaultCommand = DefaultCommand,
+            selectedFirmwareByModel = fwMap
+        };
+
+        return s;
+    }
+
+    private void PersistSelectedFirmware(string model, string? firmware)
+    {
+        // Avoid writing partial state while the app is still starting up.
+        // (e.g. LoadFirmwareOptions sets defaults and triggers the setter)
+        if (_isInitializing) return;
+
+        try
+        {
+            var s = _store.Load();
+            s.accessapp ??= new AccessAppSettings();
+            s.accessapp.selectedFirmwareByModel ??= new Dictionary<string, string>();
+            s.accessapp.selectedFirmwareByModel[model] = firmware ?? "";
+            _store.Save(BuildSettingsSnapshot(s));
+        }
+        catch
+        {
+            // ignore persistence errors
+        }
+    }
+
+    
+
+
 
     [RelayCommand]
     private void ClearDevices()
@@ -2568,6 +2661,54 @@ private List<AssignmentPlanItem> ComputeBatchAssignmentPlan(IReadOnlyList<Discov
         RequestDevicesRefresh();
     }
 
+    private bool TryGetPreferredCassiaFromLatestFailure(string mac, out string cassia, out DateTimeOffset whenLocal)
+    {
+        cassia = "";
+        whenLocal = DateTimeOffset.MinValue;
+        mac = (mac ?? "").Trim();
+        if (mac.Length == 0) return false;
+
+        // Find the latest log group we have for this MAC.
+        UpgradeLogGroup? latest = null;
+        foreach (var g in UpgradeLogGroups)
+        {
+            if (g == null) continue;
+            var gMac = (g.Mac ?? "").Trim();
+            if (gMac.Length == 0) gMac = (g.LatestMac ?? "").Trim();
+            if (gMac.Length == 0) continue;
+            if (!gMac.Equals(mac, StringComparison.OrdinalIgnoreCase)) continue;
+
+            if (latest == null || g.LastTimeLocal > latest.LastTimeLocal)
+                latest = g;
+        }
+
+        if (latest == null) return false;
+        if (!latest.ContainsCompletionFailed) return false;
+
+        var c = (latest.Cassia ?? "").Trim();
+        if (c.Length == 0) return false;
+
+        cassia = c;
+        whenLocal = latest.LastTimeLocal;
+        return true;
+    }
+
+    private string ResolveDetectorTypeForMac(string mac, string fallback)
+    {
+        mac = (mac ?? "").Trim();
+        var model = (fallback ?? "").Trim().ToUpperInvariant();
+        if (!string.IsNullOrWhiteSpace(model)) return model;
+
+        var dev = _devices.FirstOrDefault(d => d != null && string.Equals((d.Mac ?? "").Trim(), mac, StringComparison.OrdinalIgnoreCase));
+        model = (dev?.SensorModel ?? "").Trim().ToUpperInvariant();
+        if (!string.IsNullOrWhiteSpace(model)) return model;
+
+        if (!string.IsNullOrWhiteSpace(dev?.ProductNumber) && _productToModel.TryGetValue(dev.ProductNumber, out var m2))
+            model = (m2 ?? "").Trim().ToUpperInvariant();
+
+        return string.IsNullOrWhiteSpace(model) ? "" : model;
+    }
+
     /// <summary>
     /// Queue + publish start-update immediately.
     /// Status becomes "Requested update" and we wait for tele/progress to mark it really queued.
@@ -2592,7 +2733,11 @@ private List<AssignmentPlanItem> ComputeBatchAssignmentPlan(IReadOnlyList<Discov
                 model = m2;
         }
         if (string.IsNullOrWhiteSpace(model))
-            model = "P46"; // safe default
+        {
+            ConnectionStatus = "Cannot queue: detector model (P4x) is unknown for " + d.Mac;
+            try { MessageBox.Show($"Cannot queue {d.Mac} because detector model (P4x) could not be resolved.\n\nMake sure the device has a SensorModel/ProductNumber, or refresh discovery.", "Unknown model", MessageBoxButton.OK, MessageBoxImage.Warning); } catch { }
+            return;
+        }
 
         // Determine firmware from dropdown selection
         var fw = GetFirmwareForModel(model);
@@ -2601,6 +2746,13 @@ private List<AssignmentPlanItem> ComputeBatchAssignmentPlan(IReadOnlyList<Discov
         // Guard: firmware must look like a version (v02.xx). If not, don't accidentally send a model string.
         if (!string.IsNullOrWhiteSpace(fw) && !fw.Trim().StartsWith("v", StringComparison.OrdinalIgnoreCase))
             fw = "";
+
+        // If the latest upgrade attempt for this MAC failed, prefer using the SAME Cassia again
+        // (it likely holds the settings backup). We only deviate if the device is not within reach
+        // and the user explicitly chooses to use the currently suggested Cassia instead.
+        var preferredFailureCassia = "";
+        DateTimeOffset preferredFailureWhen = DateTimeOffset.MinValue;
+        var hasPreferredFailureCassia = TryGetPreferredCassiaFromLatestFailure(d.Mac, out preferredFailureCassia, out preferredFailureWhen);
 
         
 // Determine Cassia for update:
@@ -2677,6 +2829,42 @@ if (string.IsNullOrWhiteSpace(cassia))
         }
     }
 }
+
+        // Apply preferred failure Cassia (sticky) if relevant.
+        if (hasPreferredFailureCassia)
+        {
+            var pref = (preferredFailureCassia ?? "").Trim();
+            if (pref.Length > 0 && !string.Equals(pref, cassia, StringComparison.OrdinalIgnoreCase))
+            {
+                // Consider "within reach" if we have a reading and it's not extremely weak.
+                var prefHasRssi = d.CassiaRssi.TryGetValue(pref, out var prefRssi);
+                var withinReach = prefHasRssi && prefRssi >= RssiWarnQueueThreshold;
+
+                if (withinReach)
+                {
+                    cassia = pref;
+                }
+                else
+                {
+                    var prefRssiTxt = prefHasRssi ? $"{prefRssi} dBm" : "(no RSSI)";
+                    var suggested = cassia;
+
+                    var res = MessageBox.Show(
+                        $"This device previously FAILED on {pref} ({preferredFailureWhen.ToLocalTime():yyyy-MM-dd HH:mm:ss}).\n" +
+                        $"We should ideally use the same Cassia again because it likely has the settings backup.\n\n" +
+                        $"But RSSI to {pref} is {prefRssiTxt}, so it may be out of reach.\n\n" +
+                        $"Use {pref} anyway?\n\n" +
+                        $"Yes = use {pref} (sticky)\n" +
+                        $"No = use suggested {suggested}",
+                        "Reuse Cassia for failed device",
+                        MessageBoxButton.YesNo,
+                        MessageBoxImage.Warning);
+
+                    if (res == MessageBoxResult.Yes)
+                        cassia = pref;
+                }
+            }
+        }
 
 if (string.IsNullOrWhiteSpace(cassia))
 {
@@ -4140,8 +4328,21 @@ private void RequestUpgradeLogTextRefresh()
         await RemoveFromQueueAsync(fromCassia, new[] { mac }).ConfigureAwait(false);
 
         // Step 2: queue on the new Cassia
-        var model = (qi.DetectorType ?? "").Trim();
+        var model = ResolveDetectorTypeForMac(mac, (qi.DetectorType ?? "").Trim());
         var fw = (qi.FirmwareVersion ?? "").Trim();
+
+        if (string.IsNullOrWhiteSpace(model))
+        {
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                qi.Status = "Cannot move: unknown model";
+                qi.LastUpdateUtc = DateTimeOffset.UtcNow;
+                MirrorQueueToDevice(qi);
+                RequestQueueRefresh();
+            });
+            try { MessageBox.Show($"Cannot move {mac} to {newCassia} because detector model (P4x) could not be resolved. The backend requires DetectorType. Please refresh discovery so the model is known, or re-add the device.", "Unknown model", MessageBoxButton.OK, MessageBoxImage.Warning); } catch { }
+            return;
+        }
 
         Application.Current.Dispatcher.Invoke(() =>
         {
@@ -4150,6 +4351,7 @@ private void RequestUpgradeLogTextRefresh()
             qi.Progress = 0;
             qi.Notes = "";
             qi.LastUpdateUtc = DateTimeOffset.UtcNow;
+            qi.DetectorType = model; // IMPORTANT: carry model to the new Cassia
             MirrorQueueToDevice(qi);
             RequestQueueRefresh();
         });
@@ -4997,12 +5199,12 @@ private void RequestUpgradeLogTextRefresh()
         apply(FirmwareOptionsP41, "P41");
         apply(FirmwareOptionsP42, "P42");
 
-        // Always auto-select the latest FW (last = highest after sorting)
-        SelectedFirmwareP48 = FirmwareOptionsP48.LastOrDefault() ?? "";
-        SelectedFirmwareP47 = FirmwareOptionsP47.LastOrDefault() ?? "";
-        SelectedFirmwareP46 = FirmwareOptionsP46.LastOrDefault() ?? "";
-        SelectedFirmwareP41 = FirmwareOptionsP41.LastOrDefault() ?? "";
-        SelectedFirmwareP42 = FirmwareOptionsP42.LastOrDefault() ?? "";
+        // Preserve user selection if it still exists; otherwise fall back to latest.
+        SelectedFirmwareP48 = PreserveFirmwareSelection(FirmwareOptionsP48, SelectedFirmwareP48);
+        SelectedFirmwareP47 = PreserveFirmwareSelection(FirmwareOptionsP47, SelectedFirmwareP47);
+        SelectedFirmwareP46 = PreserveFirmwareSelection(FirmwareOptionsP46, SelectedFirmwareP46);
+        SelectedFirmwareP41 = PreserveFirmwareSelection(FirmwareOptionsP41, SelectedFirmwareP41);
+        SelectedFirmwareP42 = PreserveFirmwareSelection(FirmwareOptionsP42, SelectedFirmwareP42);
     }
 
 
