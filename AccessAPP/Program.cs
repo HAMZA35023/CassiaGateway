@@ -87,7 +87,8 @@ using (var scope = app.Services.CreateScope())
                 MacAddress = r.MacAddress!.Trim(),
                 Pincode = r.Pincode ?? "",
                 DetectotType = r.DetectorType ?? "",
-                FirmwareVersion = r.FirmwareVersion ?? ""
+                FirmwareVersion = r.FirmwareVersion ?? "",
+                ForceUpdate = r.ForceUpdate ?? false
             })
             .ToList();
 

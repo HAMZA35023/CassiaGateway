@@ -169,6 +169,24 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
         await RestartAsync(ct).ConfigureAwait(false);
     }
 
+    public async Task UpdateScopeAsync(string networkId, bool persist = true, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(networkId)) throw new ArgumentException("NetworkId cannot be empty.", nameof(networkId));
+
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            CurrentOptions.NetworkId = networkId.Trim();
+            if (persist) _store.Save(CurrentOptions);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+
+        await RestartAsync(ct).ConfigureAwait(false);
+    }
+
     public async Task PublishDiscoveredDevicesAsync(DiscoveredDevicesMessage msg, CancellationToken ct = default)
     {
         msg.Name = CurrentOptions.Name;
@@ -523,6 +541,81 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 }
 
                 return DisconnectDevicesRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "set-scope", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "set-network", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "set-mqtt-scope", StringComparison.OrdinalIgnoreCase))
+            {
+                Log("HandleCommandAsync: dispatch set-scope");
+
+                SetMqttScopeCommand dto;
+                try
+                {
+                    dto = string.IsNullOrWhiteSpace(payload)
+                        ? new SetMqttScopeCommand()
+                        : (JsonSerializer.Deserialize<SetMqttScopeCommand>(payload, JsonOptions) ?? new SetMqttScopeCommand());
+                }
+                catch
+                {
+                    dto = new SetMqttScopeCommand();
+                }
+
+                if (string.IsNullOrWhiteSpace(dto.NetworkId))
+                {
+                    var bad = new
+                    {
+                        success = false,
+                        message = "Missing networkId. Send payload like {\"networkId\":\"my-net\"}.",
+                        networkId = CurrentOptions.NetworkId,
+                        name = CurrentOptions.Name
+                    };
+                    return PublishTeleJsonAsync("scope", bad, CancellationToken.None);
+                }
+
+                try
+                {
+                    // Run async update + reply in the same task chain (no async keyword needed)
+                    return UpdateScopeAsync(dto.NetworkId!, persist: true, ct: CancellationToken.None)
+                        .ContinueWith(t =>
+                        {
+                            if (t.IsFaulted)
+                            {
+                                var ex = t.Exception?.GetBaseException();
+                                var bad = new
+                                {
+                                    success = false,
+                                    message = $"Failed to update networkId: {ex?.Message}",
+                                    networkId = CurrentOptions.NetworkId,
+                                    name = CurrentOptions.Name
+                                };
+                                return PublishTeleJsonAsync("scope", bad, CancellationToken.None);
+                            }
+
+                            var ok = new
+                            {
+                                success = true,
+                                message = "NetworkId updated.",
+                                networkId = CurrentOptions.NetworkId,
+                                name = CurrentOptions.Name
+                            };
+
+                            return PublishTeleJsonAsync("scope", ok, CancellationToken.None);
+                        })
+                        .Unwrap();
+
+                }
+                catch (Exception ex)
+                {
+                    var bad = new
+                    {
+                        success = false,
+                        message = $"Failed to update networkId: {ex.Message}",
+                        networkId = CurrentOptions.NetworkId,
+                        name = CurrentOptions.Name
+                    };
+                    return PublishTeleJsonAsync("scope", bad, CancellationToken.None);
+                }
             }
 
             if (string.Equals(command, "send-upgrade-log", StringComparison.OrdinalIgnoreCase))

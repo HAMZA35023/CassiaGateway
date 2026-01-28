@@ -1148,6 +1148,10 @@ public static int GetProgrammingCount()
             // NEW: Backup/restore settings (hex strings) to a file before/after upgrade
             string? settingsBackupPath = dev.SettingsBackupPath;
 
+            // Which detector types we support settings backup/restore for.
+            static bool SupportsSettingsBackup(string detectorType)
+                => detectorType == "P48" || detectorType == "P47" || detectorType == "P46" || detectorType == "P49" || detectorType == "P41" || detectorType == "P42";
+
             // ---- Local helper: Connect only (robust) ----
             async Task<(bool ok, HttpStatusCode code, string msg)> ConnectOnlyWithRetryAsync(
                 int maxAttempts,
@@ -1249,7 +1253,7 @@ public static int GetProgrammingCount()
                 // --------------------------------------------------------------------
                 if (RestoreSettingsAfterUpgrade && !isInBoot)
                 {
-                    if (DetectorType == "P48" || DetectorType == "P47")
+                    if (SupportsSettingsBackup(DetectorType))
                     {
                         // Only take backup when we will actually update firmware, and only once per device
                         if (!upgradeActor && !upgradeBootloader && !upgradeSensor)
@@ -1291,7 +1295,7 @@ public static int GetProgrammingCount()
                                         return response;
                                     }
 
-                                    if (AutoSetSysFailLevelUnderUpdate)
+                                    if (AutoSetSysFailLevelUnderUpdate && (DetectorType == "P48" || DetectorType == "P47"))
                                     {
                                         if (await DaliSetDeviceSysFailLevelAsync(macAddress, 0xFF))
                                         {
@@ -1437,6 +1441,124 @@ public static int GetProgrammingCount()
                     dev.SensorSuccess = true;
                     await Task.Delay(20000).ConfigureAwait(false);
                 }
+                else
+                {
+                    // Consider sensor step satisfied when skipped (e.g., already at target FW).
+                    dev.SensorSuccess = true;
+                }
+
+                // --------------------------------------------------------------------
+                // 3) Restore settings right after sensor upgrade (do NOT reboot here)
+                //    The rest of the flow (actor, reboot, 102 restore) stays after actor.
+                // --------------------------------------------------------------------
+                if (RestoreSettingsAfterUpgrade && !isInBoot && SupportsSettingsBackup(DetectorType))
+                {
+                    await Task.Delay(10000).ConfigureAwait(false);
+
+                    Console.WriteLine($"Starting settings restore for {macAddress} - trying to connect and login");
+
+                    var cl = await ConnectAndLoginWithRetryAsync(
+                        _gatewayIpAddress, 80, macAddress, pincode, logId, FirmwareVersion,
+                        maxAttempts: 4,
+                        delayBetweenAttemptsMs: 6000).ConfigureAwait(false);
+
+                    if (!cl.Success)
+                    {
+                        UpgradeLogger.Log(logId, macAddress, $"Restore connect+login failed: {cl.Message}", "Warn", FirmwareVersion);
+                        Console.WriteLine($"[WARN] Restore connect+login failed for {macAddress}: {cl.Message}");
+
+                        response.Success = false;
+                        response.StatusCode = 500;
+                        response.Message = "Could not connect and login to detector!";
+
+                        if (dev.requiresConfigRestore)
+                        {
+                            dev.LastFailureReason = response.Message;
+                            dev.shouldRetry = false;
+                            return response;
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine($"Starting settings restore for {macAddress} - upload config");
+                        settingsBackupPath ??= dev.SettingsBackupPath;
+
+                        if (!string.IsNullOrWhiteSpace(settingsBackupPath))
+                        {
+                            try
+                            {
+                                ServiceResponse restore = new ServiceResponse { Success = false, StatusCode = 500, Message = "Restore not attempted" };
+                                for (int attempt = 1; attempt <= 3; attempt++)
+                                {
+                                    restore = await _settingsBackup.RestoreFromFileAsync(
+                                            macAddress,
+                                            pincode,
+                                            DetectorType,
+                                            FirmwareVersion,
+                                            settingsBackupPath,
+                                            logId)
+                                        .ConfigureAwait(false);
+
+                                    UpgradeLogger.Log(
+                                        logId,
+                                        macAddress,
+                                        $"Settings restore attempt {attempt}/3: {(restore.Success ? "Success" : "Fail")} - {restore.Message}",
+                                        restore.Success ? "Success" : "Failed",
+                                        FirmwareVersion);
+
+                                    Console.WriteLine($"[INFO] Settings restore attempt {attempt}/3 for {macAddress} - result: {restore.Success} - {restore.Message}");
+
+                                    if (restore.Success)
+                                        break;
+
+                                    await Task.Delay(4000).ConfigureAwait(false);
+                                }
+
+                                dev.isConfigRestored = restore.Success;
+
+                                if (!restore.Success && dev.requiresConfigRestore)
+                                {
+                                    response.Success = false;
+                                    response.StatusCode = restore.StatusCode;
+                                    response.Message = $"Settings restore failed after retries: {restore.Message}";
+                                    dev.LastFailureReason = response.Message;
+                                    dev.shouldRetry = false;
+                                    return response;
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                UpgradeLogger.Log(logId, macAddress, $"Settings restore failed: {ex.Message}", "Failed", FirmwareVersion);
+                                Console.WriteLine($"[ERROR] Settings restore failed for {macAddress}: {ex}");
+                                dev.isConfigRestored = false;
+
+                                if (dev.requiresConfigRestore)
+                                {
+                                    response.Success = false;
+                                    response.StatusCode = 500;
+                                    response.Message = $"Settings restore exception: {ex.Message}";
+                                    dev.LastFailureReason = response.Message;
+                                    dev.shouldRetry = false;
+                                    dev.finalUpgradeResult = "Warn";
+                                    return response;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            UpgradeLogger.Log(logId, macAddress, "Settings restore skipped (no backup file available)", "Failed", FirmwareVersion);
+                            Console.WriteLine($"[ERROR] Settings restore skipped for {macAddress} - no backup file available");
+
+                            if (dev.requiresConfigRestore)
+                            {
+                                dev.shouldRetry = false;
+                                dev.finalUpgradeResult = "Warn";
+                            }
+                        }
+
+                        await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0).ConfigureAwait(false);
+                    }
+                }
 
                 if (dev.ActorSuccess != true && dev.isActorUpgradeNeeded)
                 {
@@ -1466,136 +1588,61 @@ public static int GetProgrammingCount()
                 }
 
                 // --------------------------------------------------------------------
-                // 3) Restore settings (optimized retries + better failure reporting)
+                // 3) Post-actor steps (keep existing flow here)
+                //    - Reboot after actor (if configured)
+                //    - 102 restore (P47/P48 only)
                 // --------------------------------------------------------------------
-                if (DetectorType == "P48" || DetectorType == "P47")
+                if (SupportsSettingsBackup(DetectorType))
                 {
-                    await Task.Delay(10000).ConfigureAwait(false);
+                    // Only DALI masters need login + sysfail + 102 restore
+                    var isDaliMaster = DetectorType == "P48" || DetectorType == "P47";
 
-                    Console.WriteLine($"Starting settings restore for {macAddress} - trying to connect and login");
-
-                    // IMPORTANT: more retries and longer delay based on your log timing
-                    var cl = await ConnectAndLoginWithRetryAsync(
-                        _gatewayIpAddress, 80, macAddress, pincode, logId, FirmwareVersion,
-                        maxAttempts: 4,
-                        delayBetweenAttemptsMs: 6000).ConfigureAwait(false);
-
-                    if (!cl.Success)
+                    if (isDaliMaster)
                     {
-                        UpgradeLogger.Log(logId, macAddress, $"Restore connect+login failed: {cl.Message}", "Warn", FirmwareVersion);
-                        Console.WriteLine($"[WARN] Restore connect+login failed for {macAddress}: {cl.Message}");
+                        await Task.Delay(10000).ConfigureAwait(false);
 
-                        response.Success = false;
-                        response.StatusCode = 500;
-                        response.Message = "Could not connect and login to detector!";
-                        return response;
-                    }
+                        Console.WriteLine($"Post-actor: connect+login for {macAddress}");
 
-                    if (AutoSetSysFailLevelUnderUpdate)
-                    {
-                        if (await DaliSetDeviceSysFailLevelAsync(macAddress, 0xFE))
+                        var cl = await ConnectAndLoginWithRetryAsync(
+                            _gatewayIpAddress, 80, macAddress, pincode, logId, FirmwareVersion,
+                            maxAttempts: 4,
+                            delayBetweenAttemptsMs: 6000).ConfigureAwait(false);
+
+                        if (!cl.Success)
                         {
-                            Console.WriteLine($"DALI SysFail Level set to 0xFE for {macAddress}");
-                            UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set to 0xFE", "Success", FirmwareVersion);
+                            UpgradeLogger.Log(logId, macAddress, $"Post-actor connect+login failed: {cl.Message}", "Warn", FirmwareVersion);
+                            response.Success = false;
+                            response.StatusCode = 500;
+                            response.Message = "Could not connect and login to detector!";
+                            return response;
                         }
-                        else
+
+                        if (AutoSetSysFailLevelUnderUpdate)
                         {
-                            Console.WriteLine($"Failed to set DALI SysFail Level for {macAddress}");
-                            UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set failed", "Warn", FirmwareVersion);
-                        }
-                    }
-
-                    Console.WriteLine($"Starting settings restore for {macAddress} - upload config");
-
-                    settingsBackupPath ??= dev.SettingsBackupPath;
-
-                    if (!string.IsNullOrWhiteSpace(settingsBackupPath))
-                    {
-                        try
-                        {
-                            ServiceResponse restore = new ServiceResponse { Success = false, StatusCode = 500, Message = "Restore not attempted" };
-                            for (int attempt = 1; attempt <= 3; attempt++)
-                            {
-                                restore = await _settingsBackup.RestoreFromFileAsync(
-                                        macAddress,
-                                        pincode,
-                                        DetectorType,
-                                        FirmwareVersion,
-                                        settingsBackupPath,
-                                        logId)
-                                    .ConfigureAwait(false);
-
-                                UpgradeLogger.Log(
-                                    logId,
-                                    macAddress,
-                                    $"Settings restore attempt {attempt}/3: {(restore.Success ? "Success" : "Fail")} - {restore.Message}",
-                                    restore.Success ? "Success" : "Failed",
-                                    FirmwareVersion);
-
-                                Console.WriteLine($"[INFO] Settings restore attempt {attempt}/3 for {macAddress} - result: {restore.Success} - {restore.Message}");
-
-                                if (restore.Success)
-                                    break;
-
-                                await Task.Delay(4000).ConfigureAwait(false);
-                            }
-
-                            dev.isConfigRestored = restore.Success;
-
-                            if (!restore.Success && dev.requiresConfigRestore)
-                            {
-                                response.Success = false;
-                                response.StatusCode = restore.StatusCode;
-                                response.Message = $"Settings restore failed after retries: {restore.Message}";
-                                dev.LastFailureReason = response.Message;
-                                dev.shouldRetry = false;
-                                return response;
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            UpgradeLogger.Log(logId, macAddress, $"Settings restore failed: {ex.Message}", "Failed", FirmwareVersion);
-                            Console.WriteLine($"[ERROR] Settings restore failed for {macAddress}: {ex}");
-                            dev.isConfigRestored = false;
-
-                            if (dev.requiresConfigRestore)
-                            {
-                                response.Success = false;
-                                response.StatusCode = 500;
-                                response.Message = $"Settings restore exception: {ex.Message}";
-                                dev.LastFailureReason = response.Message;
-                                dev.shouldRetry = false;
-                                dev.finalUpgradeResult = "Warn";
-                                return response;
-                            }
-                        }
-                    }
-                    else
-                    {
-                        UpgradeLogger.Log(logId, macAddress, "Settings restore skipped (no backup file available)", "Failed", FirmwareVersion);
-                        Console.WriteLine($"[ERROR] Settings restore skipped for {macAddress} - no backup file available");
-
-                        if (dev.requiresConfigRestore)
-                        {
-                            dev.shouldRetry = false;
-                            dev.finalUpgradeResult = "Warn";
+                            if (await DaliSetDeviceSysFailLevelAsync(macAddress, 0xFE))
+                                UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set to 0xFE", "Success", FirmwareVersion);
+                            else
+                                UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set failed", "Warn", FirmwareVersion);
                         }
                     }
 
                     if (RebootDetectorAfterUpgrade)
                     {
-                        Console.WriteLine($"Rebooting device {macAddress} to apply restored settings");
+                        Console.WriteLine($"Rebooting device {macAddress} after actor update");
                         await RebootDeviceAsync(macAddress).ConfigureAwait(false);
-                        UpgradeLogger.Log(logId, macAddress, "Device rebooted after settings restore", "Success", FirmwareVersion);
+                        UpgradeLogger.Log(logId, macAddress, "Device rebooted after actor update", "Success", FirmwareVersion);
                         await Task.Delay(10000).ConfigureAwait(false);
 
-                        await ConnectAndLoginWithRetryAsync(
-                            _gatewayIpAddress, _gatewayPort, macAddress, pincode, logId, FirmwareVersion,
-                            maxAttempts: 3,
-                            delayBetweenAttemptsMs: 2000).ConfigureAwait(false);
+                        if (isDaliMaster)
+                        {
+                            await ConnectAndLoginWithRetryAsync(
+                                _gatewayIpAddress, _gatewayPort, macAddress, pincode, logId, FirmwareVersion,
+                                maxAttempts: 3,
+                                delayBetweenAttemptsMs: 2000).ConfigureAwait(false);
+                        }
                     }
 
-                    if (Restore102DBAfterUpgrade)
+                    if (isDaliMaster && Restore102DBAfterUpgrade)
                     {
                         bool resp = false;
                         for (int attempt = 1; attempt <= 3; attempt++)
@@ -1624,7 +1671,7 @@ public static int GetProgrammingCount()
                 }
                 else
                 {
-                    UpgradeLogger.Log(logId, macAddress, "Settings restore skipped (not P47 or P48)", "Info", FirmwareVersion);
+                    UpgradeLogger.Log(logId, macAddress, $"Post-actor steps skipped (unsupported detector '{DetectorType}')", "Info", FirmwareVersion);
                 }
 
                 // --------------------------------------------------------------------
@@ -2745,15 +2792,23 @@ try
                     dev.CurrentFirmwareVersion
                 );
 
+                // Skip sensor upgrade when current App FW matches target, unless forced.
+                dev.upgradeSensor = dev.ForceUpdate || !FirmwareResolver.IsSameAppVersion(dev.CurrentFirmwareVersion, dev.FirmwareVersion);
+                if (!dev.upgradeSensor)
+                {
+                    UpgradeLogger.Log(logId, mac, "Sensor upgrade skipped (FW already matches target)", "Info", dev.FirmwareVersion);
+                    Console.WriteLine($"[SKIP] Sensor upgrade for {mac} - current matches target and ForceUpdate=false");
+                }
+
                 dev.isActorUpgradeNeeded = dev.DetectotType == "P48" || dev.DetectotType == "P47";
 
                 // Requirements for success reporting
-                dev.requiresConfigRestore = RestoreSettingsAfterUpgrade && (dev.DetectotType == "P48" || dev.DetectotType == "P47");
+                dev.requiresConfigRestore = RestoreSettingsAfterUpgrade && (dev.DetectotType == "P48" || dev.DetectotType == "P47" || dev.DetectotType == "P46" || dev.DetectotType == "P49" || dev.DetectotType == "P41" || dev.DetectotType == "P42");
                 dev.requires102Restore = Restore102DBAfterUpgrade && (dev.DetectotType == "P48" || dev.DetectotType == "P47");
 
                 await UpgradeDeviceAsync(
                     dev, mac, dev.Pincode, dev.DetectotType, dev.FirmwareVersion,
-                    dev.isActorUpgradeNeeded, dev.upgradeBootloader, true, logId
+                    dev.isActorUpgradeNeeded, dev.upgradeBootloader, dev.upgradeSensor, logId
                 ).ConfigureAwait(false);
 
                 int maxRetriesPerComponent = 5;
@@ -4037,6 +4092,9 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
         public string FirmwareVersion { get; set; }
         public string CurrentFirmwareVersion { get; set; }
         public string? SettingsBackupPath { get; set; }
+
+        // If true, forces re-programming even when current FW matches target.
+        public bool ForceUpdate { get; set; } = false;
         public bool BootloaderSuccess { get; set; } = false;
         public bool SensorSuccess { get; set; } = false;
         public bool ActorSuccess { get; set; } = false;
@@ -4048,6 +4106,7 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
         public bool isActorUpgradeNeeded = true;
 
         public bool upgradeBootloader = true;
+        public bool upgradeSensor = true;
         public bool isConfigRestored = false;
         public bool requiresConfigRestore = false;
         public bool requires102Restore = false;

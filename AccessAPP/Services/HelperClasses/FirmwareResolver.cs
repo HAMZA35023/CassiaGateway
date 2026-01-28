@@ -4,6 +4,62 @@ namespace AccessAPP.Services.HelperClasses
 {
     public static class FirmwareResolver
     {
+        /// <summary>
+        /// Normalizes target firmware version strings so comparisons are consistent.
+        /// Accepts: "v02.34", "02.34", "0234" => returns "02.34".
+        /// Returns empty string when input is null/invalid.
+        /// </summary>
+        public static string NormalizeTargetVersion(string? version)
+        {
+            if (string.IsNullOrWhiteSpace(version)) return string.Empty;
+            var v = version.Trim();
+
+            // v02.34 => 02.34
+            if (v.StartsWith("v", StringComparison.OrdinalIgnoreCase))
+                v = v.Substring(1);
+
+            // 0234 => 02.34
+            if (Regex.IsMatch(v, @"^\d{4}$"))
+                return $"{v.Substring(0, 2)}.{v.Substring(2, 2)}";
+
+            // 2.34 => 02.34
+            var m = Regex.Match(v, @"^(\d{1,2})\.(\d{2})$");
+            if (m.Success)
+                return $"{int.Parse(m.Groups[1].Value):00}.{m.Groups[2].Value}";
+
+            return v;
+        }
+
+        /// <summary>
+        /// Extracts the device app version from a FW string returned by GetFwVersion.
+        /// Tries to find "Sensor: App: XX.XX" or "App: XX.XX".
+        /// Returns empty string if not found.
+        /// </summary>
+        public static string ExtractAppVersionFromDeviceString(string? fwString)
+        {
+            if (string.IsNullOrWhiteSpace(fwString)) return string.Empty;
+
+            // Prefer Sensor App when present
+            var m = Regex.Match(fwString, @"Sensor:\s*App:\s*(\d{1,2})\.(\d{2})", RegexOptions.IgnoreCase);
+            if (m.Success)
+                return $"{int.Parse(m.Groups[1].Value):00}.{m.Groups[2].Value}";
+
+            // Fallback: any App:
+            m = Regex.Match(fwString, @"App:\s*(\d{1,2})\.(\d{2})", RegexOptions.IgnoreCase);
+            if (m.Success)
+                return $"{int.Parse(m.Groups[1].Value):00}.{m.Groups[2].Value}";
+
+            return string.Empty;
+        }
+
+        public static bool IsSameAppVersion(string? currentDeviceString, string? targetVersion)
+        {
+            var cur = NormalizeTargetVersion(ExtractAppVersionFromDeviceString(currentDeviceString));
+            var tgt = NormalizeTargetVersion(targetVersion);
+            if (string.IsNullOrWhiteSpace(cur) || string.IsNullOrWhiteSpace(tgt)) return false;
+            return string.Equals(cur, tgt, StringComparison.OrdinalIgnoreCase);
+        }
+
         public static string ResolveFirmwareFile(string detectorType, string firmwareVersion, bool isActor, bool isBootloader)
         {
             string versionCode = ParseVersionToCode(firmwareVersion); // e.g., "0236"

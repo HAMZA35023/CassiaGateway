@@ -1,6 +1,8 @@
 ﻿using AccessAPP.Models;
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -12,6 +14,45 @@ namespace AccessAPP.Services
     {
         private readonly IDeviceSettingsBleApi _ble;
         private readonly string _rootDir;
+
+        // Central per-detector backup/restore profile (clean single place to modify)
+        private sealed record SettingsBackupProfile(
+            bool UserConfig,
+            bool WiredPushButtons,
+            bool DaliPushButtons,
+            bool BlePushButtons);
+
+        // Conservative default: only UserConfig. Add explicit profiles per detector below.
+        // This avoids calling unsupported BLE endpoints for unknown detector families.
+        private static readonly SettingsBackupProfile DefaultProfile = new(
+            UserConfig: true,
+            WiredPushButtons: false,
+            DaliPushButtons: false,
+            BlePushButtons: false);
+
+        // NOTE: keys are UPPERCASE detector types.
+        private static readonly Dictionary<string, SettingsBackupProfile> Profiles = new()
+        {
+            // P46/P49/P41: UserConfig only
+            ["P46"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: false, DaliPushButtons: false, BlePushButtons: false),
+            ["P49"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: false, DaliPushButtons: false, BlePushButtons: false),
+            ["P41"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: false, DaliPushButtons: false, BlePushButtons: false),
+
+            // P42: UserConfig + Wired + BLE (NO DALI)
+            ["P42"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: true, DaliPushButtons: false, BlePushButtons: true),
+
+            // P47/P48: DALI masters (explicit)
+            ["P47"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: true, DaliPushButtons: true, BlePushButtons: true),
+            ["P48"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: true, DaliPushButtons: true, BlePushButtons: true),
+        };
+
+        private static SettingsBackupProfile GetProfile(string? detectorType)
+        {
+            var key = (detectorType ?? string.Empty).Trim().ToUpperInvariant();
+            if (Profiles.TryGetValue(key, out var profile))
+                return profile;
+            return DefaultProfile;
+        }
 
         public DeviceSettingsBackupService(IDeviceSettingsBleApi bleApi, string? rootDir = null)
         {
@@ -85,6 +126,8 @@ namespace AccessAPP.Services
         {
             var path = GetBackupPath(macAddress, logId);
 
+            var profile = GetProfile(detectorType);
+
             var snapshot = new DeviceSettingsSnapshot
             {
                 MacAddress = macAddress,
@@ -92,21 +135,21 @@ namespace AccessAPP.Services
                 DetectorType = detectorType,
                 FirmwareVersionTarget = firmwareVersion,
 
-                UserConfigHex = StripBleHeader(
-                    await _ble.GetUserConfig(macAddress).ConfigureAwait(false)
-                ),
+                UserConfigHex = profile.UserConfig
+                    ? StripBleHeader(await _ble.GetUserConfig(macAddress).ConfigureAwait(false))
+                    : null,
 
-                PushButtonsHex = StripBleHeader(
-                    await _ble.GetWiredPushButtonList(macAddress).ConfigureAwait(false)
-                ),
+                PushButtonsHex = profile.WiredPushButtons
+                    ? StripBleHeader(await _ble.GetWiredPushButtonList(macAddress).ConfigureAwait(false))
+                    : null,
 
-                DaliPushButtonsHex = StripBleHeader(
-                    await _ble.GetDaliPushButtonList(macAddress).ConfigureAwait(false)
-                ),
+                DaliPushButtonsHex = profile.DaliPushButtons
+                    ? StripBleHeader(await _ble.GetDaliPushButtonList(macAddress).ConfigureAwait(false))
+                    : null,
 
-                BlePushButtonsHex = StripBleHeader(
-                    await _ble.GetBLEPushButtonList(macAddress).ConfigureAwait(false)
-                ),
+                BlePushButtonsHex = profile.BlePushButtons
+                    ? StripBleHeader(await _ble.GetBLEPushButtonList(macAddress).ConfigureAwait(false))
+                    : null,
             };
 
             var json = JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true });
@@ -211,6 +254,9 @@ namespace AccessAPP.Services
                 rulesRoot
             );
 
+            // Apply per-detector restore profile (even if backup file contains fields)
+            var profile = GetProfile(detectorType);
+
             Console.WriteLine($"[Restore] Snapshot AFTER patching:");
             Console.WriteLine($"  UserConfigHex      = {Trunc(snap.UserConfigHex)}");
             Console.WriteLine($"  WiredPushButtons   = {Trunc(snap.PushButtonsHex)}");
@@ -220,7 +266,7 @@ namespace AccessAPP.Services
             bool ok = true;
 
             // ---- BLE restores ----
-            if (!string.IsNullOrWhiteSpace(snap.UserConfigHex))
+            if (profile.UserConfig && !string.IsNullOrWhiteSpace(snap.UserConfigHex))
             {
                 Console.WriteLine($"[Restore] Writing UserConfig...");
                 bool r = await _ble.SetUserConfig(macAddress, snap.UserConfigHex).ConfigureAwait(false);
@@ -228,7 +274,7 @@ namespace AccessAPP.Services
                 ok &= r;
             }
 
-            if (!string.IsNullOrWhiteSpace(snap.PushButtonsHex))
+            if (profile.WiredPushButtons && !string.IsNullOrWhiteSpace(snap.PushButtonsHex))
             {
                 Console.WriteLine($"[Restore] Writing Wired PushButtons...");
                 bool r = await _ble.SetWiredPushButtonList(macAddress, snap.PushButtonsHex).ConfigureAwait(false);
@@ -236,7 +282,7 @@ namespace AccessAPP.Services
                 ok &= r;
             }
 
-            if (!string.IsNullOrWhiteSpace(snap.DaliPushButtonsHex))
+            if (profile.DaliPushButtons && !string.IsNullOrWhiteSpace(snap.DaliPushButtonsHex))
             {
                 Console.WriteLine($"[Restore] Writing DALI PushButtons...");
                 bool r = await _ble.SetDaliPushButtonList(macAddress, snap.DaliPushButtonsHex).ConfigureAwait(false);
@@ -244,7 +290,7 @@ namespace AccessAPP.Services
                 ok &= r;
             }
 
-            if (!string.IsNullOrWhiteSpace(snap.BlePushButtonsHex))
+            if (profile.BlePushButtons && !string.IsNullOrWhiteSpace(snap.BlePushButtonsHex))
             {
                 Console.WriteLine($"[Restore] Writing BLE PushButtons...");
                 bool r = await _ble.SetBLEPushButtonList(macAddress, snap.BlePushButtonsHex).ConfigureAwait(false);

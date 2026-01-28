@@ -15,6 +15,9 @@ public interface IMqttService : IAsyncDisposable
     // Optional: broker config at runtime
     Task UpdateBrokerAsync(string host, int port, string? username, string? password, bool useTls, bool persist = true, CancellationToken ct = default);
 
+    // Change MQTT scope at runtime (only NetworkId).
+    Task UpdateScopeAsync(string networkId, bool persist = true, CancellationToken ct = default);
+
     // Placeholders to publish
     Task PublishDiscoveredDevicesAsync(DiscoveredDevicesMessage msg, CancellationToken ct = default);
     Task PublishUpdateProgressAsync(UpdateProgressMessage msg, CancellationToken ct = default);
