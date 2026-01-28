@@ -575,35 +575,17 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
                 try
                 {
-                    // Run async update + reply in the same task chain (no async keyword needed)
-                    return UpdateScopeAsync(dto.NetworkId!, persist: true, ct: CancellationToken.None)
-                        .ContinueWith(t =>
-                        {
-                            if (t.IsFaulted)
-                            {
-                                var ex = t.Exception?.GetBaseException();
-                                var bad = new
-                                {
-                                    success = false,
-                                    message = $"Failed to update networkId: {ex?.Message}",
-                                    networkId = CurrentOptions.NetworkId,
-                                    name = CurrentOptions.Name
-                                };
-                                return PublishTeleJsonAsync("scope", bad, CancellationToken.None);
-                            }
+                    UpdateScopeAsync(dto.NetworkId!, persist: true, ct: CancellationToken.None).ConfigureAwait(false);
 
-                            var ok = new
-                            {
-                                success = true,
-                                message = "NetworkId updated.",
-                                networkId = CurrentOptions.NetworkId,
-                                name = CurrentOptions.Name
-                            };
+                    var ok = new
+                    {
+                        success = true,
+                        message = "NetworkId updated.",
+                        networkId = CurrentOptions.NetworkId,
+                        name = CurrentOptions.Name
+                    };
 
-                            return PublishTeleJsonAsync("scope", ok, CancellationToken.None);
-                        })
-                        .Unwrap();
-
+                    return PublishTeleJsonAsync("scope", ok, CancellationToken.None);
                 }
                 catch (Exception ex)
                 {

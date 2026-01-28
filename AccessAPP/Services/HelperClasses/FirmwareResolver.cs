@@ -60,6 +60,30 @@ namespace AccessAPP.Services.HelperClasses
             return string.Equals(cur, tgt, StringComparison.OrdinalIgnoreCase);
         }
 
+        /// <summary>
+        /// Extracts the actor app version from a FW string returned by GetFwVersion.
+        /// Example input contains: "Actor: App: 02.34 Boot: 1.05".
+        /// Returns empty string if not found.
+        /// </summary>
+        public static string ExtractActorAppVersionFromDeviceString(string? fwString)
+        {
+            if (string.IsNullOrWhiteSpace(fwString)) return string.Empty;
+
+            var m = Regex.Match(fwString, @"Actor:\s*App:\s*(\d{1,2})\.(\d{2})", RegexOptions.IgnoreCase);
+            if (m.Success)
+                return $"{int.Parse(m.Groups[1].Value):00}.{m.Groups[2].Value}";
+
+            return string.Empty;
+        }
+
+        public static bool IsSameActorAppVersion(string? currentDeviceString, string? targetVersion)
+        {
+            var cur = NormalizeTargetVersion(ExtractActorAppVersionFromDeviceString(currentDeviceString));
+            var tgt = NormalizeTargetVersion(targetVersion);
+            if (string.IsNullOrWhiteSpace(cur) || string.IsNullOrWhiteSpace(tgt)) return false;
+            return string.Equals(cur, tgt, StringComparison.OrdinalIgnoreCase);
+        }
+
         public static string ResolveFirmwareFile(string detectorType, string firmwareVersion, bool isActor, bool isBootloader)
         {
             string versionCode = ParseVersionToCode(firmwareVersion); // e.g., "0236"

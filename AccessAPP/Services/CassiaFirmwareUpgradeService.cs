@@ -2800,7 +2800,15 @@ try
                     Console.WriteLine($"[SKIP] Sensor upgrade for {mac} - current matches target and ForceUpdate=false");
                 }
 
-                dev.isActorUpgradeNeeded = dev.DetectotType == "P48" || dev.DetectotType == "P47";
+                var isDaliMaster = dev.DetectotType == "P48" || dev.DetectotType == "P47";
+
+                // Skip actor upgrade when current Actor App FW matches target, unless forced.
+                dev.isActorUpgradeNeeded = isDaliMaster && (dev.ForceUpdate || !FirmwareResolver.IsSameActorAppVersion(dev.CurrentFirmwareVersion, dev.FirmwareVersion));
+                if (isDaliMaster && !dev.isActorUpgradeNeeded)
+                {
+                    UpgradeLogger.Log(logId, mac, "Actor upgrade skipped (FW already matches target)", "Info", dev.FirmwareVersion);
+                    Console.WriteLine($"[SKIP] Actor upgrade for {mac} - current matches target and ForceUpdate=false");
+                }
 
                 // Requirements for success reporting
                 dev.requiresConfigRestore = RestoreSettingsAfterUpgrade && (dev.DetectotType == "P48" || dev.DetectotType == "P47" || dev.DetectotType == "P46" || dev.DetectotType == "P49" || dev.DetectotType == "P41" || dev.DetectotType == "P42");
