@@ -55,6 +55,11 @@ namespace AccessAPP.Services
         private readonly IConfiguration _configuration;
         private const int MaxPacketSize = 270;
         private const int InterPacketDelay = 0;
+
+        //Bootloader sleeptimer - to be investigated what is the best value - 20ms looks to be to low and backfire, and 100ms to high
+        // 100 -> 50ms = improved bootloader from 25%/m to 33%/m, and actor from 9%/m to 16%/m
+        const int WRITE_SLEEP_MS = 50;
+
         private readonly string _firmwareActorFilePath = "d:\\work\\firma_vis\\niko\\app_hamza\\CassiaGateway\\AccessAPP\\FirmwareVersions\\353AP20227.cyacd";
         private readonly string _firmwareSensorFilePath4 = "d:\\work\\firma_vis\\niko\\app_hamza\\CassiaGateway\\AccessAPP\\FirmwareVersions\\353AP40227.cyacd";
         private readonly string _firmwareSensorFilePath3 = "d:\\work\\firma_vis\\niko\\app_hamza\\CassiaGateway\\AccessAPP\\FirmwareVersions\\353AP30227.cyacd";
@@ -3503,7 +3508,6 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
         ///Sensor Programming
 
 
-
         public static int WriteSensorData(IntPtr buffer, int size, UInt64 customContext)
         {
             bool status = false;
@@ -3525,7 +3529,7 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                     //Console.WriteLine($"size of buffer: {size}");
                     //SendMessage(data);
                     _ownInstance.cassiaReadWriteService.WriteBleMessage(_ownInstance._gatewayIpAddress, macContext, 14, hexData, "");
-                    Thread.Sleep(100);
+                    Thread.Sleep(WRITE_SLEEP_MS);
 
                     status = true;
                 }
@@ -3536,7 +3540,7 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                 //second try
                 if (!status)
                 {
-                    Thread.Sleep(2000);
+                    Thread.Sleep(1000);
 
                     try
                     {
@@ -3545,7 +3549,7 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                         //Console.WriteLine($"size of buffer: {size}");
                         //SendMessage(data);
                         _ownInstance.cassiaReadWriteService.WriteBleMessage(_ownInstance._gatewayIpAddress, macContext, 14, hexData, "");
-                        Thread.Sleep(100);
+                        Thread.Sleep(WRITE_SLEEP_MS);
 
                         status = true;
                     }
@@ -3604,7 +3608,7 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
 
                 if (!status)
                 {
-                    Thread.Sleep(2000);
+                    Thread.Sleep(1000);
                     try
                     {
                         // Encode the message
@@ -3657,7 +3661,7 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                     }
                     else
                     {
-                        Thread.Sleep(200);
+                        Thread.Sleep(WRITE_SLEEP_MS);
                     }
 
                 }
@@ -3666,7 +3670,7 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             {
                 await SendChunk(message._BleMessageBuffer, macAddress);
                 //await Task.Delay(100); // Adjust delay as needed
-                Thread.Sleep(200);
+                Thread.Sleep(WRITE_SLEEP_MS);
             }
         }
 
