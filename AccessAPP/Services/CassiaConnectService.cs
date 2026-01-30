@@ -26,12 +26,27 @@ namespace AccessAPP.Services
             _notificationService = notificationService;
         }
 
-        public async Task<ResponseModel> ConnectToBleDevice(string gatewayIpAddress, int gatewayPort, string macAddress)
+        private static string AppendQueryParam(string url, string key, string value)
+        {
+            if (string.IsNullOrWhiteSpace(url)) return url;
+            if (string.IsNullOrWhiteSpace(key)) return url;
+
+            var keyEq = key + "=";
+            if (url.Contains("?" + keyEq, StringComparison.OrdinalIgnoreCase) ||
+                url.Contains("&" + keyEq, StringComparison.OrdinalIgnoreCase))
+                return url;
+
+            return url.Contains('?') ? (url + "&" + keyEq + Uri.EscapeDataString(value ?? ""))
+                                    : (url + "?" + keyEq + Uri.EscapeDataString(value ?? ""));
+        }
+
+        public async Task<ResponseModel> ConnectToBleDevice(string gatewayIpAddress, int gatewayPort, string macAddress, int chip = -1)
         {
             var client = new HttpClient();
 
             // Define the request URL
             string url = $"http://{gatewayIpAddress}:{gatewayPort}/gap/nodes/{macAddress}/connection";
+            if (chip >= 0) url = AppendQueryParam(url, "chip", chip.ToString());
 
             // Define the JSON content
             var jsonContent = new StringContent(
@@ -56,7 +71,6 @@ namespace AccessAPP.Services
                 {
                     // Send the request
                     response = await client.SendAsync(request);
-                    Thread.Sleep(1000);
                 }
                 catch(Exception e)
                 {
@@ -181,11 +195,12 @@ namespace AccessAPP.Services
             }
         }
 
-        public async Task<ResponseModel> DisconnectFromBleDevice(string gatewayIpAddress, string macAddress, int retries = 1)
+        public async Task<ResponseModel> DisconnectFromBleDevice(string gatewayIpAddress, string macAddress, int retries = 1, int chip = -1)
         {
             try
             {
                 string disconnectEndpoint = $"http://{gatewayIpAddress}/gap/nodes/{macAddress}/connection";
+                if (chip >= 0) disconnectEndpoint = AppendQueryParam(disconnectEndpoint, "chip", chip.ToString());
 
                 // Configure the DELETE request
                 var request = new HttpRequestMessage(HttpMethod.Delete, disconnectEndpoint);
@@ -214,12 +229,19 @@ namespace AccessAPP.Services
             try
             {
                 // Write BLE message
-                var result = await cassiaReadWrite.WriteBleMessage(gatewayIpAddress, macAddress, 19, value, "?noresponse=1");
+                // IMPORTANT: Dispose the HTTP response immediately so the connection returns to the pool.
+                HttpStatusCode writeStatus;
+                using (var result = await cassiaReadWrite.WriteBleMessage(gatewayIpAddress, macAddress, 19, value, "?noresponse=1"))
+                {
+                    writeStatus = result.StatusCode;
+                }
 
                 var responseTask = new TaskCompletionSource<DataResponseModel>();
 
+                Guid subToken = Guid.Empty;
+
                 // ✅ Subscribe to notifications using the singleton `_notificationService`
-                _notificationService.Subscribe(macAddress, (sender, data) =>
+                subToken = _notificationService.Subscribe(macAddress, (sender, data) =>
                 {
                     // Process the notification data
                     var response = new GenericTelegramReply(data);
@@ -230,7 +252,7 @@ namespace AccessAPP.Services
                         MacAddress = macAddress,
                         Data = responseResult,
                         Time = DateTimeOffset.Now.ToUnixTimeMilliseconds(),
-                        Status = result.StatusCode,
+                        Status = writeStatus,
                     };
 
                     responseTask.TrySetResult(responseBody);
@@ -241,12 +263,13 @@ namespace AccessAPP.Services
 
                 if (completedTask == responseTask.Task)
                 {
+                    if (subToken != Guid.Empty) _notificationService.Unsubscribe(macAddress, subToken);
                     return await responseTask.Task; // ✅ Return received data
                 }
                 else
                 {
                     // ✅ Handle timeout and unsubscribe
-                    _notificationService.Unsubscribe(macAddress);
+                    if (subToken != Guid.Empty) _notificationService.Unsubscribe(macAddress, subToken);
                     return new DataResponseModel
                     {
                         MacAddress = macAddress,
@@ -267,12 +290,15 @@ namespace AccessAPP.Services
             {
                 string hexLoginValue = new LoginTelegram().Create();
                 
-                var result = await cassiaReadWrite.WriteBleMessage(gatewayIpAddress, macAddress, 19, hexLoginValue, "?noresponse=1");
+                // IMPORTANT: Dispose the HTTP response when the login attempt completes (end of method scope).
+                using var result = await cassiaReadWrite.WriteBleMessage(gatewayIpAddress, macAddress, 19, hexLoginValue, "?noresponse=1");
 
                 var loginResultTask = new TaskCompletionSource<LoginResponseModel>();
 
+                Guid subToken = Guid.Empty;
+
                 // ✅ Subscribe to notifications using the singleton `_notificationService`
-                _notificationService.Subscribe(macAddress, (sender, data) =>
+                subToken = _notificationService.Subscribe(macAddress, (sender, data) =>
                 {
                     var loginReply = new LoginTelegramReply(data);
                     if (loginReply.TelegramType == "1100")
@@ -294,12 +320,13 @@ namespace AccessAPP.Services
 
                 if (completedTask == loginResultTask.Task)
                 {
+                    if (subToken != Guid.Empty) _notificationService.Unsubscribe(macAddress, subToken);
                     return await loginResultTask.Task; // ✅ Return successful login response
                 }
                 else
                 {
                     // ✅ Handle timeout and unsubscribe
-                    _notificationService.Unsubscribe(macAddress);
+                    if (subToken != Guid.Empty) _notificationService.Unsubscribe(macAddress, subToken);
                     return new LoginResponseModel
                     {
                         Status = "Timeout",

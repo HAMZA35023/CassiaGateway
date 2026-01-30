@@ -596,17 +596,17 @@ namespace AccessAPP.Controllers
                     }
 
                     // Step 2: Send the telegram to the BLE device using WriteBleMessage method
+                    // Step 2: Send the telegram to the BLE device
                     CassiaReadWriteService cassiaReadWrite = new CassiaReadWriteService();
-                    cassiaReadWrite.semaphore = _connectService.semaphore;
-                    var writeResponse = await cassiaReadWrite.WriteBleMessage(_gatewayIpAddress, macAddress, 19, hexLoginValue, "?noresponse=1");
-
-                    if (writeResponse.IsSuccessStatusCode)
+                    try
                     {
+                        // IMPORTANT: Always dispose the HTTP response to return the connection to the pool.
+                        using var _ = await cassiaReadWrite.WriteBleMessageAsync(_gatewayIpAddress, macAddress, 19, hexLoginValue, "?noresponse=1");
                         responses.Add($"Light control telegram sent successfully to device: {macAddress}");
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        responses.Add($"Failed to send telegram to device: {macAddress}, Reason: {writeResponse.ReasonPhrase}");
+                        responses.Add($"Failed to send telegram to device: {macAddress}, Reason: {ex.Message}");
                     }
 
                     //await Task.Delay(500);

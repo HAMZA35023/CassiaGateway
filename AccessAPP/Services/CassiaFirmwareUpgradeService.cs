@@ -87,6 +87,81 @@ namespace AccessAPP.Services
         private static ConcurrentDictionary<string, HashSet<string>> completedRows = new();
         private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _macsInProgress = new(StringComparer.OrdinalIgnoreCase);
 
+	    // Cassia X2000 dual-chip support: assign each active upgrade to a chip (0/1)
+	    // and ensure all REST calls for that MAC use the same chip.
+	    private readonly ConcurrentDictionary<string, int> _chipByMac = new(StringComparer.OrdinalIgnoreCase);
+	    private readonly ChipAllocator _chipAllocator = new ChipAllocator();
+
+	    private int GetChipForMac(string mac)
+	    {
+	        if (string.IsNullOrWhiteSpace(mac)) return RuntimeVariables.DEFAULT_CASSIA_CHIP;
+	        return _chipByMac.TryGetValue(mac, out var chip) ? chip : RuntimeVariables.DEFAULT_CASSIA_CHIP;
+	    }
+
+	    // Ensures we distribute parallel upgrades across Cassia X2000's two BLE chips.
+	    // We keep it simple: max one in-flight upgrade per chip (so up to 2 in parallel).
+	    private sealed class ChipAllocator
+	    {
+	        private readonly SemaphoreSlim _chip0 = new SemaphoreSlim(1, 1);
+	        private readonly SemaphoreSlim _chip1 = new SemaphoreSlim(1, 1);
+	        private int _rr;
+
+	        public async Task<ChipLease> AcquireAsync()
+	        {
+	            // Fast-path: try immediately (round-robin preference)
+	            var prefer = Interlocked.Increment(ref _rr) & 1;
+	            if (prefer == 0)
+	            {
+	                if (_chip0.Wait(0)) return new ChipLease(0, _chip0);
+	                if (_chip1.Wait(0)) return new ChipLease(1, _chip1);
+	            }
+	            else
+	            {
+	                if (_chip1.Wait(0)) return new ChipLease(1, _chip1);
+	                if (_chip0.Wait(0)) return new ChipLease(0, _chip0);
+	            }
+
+	            // Slow-path: wait for whichever chip becomes available first
+	            using var cts = new CancellationTokenSource();
+	            var t0 = _chip0.WaitAsync(cts.Token);
+	            var t1 = _chip1.WaitAsync(cts.Token);
+	            var winner = await Task.WhenAny(t0, t1).ConfigureAwait(false);
+	            cts.Cancel();
+
+	            if (winner == t0)
+	            {
+	                // ensure the wait completed successfully
+	                await t0.ConfigureAwait(false);
+	                return new ChipLease(0, _chip0);
+	            }
+	            else
+	            {
+	                await t1.ConfigureAwait(false);
+	                return new ChipLease(1, _chip1);
+	            }
+	        }
+	    }
+
+	    public readonly struct ChipLease : IDisposable
+	    {
+	        public int Chip { get; }
+	        private readonly SemaphoreSlim? _sem;
+	
+	        public ChipLease(int chip, SemaphoreSlim sem)
+	        {
+	            Chip = chip;
+	            _sem = sem;
+	        }
+
+	        public static ChipLease Fixed(int chip) => new ChipLease(chip, sem: null!);
+
+	        public void Dispose()
+	        {
+	            // Fixed leases don't have a semaphore to release.
+	            try { _sem?.Release(); } catch { }
+	        }
+	    }
+
         CassiaReadWriteService cassiaReadWriteService = new CassiaReadWriteService();
 
 
@@ -177,7 +252,6 @@ public static int GetProgrammingCount()
             _ownInstance = this;
             _httpClient = httpClient;
             _connectService = connectService;
-            cassiaReadWriteService.semaphore = connectService.semaphore;
             _deviceStorageService = deviceStorageService;
             _cassiaPinCodeService = cassiaPinCodeService;
             _configuration = configuration;
@@ -487,7 +561,7 @@ public static int GetProgrammingCount()
                 {
                     try
                     {
-                        var cr = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
+						var cr = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac, chip: GetChipForMac(nodeMac));
                         if (cr.Status == HttpStatusCode.OK)
                         {
                             UpgradeLogger.Log(logId, nodeMac, stepName, $"Success (attempt {attempt}/{connectMaxAttempts})");
@@ -674,7 +748,7 @@ public static int GetProgrammingCount()
             try
             {
                 Console.WriteLine("device disconnected and will reconnect after 3s");
-                await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0);
+				await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chip: GetChipForMac(nodeMac));
                 UpgradeLogger.Log(logId, nodeMac, "Disconnected", "Success");
             }
             catch (Exception ex)
@@ -709,7 +783,7 @@ public static int GetProgrammingCount()
                 {
                     try
                     {
-                        var cr = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
+						var cr = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac, chip: GetChipForMac(nodeMac));
                         if (cr.Status == HttpStatusCode.OK)
                         {
                             UpgradeLogger.Log(logId, nodeMac, stepName, $"Success (attempt {attempt}/{connectMaxAttempts})");
@@ -825,7 +899,7 @@ public static int GetProgrammingCount()
 
                 try
                 {
-                    await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0);
+					await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chip: GetChipForMac(nodeMac));
                 }
                 catch { /* ignore */ }
 
@@ -1004,8 +1078,8 @@ public static int GetProgrammingCount()
                     var attemptTask = Task.Run(async () =>
                     {
                         // 1) Connect
-                        var connectionResult = await _connectService
-                            .ConnectToBleDevice(gatewayIp, gatewayPort, macAddress)
+						var connectionResult = await _connectService
+							.ConnectToBleDevice(gatewayIp, gatewayPort, macAddress, chip: GetChipForMac(macAddress))
                             .ConfigureAwait(false);
 
                         if (connectionResult.Status != HttpStatusCode.OK)
@@ -1021,7 +1095,7 @@ public static int GetProgrammingCount()
                         bool isAlreadyInBootMode = CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress);
                         if (isAlreadyInBootMode)
                         {
-                            await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0);
+							await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0, chip: GetChipForMac(macAddress));
                             return new ConnectLoginResult
                             {
                                 Success = false,
@@ -1092,7 +1166,7 @@ public static int GetProgrammingCount()
                         $"Connect+Login timeout attempt {attempt}/{maxAttempts}",
                         "Warn", firmwareVersion);
 
-                    _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0).Wait();
+					_connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0, chip: GetChipForMac(macAddress)).Wait();
                     UpgradeLogger.Log(logId, macAddress,
                         $"Disconnected after timeout on attempt {attempt}/{maxAttempts}",
                         "Info", firmwareVersion);
@@ -1104,7 +1178,7 @@ public static int GetProgrammingCount()
                     UpgradeLogger.Log(logId, macAddress,
                         $"Connect+Login exception attempt {attempt}/{maxAttempts}: {ex.Message}",
                         "Warn", firmwareVersion);
-                    _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0).Wait();
+					_connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0, chip: GetChipForMac(macAddress)).Wait();
                     UpgradeLogger.Log(logId, macAddress,
                         $"Disconnected after exception on attempt {attempt}/{maxAttempts}",
                         "Info", firmwareVersion);
@@ -1117,7 +1191,7 @@ public static int GetProgrammingCount()
                     await Task.Delay(delayBetweenAttemptsMs).ConfigureAwait(false);
             }
 
-            _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0).Wait();
+			_connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0, chip: GetChipForMac(macAddress)).Wait();
             
             UpgradeLogger.Log(logId, macAddress,
                 $"Disconnected after all Connect+Login attempts failed",
@@ -1168,7 +1242,7 @@ public static int GetProgrammingCount()
                 {
                     try
                     {
-                        var cr = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, macAddress).ConfigureAwait(false);
+						var cr = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, macAddress, chip: GetChipForMac(macAddress)).ConfigureAwait(false);
                         last = cr.Status;
 
                         if (cr.Status == HttpStatusCode.OK)
@@ -1558,7 +1632,7 @@ public static int GetProgrammingCount()
                             }
                         }
 
-                        await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0).ConfigureAwait(false);
+						await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0, chip: GetChipForMac(macAddress)).ConfigureAwait(false);
                     }
                 }
 
@@ -1669,7 +1743,7 @@ public static int GetProgrammingCount()
                         }
                     }
 
-                    await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0).ConfigureAwait(false);
+					await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0, chip: GetChipForMac(macAddress)).ConfigureAwait(false);
                 }
                 else
                 {
@@ -1699,7 +1773,7 @@ public static int GetProgrammingCount()
             }
             finally
             {
-                await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0).ConfigureAwait(false);
+				await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0, chip: GetChipForMac(macAddress)).ConfigureAwait(false);
                 UpgradeLogger.Log(logId, macAddress, "Disconnected at the end of upgrade process", "Info", FirmwareVersion);
 
             }
@@ -1980,7 +2054,7 @@ public static int GetProgrammingCount()
             {
                 if (disconnect_on_finish)
                 {
-                    await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress);
+					await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, chip: GetChipForMac(macAddress));
                 }
             }
             return "";
@@ -1995,7 +2069,7 @@ public static int GetProgrammingCount()
             try
             {
                 if (string.IsNullOrWhiteSpace(macAddress)) return false;
-                var resp = await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress.Trim(), 0).ConfigureAwait(false);
+				var resp = await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress.Trim(), 0, chip: GetChipForMac(macAddress)).ConfigureAwait(false);
                 // resp.Status is HttpStatusCode (non-nullable); avoid null-propagation on value type.
                 return resp != null && resp.Status == HttpStatusCode.OK;
             }
@@ -2059,7 +2133,7 @@ public static int GetProgrammingCount()
                     ct.ThrowIfCancellationRequested();
 
                     lastConnect = await _connectService
-                        .ConnectToBleDevice(_gatewayIpAddress, _gatewayPort, mac)
+						.ConnectToBleDevice(_gatewayIpAddress, _gatewayPort, mac, chip: GetChipForMac(mac))
                         .ConfigureAwait(false);
 
                     if (lastConnect != null && lastConnect.Status == HttpStatusCode.OK)
@@ -2353,7 +2427,7 @@ public static int GetProgrammingCount()
                 {
                     try
                     {
-                        var resp = await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, mac, 0).ConfigureAwait(false);
+						var resp = await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, mac, 0, chip: GetChipForMac(mac)).ConfigureAwait(false);
                         result.Disconnected = resp != null && resp.Status == HttpStatusCode.OK;
                     }
                     catch
@@ -2540,8 +2614,16 @@ public static int GetProgrammingCount()
 
                         totalDevicesProcessed++;
 
-                        // Start immediately
-                        running.Add(ProcessSingleDeviceUpgradeAsync(dev, summaries, ms => Interlocked.Add(ref totalDeviceMs, ms)));
+						// Start immediately. On Cassia X2000 we can use both BLE chips; when enabled,
+						// each in-flight upgrade is assigned a chip (0/1) and all REST calls for that MAC
+						// are forced to that chip.
+						ChipLease lease;
+						if (RuntimeVariables.USE_BOTH_CASSIA_CHIPS && maxThreads >= 2)
+							lease = await _chipAllocator.AcquireAsync().ConfigureAwait(false);
+						else
+							lease = ChipLease.Fixed(RuntimeVariables.DEFAULT_CASSIA_CHIP);
+
+						running.Add(ProcessSingleDeviceUpgradeAsync(dev, lease, summaries, ms => Interlocked.Add(ref totalDeviceMs, ms)));
                         inQueue = _upgradeQueue.Count;
                     }
 
@@ -2724,10 +2806,11 @@ public static int GetProgrammingCount()
         // ------------------------------------------------------------------------------------
         // Per-device logic extracted from your original tasks delegate (same behavior)
         // ------------------------------------------------------------------------------------
-        private async Task ProcessSingleDeviceUpgradeAsync(
-            UpgradeProgress dev,
-            ConcurrentBag<DeviceUpgradeSummary> summaries,
-            Action<long> addDeviceMs)
+		private async Task ProcessSingleDeviceUpgradeAsync(
+		    UpgradeProgress dev,
+		    ChipLease chipLease,
+		    ConcurrentBag<DeviceUpgradeSummary> summaries,
+		    Action<long> addDeviceMs)
         {
             var deviceSw = Stopwatch.StartNew();
             var mac = NormalizeMac(dev.MacAddress);
@@ -2737,6 +2820,9 @@ public static int GetProgrammingCount()
             {
                 Console.WriteLine($"[SKIP] {mac} already upgrading in another task");
                 deviceSw.Stop();
+
+		        // Release chip lease for skipped items.
+		        chipLease.Dispose();
 
                 summaries.Add(new DeviceUpgradeSummary
                 {
@@ -2748,8 +2834,14 @@ public static int GetProgrammingCount()
                     Status = "SKIPPED"
                 });
 
-                return;
+		        return;
             }
+
+		    // Bind this MAC to a Cassia BLE chip for the duration of the upgrade.
+		    _chipByMac[mac] = chipLease.Chip;
+		    CassiaChipManager.SetChip(mac, chipLease.Chip);
+		    if (_VERBOSE)
+		        Console.WriteLine($"[CHIP] {mac} assigned chip={chipLease.Chip}");
 
             Interlocked.Increment(ref UpgradeDevicesInProgress);
 
@@ -2952,6 +3044,11 @@ try
             {
                 _macsInProgress.TryRemove(mac, out _);
 
+				// Release chip assignment + lease
+				_chipByMac.TryRemove(mac, out _);
+				CassiaChipManager.ReleaseChip(mac);
+				chipLease.Dispose();
+
                 
 _programmingTargets.TryRemove(mac, out _);
 Interlocked.Decrement(ref UpgradeDevicesInProgress);
@@ -3015,7 +3112,7 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
         {
             Console.WriteLine($"Processing Sensor Upgrade started->{nodeMac}");
             var response = new ServiceResponse();
-            var isConnected = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac);
+			var isConnected = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac, chip: GetChipForMac(nodeMac));
             if (isConnected.Status != HttpStatusCode.OK)
             {
                 UpgradeLogger.Log(logId, nodeMac, "ReConnected", "Failed");
@@ -3034,7 +3131,7 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             {
                 //await Task.Delay(3000);
 
-                bool notificationEnabled = await _notificationService.EnableNotificationAsync(_gatewayIpAddress, nodeMac, bActor);
+				bool notificationEnabled = await _notificationService.EnableNotificationAsync(_gatewayIpAddress, nodeMac, bActor, chip: GetChipForMac(nodeMac));
 
                 if (!notificationEnabled)
                 {
@@ -3511,7 +3608,6 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             byte[] data = new byte[size];
             Marshal.Copy(buffer, data, 0, size);
 
-            Console.WriteLine($"Using waittime: {RuntimeVariables.WRITE_SLEEP_MS}");
 
             if (GetHidDevice())
             {
@@ -3526,7 +3622,7 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                     //Console.WriteLine($"Data Sent: {hexData} | macContext: {macContext}");
                     //Console.WriteLine($"size of buffer: {size}");
                     //SendMessage(data);
-                    _ownInstance.cassiaReadWriteService.WriteBleMessage(_ownInstance._gatewayIpAddress, macContext, 14, hexData, "");
+					_ownInstance.cassiaReadWriteService.WriteBleMessageSync(_ownInstance._gatewayIpAddress, macContext, 14, hexData, "", chip: _ownInstance.GetChipForMac(macContext));
                     Thread.Sleep(RuntimeVariables.WRITE_SLEEP_MS);
 
                     status = true;
@@ -3547,7 +3643,7 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                         //Console.WriteLine($"size of buffer: {size}");
                         //SendMessage(data);
                         Console.WriteLine($"Trying again... (waited)");
-                        _ownInstance.cassiaReadWriteService.WriteBleMessage(_ownInstance._gatewayIpAddress, macContext, 14, hexData, "");
+						_ownInstance.cassiaReadWriteService.WriteBleMessageSync(_ownInstance._gatewayIpAddress, macContext, 14, hexData, "", chip: _ownInstance.GetChipForMac(macContext));
                         Thread.Sleep(RuntimeVariables.WRITE_SLEEP_MS);
 
                         status = true;
@@ -3573,7 +3669,6 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             byte[] data = new byte[size];
             Marshal.Copy(buffer, data, 0, size);
 
-            Console.WriteLine($"Using waittime: {RuntimeVariables.WRITE_SLEEP_MS}");
 
             // Log the data being written
             //Console.WriteLine($"WriteData called: Buffer size={size} Data={BitConverter.ToString(data)}");
@@ -3684,7 +3779,14 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             string hexData = BitConverter.ToString(chunk).Replace("-", "");
             //Console.WriteLine($"Data Sent: {hexData} -> mac: {macAddress}");
 
-            await _ownInstance.cassiaReadWriteService.WriteBleMessage(_ownInstance._gatewayIpAddress, macAddress, 19, hexData, "?noresponse=1");
+		    // IMPORTANT: Always dispose the HTTP response to return the connection to the pool.
+		    using var _ = await _ownInstance.cassiaReadWriteService.WriteBleMessageAsync(
+		        _ownInstance._gatewayIpAddress,
+		        macAddress,
+		        19,
+		        hexData,
+		        "?noresponse=1",
+		        chip: _ownInstance.GetChipForMac(macAddress));
 
         }
 
@@ -3698,7 +3800,8 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                 value = "0101000800D9CB02";
             }
 
-            var response = await cassiaReadWriteService.WriteBleMessage(gatewayIpAddress, nodeMac, 19, value, "?noresponse=1");
+		    // IMPORTANT: Always dispose the HTTP response to return the connection to the pool.
+		    using var response = await cassiaReadWriteService.WriteBleMessageAsync(gatewayIpAddress, nodeMac, 19, value, "?noresponse=1", chip: GetChipForMac(nodeMac));
 
             return response.IsSuccessStatusCode;
         }
@@ -3773,8 +3876,9 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                         }
                     });
 
-                    // Send the write message to trigger the notification
-                    await cassiaReadWriteService.WriteBleMessage(gatewayIpAddress, nodeMac, 19, hexData, "?noresponse=1");
+				// Send the write message to trigger the notification
+				// IMPORTANT: Always dispose the HTTP response to return the connection to the pool.
+				using var _ = await cassiaReadWriteService.WriteBleMessageAsync(gatewayIpAddress, nodeMac, 19, hexData, "?noresponse=1", chip: GetChipForMac(nodeMac));
 
                     // Wait for the boot check result or timeout
                     var bootCheckTask = bootCheckResultTask.Task;
@@ -4039,16 +4143,21 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             return bytes;
         }
 
-        public async Task<bool> EnableNotificationAsync(string gatewayIpAddress, string nodeMac, bool bActor)
+		public async Task<bool> EnableNotificationAsync(string gatewayIpAddress, string nodeMac, bool bActor, int chip = -1)
         {
             HttpClient _httpClientTmp = new HttpClient();
             try
             {
                 string url = $"http://{gatewayIpAddress}/gatt/nodes/{nodeMac}/handle/15/value/0100";
-                if (bActor)
-                {
-                    url = $"http://{gatewayIpAddress}/gatt/nodes/{nodeMac}/handle/16/value/0100";
-                }
+				if (bActor)
+				{
+					url = $"http://{gatewayIpAddress}/gatt/nodes/{nodeMac}/handle/16/value/0100";
+				}
+
+				if (chip >= 0)
+				{
+					url += url.Contains('?') ? $"&chip={chip}" : $"?chip={chip}";
+				}
 
 
                 HttpResponseMessage response = await _httpClientTmp.GetAsync(url);
