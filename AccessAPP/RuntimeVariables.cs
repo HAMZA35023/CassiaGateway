@@ -1,4 +1,4 @@
-﻿namespace AccessAPP
+namespace AccessAPP
 {
     public class RuntimeVariables
     {
@@ -11,7 +11,7 @@
         public static bool USE_BOTH_CASSIA_CHIPS = true;
 
         // Default chip to use when dual-chip is disabled (or when only one upgrade is running).
-        public static int DEFAULT_CASSIA_CHIP = 0;
+        public static int DEFAULT_CASSIA_CHIP = 1;
 
         // Max concurrent REST requests per chip (keep at 1 for strict ordering; 2 can be faster if stable).
         public static int CASSIA_MAX_INFLIGHT_PER_CHIP = 1;

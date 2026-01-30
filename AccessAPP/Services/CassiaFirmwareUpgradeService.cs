@@ -99,68 +99,111 @@ namespace AccessAPP.Services
 	    }
 
 	    // Ensures we distribute parallel upgrades across Cassia X2000's two BLE chips.
-	    // We keep it simple: max one in-flight upgrade per chip (so up to 2 in parallel).
+	    // Important: the X2000 has 2 radios, but each radio can handle more than one connection.
+	    // To support SetParallelProgrammers > 2, we allow multiple concurrent upgrades per chip.
+	    // Policy: maxUpgradesPerChip = ceil(parallelProgrammers / 2).
 	    private sealed class ChipAllocator
 	    {
-	        private readonly SemaphoreSlim _chip0 = new SemaphoreSlim(1, 1);
-	        private readonly SemaphoreSlim _chip1 = new SemaphoreSlim(1, 1);
+	        private readonly object _gate = new();
+	        private int _inUse0;
+	        private int _inUse1;
 	        private int _rr;
+	        private TaskCompletionSource<bool> _signal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+	        private static int GetMaxUpgradesPerChip()
+	        {
+	            // If user sets parallel=4 => allow 2 upgrades on each chip.
+	            var parallel = CassiaFirmwareUpgradeService.GetParallelProgrammers();
+	            var perChip = (parallel + 1) / 2; // ceil(parallel/2)
+	            return Math.Clamp(perChip, 1, 8);
+	        }
 
 	        public async Task<ChipLease> AcquireAsync()
 	        {
-	            // Fast-path: try immediately (round-robin preference)
-	            var prefer = Interlocked.Increment(ref _rr) & 1;
-	            if (prefer == 0)
+	            while (true)
 	            {
-	                if (_chip0.Wait(0)) return new ChipLease(0, _chip0);
-	                if (_chip1.Wait(0)) return new ChipLease(1, _chip1);
+	                Task waitTask;
+	                lock (_gate)
+	                {
+	                    var maxPerChip = GetMaxUpgradesPerChip();
+	                    var prefer = Interlocked.Increment(ref _rr) & 1;
+
+	                    if (TryTake(prefer == 0 ? 0 : 1, maxPerChip, out var lease) ||
+	                        TryTake(prefer == 0 ? 1 : 0, maxPerChip, out lease))
+	                    {
+	                        return lease;
+	                    }
+
+	                    waitTask = _signal.Task;
+	                }
+
+	                await waitTask.ConfigureAwait(false);
+	            }
+	        }
+
+	        private bool TryTake(int chip, int maxPerChip, out ChipLease lease)
+	        {
+	            lease = default;
+	            if (chip == 0)
+	            {
+	                if (_inUse0 >= maxPerChip) return false;
+	                _inUse0++;
+	                lease = ChipLease.Create(this, 0);
+	                return true;
 	            }
 	            else
 	            {
-	                if (_chip1.Wait(0)) return new ChipLease(1, _chip1);
-	                if (_chip0.Wait(0)) return new ChipLease(0, _chip0);
+	                if (_inUse1 >= maxPerChip) return false;
+	                _inUse1++;
+	                lease = ChipLease.Create(this, 1);
+	                return true;
 	            }
+	        }
 
-	            // Slow-path: wait for whichever chip becomes available first
-	            using var cts = new CancellationTokenSource();
-	            var t0 = _chip0.WaitAsync(cts.Token);
-	            var t1 = _chip1.WaitAsync(cts.Token);
-	            var winner = await Task.WhenAny(t0, t1).ConfigureAwait(false);
-	            cts.Cancel();
+	        internal void Release(int chip)
+	        {
+	            lock (_gate)
+	            {
+	                if (chip == 0) _inUse0 = Math.Max(0, _inUse0 - 1);
+	                else _inUse1 = Math.Max(0, _inUse1 - 1);
 
-	            if (winner == t0)
-	            {
-	                // ensure the wait completed successfully
-	                await t0.ConfigureAwait(false);
-	                return new ChipLease(0, _chip0);
-	            }
-	            else
-	            {
-	                await t1.ConfigureAwait(false);
-	                return new ChipLease(1, _chip1);
+	                // Wake up one or more waiters.
+	                var old = _signal;
+	                _signal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+	                old.TrySetResult(true);
 	            }
 	        }
 	    }
 
-	    public readonly struct ChipLease : IDisposable
-	    {
-	        public int Chip { get; }
-	        private readonly SemaphoreSlim? _sem;
-	
-	        public ChipLease(int chip, SemaphoreSlim sem)
-	        {
-	            Chip = chip;
-	            _sem = sem;
-	        }
+	    private readonly struct ChipLease : IDisposable
+{
+    public int Chip { get; }
+    private readonly ChipAllocator? _allocator;
 
-	        public static ChipLease Fixed(int chip) => new ChipLease(chip, sem: null!);
+    private ChipLease(ChipAllocator? allocator, int chip)
+    {
+        _allocator = allocator;
+        Chip = chip;
+    }
 
-	        public void Dispose()
-	        {
-	            // Fixed leases don't have a semaphore to release.
-	            try { _sem?.Release(); } catch { }
-	        }
-	    }
+    // Created by ChipAllocator when dual-chip scheduling is enabled
+    public static ChipLease Create(ChipAllocator allocator, int chip) => new ChipLease(allocator, chip);
+
+    // Used when dual-chip is disabled: fixed chip, no release accounting
+    public static ChipLease Fixed(int chip) => new ChipLease(null, chip);
+
+    public void Dispose()
+    {
+        try
+        {
+            _allocator?.Release(Chip);
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+}
 
         CassiaReadWriteService cassiaReadWriteService = new CassiaReadWriteService();
 
@@ -3608,8 +3651,6 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             byte[] data = new byte[size];
             Marshal.Copy(buffer, data, 0, size);
 
-            Console.WriteLine($"Using waittime: {RuntimeVariables.WRITE_SLEEP_MS}");
-
             if (GetHidDevice())
             {
                 string hexData = BitConverter.ToString(data).Replace("-", "");
@@ -3669,8 +3710,6 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             bool status = false;
             byte[] data = new byte[size];
             Marshal.Copy(buffer, data, 0, size);
-
-            Console.WriteLine($"Using waittime: {RuntimeVariables.WRITE_SLEEP_MS}");
 
             // Log the data being written
             //Console.WriteLine($"WriteData called: Buffer size={size} Data={BitConverter.ToString(data)}");
