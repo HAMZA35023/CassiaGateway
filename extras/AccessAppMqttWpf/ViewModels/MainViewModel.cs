@@ -15,6 +15,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Data;
 using System.Windows.Threading;
+using Microsoft.VisualBasic;
 using AccessAppMqttWpf;
 
 namespace AccessAppMqttWpf.ViewModels;
@@ -326,6 +327,10 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string commandTopicTemplate = "accessapp/{networkId}/cmd/{cassia}/{command}";
     [ObservableProperty] private string defaultCommand = "start-update";
 
+    // If true, we include forceUpdate=true in start-update payloads.
+    // Default is false on startup.
+    [ObservableProperty] private bool forceUpdateEnabled = false;
+
     // Firmware selection per model (dropdowns). Will later be populated from MQTT; for now hardcoded list.
     public ObservableCollection<string> FirmwareOptionsP41 { get; } = new();
     public ObservableCollection<string> FirmwareOptionsP42 { get; } = new();
@@ -455,6 +460,7 @@ public partial class MainViewModel : ObservableObject
         NetworkId = s.accessapp.networkId;
         CommandTopicTemplate = s.accessapp.commandTopicTemplate;
         DefaultCommand = s.accessapp.defaultCommand;
+        ForceUpdateEnabled = s.accessapp.forceUpdate;
 
         // Firmware selections: remember across restarts/resync.
         try
@@ -1207,6 +1213,33 @@ partial void OnSensorFilterChanged(string value)
             await ResyncCoreAsync().ConfigureAwait(false);
     }
 
+    [RelayCommand]
+    private async Task SetCassiaMqttScope(string cassiaName)
+    {
+        cassiaName = (cassiaName ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(cassiaName)) return;
+
+        // Named arguments are case-sensitive in C#. Use positional arguments here to avoid issues.
+        var newNet = Interaction.InputBox(
+            $"Enter new NetworkId (MQTT scope) for '{cassiaName}':",
+            "Set MQTT scope",
+            NetworkId ?? "");
+
+        newNet = (newNet ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(newNet)) return;
+
+        try
+        {
+            var topic = BuildCmdTopic(cassiaName, "set-network");
+            await _mqtt.PublishJsonAsync(topic, new { networkId = newNet }, retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+            ConnectionStatus = $"Sent set-network to {cassiaName} → {newNet}";
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = "Error: " + ex.Message;
+        }
+    }
+
     private AppSettings BuildSettingsSnapshot(AppSettings? baseSettings)
     {
         var s = baseSettings ?? new AppSettings();
@@ -1249,6 +1282,7 @@ partial void OnSensorFilterChanged(string value)
             networkId = NetworkId,
             commandTopicTemplate = CommandTopicTemplate,
             defaultCommand = DefaultCommand,
+            forceUpdate = ForceUpdateEnabled,
             selectedFirmwareByModel = fwMap
         };
 
@@ -2268,6 +2302,25 @@ partial void OnSensorFilterChanged(string value)
             CassiaNameOptions.Add(name);
     }
 
+    private void SortCassiaGatewaysByName()
+    {
+        if (CassiaGateways.Count <= 1) return;
+
+        var ordered = CassiaGateways
+            .Where(g => g != null)
+            .OrderBy(g => g.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        // Reorder in-place (preserves bindings)
+        for (int targetIndex = 0; targetIndex < ordered.Count; targetIndex++)
+        {
+            var item = ordered[targetIndex];
+            var currentIndex = CassiaGateways.IndexOf(item);
+            if (currentIndex >= 0 && currentIndex != targetIndex)
+                CassiaGateways.Move(currentIndex, targetIndex);
+        }
+    }
+
     private void EnsureDeviceAssignmentWiring(DiscoveredDevice d)
     {
         if (d == null) return;
@@ -2894,6 +2947,8 @@ if (string.IsNullOrWhiteSpace(cassia))
         qi.Notes = "";
         qi.LastUpdateUtc = DateTimeOffset.UtcNow;
 
+        UpdateQueueRssiForMac(d.Mac);
+
         // Mirror into discovered list immediately
         MirrorQueueToDevice(qi);
 
@@ -2912,7 +2967,8 @@ if (string.IsNullOrWhiteSpace(cassia))
                 DetectorType = model,
                 FirmwareVersion = fw,
                 MacAddress = d.Mac,
-                Pincode = ""
+                Pincode = "",
+                forceUpdate = ForceUpdateEnabled
             }
         };
 
@@ -3185,6 +3241,8 @@ if (string.IsNullOrWhiteSpace(cassia))
                     {
                         gw = new CassiaGateway { Name = name, NetworkId = net };
                         CassiaGateways.Add(gw);
+                        SortCassiaGatewaysByName();
+                        SortCassiaGatewaysByName();
                     }
 
                     EnsureCassiaOption(name);
@@ -3350,6 +3408,7 @@ if (kind == "tele" && leaf == "progress")
                         {
                             gw = new CassiaGateway { Name = cassia, NetworkId = net };
                             CassiaGateways.Add(gw);
+                            SortCassiaGatewaysByName();
                         }
 
                         EnsureCassiaOption(gw.Name);
@@ -3409,6 +3468,7 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
                             }
 
                             existing.UpdateFromCassia(cassia, rssi, ts);
+                            UpdateQueueRssiForMac(mac);
                             EnsureStickyAssignment(existing);
                         }
 
@@ -4352,6 +4412,7 @@ private void RequestUpgradeLogTextRefresh()
             qi.Notes = "";
             qi.LastUpdateUtc = DateTimeOffset.UtcNow;
             qi.DetectorType = model; // IMPORTANT: carry model to the new Cassia
+            UpdateQueueRssiForMac(mac);
             MirrorQueueToDevice(qi);
             RequestQueueRefresh();
         });
@@ -4533,6 +4594,7 @@ private void RequestUpgradeLogTextRefresh()
                 {
                     gw = new CassiaGateway { Name = cassia, NetworkId = NetworkId };
                     CassiaGateways.Add(gw);
+                    SortCassiaGatewaysByName();
                 }
 
                 gw.FwManifestLastSeenUtc = DateTimeOffset.UtcNow;
@@ -4615,6 +4677,8 @@ private void RequestUpgradeLogTextRefresh()
                     else
                         d.LastSeenUtc = lastSeenUtc;
 
+                    UpdateQueueRssiForMac(mac);
+
                     ApplyCachedStatusToDevice(d);
                     EnsureStickyAssignment(d);
                 }
@@ -4624,6 +4688,20 @@ private void RequestUpgradeLogTextRefresh()
             });
         }
         catch { }
+    }
+
+    private void UpdateQueueRssiForMac(string? mac)
+    {
+        mac = (mac ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(mac)) return;
+
+        var qi = QueueItems.FirstOrDefault(x => x.Mac.Equals(mac, StringComparison.OrdinalIgnoreCase));
+        if (qi == null) return;
+
+        if (_deviceByMac.TryGetValue(mac, out var d))
+        {
+            qi.UpdateRssiEntries(d.CassiaRssi, qi.Cassia);
+        }
     }
 
     private void HandleQueueRemoveTele(string cassia, string payload)
@@ -4722,6 +4800,8 @@ private void RequestUpgradeLogTextRefresh()
                         qi.LastUpdateUtc = now;
                     }
 
+                    UpdateQueueRssiForMac(mac);
+                    UpdateQueueRssiForMac(mac);
                     MirrorQueueToDevice(qi);
                 }
 
@@ -4911,6 +4991,7 @@ private void RequestUpgradeLogTextRefresh()
                 {
                     gw = new CassiaGateway { Name = cassia, NetworkId = NetworkId };
                     CassiaGateways.Add(gw);
+                    SortCassiaGatewaysByName();
                     EnsureCassiaOption(cassia);
                 }
 
