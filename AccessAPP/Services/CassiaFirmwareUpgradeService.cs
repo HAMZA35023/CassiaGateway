@@ -3608,6 +3608,7 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             byte[] data = new byte[size];
             Marshal.Copy(buffer, data, 0, size);
 
+            Console.WriteLine($"Using waittime: {RuntimeVariables.WRITE_SLEEP_MS}");
 
             if (GetHidDevice())
             {
@@ -3669,6 +3670,7 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             byte[] data = new byte[size];
             Marshal.Copy(buffer, data, 0, size);
 
+            Console.WriteLine($"Using waittime: {RuntimeVariables.WRITE_SLEEP_MS}");
 
             // Log the data being written
             //Console.WriteLine($"WriteData called: Buffer size={size} Data={BitConverter.ToString(data)}");

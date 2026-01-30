@@ -2,6 +2,7 @@
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using AccessAPP;
 using AccessAPP.Services;
 
 public class CassiaReadWriteService : IDisposable
@@ -11,27 +12,37 @@ public class CassiaReadWriteService : IDisposable
     // - Limit max concurrent connections to avoid overloading Cassia local REST
     private static readonly HttpClient httpClient = new HttpClient(new SocketsHttpHandler
     {
-        MaxConnectionsPerServer = 8,
+        MaxConnectionsPerServer = 50,
         PooledConnectionLifetime = TimeSpan.FromMinutes(5),
         PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
         EnableMultipleHttp2Connections = false
     });
 
-    // Keep a semaphore for request serialization/backpressure.
-    // NOTE: Some older code assigns a shared semaphore instance (cassiaReadWrite.semaphore = ...).
-    // To stay compatible, we allow setting it.
-    private SemaphoreSlim _semaphore = new SemaphoreSlim(1, 1);
+    // Concurrency control:
+// We want parallelism across the two Cassia BLE chips, but still keep backpressure
+// so we don't overload the local REST API.
+//
+// Policy:
+// - Per-chip limiter (chip 0 and chip 1 are independent)
+// - Optional global limiter for backwards-compatibility if some code assigns it
+//   (but we don't set it by default).
+private readonly SemaphoreSlim _chip0Semaphore = new SemaphoreSlim(RuntimeVariables.CASSIA_MAX_INFLIGHT_PER_CHIP, RuntimeVariables.CASSIA_MAX_INFLIGHT_PER_CHIP);
+private readonly SemaphoreSlim _chip1Semaphore = new SemaphoreSlim(RuntimeVariables.CASSIA_MAX_INFLIGHT_PER_CHIP, RuntimeVariables.CASSIA_MAX_INFLIGHT_PER_CHIP);
 
-    public SemaphoreSlim semaphore
-    {
-        get => _semaphore;
-        set
-        {
-            if (value != null) _semaphore = value;
-        }
-    }
+// Backwards-compatible global limiter (avoid using this if you want dual-chip scaling)
+private SemaphoreSlim? _globalSemaphore = null;
+public SemaphoreSlim? semaphore
+{
+    get => _globalSemaphore;
+    set => _globalSemaphore = value;
+}
 
-    private static string AppendQueryParam(string url, string key, string value)
+private SemaphoreSlim GetChipSemaphore(int chip)
+{
+    return chip == 1 ? _chip1Semaphore : _chip0Semaphore;
+}
+
+private static string AppendQueryParam(string url, string key, string value)
     {
         if (string.IsNullOrWhiteSpace(url)) return url;
         if (string.IsNullOrWhiteSpace(key)) return url;
@@ -52,35 +63,27 @@ public class CassiaReadWriteService : IDisposable
     /// </summary>
     public void WriteBleMessageSync(string gatewayIpAddress, string macAddress, int handle, string hexValue, string queryParams, int chip = -1)
     {
-        _semaphore.Wait();
+        var effectiveChip = chip;
+        if (effectiveChip < 0 && CassiaChipManager.TryGetChip(macAddress, out var resolvedChip))
+            effectiveChip = resolvedChip;
+
+        var chipSem = GetChipSemaphore(effectiveChip);
+        chipSem.Wait();
+        _globalSemaphore?.Wait();
+
         try
         {
-            var effectiveChip = chip;
-            if (effectiveChip < 0 && CassiaChipManager.TryGetChip(macAddress, out var resolvedChip))
-                effectiveChip = resolvedChip;
-
             string endpoint = $"http://{gatewayIpAddress}/gatt/nodes/{macAddress}/handle/{handle}/value/{hexValue}{queryParams}";
             if (effectiveChip >= 0) endpoint = AppendQueryParam(endpoint, "chip", effectiveChip.ToString());
 
             using var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
-            using var response = httpClient.Send(request, HttpCompletionOption.ResponseHeadersRead);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-                Console.WriteLine($"Bad Write {macAddress} reason: {body}");
-            }
-
+            using var response = httpClient.Send(request);
             response.EnsureSuccessStatusCode();
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error {macAddress}: {ex}");
-            throw;
         }
         finally
         {
-            _semaphore.Release();
+            _globalSemaphore?.Release();
+            chipSem.Release();
         }
     }
 
@@ -88,34 +91,40 @@ public class CassiaReadWriteService : IDisposable
     /// Async write used by several services. Returns the HTTP response for backwards compatibility.
     /// Prefer WriteBleMessageSync inside the bootloader transfer loop.
     /// </summary>
-    public async Task<HttpResponseMessage> WriteBleMessageAsync(string gatewayIpAddress, string macAddress, int handle, string hexValue, string queryParams, int chip = -1, CancellationToken ct = default)
+    /// <summary>
+/// Async REST call. Use this for “control plane” operations (connect/login/read/etc.).
+/// Prefer WriteBleMessageSync inside the bootloader transfer loop.
+/// </summary>
+public async Task<HttpResponseMessage> WriteBleMessageAsync(string gatewayIpAddress, string macAddress, int handle, string hexValue, string queryParams, int chip = -1, CancellationToken ct = default)
     {
-        await _semaphore.WaitAsync(ct).ConfigureAwait(false);
+        var effectiveChip = chip;
+        if (effectiveChip < 0 && CassiaChipManager.TryGetChip(macAddress, out var resolvedChip))
+            effectiveChip = resolvedChip;
+
+        var chipSem = GetChipSemaphore(effectiveChip);
+        await chipSem.WaitAsync(ct).ConfigureAwait(false);
+        if (_globalSemaphore != null)
+            await _globalSemaphore.WaitAsync(ct).ConfigureAwait(false);
+
         try
         {
-            var effectiveChip = chip;
-            if (effectiveChip < 0 && CassiaChipManager.TryGetChip(macAddress, out var resolvedChip))
-                effectiveChip = resolvedChip;
-
             string endpoint = $"http://{gatewayIpAddress}/gatt/nodes/{macAddress}/handle/{handle}/value/{hexValue}{queryParams}";
             if (effectiveChip >= 0) endpoint = AppendQueryParam(endpoint, "chip", effectiveChip.ToString());
 
             using var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
-            // Do NOT dispose here – caller may need StatusCode/headers/body.
             var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-                Console.WriteLine($"Bad Write {macAddress} reason: {body}");
-            }
-
             response.EnsureSuccessStatusCode();
-            return response;
+            return response; // caller must dispose
+        }
+        catch
+        {
+            // Ensure we don't leak the global semaphore on exceptions
+            throw;
         }
         finally
         {
-            _semaphore.Release();
+            _globalSemaphore?.Release();
+            chipSem.Release();
         }
     }
 

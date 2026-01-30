@@ -20,7 +20,7 @@ namespace AccessAPP.Services
 
         public CassiaConnectService(HttpClient httpClient, IConfiguration configuration, CassiaNotificationService notificationService)
         {
-            cassiaReadWrite.semaphore = semaphore;
+        // cassiaReadWrite.semaphore = semaphore; // removed: would serialize all REST across both chips
             _httpClient = httpClient;
             _configuration = configuration;
             _notificationService = notificationService;

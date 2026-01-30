@@ -1,4 +1,7 @@
-﻿using System.Collections.Concurrent;
+﻿using System;
+using System.Net.Http;
+using System.Threading;
+using System.Collections.Concurrent;
 using System.Text.Json;
 using AccessAPP.Services;
 using AccessAPP;
@@ -9,7 +12,15 @@ public class CassiaNotificationService : IDisposable
     const bool _DEBUG = false;
     const bool _VERBOSE = false;
 
-    private static readonly HttpClient _httpClient = new HttpClient();
+    private static readonly HttpClient _httpClient = new HttpClient(new SocketsHttpHandler
+    {
+        MaxConnectionsPerServer = 10,
+        PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+        PooledConnectionIdleTimeout = TimeSpan.FromMinutes(5)
+    })
+    {
+        Timeout = Timeout.InfiniteTimeSpan
+    };
     // Allow multiple concurrent waiters per MAC (login, read, backup steps, etc.).
     // Using only a single handler caused "Replacing existing handler" and timeouts.
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<Guid, EventHandler<string>>> _eventHandlers;
