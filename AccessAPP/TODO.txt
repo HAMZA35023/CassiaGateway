@@ -6,3 +6,5 @@ MAJOR:
 
 MINOR:
 
+Actor wait best = 1ms
+Bootloader wait best = 30ms

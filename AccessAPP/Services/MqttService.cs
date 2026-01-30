@@ -626,6 +626,73 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 );
             }
 
+            if (string.Equals(command, "set-write-sleep-ms", StringComparison.OrdinalIgnoreCase) ||
+    string.Equals(command, "write-sleep-ms", StringComparison.OrdinalIgnoreCase))
+            {
+                Log("HandleCommandAsync: dispatch set-write-sleep-ms");
+
+                var raw = (payload ?? string.Empty).Trim();
+
+                // accept raw "40"
+                if (!int.TryParse(raw, out var ms))
+                {
+                    // (optional) accept {"value":40} too, without breaking raw mode
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(raw);
+                        if (doc.RootElement.ValueKind == JsonValueKind.Object &&
+                            doc.RootElement.TryGetProperty("value", out var v) &&
+                            v.ValueKind == JsonValueKind.Number &&
+                            v.TryGetInt32(out var jsonMs))
+                        {
+                            ms = jsonMs;
+                        }
+                        else
+                        {
+                            ms = int.MinValue;
+                        }
+                    }
+                    catch
+                    {
+                        ms = int.MinValue;
+                    }
+
+                    if (ms == int.MinValue)
+                    {
+                        var bad = new
+                        {
+                            success = false,
+                            message = "Missing integer value. Send payload like {\"value\":40} or just 40.",
+                            currentValue = RuntimeVariables.WRITE_SLEEP_MS
+                        };
+                        return PublishTeleJsonAsync("write-sleep-ms", bad, CancellationToken.None);
+                    }
+                }
+
+                // sanity limits (adjust if you want)
+                if (ms < 0 || ms > 1000)
+                {
+                    var bad = new
+                    {
+                        success = false,
+                        message = "Value out of range. Allowed: 0..1000 ms.",
+                        currentValue = RuntimeVariables.WRITE_SLEEP_MS
+                    };
+                    return PublishTeleJsonAsync("write-sleep-ms", bad, CancellationToken.None);
+                }
+
+                RuntimeVariables.WRITE_SLEEP_MS = ms;
+
+                var ok = new
+                {
+                    success = true,
+                    message = "WRITE_SLEEP_MS updated.",
+                    value = RuntimeVariables.WRITE_SLEEP_MS
+                };
+                return PublishTeleJsonAsync("write-sleep-ms", ok, CancellationToken.None);
+            }
+
+
             // NEW: request firmware manifest
             if (string.Equals(command, "get-fw-manifest", StringComparison.OrdinalIgnoreCase))
             {

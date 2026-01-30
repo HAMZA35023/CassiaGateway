@@ -39,7 +39,7 @@ namespace AccessAPP.Services
         const bool _DEBUG = false;
         const bool _VERBOSE = true;
 
-        public static int GlobalnumberOfParallelThreads = 3; // runtime adjustable via MQTT (resets on restart) // Optimal setting with current Cassia Gateway HW (21:43 Min for 3 P48 with actor and sensor firmware update)
+        public static int GlobalnumberOfParallelThreads = 2; // runtime adjustable via MQTT (resets on restart) // Optimal setting with current Cassia Gateway HW (21:43 Min for 3 P48 with actor and sensor firmware update)
         
         //TODO: Be moved to app-settings
         //Only for P47+P48
@@ -56,10 +56,7 @@ namespace AccessAPP.Services
         private const int MaxPacketSize = 270;
         private const int InterPacketDelay = 0;
 
-        //Bootloader sleeptimer - to be investigated what is the best value - 20ms looks to be to low and backfire, and 100ms to high
-        // 100 -> 50ms = improved bootloader from 25%/m to 33%/m, and actor from 9%/m to 16%/m
-        const int WRITE_SLEEP_MS = 50;
-
+        
         private readonly string _firmwareActorFilePath = "d:\\work\\firma_vis\\niko\\app_hamza\\CassiaGateway\\AccessAPP\\FirmwareVersions\\353AP20227.cyacd";
         private readonly string _firmwareSensorFilePath4 = "d:\\work\\firma_vis\\niko\\app_hamza\\CassiaGateway\\AccessAPP\\FirmwareVersions\\353AP40227.cyacd";
         private readonly string _firmwareSensorFilePath3 = "d:\\work\\firma_vis\\niko\\app_hamza\\CassiaGateway\\AccessAPP\\FirmwareVersions\\353AP30227.cyacd";
@@ -3514,6 +3511,7 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             byte[] data = new byte[size];
             Marshal.Copy(buffer, data, 0, size);
 
+            Console.WriteLine($"Using waittime: {RuntimeVariables.WRITE_SLEEP_MS}");
 
             if (GetHidDevice())
             {
@@ -3529,7 +3527,7 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                     //Console.WriteLine($"size of buffer: {size}");
                     //SendMessage(data);
                     _ownInstance.cassiaReadWriteService.WriteBleMessage(_ownInstance._gatewayIpAddress, macContext, 14, hexData, "");
-                    Thread.Sleep(WRITE_SLEEP_MS);
+                    Thread.Sleep(RuntimeVariables.WRITE_SLEEP_MS);
 
                     status = true;
                 }
@@ -3548,8 +3546,9 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                         //Console.WriteLine($"Data Sent: {hexData} | macContext: {macContext}");
                         //Console.WriteLine($"size of buffer: {size}");
                         //SendMessage(data);
+                        Console.WriteLine($"Trying again... (waited)");
                         _ownInstance.cassiaReadWriteService.WriteBleMessage(_ownInstance._gatewayIpAddress, macContext, 14, hexData, "");
-                        Thread.Sleep(WRITE_SLEEP_MS);
+                        Thread.Sleep(RuntimeVariables.WRITE_SLEEP_MS);
 
                         status = true;
                     }
@@ -3573,6 +3572,8 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             bool status = false;
             byte[] data = new byte[size];
             Marshal.Copy(buffer, data, 0, size);
+
+            Console.WriteLine($"Using waittime: {RuntimeVariables.WRITE_SLEEP_MS}");
 
             // Log the data being written
             //Console.WriteLine($"WriteData called: Buffer size={size} Data={BitConverter.ToString(data)}");
@@ -3611,6 +3612,8 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                     Thread.Sleep(1000);
                     try
                     {
+                        Console.WriteLine($"Trying again... (waited)");
+
                         // Encode the message
                         if (!bleMessage.EncodeGetBleTelegram())
                             throw new Exception("Failed to encode BLE telegram.");
@@ -3661,7 +3664,7 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                     }
                     else
                     {
-                        Thread.Sleep(WRITE_SLEEP_MS);
+                        Thread.Sleep(RuntimeVariables.WRITE_SLEEP_MS);
                     }
 
                 }
@@ -3670,7 +3673,7 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             {
                 await SendChunk(message._BleMessageBuffer, macAddress);
                 //await Task.Delay(100); // Adjust delay as needed
-                Thread.Sleep(WRITE_SLEEP_MS);
+                Thread.Sleep(RuntimeVariables.WRITE_SLEEP_MS);
             }
         }
 
