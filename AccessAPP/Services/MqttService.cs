@@ -15,6 +15,13 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     private readonly MqttConfigStore _store;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
+    // Publish resilience (prevents one stalled publish from freezing all telemetry)
+    private int _publishFailures;
+    private DateTime _publishFailureWindowStartUtc = DateTime.MinValue;
+    private DateTime _lastPublishOkUtc = DateTime.MinValue;
+    private int _reconnectRequested;
+    private DateTime _lastReconnectAttemptUtc = DateTime.MinValue;
+
     private static readonly TimeSpan StatusHeartbeatInterval = TimeSpan.FromSeconds(10);
 
     private MQTTnet.IMqttClient? _client;
@@ -1139,6 +1146,86 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
     // ---------------- Publish helpers ----------------
 
+    private async Task<bool> TryPublishMessageAsync(MqttApplicationMessage msg, CancellationToken ct)
+    {
+        var client = _client;
+        if (client is null || !client.IsConnected) return false;
+
+        // Hard timeout so a half-dead TCP connection cannot stall all publishes forever.
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var timeoutSec = Math.Max(1, CurrentOptions.PublishTimeoutSeconds);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSec));
+
+        try
+        {
+            await client.PublishAsync(msg, timeoutCts.Token).ConfigureAwait(false);
+            NotePublishSuccess();
+            return true;
+        }
+        catch (OperationCanceledException oce)
+        {
+            NotePublishFailure("publish timeout", oce);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            NotePublishFailure("publish error", ex);
+            return false;
+        }
+    }
+
+    private void NotePublishSuccess()
+    {
+        _publishFailures = 0;
+        _publishFailureWindowStartUtc = DateTime.MinValue;
+        _lastPublishOkUtc = DateTime.UtcNow;
+    }
+
+    private void NotePublishFailure(string reason, Exception? ex)
+    {
+        var now = DateTime.UtcNow;
+
+        // Rolling failure window.
+        var windowSec = Math.Max(1, CurrentOptions.PublishFailureWindowSeconds);
+        if (_publishFailureWindowStartUtc == DateTime.MinValue || (now - _publishFailureWindowStartUtc) > TimeSpan.FromSeconds(windowSec))
+        {
+            _publishFailureWindowStartUtc = now;
+            _publishFailures = 0;
+        }
+
+        _publishFailures++;
+
+        Log($"Publish failure ({_publishFailures}/{CurrentOptions.PublishFailureReconnectThreshold}) reason='{reason}' ex='{ex?.Message}'");
+
+        var threshold = Math.Max(1, CurrentOptions.PublishFailureReconnectThreshold);
+        if (_publishFailures < threshold) return;
+
+        // Debounce reconnect attempts.
+        var debounceSec = Math.Max(1, CurrentOptions.ReconnectDebounceSeconds);
+        if ((now - _lastReconnectAttemptUtc) < TimeSpan.FromSeconds(debounceSec)) return;
+
+        _lastReconnectAttemptUtc = now;
+
+        if (Interlocked.Exchange(ref _reconnectRequested, 1) != 0) return;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                Log("Publish failures exceeded threshold -> restarting MQTT connection");
+                await RestartAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception rex)
+            {
+                Log($"Restart after publish failures failed: {rex.Message}");
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _reconnectRequested, 0);
+            }
+        });
+    }
+
     private async Task PublishJsonAsync(string topic, object payload, bool retain, CancellationToken ct)
     {
         await EnsureConnectedAndSubscribedAsync(ct).ConfigureAwait(false);
@@ -1152,9 +1239,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
             .WithRetainFlag(retain)
             .Build();
 
-        var client = _client;
-        if (client is not null && client.IsConnected)
-            await client.PublishAsync(msg, ct).ConfigureAwait(false);
+        await TryPublishMessageAsync(msg, ct).ConfigureAwait(false);
     }
 
     public async Task PublishAsync(string topic, string payload, bool retain = false, int qos = 0, CancellationToken ct = default)
@@ -1174,9 +1259,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
             .WithRetainFlag(retain)
             .Build();
 
-        var client = _client;
-        if (client is not null && client.IsConnected)
-            await client.PublishAsync(msg, ct).ConfigureAwait(false);
+        await TryPublishMessageAsync(msg, ct).ConfigureAwait(false);
     }
 
     // ---------------- Topic helpers ----------------

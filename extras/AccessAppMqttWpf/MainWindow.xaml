@@ -1297,17 +1297,21 @@
                                                         </Grid.RowDefinitions>
 
                                                         <StackPanel Orientation="Horizontal" Grid.Row="0">
-                                                            <TextBlock Text="{Binding LogIdMacPart}" FontWeight="SemiBold"/>
-                                                            <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
-                                                            <TextBlock Text="{Binding StartedAtLocalText}" />
-                                                            <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
-                                                            <TextBlock Text="{Binding Cassia}"/>
-                                                            <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
-                                                            <TextBlock Text="{Binding LatestMac}"/>
-                                                            <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
-                                                            <TextBlock Text="{Binding LastTimeLocalText}"/>
+                                                                <TextBlock Text="{Binding LogIdMacPart}" FontWeight="SemiBold"/>
+                                                                <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
+                                                                <TextBlock Text="{Binding StartedAtLocalText}" />
+                                                                <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
+                                                                <TextBlock Text="{Binding Cassia}"/>
+                                                                <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
+                                                                <TextBlock Text="{Binding LatestMac}"/>
+                                                                <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
+                                                                <TextBlock Text="{Binding LastTimeLocalText}"/>
+                                                                <TextBlock Text="  •  TOTAL TIME: " Foreground="{StaticResource MutedBrush}"/>
+                                                                <TextBlock Text="{Binding TotalDurationText}" />
+                                                                <TextBlock Text="m" Foreground="{StaticResource MutedBrush}"/>
 
-                                                            <Border Margin="12,0,0,0"
+
+                                                                <Border Margin="12,0,0,0"
                                                                     Padding="8,2"
                                                                     CornerRadius="10"
                                                                     VerticalAlignment="Center"

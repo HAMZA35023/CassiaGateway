@@ -7,6 +7,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
+using System.Net.Mail;
 using System.Numerics;
 using System.Runtime.InteropServices;
 
@@ -1249,6 +1250,51 @@ public static int GetProgrammingCount()
             };
         }
 
+        async Task<(bool ok, HttpStatusCode code, string msg)> ConnectOnlyWithRetryAsync(
+                int maxAttempts,
+                int delayMs,
+                string stageName,
+                string macAddress,
+                string FirmwareVersion,
+                string logId,
+                bool logSuccess = true)
+        {
+            HttpStatusCode last = 0;
+            string lastMsg = "Connect failed";
+
+            for (int attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                try
+                {
+                    var cr = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, macAddress, chip: GetChipForMac(macAddress)).ConfigureAwait(false);
+                    last = cr.Status;
+
+                    if (cr.Status == HttpStatusCode.OK)
+                    {
+                        if (logSuccess)
+                            UpgradeLogger.Log(logId, macAddress, stageName, $"Success (attempt {attempt}/{maxAttempts})", FirmwareVersion);
+                        return (true, cr.Status, "OK");
+                    }
+
+                    UpgradeLogger.Log(logId, macAddress, stageName, $"Failed (attempt {attempt}/{maxAttempts})", FirmwareVersion);
+                    lastMsg = $"Connect failed ({cr.Status})";
+                }
+                catch (Exception ex)
+                {
+                    UpgradeLogger.Log(logId, macAddress, stageName, $"Exception (attempt {attempt}/{maxAttempts}): {ex.Message}", FirmwareVersion);
+                    lastMsg = ex.Message;
+                }
+
+                // extra cooldown for 417 right after boot transitions
+                if ((int)last == 417)
+                    await Task.Delay(delayMs + 4000).ConfigureAwait(false);
+                else
+                    await Task.Delay(delayMs).ConfigureAwait(false);
+            }
+
+            return (false, last, lastMsg);
+        }
+
         public async Task<ServiceResponse> UpgradeDeviceAsync(
             UpgradeProgress dev,
             string macAddress,
@@ -1270,49 +1316,7 @@ public static int GetProgrammingCount()
             // Which detector types we support settings backup/restore for.
             static bool SupportsSettingsBackup(string detectorType)
                 => detectorType == "P48" || detectorType == "P47" || detectorType == "P46" || detectorType == "P49" || detectorType == "P41" || detectorType == "P42";
-
-            // ---- Local helper: Connect only (robust) ----
-            async Task<(bool ok, HttpStatusCode code, string msg)> ConnectOnlyWithRetryAsync(
-                int maxAttempts,
-                int delayMs,
-                string stageName,
-                bool logSuccess = true)
-            {
-                HttpStatusCode last = 0;
-                string lastMsg = "Connect failed";
-
-                for (int attempt = 1; attempt <= maxAttempts; attempt++)
-                {
-                    try
-                    {
-						var cr = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, macAddress, chip: GetChipForMac(macAddress)).ConfigureAwait(false);
-                        last = cr.Status;
-
-                        if (cr.Status == HttpStatusCode.OK)
-                        {
-                            if (logSuccess)
-                                UpgradeLogger.Log(logId, macAddress, stageName, $"Success (attempt {attempt}/{maxAttempts})", FirmwareVersion);
-                            return (true, cr.Status, "OK");
-                        }
-
-                        UpgradeLogger.Log(logId, macAddress, stageName, $"Failed (attempt {attempt}/{maxAttempts})", FirmwareVersion);
-                        lastMsg = $"Connect failed ({cr.Status})";
-                    }
-                    catch (Exception ex)
-                    {
-                        UpgradeLogger.Log(logId, macAddress, stageName, $"Exception (attempt {attempt}/{maxAttempts}): {ex.Message}", FirmwareVersion);
-                        lastMsg = ex.Message;
-                    }
-
-                    // extra cooldown for 417 right after boot transitions
-                    if ((int)last == 417)
-                        await Task.Delay(delayMs + 4000).ConfigureAwait(false);
-                    else
-                        await Task.Delay(delayMs).ConfigureAwait(false);
-                }
-
-                return (false, last, lastMsg);
-            }
+           
 
             try
             {
@@ -1330,7 +1334,11 @@ public static int GetProgrammingCount()
                     maxAttempts: 5,
                     delayMs: 2000,
                     stageName: "Connected (probe)",
-                    logSuccess: false).ConfigureAwait(false);
+                    logSuccess: false,
+                    macAddress: macAddress,
+                    FirmwareVersion: FirmwareVersion,
+                    logId: logId
+                    ).ConfigureAwait(false);
 
                 if (!connProbe.ok)
                 {
@@ -3155,17 +3163,26 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
         {
             Console.WriteLine($"Processing Sensor Upgrade started->{nodeMac}");
             var response = new ServiceResponse();
-			var isConnected = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac, chip: GetChipForMac(nodeMac));
-            if (isConnected.Status != HttpStatusCode.OK)
+
+            var connProbe = await ConnectOnlyWithRetryAsync(
+                maxAttempts: 5,
+                delayMs: 2000,
+                stageName: "Connected (ProcessingSensorUpgrade probe)",
+                logSuccess: false,
+                macAddress: nodeMac,
+                FirmwareVersion: FirmwareVersion,
+                logId: logId
+                ).ConfigureAwait(false);
+
+            if (!connProbe.ok)
             {
-                UpgradeLogger.Log(logId, nodeMac, "ReConnected", "Failed");
-                Console.WriteLine("Failed to connect to device.");
+                UpgradeLogger.Log(logId, nodeMac, "Connected", "Failed", FirmwareVersion);
                 response.Success = false;
-                response.StatusCode = 500;
+                response.StatusCode = (int)(connProbe.code == 0 ? HttpStatusCode.ServiceUnavailable : connProbe.code);
                 response.Message = "Failed to connect to device.";
                 return response;
             }
-            UpgradeLogger.Log(logId, nodeMac, "ReConnected", "Success");
+
 
             bool isAlreadyInBootMode = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
 
