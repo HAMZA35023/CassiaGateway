@@ -282,19 +282,28 @@ namespace AccessAPP.Services.UpgradeCore
 
                     if (running.Count > 0)
                     {
-                        var tasks = running.ToArray();
-                        var completed = await Task.WhenAny(tasks).ConfigureAwait(false);
+                        // Wake either when a running task completes OR when new work is enqueued.
+                        using var cts = new CancellationTokenSource();
 
-                        // If there is queued work, and we have capacity, we can wake faster via signal.
-                        Task signal = _queueSignal.WaitAsync();
-                        await Task.WhenAny(completed, signal).ConfigureAwait(false);
+                        var signalTask = _queueSignal.WaitAsync(cts.Token);
+                        var anyRunningTask = Task.WhenAny(running);
+
+                        var winner = await Task.WhenAny(anyRunningTask, signalTask).ConfigureAwait(false);
+
+                        // If a running task completed, cancel the signal wait to avoid leaking a waiter
+                        if (winner == anyRunningTask)
+                            cts.Cancel();
+
+                        // loop continues; it will dequeue and start more if capacity exists
                     }
                     else
                     {
                         if (!_upgradeQueue.IsEmpty)
                             continue;
+
                         await _queueSignal.WaitAsync().ConfigureAwait(false);
                     }
+
                 }
             }
             catch (Exception ex)
