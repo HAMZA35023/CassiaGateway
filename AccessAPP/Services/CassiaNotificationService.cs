@@ -97,8 +97,8 @@ public class CassiaNotificationService : IDisposable
                     if (line.StartsWith("data:"))
                     {
                         if (_DEBUG)
-                        Console.WriteLine("SSE Raw data: " + line);
-                        line = line.Substring("data:".Length).Trim();
+                        AppLog.Debug("SSE Raw data: " + line);
+line = line.Substring("data:".Length).Trim();
                         Task.Run(() => InvokeHandlers(line));
                     }
                 }

@@ -166,18 +166,16 @@ namespace AccessAPP.Services
             string backupFilePath,
             string? logId)
         {
-            Console.WriteLine($"[Restore] START");
-            Console.WriteLine($"[Restore] MAC={macAddress}, Detector={detectorType}, FW={firmwareVersion}, LogId={logId}");
-            Console.WriteLine($"[Restore] BackupFile={backupFilePath}");
-
-            
-            // Resolve backup path robustly (absolute/relative, fallback by MAC)
+            AppLog.Info($"[Restore] START");
+AppLog.Info($"[Restore] MAC={macAddress}, Detector={detectorType}, FW={firmwareVersion}, LogId={logId}");
+AppLog.Info($"[Restore] BackupFile={backupFilePath}");
+// Resolve backup path robustly (absolute/relative, fallback by MAC)
             backupFilePath = ResolveBackupPath(macAddress, backupFilePath);
 
             if (string.IsNullOrWhiteSpace(backupFilePath) || !File.Exists(backupFilePath))
             {
-                Console.WriteLine($"[Restore][ERROR] Backup file not found");
-                return new ServiceResponse
+                AppLog.Error($"[Restore] Backup file not found");
+return new ServiceResponse
                 {
                     Success = false,
                     StatusCode = 404,
@@ -189,12 +187,12 @@ namespace AccessAPP.Services
             try
             {
                 json = await File.ReadAllTextAsync(backupFilePath, Encoding.UTF8).ConfigureAwait(false);
-                Console.WriteLine($"[Restore] Backup file loaded ({json.Length} chars)");
-            }
+                AppLog.Debug($"[Restore] Backup file loaded ({json.Length} chars)");
+}
             catch (Exception ex)
             {
-                Console.WriteLine($"[Restore][ERROR] Failed to read backup file: {ex}");
-                return new ServiceResponse
+                AppLog.Error($"[Restore] Failed to read backup file: {ex}");
+return new ServiceResponse
                 {
                     Success = false,
                     StatusCode = 500,
@@ -209,8 +207,8 @@ namespace AccessAPP.Services
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[Restore][ERROR] JSON deserialization failed: {ex}");
-                return new ServiceResponse
+                AppLog.Error($"[Restore] JSON deserialization failed: {ex}");
+return new ServiceResponse
                 {
                     Success = false,
                     StatusCode = 400,
@@ -220,8 +218,8 @@ namespace AccessAPP.Services
 
             if (snap == null)
             {
-                Console.WriteLine($"[Restore][ERROR] Snapshot is null after deserialize");
-                return new ServiceResponse
+                AppLog.Error($"[Restore] Snapshot is null after deserialize");
+return new ServiceResponse
                 {
                     Success = false,
                     StatusCode = 400,
@@ -229,13 +227,12 @@ namespace AccessAPP.Services
                 };
             }
 
-            Console.WriteLine($"[Restore] Snapshot loaded:");
-            Console.WriteLine($"  UserConfigHex      = {Trunc(snap.UserConfigHex)}");
-            Console.WriteLine($"  WiredPushButtons   = {Trunc(snap.PushButtonsHex)}");
-            Console.WriteLine($"  DaliPushButtons    = {Trunc(snap.DaliPushButtonsHex)}");
-            Console.WriteLine($"  BlePushButtons     = {Trunc(snap.BlePushButtonsHex)}");
-
-            // ---- Rules loading ----
+            AppLog.Info($"[Restore] Snapshot loaded:");
+AppLog.Info($"  UserConfigHex      = {Trunc(snap.UserConfigHex)}");
+AppLog.Info($"  WiredPushButtons   = {Trunc(snap.PushButtonsHex)}");
+AppLog.Info($"  DaliPushButtons    = {Trunc(snap.DaliPushButtonsHex)}");
+AppLog.Info($"  BlePushButtons     = {Trunc(snap.BlePushButtonsHex)}");
+// ---- Rules loading ----
             SettingsVersionPatcher.RulesRoot rulesRoot;
 
             try
@@ -244,8 +241,8 @@ namespace AccessAPP.Services
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[Restore][WARN] Rules load failed: {ex}");
-                rulesRoot = new SettingsVersionPatcher.RulesRoot(); // safe fallback
+                AppLog.Warn($"[Restore] Rules load failed: {ex}");
+rulesRoot = new SettingsVersionPatcher.RulesRoot(); // safe fallback
             }
 
             SettingsVersionPatcher.ApplyRestoreVersionRules(
@@ -257,50 +254,48 @@ namespace AccessAPP.Services
             // Apply per-detector restore profile (even if backup file contains fields)
             var profile = GetProfile(detectorType);
 
-            Console.WriteLine($"[Restore] Snapshot AFTER patching:");
-            Console.WriteLine($"  UserConfigHex      = {Trunc(snap.UserConfigHex)}");
-            Console.WriteLine($"  WiredPushButtons   = {Trunc(snap.PushButtonsHex)}");
-            Console.WriteLine($"  DaliPushButtons    = {Trunc(snap.DaliPushButtonsHex)}");
-            Console.WriteLine($"  BlePushButtons     = {Trunc(snap.BlePushButtonsHex)}");
-
-            bool ok = true;
+            AppLog.Info($"[Restore] Snapshot AFTER patching:");
+AppLog.Info($"  UserConfigHex      = {Trunc(snap.UserConfigHex)}");
+AppLog.Info($"  WiredPushButtons   = {Trunc(snap.PushButtonsHex)}");
+AppLog.Info($"  DaliPushButtons    = {Trunc(snap.DaliPushButtonsHex)}");
+AppLog.Info($"  BlePushButtons     = {Trunc(snap.BlePushButtonsHex)}");
+bool ok = true;
 
             // ---- BLE restores ----
             if (profile.UserConfig && !string.IsNullOrWhiteSpace(snap.UserConfigHex))
             {
-                Console.WriteLine($"[Restore] Writing UserConfig...");
-                bool r = await _ble.SetUserConfig(macAddress, snap.UserConfigHex).ConfigureAwait(false);
-                Console.WriteLine($"[Restore] UserConfig result={r}");
-                ok &= r;
+                AppLog.Info($"[Restore] Writing UserConfig...");
+bool r = await _ble.SetUserConfig(macAddress, snap.UserConfigHex).ConfigureAwait(false);
+                AppLog.Info($"[Restore] UserConfig result={r}");
+ok &= r;
             }
 
             if (profile.WiredPushButtons && !string.IsNullOrWhiteSpace(snap.PushButtonsHex))
             {
-                Console.WriteLine($"[Restore] Writing Wired PushButtons...");
-                bool r = await _ble.SetWiredPushButtonList(macAddress, snap.PushButtonsHex).ConfigureAwait(false);
-                Console.WriteLine($"[Restore] Wired PushButtons result={r}");
-                ok &= r;
+                AppLog.Info($"[Restore] Writing Wired PushButtons...");
+bool r = await _ble.SetWiredPushButtonList(macAddress, snap.PushButtonsHex).ConfigureAwait(false);
+                AppLog.Info($"[Restore] Wired PushButtons result={r}");
+ok &= r;
             }
 
             if (profile.DaliPushButtons && !string.IsNullOrWhiteSpace(snap.DaliPushButtonsHex))
             {
-                Console.WriteLine($"[Restore] Writing DALI PushButtons...");
-                bool r = await _ble.SetDaliPushButtonList(macAddress, snap.DaliPushButtonsHex).ConfigureAwait(false);
-                Console.WriteLine($"[Restore] DALI PushButtons result={r}");
-                ok &= r;
+                AppLog.Info($"[Restore] Writing DALI PushButtons...");
+bool r = await _ble.SetDaliPushButtonList(macAddress, snap.DaliPushButtonsHex).ConfigureAwait(false);
+                AppLog.Info($"[Restore] DALI PushButtons result={r}");
+ok &= r;
             }
 
             if (profile.BlePushButtons && !string.IsNullOrWhiteSpace(snap.BlePushButtonsHex))
             {
-                Console.WriteLine($"[Restore] Writing BLE PushButtons...");
-                bool r = await _ble.SetBLEPushButtonList(macAddress, snap.BlePushButtonsHex).ConfigureAwait(false);
-                Console.WriteLine($"[Restore] BLE PushButtons result={r}");
-                ok &= r;
+                AppLog.Info($"[Restore] Writing BLE PushButtons...");
+bool r = await _ble.SetBLEPushButtonList(macAddress, snap.BlePushButtonsHex).ConfigureAwait(false);
+                AppLog.Info($"[Restore] BLE PushButtons result={r}");
+ok &= r;
             }
 
-            Console.WriteLine($"[Restore] END ok={ok}");
-
-            return new ServiceResponse
+            AppLog.Info($"[Restore] END ok={ok}");
+return new ServiceResponse
             {
                 Success = ok,
                 StatusCode = ok ? 200 : 500,

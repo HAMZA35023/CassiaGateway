@@ -1,8 +1,12 @@
 ﻿using AccessAPP.Services;
+using Serilog;
 
 const string VERSION = "0.2.0";
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Optional: enable Serilog via env var ACCESSAPP_USE_SERILOG=1
+LoggingBootstrapper.TryConfigureSerilog(builder);
 
 // Add services to the container.
 builder.Services.AddControllers();

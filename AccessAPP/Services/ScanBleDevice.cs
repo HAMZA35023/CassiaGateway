@@ -86,8 +86,8 @@ public class ScanBleDevice : IDisposable
                         line = line.Substring("data:".Length).Trim();
                         Task.Run(() => ProcessScannedDevice(line));
 
-                        //Console.WriteLine(line);
-                    }
+                        // AppLog.Verbose(line);
+}
                 }
             }
             catch (Exception ex)

@@ -58,8 +58,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
     public async Task StartAsync(CancellationToken ct = default)
     {
-        Log("Starting MQTT service");
-
+        AppLog.Info("Starting MQTT service");
         // Wire UpgradeLogger to MQTT + topic shape used by this service
         UpgradeLogger.Mqtt = this;
 
@@ -74,7 +73,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
         {
             if (_runLoop is not null)
             {
-                Log("Already running");
+                AppLog.Debug("Already running");
                 return;
             }
 
@@ -89,8 +88,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
     public async Task StopAsync(CancellationToken ct = default)
     {
-        Log("Stopping MQTT service");
-
+        AppLog.Info("Stopping MQTT service");
         Task? loop;
         MQTTnet.IMqttClient? client;
 
@@ -121,7 +119,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
             }
             catch (Exception ex)
             {
-                Log($"Disconnect error: {ex.Message}");
+                AppLog.Warn($"Disconnect error: {ex.Message}");
             }
 
             try { client.Dispose(); } catch { /* ignore */ }
@@ -264,13 +262,12 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
     private async Task RunLoopAsync(CancellationToken ct)
     {
-        Log("Run loop started");
-
+        AppLog.Debug("Run loop started");
         while (!ct.IsCancellationRequested)
         {
             try
             {
-                Log($"Ensuring connection to {CurrentOptions.Host}:{CurrentOptions.Port} (clientId={CurrentOptions.ClientId}, network={CurrentOptions.NetworkId})");
+                AppLog.Debug($"Ensuring connection to {CurrentOptions.Host}:{CurrentOptions.Port} (clientId={CurrentOptions.ClientId}, network={CurrentOptions.NetworkId})");
                 await EnsureConnectedAndSubscribedAsync(ct).ConfigureAwait(false);
 
                 // retained online status
@@ -286,8 +283,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
                 };
                 await PublishJsonAsync(TeleTopic("status"), online, retain: false, ct).ConfigureAwait(false);
-                Log("Published retained online status");
-
+                AppLog.Info("Published retained online status");
                 var nextHeartbeat = DateTimeOffset.UtcNow + StatusHeartbeatInterval;
 
                 while (!ct.IsCancellationRequested && _client is not null && _client.IsConnected)
@@ -318,23 +314,23 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
             }
             catch (OperationCanceledException)
             {
-                Log("Run loop cancelled");
+                AppLog.Debug("Run loop cancelled");
             }
             catch (Exception ex)
             {
-                Log($"Connection error: {ex.Message}");
+                AppLog.Warn($"Connection error: {ex.Message}");
             }
 
             if (!ct.IsCancellationRequested)
             {
                 var delay = Math.Max(1, CurrentOptions.ReconnectDelaySeconds);
-                Log($"Reconnecting in {delay}s...");
+                AppLog.Warn($"Reconnecting in {delay}s...");
                 try { await Task.Delay(TimeSpan.FromSeconds(delay), ct).ConfigureAwait(false); }
                 catch { /* ignore */ }
             }
         }
 
-        Log("Run loop exited");
+        AppLog.Debug("Run loop exited");
     }
 
     private async Task EnsureConnectedAndSubscribedAsync(CancellationToken ct)
@@ -349,29 +345,27 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
                 _client.ConnectedAsync += e =>
                 {
-                    Log("ConnectedAsync event");
+                    AppLog.Debug("ConnectedAsync event");
                     return Task.CompletedTask;
                 };
 
                 _client.DisconnectedAsync += e =>
                 {
-                    Log($"DisconnectedAsync event reason={e.Reason} reasonString='{e.ReasonString}' ex={(e.Exception != null ? e.Exception.Message : "null")}");
+                    AppLog.Error($"DisconnectedAsync event reason={e.Reason} reasonString='{e.ReasonString}' ex={(e.Exception != null ? e.Exception.Message : "null")}");
                     _subscribed = false;
                     return Task.CompletedTask;
                 };
 
                 _client.ApplicationMessageReceivedAsync += e =>
                 {
-                    Log($"RX topic: {e.ApplicationMessage.Topic}");
-
+                    AppLog.Debug($"RX topic: {e.ApplicationMessage.Topic}");
                     byte[] payload = e.ApplicationMessage.Payload.ToArray();
 
                     var text = payload.Length == 0
                         ? string.Empty
                         : Encoding.UTF8.GetString(payload);
 
-                    Log($"RX payload: {text}");
-
+                    AppLog.Verbose($"RX payload: {text}");
                     return HandleCommandAsync(e.ApplicationMessage.Topic, text);
                 };
             }
@@ -380,11 +374,10 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
             _subscribed = false;
 
-            Log("Connecting to broker...");
+            AppLog.Debug("Connecting to broker...");
             var opts = BuildOptionsObject();
             await ConnectAsyncViaReflection(_client, opts, ct).ConfigureAwait(false);
-            Log("Connected");
-
+            AppLog.Info("Connected");
             await SubscribeTopicsAsync(ct).ConfigureAwait(false);
         }
         finally
@@ -407,13 +400,12 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
             // parse topic: accessapp/{network}/cmd/{target}/{command}
             var parts = topic.Split('/', StringSplitOptions.RemoveEmptyEntries);
 
-            Log($"HandleCommandAsync: parts.Length={parts.Length}");
+            AppLog.Verbose($"HandleCommandAsync: parts.Length={parts.Length}");
             for (int i = 0; i < parts.Length; i++)
-                Log($"  parts[{i}]='{parts[i]}'");
-
+                AppLog.Verbose($"  parts[{i}]='{parts[i]}'");
             if (parts.Length < 5)
             {
-                Log("HandleCommandAsync: ignored (too few parts)");
+                AppLog.Warn("HandleCommandAsync: ignored (too few parts)");
                 return Task.CompletedTask;
             }
 
@@ -423,24 +415,23 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
             var target = parts[3];
             var command = parts[4];
 
-            Log($"HandleCommandAsync parsed: baseTopic='{baseTopic}', networkId='{networkId}', cmdLiteral='{cmdLiteral}', target='{target}', command='{command}'");
-            Log($"Options: BaseTopic='{CurrentOptions.BaseTopic}', NetworkId='{CurrentOptions.NetworkId}', Name='{CurrentOptions.Name}'");
-
+            AppLog.Debug($"HandleCommandAsync parsed: baseTopic='{baseTopic}', networkId='{networkId}', cmdLiteral='{cmdLiteral}', target='{target}', command='{command}'");
+            AppLog.Info($"Options: BaseTopic='{CurrentOptions.BaseTopic}', NetworkId='{CurrentOptions.NetworkId}', Name='{CurrentOptions.Name}'");
             if (!string.Equals(baseTopic, CurrentOptions.BaseTopic, StringComparison.OrdinalIgnoreCase))
             {
-                Log("HandleCommandAsync: ignored (baseTopic mismatch)");
+                AppLog.Warn("HandleCommandAsync: ignored (baseTopic mismatch)");
                 return Task.CompletedTask;
             }
 
             if (!string.Equals(cmdLiteral, "cmd", StringComparison.OrdinalIgnoreCase))
             {
-                Log("HandleCommandAsync: ignored (not cmd)");
+                AppLog.Warn("HandleCommandAsync: ignored (not cmd)");
                 return Task.CompletedTask;
             }
 
             if (!string.Equals(networkId, CurrentOptions.NetworkId, StringComparison.OrdinalIgnoreCase))
             {
-                Log("HandleCommandAsync: ignored (networkId mismatch)");
+                AppLog.Warn("HandleCommandAsync: ignored (networkId mismatch)");
                 return Task.CompletedTask;
             }
 
@@ -448,20 +439,19 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
             if (!string.Equals(target, CurrentOptions.Name, StringComparison.OrdinalIgnoreCase) &&
                 !string.Equals(target, "all", StringComparison.OrdinalIgnoreCase))
             {
-                Log("HandleCommandAsync: ignored (target mismatch)");
+                AppLog.Warn("HandleCommandAsync: ignored (target mismatch)");
                 return Task.CompletedTask;
             }
 
             if (string.Equals(command, "start-update", StringComparison.OrdinalIgnoreCase))
             {
-                Log("HandleCommandAsync: dispatch start-update");
-
+                AppLog.Debug("HandleCommandAsync: dispatch start-update");
                 var reqs = JsonSerializer.Deserialize<List<StartUpdateRequest>>(payload, JsonOptions)
                            ?? new List<StartUpdateRequest>();
 
                 if (reqs.Count > 0)
                 {
-                    Log($"DEBUG first req: DetectorType='{reqs[0].DetectorType}', FW='{reqs[0].FirmwareVersion}', MAC='{reqs[0].MacAddress}', Pin='{reqs[0].Pincode}'");
+                    AppLog.Info($"DEBUG first req: DetectorType='{reqs[0].DetectorType}', FW='{reqs[0].FirmwareVersion}', MAC='{reqs[0].MacAddress}', Pin='{reqs[0].Pincode}'");
                 }
 
                 var dto = new StartUpdateCommand
@@ -474,13 +464,13 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                         .ToList()
                 };
 
-                Log($"start-update parsed OK: {dto.Requests.Count} request(s)");
+                AppLog.Info($"start-update parsed OK: {dto.Requests.Count} request(s)");
                 return StartUpdateRequested?.Invoke(dto) ?? Task.CompletedTask;
             }
 
             if (string.Equals(command, "get-fw-version", StringComparison.OrdinalIgnoreCase))
             {
-                Log("HandleCommandAsync: dispatch get-fw-version");
+                AppLog.Debug("HandleCommandAsync: dispatch get-fw-version");
                 var dto = JsonSerializer.Deserialize<GetFwVersionCommand>(payload, JsonOptions) ?? new GetFwVersionCommand();
                 return GetFwVersionRequested?.Invoke(dto) ?? Task.CompletedTask;
             }
@@ -488,8 +478,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
             if (string.Equals(command, "identify", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(command, "identify-device", StringComparison.OrdinalIgnoreCase))
             {
-                Log("HandleCommandAsync: dispatch identify");
-
+                AppLog.Debug("HandleCommandAsync: dispatch identify");
                 IdentifyCommand dto;
                 try
                 {
@@ -527,8 +516,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
             if (string.Equals(command, "disconnect-devices", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(command, "disconnect", StringComparison.OrdinalIgnoreCase))
             {
-                Log("HandleCommandAsync: dispatch disconnect-devices");
-
+                AppLog.Debug("HandleCommandAsync: dispatch disconnect-devices");
                 DisconnectDevicesCommand dto;
                 try
                 {
@@ -554,8 +542,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 string.Equals(command, "set-network", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(command, "set-mqtt-scope", StringComparison.OrdinalIgnoreCase))
             {
-                Log("HandleCommandAsync: dispatch set-scope");
-
+                AppLog.Debug("HandleCommandAsync: dispatch set-scope");
                 SetMqttScopeCommand dto;
                 try
                 {
@@ -609,8 +596,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
             if (string.Equals(command, "send-upgrade-log", StringComparison.OrdinalIgnoreCase))
             {
-                Log("HandleCommandAsync: dispatch send-upgrade-log");
-
+                AppLog.Debug("HandleCommandAsync: dispatch send-upgrade-log");
                 SendUpgradeLogCommand dto;
                 try
                 {
@@ -636,8 +622,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
             if (string.Equals(command, "set-write-sleep-ms", StringComparison.OrdinalIgnoreCase) ||
     string.Equals(command, "write-sleep-ms", StringComparison.OrdinalIgnoreCase))
             {
-                Log("HandleCommandAsync: dispatch set-write-sleep-ms");
-
+                AppLog.Debug("HandleCommandAsync: dispatch set-write-sleep-ms");
                 var raw = (payload ?? string.Empty).Trim();
 
                 // accept raw "40"
@@ -703,8 +688,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
             // NEW: request firmware manifest
             if (string.Equals(command, "get-fw-manifest", StringComparison.OrdinalIgnoreCase))
             {
-                Log("HandleCommandAsync: dispatch get-fw-manifest");
-
+                AppLog.Debug("HandleCommandAsync: dispatch get-fw-manifest");
                 GetFirmwareManifestCommand dto;
                 try
                 {
@@ -723,8 +707,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
             if (string.Equals(command, "get-queue-list", StringComparison.OrdinalIgnoreCase))
             {
-                Log("HandleCommandAsync: dispatch get-queue-list");
-
+                AppLog.Debug("HandleCommandAsync: dispatch get-queue-list");
                 // payload can be {} / empty / include requestId, but we keep it tolerant
                 string? requestId = null;
                 try
@@ -761,8 +744,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
             if (string.Equals(command, "get-programming-list", StringComparison.OrdinalIgnoreCase))
             {
-                Log("HandleCommandAsync: dispatch get-programming-list");
-
+                AppLog.Debug("HandleCommandAsync: dispatch get-programming-list");
                 string? requestId = null;
                 try
                 {
@@ -798,8 +780,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
             if (string.Equals(command, "get-device-list", StringComparison.OrdinalIgnoreCase))
             {
-                Log("HandleCommandAsync: dispatch get-device-list");
-
+                AppLog.Debug("HandleCommandAsync: dispatch get-device-list");
                 string? requestId = null;
                 try
                 {
@@ -834,8 +815,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
             if (string.Equals(command, "remove-from-queue", StringComparison.OrdinalIgnoreCase))
             {
-                Log("HandleCommandAsync: dispatch remove-from-queue");
-
+                AppLog.Debug("HandleCommandAsync: dispatch remove-from-queue");
                 // Accept payload as:
                 //  - "10:B9:F7:..."
                 //  - {"macAddress":"..."} / {"mac":"..."}
@@ -937,8 +917,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
             if (string.Equals(command, "get-parallel-programmers", StringComparison.OrdinalIgnoreCase))
             {
-                Log("HandleCommandAsync: dispatch get-parallel-programmers");
-
+                AppLog.Debug("HandleCommandAsync: dispatch get-parallel-programmers");
                 var current = CassiaFirmwareUpgradeService.GetParallelProgrammers();
                 var resp = new
                 {
@@ -955,8 +934,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
             if (string.Equals(command, "set-parallel-programmers", StringComparison.OrdinalIgnoreCase))
             {
-                Log("HandleCommandAsync: dispatch set-parallel-programmers");
-
+                AppLog.Debug("HandleCommandAsync: dispatch set-parallel-programmers");
                 int? requested = null;
                 try
                 {
@@ -1003,28 +981,26 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
                 if (string.Equals(command, "clear-upgrade-log", StringComparison.OrdinalIgnoreCase))
             {
-                Log("HandleCommandAsync: dispatch clear-upgrade-log");
-
+                AppLog.Debug("HandleCommandAsync: dispatch clear-upgrade-log");
                 var currentDir = Directory.GetCurrentDirectory();
-                Console.WriteLine("Current Directory: " + currentDir);
-
-                var logPath = Path.Combine(currentDir, "Logs", "upgrade_logs.txt");
+                AppLog.Debug("Current Directory: " + currentDir);
+var logPath = Path.Combine(currentDir, "Logs", "upgrade_logs.txt");
 
                 if (!System.IO.File.Exists(logPath))
                 {
-                    Log("No upgrade log file to clear.");
+                    AppLog.Info("No upgrade log file to clear.");
                     return Task.CompletedTask;
                 }
 
                 try
                 {
                     System.IO.File.Delete(logPath);
-                    Log("Upgrade log cleared successfully.");
+                    AppLog.Info("Upgrade log cleared successfully.");
                     return Task.CompletedTask;
                 }
                 catch (Exception ex)
                 {
-                    Log($"Error clearing upgrade log: {ex.Message}");
+                    AppLog.Error($"Error clearing upgrade log: {ex.Message}");
                     return Task.CompletedTask;
 
                 }
@@ -1032,8 +1008,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
             if (string.Equals(command, "clear-device-settings-backups", StringComparison.OrdinalIgnoreCase))
             {
-                Log("HandleCommandAsync: dispatch clear-device-settings-backups");
-
+                AppLog.Debug("HandleCommandAsync: dispatch clear-device-settings-backups");
                 var currentDir = Directory.GetCurrentDirectory();
                 var backupsDir = Path.Combine(currentDir, "device-settings-backups");
 
@@ -1077,8 +1052,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                         message = $"Device settings backups cleared. Deleted={deleted}, Failed={failed}."
                     };
 
-                    Log(ok.message);
-
+                    AppLog.Info(ok.message);
                     return PublishJsonAsync(
                         TeleTopic("clear-device-settings-backups"),
                         ok,
@@ -1093,8 +1067,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                         message = $"Error clearing device settings backups: {ex.Message}"
                     };
 
-                    Log(bad.message);
-
+                    AppLog.Info(bad.message);
                     return PublishJsonAsync(
                         TeleTopic("clear-device-settings-backups"),
                         bad,
@@ -1104,14 +1077,14 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
             }
 
 
-            Log($"HandleCommandAsync: ignored (unknown command '{command}')");
+            AppLog.Warn($"HandleCommandAsync: ignored (unknown command '{command}')");
             return Task.CompletedTask;
         }
         catch (Exception ex)
         {
-            Log($"HandleCommandAsync ERROR: {ex}");
-            Log($"topic was: {topic}");
-            Log($"payload was: {payload}");
+            AppLog.Error($"HandleCommandAsync ERROR: {ex}");
+            AppLog.Info($"topic was: {topic}");
+            AppLog.Info($"payload was: {payload}");
             return Task.CompletedTask;
         }
     }
@@ -1122,7 +1095,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
         if (_subscribed) return;
 
         var topicMine = CmdTopic(CurrentOptions.Name, "#");
-        Log($"Subscribing: {topicMine}");
+        AppLog.Info($"Subscribing: {topicMine}");
         await _client.SubscribeAsync(new MqttTopicFilter
         {
             Topic = topicMine,
@@ -1132,7 +1105,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
         if (CurrentOptions.SubscribeToAllTarget)
         {
             var topicAll = CmdTopic("all", "#");
-            Log($"Subscribing: {topicAll}");
+            AppLog.Info($"Subscribing: {topicAll}");
             await _client.SubscribeAsync(new MqttTopicFilter
             {
                 Topic = topicAll,
@@ -1141,7 +1114,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
         }
 
         _subscribed = true;
-        Log("Subscriptions active");
+        AppLog.Info("Subscriptions active");
     }
 
     // ---------------- Publish helpers ----------------
@@ -1195,8 +1168,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
         _publishFailures++;
 
-        Log($"Publish failure ({_publishFailures}/{CurrentOptions.PublishFailureReconnectThreshold}) reason='{reason}' ex='{ex?.Message}'");
-
+        AppLog.Info($"Publish failure ({_publishFailures}/{CurrentOptions.PublishFailureReconnectThreshold}) reason='{reason}' ex='{ex?.Message}'");
         var threshold = Math.Max(1, CurrentOptions.PublishFailureReconnectThreshold);
         if (_publishFailures < threshold) return;
 
@@ -1212,12 +1184,12 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
         {
             try
             {
-                Log("Publish failures exceeded threshold -> restarting MQTT connection");
+                AppLog.Info("Publish failures exceeded threshold -> restarting MQTT connection");
                 await RestartAsync(CancellationToken.None).ConfigureAwait(false);
             }
             catch (Exception rex)
             {
-                Log($"Restart after publish failures failed: {rex.Message}");
+                AppLog.Error($"Restart after publish failures failed: {rex.Message}");
             }
             finally
             {
@@ -1298,8 +1270,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
         var tcp = Activator.CreateInstance(tcpType)
                   ?? throw new InvalidOperationException("Failed to create TCP options instance.");
-        Log("TCP options props: " + string.Join(", ", tcp.GetType().GetProperties().Select(p => p.Name)));
-
+        AppLog.Info("TCP options props: " + string.Join(", ", tcp.GetType().GetProperties().Select(p => p.Name)));
         ApplyTcpEndpoint(tcp, o.Host, o.Port);
 
         if (!TrySetProp(options, "ChannelOptions", tcp))
@@ -1476,10 +1447,4 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
         return Task.CompletedTask;
     }
 
-    // ---------------- Logging ----------------
-
-    private void Log(string msg)
-    {
-        Console.WriteLine($"[MQTT {DateTime.Now:HH:mm:ss}] {msg}");
-    }
 }

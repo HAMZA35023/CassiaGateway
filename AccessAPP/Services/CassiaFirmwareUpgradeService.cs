@@ -10,6 +10,7 @@ using System.Net;
 using System.Net.Mail;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using AccessAPP.Logging;
 
 
 namespace AccessAPP.Services
@@ -29,40 +30,21 @@ namespace AccessAPP.Services
                 var old = _inQueue;
                 _inQueue = value;
 
-                Console.WriteLine(
-                    $"[QUEUE] inQueue {old} → {_inQueue} @ {DateTime.Now:HH:mm:ss.fff}"
-                );
-            }
+                AppLog.Debug($"[QUEUE] inQueue {old} → {_inQueue} @ {DateTime.Now:HH:mm:ss.fff}");
+}
         }
 
         public static double totalSpeed { get; set; } = 0;
 
-        const bool _DEBUG = false;
-        const bool _VERBOSE = true;
 
         public static int GlobalnumberOfParallelThreads = 2; // runtime adjustable via MQTT (resets on restart) // Optimal setting with current Cassia Gateway HW (21:43 Min for 3 P48 with actor and sensor firmware update)
         
-        //TODO: Be moved to app-settings
-        //Only for P47+P48
-        const bool RebootDetectorAfterUpgrade = true;
-        const bool Restore102DBAfterUpgrade = true;
-        const bool RestoreSettingsAfterUpgrade = true;
-        const bool AutoSetSysFailLevelUnderUpdate = true;
-
         private readonly HttpClient _httpClient;
         private readonly CassiaConnectService _connectService;
         private readonly CassiaPinCodeService _cassiaPinCodeService;
         private static DeviceStorageService _deviceStorageService;
         private readonly IConfiguration _configuration;
-        private const int MaxPacketSize = 270;
-        private const int InterPacketDelay = 0;
 
-        
-        private readonly string _firmwareActorFilePath = "d:\\work\\firma_vis\\niko\\app_hamza\\CassiaGateway\\AccessAPP\\FirmwareVersions\\353AP20227.cyacd";
-        private readonly string _firmwareSensorFilePath4 = "d:\\work\\firma_vis\\niko\\app_hamza\\CassiaGateway\\AccessAPP\\FirmwareVersions\\353AP40227.cyacd";
-        private readonly string _firmwareSensorFilePath3 = "d:\\work\\firma_vis\\niko\\app_hamza\\CassiaGateway\\AccessAPP\\FirmwareVersions\\353AP30227.cyacd";
-        private readonly string _firmwareSensorFilePath1 = "d:\\work\\firma_vis\\niko\\app_hamza\\CassiaGateway\\AccessAPP\\FirmwareVersions\\353AP10227.cyacd";
-        private readonly string _firmwareBootLoaderFilePath = "d:\\work\\firma_vis\\niko\\app_hamza\\CassiaGateway\\AccessAPP\\FirmwareVersions\\353BL10604.cyacd";
         private readonly IDeviceSettingsBackupService _settingsBackup;
 
         private ConcurrentDictionary<string, ConcurrentQueue<byte[]>> _notificationQueues = new ConcurrentDictionary<string, ConcurrentQueue<byte[]>>();
@@ -75,8 +57,7 @@ namespace AccessAPP.Services
         internal const int ERR_CLOSE = 2;
         internal const int ERR_READ = 3;
         internal const int ERR_WRITE = 4;
-        double progressBarProgress = 0;
-        double progressBarStepSize = 5;
+
         private readonly byte[] _securityKey = { 0x49, 0xA1, 0x34, 0xB6, 0xC7, 0x79 }; // Security ID
         private readonly byte _appID = 0x00; // AppID as shown in the screenshot
         private readonly string _gatewayIpAddress;
@@ -325,18 +306,18 @@ public static int GetProgrammingCount()
                 // Treat "sent successfully" as OK
                 if (sensorResponse.Status.ToString() == "OK")
                 {
-                    Console.WriteLine($"[REBOOT] Command sent, device rebooting: MAC={nodeMac}");
-                    return true;
+                    AppLog.Info($"[REBOOT] Command sent, device rebooting: MAC={nodeMac}");
+return true;
                 }
 
-                Console.WriteLine($"[REBOOT] Failed to send command: MAC={nodeMac}, Status={sensorResponse.Status}");
-                return false;
+                AppLog.Warn($"[REBOOT] Failed to send command: MAC={nodeMac}, Status={sensorResponse.Status}");
+return false;
             }
             catch (Exception ex)
             {
                 // BLE stack may throw because device disappears instantly
-                Console.WriteLine($"[REBOOT] Exception (expected in some cases): MAC={nodeMac}, {ex.Message}");
-                return true; // command was likely accepted before disconnect
+                AppLog.Debug($"[REBOOT] Exception (expected in some cases): MAC={nodeMac}, {ex.Message}");
+return true; // command was likely accepted before disconnect
             }
         }
 
@@ -361,8 +342,8 @@ public static int GetProgrammingCount()
 
             if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
             {
-                Console.WriteLine($"[DALI] SysFailLevel set failed: MAC={nodeMac}, Level=0x{levelHex}, Status={sensorResponse.Status}, RAW={sensorResponse.Data}");
-                return false;
+                AppLog.Warn($"[DALI] SysFailLevel set failed: MAC={nodeMac}, Level=0x{levelHex}, Status={sensorResponse.Status}, RAW={sensorResponse.Data}");
+return false;
             }
 
             string reply = sensorResponse.Data.Trim().ToUpperInvariant();
@@ -370,12 +351,10 @@ public static int GetProgrammingCount()
             // Success can be "00" or "0000"
             bool ok = reply == "00" || reply == "0000";
 
-            Console.WriteLine($"[DALI] SysFailLevel set: MAC={nodeMac}, Level=0x{levelHex}, Cmd={cmd}, Reply={reply}, OK={ok}");
-
-            if (!ok)
-                Console.WriteLine($"[DALI] SysFailLevel set rejected: MAC={nodeMac}, Level=0x{levelHex}, Cmd={cmd}, Reply={reply}");
-
-            return ok;
+            AppLog.Info($"[DALI] SysFailLevel set: MAC={nodeMac}, Level=0x{levelHex}, Cmd={cmd}, Reply={reply}, OK={ok}");
+if (!ok)
+                AppLog.Warn($"[DALI] SysFailLevel set rejected: MAC={nodeMac}, Level=0x{levelHex}, Cmd={cmd}, Reply={reply}");
+return ok;
         }
 
         public async Task<string> GetBLEPushButtonList(string nodeMac)
@@ -387,8 +366,8 @@ public static int GetProgrammingCount()
             string hex = "";
             if (sensorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(sensorResponse.Data))
             {
-                Console.WriteLine(sensorResponse.Data);
-                hex = sensorResponse.Data;
+                AppLog.Debug(sensorResponse.Data);
+hex = sensorResponse.Data;
             }
 
             return hex;
@@ -403,18 +382,17 @@ public static int GetProgrammingCount()
             bool resp = false;
             if (sensorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(sensorResponse.Data))
             {
-                Console.WriteLine(sensorResponse.Data);
-                resp = sensorResponse.Data == "00";
+                AppLog.Debug(sensorResponse.Data);
+resp = sensorResponse.Data == "00";
 
                 if (!resp)
                 {
-                    Console.WriteLine("Failed to set: " + sensorCommand + newBlePushButtonListHex);
-                }
+                    AppLog.Warn("Failed to set: " + sensorCommand + newBlePushButtonListHex);
+}
             }
             else
-                Console.WriteLine("BLE failed: " + sensorResponse.Status.ToString() + "RAW: " + sensorResponse.Data);
-
-            return resp;
+                AppLog.Warn("BLE failed: " + sensorResponse.Status.ToString() + "RAW: " + sensorResponse.Data);
+return resp;
         }
 
         public async Task<string> GetWiredPushButtonList(string nodeMac)
@@ -426,8 +404,8 @@ public static int GetProgrammingCount()
             string hex = "";
             if (sensorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(sensorResponse.Data))
             {
-                Console.WriteLine(sensorResponse.Data);
-                hex = sensorResponse.Data;
+                AppLog.Debug(sensorResponse.Data);
+hex = sensorResponse.Data;
             }
 
             return hex;
@@ -442,18 +420,16 @@ public static int GetProgrammingCount()
             bool resp = false;
             if (sensorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(sensorResponse.Data))
             {
-                Console.WriteLine(sensorResponse.Data);
-                resp = sensorResponse.Data == "00";
+                AppLog.Debug(sensorResponse.Data);
+resp = sensorResponse.Data == "00";
                 if (!resp)
                 {
-                    Console.WriteLine("Failed to set: " + sensorCommand + newWiredPushButtonListHex);
-                }
+                    AppLog.Warn("Failed to set: " + sensorCommand + newWiredPushButtonListHex);
+}
             }
             else
-                Console.WriteLine("BLE failed: " + sensorResponse.Status.ToString() + "RAW: " + sensorResponse.Data);
-
-
-            return resp;
+                AppLog.Warn("BLE failed: " + sensorResponse.Status.ToString() + "RAW: " + sensorResponse.Data);
+return resp;
         }
 
         public async Task<string> GetDaliPushButtonList(string nodeMac)
@@ -465,8 +441,8 @@ public static int GetProgrammingCount()
             string hex = "";
             if (sensorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(sensorResponse.Data))
             {
-                Console.WriteLine(sensorResponse.Data);
-                hex = sensorResponse.Data;
+                AppLog.Debug(sensorResponse.Data);
+hex = sensorResponse.Data;
             }
 
             return hex;
@@ -481,19 +457,17 @@ public static int GetProgrammingCount()
             bool resp = false;
             if (sensorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(sensorResponse.Data))
             {
-                Console.WriteLine(sensorResponse.Data);
-                resp = sensorResponse.Data == "00";
+                AppLog.Debug(sensorResponse.Data);
+resp = sensorResponse.Data == "00";
                 if (!resp)
                 {
-                    Console.WriteLine("Failed to set: " + sensorCommand + newDaliPushButtonListHex);
-                }
+                    AppLog.Warn("Failed to set: " + sensorCommand + newDaliPushButtonListHex);
+}
 
             }
             else
-                Console.WriteLine("BLE failed: " + sensorResponse.Status.ToString() + "RAW: " + sensorResponse.Data);
-
-
-            return resp;
+                AppLog.Warn("BLE failed: " + sensorResponse.Status.ToString() + "RAW: " + sensorResponse.Data);
+return resp;
         }
 
         // Optional helpers
@@ -506,8 +480,8 @@ public static int GetProgrammingCount()
             bool resp = false;
             if (sensorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(sensorResponse.Data))
             {
-                Console.WriteLine(sensorResponse.Data);
-                resp = true;
+                AppLog.Debug(sensorResponse.Data);
+resp = true;
             }
 
             return resp;
@@ -522,8 +496,8 @@ public static int GetProgrammingCount()
             bool resp = false;
             if (sensorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(sensorResponse.Data))
             {
-                Console.WriteLine(sensorResponse.Data);
-                resp = true;
+                AppLog.Debug(sensorResponse.Data);
+resp = true;
             }
 
             return resp;
@@ -538,8 +512,8 @@ public static int GetProgrammingCount()
             string userconfig = "";
             if (sensorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(sensorResponse.Data))
             {
-                Console.WriteLine(sensorResponse.Data);
-                userconfig = sensorResponse.Data;
+                AppLog.Debug(sensorResponse.Data);
+userconfig = sensorResponse.Data;
             }
 
             return userconfig;
@@ -554,18 +528,16 @@ public static int GetProgrammingCount()
             bool resp = false;
             if (sensorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(sensorResponse.Data))
             {
-                Console.WriteLine(sensorResponse.Data);
-                resp = sensorResponse.Data == "0000" || sensorResponse.Data == "00";
+                AppLog.Debug(sensorResponse.Data);
+resp = sensorResponse.Data == "0000" || sensorResponse.Data == "00";
                 if (!resp)
                 {
-                    Console.WriteLine("Failed to set: " + sensorCommand + newuserconfig);
-                }
+                    AppLog.Warn("Failed to set: " + sensorCommand + newuserconfig);
+}
             }
             else
-                Console.WriteLine("BLE failed: " + sensorResponse.Status.ToString() + "RAW: " + sensorResponse.Data);
-
-
-            return resp;
+                AppLog.Warn("BLE failed: " + sensorResponse.Status.ToString() + "RAW: " + sensorResponse.Data);
+return resp;
         }
 
         public async Task<ServiceResponse> UpgradeSensorAsync(
@@ -722,8 +694,8 @@ public static int GetProgrammingCount()
                         if (isBoot)
                         {
                             UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Achieved");
-                            Console.WriteLine($"Device entered boot mode after {attempt} jump attempts.");
-                            return true;
+                            AppLog.Info($"Device entered boot mode after {attempt} jump attempts.");
+return true;
                         }
 
                         UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", $"NotYet (verify {verify}/5, attempt {attempt}/{bootJumpMaxAttempts})");
@@ -749,13 +721,12 @@ public static int GetProgrammingCount()
                 return response;
             }
 
-            Console.WriteLine($"Connected to device...{nodeMac}");
-
-            // If already in boot mode, skip login/jump and go directly to processing
+            AppLog.Info($"Connected to device...{nodeMac}");
+// If already in boot mode, skip login/jump and go directly to processing
             if (CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac))
             {
-                Console.WriteLine($"Device is already in boot mode. -> {nodeMac}");
-                UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
+                AppLog.Info($"Device is already in boot mode. -> {nodeMac}");
+UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
                 await Task.Delay(3000);
 
                 return await ProcessingSensorUpgrade(nodeMac, bActor, isBootloader, DetectorType, FirmwareVersion, logId);
@@ -773,9 +744,8 @@ public static int GetProgrammingCount()
                 return response;
             }
 
-            Console.WriteLine($"Logged into device...{nodeMac}");
-
-            // ----------------------------
+            AppLog.Info($"Logged into device...{nodeMac}");
+// ----------------------------
             // Step 3: Jump to bootloader + verify (robust)
             // ----------------------------
             if (!await EnsureBootModeAsync())
@@ -791,8 +761,8 @@ public static int GetProgrammingCount()
             // ----------------------------
             try
             {
-                Console.WriteLine("device disconnected and will reconnect after 3s");
-				await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chip: GetChipForMac(nodeMac));
+                AppLog.Info("device disconnected and will reconnect after 3s");
+await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chip: GetChipForMac(nodeMac));
                 UpgradeLogger.Log(logId, nodeMac, "Disconnected", "Success");
             }
             catch (Exception ex)
@@ -928,9 +898,8 @@ public static int GetProgrammingCount()
                 return response;
             }
 
-            Console.WriteLine($"Connected to device...{nodeMac}");
-
-            // If sensor is already in boot mode -> actor upgrade cannot proceed
+            AppLog.Info($"Connected to device...{nodeMac}");
+// If sensor is already in boot mode -> actor upgrade cannot proceed
             if (CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac))
             {
                 UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
@@ -962,9 +931,8 @@ public static int GetProgrammingCount()
                 return response;
             }
 
-            Console.WriteLine($"Logged into device...{nodeMac}");
-
-            // ----------------------------
+            AppLog.Info($"Logged into device...{nodeMac}");
+// ----------------------------
             // Step 3: Jump actor to bootloader (robust)
             // ----------------------------
             if (!await JumpActorToBootModeAsync())
@@ -1010,8 +978,8 @@ public static int GetProgrammingCount()
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"Error upgrading actor {request.MacAddress}: {ex.Message}");
-                        return new ServiceResponse
+                        AppLog.Error($"Error upgrading actor {request.MacAddress}", ex);
+return new ServiceResponse
                         {
                             Success = false,
                             StatusCode = 500,
@@ -1116,9 +1084,8 @@ public static int GetProgrammingCount()
                         $"Connect+Login attempt {attempt}/{maxAttempts} (timeout 10s)",
                         "Info", firmwareVersion);
 
-                    Console.WriteLine($"[INFO] Connect+Login attempt {attempt}/{maxAttempts} for {macAddress}");
-
-                    // ---- Run connect + login with timeout ----
+                    AppLog.Info($" Connect+Login attempt {attempt}/{maxAttempts} for {macAddress}");
+// ---- Run connect + login with timeout ----
                     var attemptTask = Task.Run(async () =>
                     {
                         // 1) Connect
@@ -1322,12 +1289,12 @@ public static int GetProgrammingCount()
             {
                 UpgradeLogger.Log(logId, macAddress, "Process Start Device Async", "Success", FirmwareVersion);
 
+
                 // --------------------------------------------------------------------
                 // 0) Determine boot/application mode early (best-effort + robust connect)
                 // --------------------------------------------------------------------
-                Console.WriteLine($"Getting current FW Verison if possible {macAddress}");
-
-                // IMPORTANT FIX:
+                AppLog.Info($"Getting current FW Verison if possible {macAddress}");
+// IMPORTANT FIX:
                 // Your original connect logic was wrong (connect -> if OK connect again -> else block inverted).
                 // Replace with a clean connect-only attempt.
                 var connProbe = await ConnectOnlyWithRetryAsync(
@@ -1352,6 +1319,11 @@ public static int GetProgrammingCount()
                     return response;
                 }
 
+                var chipid = _chipByMac[macAddress];
+
+                UpgradeLogger.Log(logId, macAddress, $"Using Chip {chipid}", "info");
+                AppLog.Info($"Using ChipID {chipid} for {macAddress}");
+
                 // NOTE: if CheckIfDeviceInBootMode relies on Cassia state, this is now safer.
                 var isInBoot = false;
                 try
@@ -1365,20 +1337,20 @@ public static int GetProgrammingCount()
 
                 if (isInBoot)
                 {
-                    Console.WriteLine($"Device is in boot mode, skipping FW version check: {macAddress}");
-                    UpgradeLogger.Log(logId, macAddress, "Device in boot mode, skipping FW version check", "Info", FirmwareVersion);
+                    AppLog.Info($"Device is in boot mode, skipping FW version check: {macAddress}");
+UpgradeLogger.Log(logId, macAddress, "Device in boot mode, skipping FW version check", "Info", FirmwareVersion);
                 }
                 else
                 {
-                    Console.WriteLine($"Device is in application mode, checking FW version: {macAddress}");
-                    UpgradeLogger.Log(logId, macAddress, "Device in application mode, checking FW version", "Info", FirmwareVersion);
+                    AppLog.Info($"Device is in application mode, checking FW version: {macAddress}");
+UpgradeLogger.Log(logId, macAddress, "Device in application mode, checking FW version", "Info", FirmwareVersion);
                 }
 
                 // --------------------------------------------------------------------
                 // 1) Settings backup (best-effort but CRITICAL gating before FW update)
                 //    (optimized based on logs: more retries + skip when file already exists)
                 // --------------------------------------------------------------------
-                if (RestoreSettingsAfterUpgrade && !isInBoot)
+                if (RuntimeVariables.RestoreSettingsAfterUpgrade && !isInBoot)
                 {
                     if (SupportsSettingsBackup(DetectorType))
                     {
@@ -1386,21 +1358,20 @@ public static int GetProgrammingCount()
                         if (!upgradeActor && !upgradeBootloader && !upgradeSensor)
                         {
                             UpgradeLogger.Log(logId, macAddress, "Settings backup skipped (no FW steps in this attempt)", "Info", FirmwareVersion);
-                            Console.WriteLine($"Skipping settings backup for {macAddress} - no FW steps in this attempt");
-                        }
+                            AppLog.Info($"Skipping settings backup for {macAddress} - no FW steps in this attempt");
+}
                         else
                         {
                             // If backup already exists, reuse it and DO NOT block upgrade on connect/login here.
                             if (!string.IsNullOrWhiteSpace(settingsBackupPath) && File.Exists(settingsBackupPath))
                             {
                                 UpgradeLogger.Log(logId, macAddress, $"Settings backup already exists: {settingsBackupPath}", "Info", FirmwareVersion);
-                                Console.WriteLine($"Settings backup already exists for {macAddress}: {settingsBackupPath}");
-                            }
+                                AppLog.Info($"Settings backup already exists for {macAddress}: {settingsBackupPath}");
+}
                             else
                             {
-                                Console.WriteLine($"Starting settings backup for {macAddress}");
-
-                                try
+                                AppLog.Info($"Starting settings backup for {macAddress}");
+try
                                 {
                                     // IMPORTANT: increased retries + delays, because logs show 417 after boot transitions.
                                     var cl = await ConnectAndLoginWithRetryAsync(
@@ -1411,9 +1382,8 @@ public static int GetProgrammingCount()
                                     if (!cl.Success)
                                     {
                                         UpgradeLogger.Log(logId, macAddress, $"[1] Connect+login failed: {cl.Message}", "Warn", FirmwareVersion);
-                                        Console.WriteLine($"[WARN] [1] Connect+login failed for {macAddress}: {cl.Message}");
-
-                                        // CRITICAL: Do NOT start firmware update if backup cannot be taken.
+                                        AppLog.Warn($" [1] Connect+login failed for {macAddress}: {cl.Message}");
+// CRITICAL: Do NOT start firmware update if backup cannot be taken.
                                         response.Success = false;
                                         response.StatusCode = cl.StatusCode;
                                         response.Message = $"Settings backup blocked upgrade: {cl.Message}";
@@ -1422,17 +1392,17 @@ public static int GetProgrammingCount()
                                         return response;
                                     }
 
-                                    if (AutoSetSysFailLevelUnderUpdate && (DetectorType == "P48" || DetectorType == "P47"))
+                                    if (RuntimeVariables.AutoSetSysFailLevelUnderUpdate && (DetectorType == "P48" || DetectorType == "P47"))
                                     {
                                         if (await DaliSetDeviceSysFailLevelAsync(macAddress, 0xFF))
                                         {
-                                            Console.WriteLine($"DALI SysFail Level set to 0xFF for {macAddress}");
-                                            UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set to 0xFF", "Success", FirmwareVersion);
+                                            AppLog.Info($"DALI SysFail Level set to 0xFF for {macAddress}");
+UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set to 0xFF", "Success", FirmwareVersion);
                                         }
                                         else
                                         {
-                                            Console.WriteLine($"Failed to set DALI SysFail Level for {macAddress}");
-                                            UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set failed", "Warn", FirmwareVersion);
+                                            AppLog.Warn($"Failed to set DALI SysFail Level for {macAddress}");
+UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set failed", "Warn", FirmwareVersion);
                                         }
                                     }
 
@@ -1454,19 +1424,16 @@ public static int GetProgrammingCount()
                                         return response;
                                     }
 
-                                    Console.WriteLine($"[INFO] Settings backup saved for {macAddress} to: {settingsBackupPath}");
-                                    dev.SettingsBackupPath = settingsBackupPath;
+                                    AppLog.Info($" Settings backup saved for {macAddress} to: {settingsBackupPath}");
+dev.SettingsBackupPath = settingsBackupPath;
 
-                                    if (_VERBOSE)
-                                    {
-                                        Console.WriteLine(
-                                            $"[VERBOSE] Settings backup snapshot for {macAddress}:\n" +
+             
+                                        AppLog.Verbose($"Settings backup snapshot for {macAddress}:\n" +
                                             System.Text.Json.JsonSerializer.Serialize(
                                                 backup.snapshot,
                                                 new System.Text.Json.JsonSerializerOptions { WriteIndented = true }
-                                            )
-                                        );
-                                    }
+                                            ));
+
                                 }
                                 catch (Exception ex)
                                 {
@@ -1474,8 +1441,8 @@ public static int GetProgrammingCount()
                                     response.StatusCode = 500;
                                     response.Message = $"Settings backup failed: {ex.Message}";
                                     UpgradeLogger.Log(logId, macAddress, response.Message, "Failed", FirmwareVersion);
-                                    Console.WriteLine($"[ERROR] Settings backup failed for {macAddress}: {ex}");
-                                    dev.LastFailureReason = response.Message;
+                                    AppLog.Error($" Settings backup failed for {macAddress}: {ex}");
+dev.LastFailureReason = response.Message;
                                     dev.shouldRetry = false;
                                     return response;
                                 }
@@ -1498,16 +1465,16 @@ public static int GetProgrammingCount()
                 /*
                 if (upgradeActor && !disable_update && !isInBoot) // can't update actor first if in bootloader mode
                 {
-                    Console.WriteLine($"Starting actor upgrade for {macAddress}");
-                    dev.RetryCountActor++;
+                    AppLog.Info($"Starting actor upgrade for {macAddress}");
+dev.RetryCountActor++;
 
                     stopwatch.Restart();
                     var actorUpgradeResult = await UpgradeActorAsync(macAddress, pincode, true, DetectorType, FirmwareVersion, logId)
                         .ConfigureAwait(false);
                     stopwatch.Stop();
 
-                    Console.WriteLine($"Actor upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds - result: {actorUpgradeResult.Success}");
-                    dev.ActorSuccess = actorUpgradeResult.Success;
+                    AppLog.Info($"Actor upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds - result: {actorUpgradeResult.Success}");
+dev.ActorSuccess = actorUpgradeResult.Success;
 
                     await Task.Delay(20000).ConfigureAwait(false);
                 }
@@ -1516,9 +1483,8 @@ public static int GetProgrammingCount()
                 if (upgradeBootloader && !disable_update)
                 {
                     dev.RetryCountBootloader++;
-                    Console.WriteLine($"Starting bootloader upgrade for {macAddress}");
-
-                    // cooldown before bootloader step often helps after actor step
+                    AppLog.Info($"Starting bootloader upgrade for {macAddress}");
+// cooldown before bootloader step often helps after actor step
                     await Task.Delay(5000).ConfigureAwait(false);
 
                     stopwatch.Restart();
@@ -1526,9 +1492,8 @@ public static int GetProgrammingCount()
                         .ConfigureAwait(false);
                     stopwatch.Stop();
 
-                    Console.WriteLine($"Bootloader upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds - result: {bootladerUpgradeResult.Success}");
-
-                    if (!bootladerUpgradeResult.Success)
+                    AppLog.Info($"Bootloader upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds - result: {bootladerUpgradeResult.Success}");
+if (!bootladerUpgradeResult.Success)
                     {
                         response.Success = false;
                         response.StatusCode = bootladerUpgradeResult.StatusCode;
@@ -1543,8 +1508,8 @@ public static int GetProgrammingCount()
 
                 if (upgradeSensor && !disable_update)
                 {
-                    Console.WriteLine($"Starting Sensor upgrade for {macAddress}");
-                    dev.RetryCountSensor++;
+                    AppLog.Info($"Starting Sensor upgrade for {macAddress}");
+dev.RetryCountSensor++;
 
                     // IMPORTANT: after JumpToBootloader, Cassia often needs a longer cool-down before next Connect+Login
                     await Task.Delay(8000).ConfigureAwait(false);
@@ -1554,9 +1519,8 @@ public static int GetProgrammingCount()
                         .ConfigureAwait(false);
                     stopwatch.Stop();
 
-                    Console.WriteLine($"Sensor upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds - result: {sensorUpgradeResult.Success}");
-
-                    if (!sensorUpgradeResult.Success)
+                    AppLog.Info($"Sensor upgrade completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds - result: {sensorUpgradeResult.Success}");
+if (!sensorUpgradeResult.Success)
                     {
                         response.Success = false;
                         response.StatusCode = sensorUpgradeResult.StatusCode;
@@ -1578,13 +1542,12 @@ public static int GetProgrammingCount()
                 // 3) Restore settings right after sensor upgrade (do NOT reboot here)
                 //    The rest of the flow (actor, reboot, 102 restore) stays after actor.
                 // --------------------------------------------------------------------
-                if (RestoreSettingsAfterUpgrade && !isInBoot && SupportsSettingsBackup(DetectorType))
+                if (RuntimeVariables.RestoreSettingsAfterUpgrade && !isInBoot && SupportsSettingsBackup(DetectorType))
                 {
                     await Task.Delay(10000).ConfigureAwait(false);
 
-                    Console.WriteLine($"Starting settings restore for {macAddress} - trying to connect and login");
-
-                    var cl = await ConnectAndLoginWithRetryAsync(
+                    AppLog.Info($"Starting settings restore for {macAddress} - trying to connect and login");
+var cl = await ConnectAndLoginWithRetryAsync(
                         _gatewayIpAddress, 80, macAddress, pincode, logId, FirmwareVersion,
                         maxAttempts: 4,
                         delayBetweenAttemptsMs: 6000).ConfigureAwait(false);
@@ -1592,9 +1555,8 @@ public static int GetProgrammingCount()
                     if (!cl.Success)
                     {
                         UpgradeLogger.Log(logId, macAddress, $"Restore connect+login failed: {cl.Message}", "Warn", FirmwareVersion);
-                        Console.WriteLine($"[WARN] Restore connect+login failed for {macAddress}: {cl.Message}");
-
-                        response.Success = false;
+                        AppLog.Warn($" Restore connect+login failed for {macAddress}: {cl.Message}");
+response.Success = false;
                         response.StatusCode = 500;
                         response.Message = "Could not connect and login to detector!";
 
@@ -1607,8 +1569,8 @@ public static int GetProgrammingCount()
                     }
                     else
                     {
-                        Console.WriteLine($"Starting settings restore for {macAddress} - upload config");
-                        settingsBackupPath ??= dev.SettingsBackupPath;
+                        AppLog.Info($"Starting settings restore for {macAddress} - upload config");
+settingsBackupPath ??= dev.SettingsBackupPath;
 
                         if (!string.IsNullOrWhiteSpace(settingsBackupPath))
                         {
@@ -1633,9 +1595,8 @@ public static int GetProgrammingCount()
                                         restore.Success ? "Success" : "Failed",
                                         FirmwareVersion);
 
-                                    Console.WriteLine($"[INFO] Settings restore attempt {attempt}/3 for {macAddress} - result: {restore.Success} - {restore.Message}");
-
-                                    if (restore.Success)
+                                    AppLog.Info($" Settings restore attempt {attempt}/3 for {macAddress} - result: {restore.Success} - {restore.Message}");
+if (restore.Success)
                                         break;
 
                                     await Task.Delay(4000).ConfigureAwait(false);
@@ -1656,8 +1617,8 @@ public static int GetProgrammingCount()
                             catch (Exception ex)
                             {
                                 UpgradeLogger.Log(logId, macAddress, $"Settings restore failed: {ex.Message}", "Failed", FirmwareVersion);
-                                Console.WriteLine($"[ERROR] Settings restore failed for {macAddress}: {ex}");
-                                dev.isConfigRestored = false;
+                                AppLog.Error($" Settings restore failed for {macAddress}: {ex}");
+dev.isConfigRestored = false;
 
                                 if (dev.requiresConfigRestore)
                                 {
@@ -1674,9 +1635,8 @@ public static int GetProgrammingCount()
                         else
                         {
                             UpgradeLogger.Log(logId, macAddress, "Settings restore skipped (no backup file available)", "Failed", FirmwareVersion);
-                            Console.WriteLine($"[ERROR] Settings restore skipped for {macAddress} - no backup file available");
-
-                            if (dev.requiresConfigRestore)
+                            AppLog.Error($" Settings restore skipped for {macAddress} - no backup file available");
+if (dev.requiresConfigRestore)
                             {
                                 dev.shouldRetry = false;
                                 dev.finalUpgradeResult = "Warn";
@@ -1691,16 +1651,16 @@ public static int GetProgrammingCount()
                 {
                     if (upgradeActor && !disable_update)
                     {
-                        Console.WriteLine($"Starting actor upgrade for {macAddress}");
-                        dev.RetryCountActor++;
+                        AppLog.Info($"Starting actor upgrade for {macAddress}");
+dev.RetryCountActor++;
 
                         stopwatch.Restart();
                         var actorUpgradeResult = await UpgradeActorAsync(macAddress, pincode, true, DetectorType, FirmwareVersion, logId)
                             .ConfigureAwait(false);
                         stopwatch.Stop();
 
-                        Console.WriteLine($"Retry Actor upgrade after sensor application completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds - result: {actorUpgradeResult.Success}");
-                        dev.ActorSuccess = actorUpgradeResult.Success;
+                        AppLog.Warn($"Retry Actor upgrade after sensor application completed for {macAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds - result: {actorUpgradeResult.Success}");
+dev.ActorSuccess = actorUpgradeResult.Success;
 
                         if (!actorUpgradeResult.Success)
                         {
@@ -1728,9 +1688,8 @@ public static int GetProgrammingCount()
                     {
                         await Task.Delay(10000).ConfigureAwait(false);
 
-                        Console.WriteLine($"Post-actor: connect+login for {macAddress}");
-
-                        var cl = await ConnectAndLoginWithRetryAsync(
+                        AppLog.Info($"Post-actor: connect+login for {macAddress}");
+var cl = await ConnectAndLoginWithRetryAsync(
                             _gatewayIpAddress, 80, macAddress, pincode, logId, FirmwareVersion,
                             maxAttempts: 4,
                             delayBetweenAttemptsMs: 6000).ConfigureAwait(false);
@@ -1744,7 +1703,7 @@ public static int GetProgrammingCount()
                             return response;
                         }
 
-                        if (AutoSetSysFailLevelUnderUpdate)
+                        if (RuntimeVariables.AutoSetSysFailLevelUnderUpdate)
                         {
                             if (await DaliSetDeviceSysFailLevelAsync(macAddress, 0xFE))
                                 UpgradeLogger.Log(logId, macAddress, "DALI SysFail Level set to 0xFE", "Success", FirmwareVersion);
@@ -1753,10 +1712,10 @@ public static int GetProgrammingCount()
                         }
                     }
 
-                    if (RebootDetectorAfterUpgrade)
+                    if (RuntimeVariables.RebootDetectorAfterUpgrade)
                     {
-                        Console.WriteLine($"Rebooting device {macAddress} after actor update");
-                        await RebootDeviceAsync(macAddress).ConfigureAwait(false);
+                        AppLog.Info($"Rebooting device {macAddress} after actor update");
+await RebootDeviceAsync(macAddress).ConfigureAwait(false);
                         UpgradeLogger.Log(logId, macAddress, "Device rebooted after actor update", "Success", FirmwareVersion);
                         await Task.Delay(10000).ConfigureAwait(false);
 
@@ -1769,14 +1728,14 @@ public static int GetProgrammingCount()
                         }
                     }
 
-                    if (isDaliMaster && Restore102DBAfterUpgrade)
+                    if (isDaliMaster && RuntimeVariables.Restore102DBAfterUpgrade)
                     {
                         bool resp = false;
                         for (int attempt = 1; attempt <= 3; attempt++)
                         {
                             resp = await DaliRestore102Database(macAddress).ConfigureAwait(false);
-                            Console.WriteLine($"Dali Restore 102 Database attempt {attempt}/3 response: {resp} for {macAddress}");
-                            UpgradeLogger.Log(logId, macAddress, $"Dali Restore 102 Database attempt {attempt}/3 response: {resp}", resp ? "Success" : "Failed", FirmwareVersion);
+                            AppLog.Debug($"Dali Restore 102 Database attempt {attempt}/3 response: {resp} for {macAddress}");
+UpgradeLogger.Log(logId, macAddress, $"Dali Restore 102 Database attempt {attempt}/3 response: {resp}", resp ? "Success" : "Failed", FirmwareVersion);
                             if (resp) break;
                             await Task.Delay(3000).ConfigureAwait(false);
                         }
@@ -1815,8 +1774,8 @@ public static int GetProgrammingCount()
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error during sensor and actor upgrade: {ex.Message}");
-                response.Success = false;
+                AppLog.Error("Error during sensor and actor upgrade", ex);
+response.Success = false;
                 response.StatusCode = 500;
                 response.Message = "An unexpected error occurred during the upgrade process.";
                 UpgradeLogger.Log(logId, macAddress, $"Device Upgrade Failed: {ex.Message}", "Failed", FirmwareVersion);
@@ -1848,13 +1807,11 @@ public static int GetProgrammingCount()
                     failedDevices.Enqueue((device, 1)); // Initial retry count is 1
                 }
 
-                Console.WriteLine("Next Device will be upgraded after 10 seconds");
+                AppLog.Info("Next Device will be upgraded after 10 seconds");
+}
 
-            }
-
-            Console.WriteLine($"Initial upgrade completed. Retrying failed devices: {failedDevices.Count} devices.");
-
-            while (failedDevices.Count > 0)
+            AppLog.Warn($"Initial upgrade completed. Retrying failed devices: {failedDevices.Count} devices.");
+while (failedDevices.Count > 0)
             {
                 var (device, retryCount) = failedDevices.Dequeue();
                 string logId = $"{device.MacAddress.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
@@ -1883,18 +1840,17 @@ public static int GetProgrammingCount()
             try
             {
                 Stopwatch stopwatch = new Stopwatch();
-                Console.WriteLine($"Starting bootloader upgrade for {device.MacAddress}, Attempt {retryCount + 1}");
-                stopwatch.Restart();
+                AppLog.Warn($"Starting bootloader upgrade for {device.MacAddress}, Attempt {retryCount + 1}");
+stopwatch.Restart();
 
                 // Step 1: Bootloader Upgrade
                 var bootloaderUpgradeResult = await UpgradeSensorAsync(device.MacAddress, device.Pincode, false, true, device.DetctorType, device.FirmwareVersion, logId);
                 stopwatch.Stop();
-                Console.WriteLine($"Bootloader upgrade completed for {device.MacAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds");
-
-                if (!bootloaderUpgradeResult.Success)
+                AppLog.Info($"Bootloader upgrade completed for {device.MacAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds");
+if (!bootloaderUpgradeResult.Success)
                 {
-                    Console.WriteLine($"Bootloader upgrade failed for {device.MacAddress}. Skipping sensor upgrade.");
-                    response.Success = false;
+                    AppLog.Warn($"Bootloader upgrade failed for {device.MacAddress}. Skipping sensor upgrade.");
+response.Success = false;
                     response.StatusCode = bootloaderUpgradeResult.StatusCode;
                     response.Message = $"Bootloader upgrade failed: {bootloaderUpgradeResult.Message}";
                     return response;
@@ -1903,15 +1859,13 @@ public static int GetProgrammingCount()
                 // Allow bootloader transition delay
                 await Task.Delay(10000);
 
-                Console.WriteLine($"Starting sensor upgrade for {device.MacAddress}, Attempt {retryCount + 1}");
-
-                // Step 2: Sensor Upgrade (Only if Bootloader upgrade succeeded)
+                AppLog.Warn($"Starting sensor upgrade for {device.MacAddress}, Attempt {retryCount + 1}");
+// Step 2: Sensor Upgrade (Only if Bootloader upgrade succeeded)
                 stopwatch.Restart();
                 var sensorUpgradeResult = await UpgradeSensorAsync(device.MacAddress, device.Pincode, false, false, device.DetctorType, device.FirmwareVersion, logId);
                 stopwatch.Stop();
-                Console.WriteLine($"Sensor upgrade completed for {device.MacAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds");
-
-                if (!sensorUpgradeResult.Success)
+                AppLog.Info($"Sensor upgrade completed for {device.MacAddress}. Time taken: {stopwatch.Elapsed.TotalSeconds} seconds");
+if (!sensorUpgradeResult.Success)
                 {
                     response.Success = false;
                     response.StatusCode = sensorUpgradeResult.StatusCode;
@@ -1926,8 +1880,8 @@ public static int GetProgrammingCount()
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error during sensor and bootloader upgrade for {device.MacAddress}: {ex.Message}");
-                response.Success = false;
+                AppLog.Error($"Error during sensor and bootloader upgrade for {device.MacAddress}", ex);
+response.Success = false;
                 response.StatusCode = 500;
                 response.Message = "An unexpected error occurred during the upgrade process.";
                 return response;
@@ -1959,76 +1913,6 @@ public static int GetProgrammingCount()
         }
 
         public int UpgradeDevicesInProgress = 0;
-
-        //private async Task UpgradeDevicesInParallel(List<UpgradeProgress> devices, int numbersOfThreadsInParallel = 2)
-        //{
-        //    int maxRetriesPerComponent = 3;
-        //    Interlocked.Add(ref UpgradeDevicesInProgress, devices.Count);
-
-        //    if (numbersOfThreadsInParallel > 1)
-        //    {
-        //        Console.WriteLine("Upgrade devices - PRALLEL MODE");
-        //        SmartThreadPool smartThreadPool = new SmartThreadPool();
-        //        smartThreadPool.MaxThreads = numbersOfThreadsInParallel; //max flash devices in the same time
-
-        //        foreach (var device in devices)
-        //        {
-        //            smartThreadPool.QueueWorkItem(async dev =>
-        //            {
-        //                string logId = $"{dev.MacAddress.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
-        //                dev.RetryCount = 0;
-        //                dev.RetryCountActor = 0;
-        //                dev.RetryCountBootloader = 0;
-        //                dev.RetryCountSensor = 0;
-        //                Console.WriteLine($"Starting upgrade for device {dev.MacAddress}");
-        //                await UpgradeDeviceAsync(dev, dev.MacAddress, dev.Pincode, dev.DetectotType, dev.FirmwareVersion, true, true, true, logId);
-        //                while (!dev.IsFullyUpgraded && (dev.RetryCountActor < 2 * maxRetriesPerComponent
-        //                                            || dev.RetryCountBootloader < maxRetriesPerComponent
-        //                                            || dev.RetryCountSensor < maxRetriesPerComponent))
-        //                {
-        //                    Task.Delay(10000).Wait();
-        //                    dev.RetryCount++;
-        //                    Console.WriteLine($"Retry upgrade for device {dev.MacAddress} - Retry {dev.RetryCount}");
-        //                    await UpgradeDeviceAsync(dev, dev.MacAddress, dev.Pincode, dev.DetectotType, dev.FirmwareVersion, !dev.ActorSuccess, !dev.BootloaderSuccess, !dev.SensorSuccess, logId);
-        //                }
-
-        //                Console.WriteLine($">>>> THREAD END - {dev.MacAddress} - actor: {dev.ActorSuccess}:{dev.RetryCountActor} - bootloader: {dev.BootloaderSuccess}:{dev.RetryCountBootloader} - sensor: {dev.SensorSuccess}:{dev.RetryCountSensor}");
-
-        //                Interlocked.Decrement(ref UpgradeDevicesInProgress);
-        //            }, device);
-
-        //        }
-
-        //        smartThreadPool.WaitForIdle();
-        //    }
-        //    else
-        //    {
-        //        Console.WriteLine("Upgrade devices - SEQUENTIAL MODE");
-        //        foreach (var dev in devices)
-        //        {
-        //            string logId = $"{dev.MacAddress.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
-        //            dev.RetryCount = 0;
-        //            dev.RetryCountActor = 0;
-        //            dev.RetryCountBootloader = 0;
-        //            dev.RetryCountSensor = 0;
-        //            Console.WriteLine($"Starting upgrade for device {dev.MacAddress}");
-        //            await UpgradeDeviceAsync(dev, dev.MacAddress, dev.Pincode, dev.DetectotType, dev.FirmwareVersion, true, true, true, logId);
-        //            while (!dev.IsFullyUpgraded && (dev.RetryCountActor < 2 * maxRetriesPerComponent
-        //                                        || dev.RetryCountBootloader < maxRetriesPerComponent
-        //                                        || dev.RetryCountSensor < maxRetriesPerComponent))
-        //            {
-        //                Task.Delay(10000).Wait();
-        //                dev.RetryCount++;
-        //                Console.WriteLine($"Retry upgrade for device {dev.MacAddress} - Retry {dev.RetryCount}");
-        //                await UpgradeDeviceAsync(dev, dev.MacAddress, dev.Pincode, dev.DetectotType, dev.FirmwareVersion, !dev.ActorSuccess, !dev.BootloaderSuccess, !dev.SensorSuccess, logId);
-        //            }
-
-        //            Console.WriteLine($">>>> THREAD END - {dev.MacAddress} - actor: {dev.ActorSuccess}:{dev.RetryCountActor} - bootloader: {dev.BootloaderSuccess}:{dev.RetryCountBootloader} - sensor: {dev.SensorSuccess}:{dev.RetryCountSensor}");
-
-        //            Interlocked.Decrement(ref UpgradeDevicesInProgress);
-        //        }
-        //    }
-        //}
 
         private sealed class DeviceUpgradeSummary
         {
@@ -2066,8 +1950,8 @@ public static int GetProgrammingCount()
                     delayBetweenAttemptsMs: 2000).ConfigureAwait(false);
                 if (!cl.Success)
                 {
-                    Console.WriteLine($"[WARN] Connect+login failed for {macAddress}: {cl.Message}");
-                    return "";
+                    AppLog.Warn($" Connect+login failed for {macAddress}: {cl.Message}");
+return "";
                 }
                 else
                 {
@@ -2093,14 +1977,14 @@ public static int GetProgrammingCount()
                         actorInfo = ScanDataParser.ParseSoftwareVersionFromResponse(actorResponse.Data);
                     }
 
-                    Console.WriteLine($"{macAddress} - Get this Version: Sensor: {sensorInfo} | Actor: {actorInfo}");
-                    return ($"Sensor: {sensorInfo} | Actor: {actorInfo}");
+                    AppLog.Info($"{macAddress} - Get this Version: Sensor: {sensorInfo} | Actor: {actorInfo}");
+return ($"Sensor: {sensorInfo} | Actor: {actorInfo}");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[ERROR] GetFwVersion exception for {macAddress}: {ex}");
-            }
+                AppLog.Error($" GetFwVersion exception for {macAddress}: {ex}");
+}
             finally
             {
                 if (disconnect_on_finish)
@@ -2558,16 +2442,16 @@ public static int GetProgrammingCount()
                 if (_macsInProgress.ContainsKey(mac))
                 {
                     skippedDuplicate++;
-                    Console.WriteLine($"[UPGRADE QUEUE] SKIP add (already running): {mac}");
-                    continue;
+                    AppLog.Info($"[UPGRADE QUEUE] SKIP add (already running): {mac}");
+continue;
                 }
 
                 // Already queued pending?
                 if (!_queuedMacs.TryAdd(mac, 0))
                 {
                     skippedDuplicate++;
-                    Console.WriteLine($"[UPGRADE QUEUE] SKIP add (already queued): {mac}");
-                    continue;
+                    AppLog.Info($"[UPGRADE QUEUE] SKIP add (already queued): {mac}");
+continue;
                 }
 
                 dev.MacAddress = mac;
@@ -2579,19 +2463,15 @@ public static int GetProgrammingCount()
                 inQueue = _upgradeQueue.Count;
                 queued++;
 
-                Console.WriteLine(
-                    $"[UPGRADE QUEUE] ADDED: {mac} " +
+                AppLog.Info($"[UPGRADE QUEUE] ADDED: {mac} " +
                     $"type:{dev.DetectotType ?? ""} " +
                     $"tgt:{dev.FirmwareVersion ?? ""}");
-
-                // Wake the worker so it can start this immediately (if there is capacity)
+// Wake the worker so it can start this immediately (if there is capacity)
                 _queueSignal.Release();
             }
 
-            Console.WriteLine(
-                $"[UPGRADE QUEUE] Add request: in={devices.Count}, added={queued}, dup/ignored={skippedDuplicate}, invalid={skippedInvalid}, pending={_upgradeQueue.Count}");
-
-            lock (_upgradeQueueGate)
+            AppLog.Info($"[UPGRADE QUEUE] Add request: in={devices.Count}, added={queued}, dup/ignored={skippedDuplicate}, invalid={skippedInvalid}, pending={_upgradeQueue.Count}");
+lock (_upgradeQueueGate)
             {
                 // If the previous worker task died/completed but the flag didn't get cleared due to a race,
                 // allow restart safely.
@@ -2608,9 +2488,8 @@ public static int GetProgrammingCount()
                 int threadsParam = numbersOfThreadsInParallel;
                 int threadsEffective = threadsParam == -1 ? GlobalnumberOfParallelThreads : threadsParam;
 
-                Console.WriteLine($"[UPGRADE QUEUE] Worker START (threads={threadsEffective})");
-
-                _upgradeQueueWorkerTask = Task.Run(() => UpgradeQueueWorkerLiveAsync(threadsParam));
+                AppLog.Info($"[UPGRADE QUEUE] Worker START (threads={threadsEffective})");
+_upgradeQueueWorkerTask = Task.Run(() => UpgradeQueueWorkerLiveAsync(threadsParam));
                 return _upgradeQueueWorkerTask;
             }
         }
@@ -2748,14 +2627,13 @@ public static int GetProgrammingCount()
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[UPGRADE QUEUE] Worker crashed: {ex.GetType().Name}: {ex.Message}");
-            }
+                AppLog.Info($"[UPGRADE QUEUE] Worker crashed: {ex.GetType().Name}: {ex.Message}");
+}
             finally
             {
                 globalSw.Stop();
-                Console.WriteLine($"[UPGRADE QUEUE] Worker STOP (run complete). wall={globalSw.Elapsed.TotalSeconds:F2}s, processed={totalDevicesProcessed}, pending={_upgradeQueue.Count}");
-
-                // Optional: print run summary at end (same style as before)
+                AppLog.Info($"[UPGRADE QUEUE] Worker STOP (run complete). wall={globalSw.Elapsed.TotalSeconds:F2}s, processed={totalDevicesProcessed}, pending={_upgradeQueue.Count}");
+// Optional: print run summary at end (same style as before)
                 // Use current (dynamic) configured threads for summary readability.
                 var finalThreads = fixedParallel ? numbersOfThreadsInParallel : Math.Max(1, Volatile.Read(ref GlobalnumberOfParallelThreads));
                 PrintUpgradeRunSummary(summaries, totalDevicesProcessed, totalDeviceMs, finalThreads, globalSw);
@@ -2781,8 +2659,8 @@ public static int GetProgrammingCount()
                 }
             }
             inQueue = _upgradeQueue.Count;
-            Console.WriteLine($"[UPGRADE QUEUE] Cleared {removed} queued device(s). Pending now: {_upgradeQueue.Count}");
-            return removed;
+            AppLog.Info($"[UPGRADE QUEUE] Cleared {removed} queued device(s). Pending now: {_upgradeQueue.Count}");
+return removed;
         }
 
         /// <summary>
@@ -2835,9 +2713,8 @@ public static int GetProgrammingCount()
 
             inQueue = _upgradeQueue.Count;
             if (removed == 1)
-                Console.WriteLine($"[UPGRADE QUEUE] Removed pending device: {mac}. Pending now: {_upgradeQueue.Count}");
-
-            return removed;
+                AppLog.Info($"[UPGRADE QUEUE] Removed pending device: {mac}. Pending now: {_upgradeQueue.Count}");
+return removed;
         }
 
         public static int RemoveFromUpgradeQueuePending(string mac)
@@ -2869,8 +2746,8 @@ public static int GetProgrammingCount()
             // --- CLAIM MAC (prevents double-upgrade anywhere in the app) ---
             if (!_macsInProgress.TryAdd(mac, 0))
             {
-                Console.WriteLine($"[SKIP] {mac} already upgrading in another task");
-                deviceSw.Stop();
+                AppLog.Info($"[SKIP] {mac} already upgrading in another task");
+deviceSw.Stop();
 
 		        // Release chip lease for skipped items.
 		        chipLease.Dispose();
@@ -2891,22 +2768,18 @@ public static int GetProgrammingCount()
 		    // Bind this MAC to a Cassia BLE chip for the duration of the upgrade.
 		    _chipByMac[mac] = chipLease.Chip;
 		    CassiaChipManager.SetChip(mac, chipLease.Chip);
-		    if (_VERBOSE)
-		        Console.WriteLine($"[CHIP] {mac} assigned chip={chipLease.Chip}");
-
-            Interlocked.Increment(ref UpgradeDevicesInProgress);
+		        AppLog.Info($"[CHIP] {mac} assigned chip={chipLease.Chip}");
+Interlocked.Increment(ref UpgradeDevicesInProgress);
 
             
 // Track programming list for MQTT (mac + target fw)
 _programmingTargets[mac] = (dev.DetectotType ?? "", dev.FirmwareVersion ?? "");
 try
             {
-                if (_VERBOSE)
-                {
-                    Console.WriteLine(
-                        $"[VERBOSE][{DateTime.Now:HH:mm:ss.fff}][T{Environment.CurrentManagedThreadId}] " +
+      
+                    AppLog.Debug($"[{DateTime.Now:HH:mm:ss.fff}][T{Environment.CurrentManagedThreadId}] " +
                         System.Text.Json.JsonSerializer.Serialize(dev));
-                }
+
 
                 if (!CheckIfDeviceInBootMode(_gatewayIpAddress, mac))
                 {
@@ -2929,9 +2802,8 @@ try
                 dev.RetryCountBootloader = 0;
                 dev.RetryCountSensor = 0;
 
-                Console.WriteLine($"[START] {mac}");
-
-                dev.upgradeBootloader = FirmwareResolver.ShouldUpgradeBootloader(
+                AppLog.Info($"[START] {mac}");
+dev.upgradeBootloader = FirmwareResolver.ShouldUpgradeBootloader(
                     dev.DetectotType,
                     dev.FirmwareVersion,
                     dev.CurrentFirmwareVersion
@@ -2942,8 +2814,8 @@ try
                 if (!dev.upgradeSensor)
                 {
                     UpgradeLogger.Log(logId, mac, "Sensor upgrade skipped (FW already matches target)", "Info", dev.FirmwareVersion);
-                    Console.WriteLine($"[SKIP] Sensor upgrade for {mac} - current matches target and ForceUpdate=false");
-                }
+                    AppLog.Info($"[SKIP] Sensor upgrade for {mac} - current matches target and ForceUpdate=false");
+}
 
                 var isDaliMaster = dev.DetectotType == "P48" || dev.DetectotType == "P47";
 
@@ -2952,12 +2824,12 @@ try
                 if (isDaliMaster && !dev.isActorUpgradeNeeded)
                 {
                     UpgradeLogger.Log(logId, mac, "Actor upgrade skipped (FW already matches target)", "Info", dev.FirmwareVersion);
-                    Console.WriteLine($"[SKIP] Actor upgrade for {mac} - current matches target and ForceUpdate=false");
-                }
+                    AppLog.Info($"[SKIP] Actor upgrade for {mac} - current matches target and ForceUpdate=false");
+}
 
                 // Requirements for success reporting
-                dev.requiresConfigRestore = RestoreSettingsAfterUpgrade && (dev.DetectotType == "P48" || dev.DetectotType == "P47" || dev.DetectotType == "P46" || dev.DetectotType == "P49" || dev.DetectotType == "P41" || dev.DetectotType == "P42");
-                dev.requires102Restore = Restore102DBAfterUpgrade && (dev.DetectotType == "P48" || dev.DetectotType == "P47");
+                dev.requiresConfigRestore = RuntimeVariables.RestoreSettingsAfterUpgrade && (dev.DetectotType == "P48" || dev.DetectotType == "P47" || dev.DetectotType == "P46" || dev.DetectotType == "P49" || dev.DetectotType == "P41" || dev.DetectotType == "P42");
+                dev.requires102Restore = RuntimeVariables.Restore102DBAfterUpgrade && (dev.DetectotType == "P48" || dev.DetectotType == "P47");
 
                 await UpgradeDeviceAsync(
                     dev, mac, dev.Pincode, dev.DetectotType, dev.FirmwareVersion,
@@ -2986,10 +2858,9 @@ try
                 {
                     if (!CanRetryNow())
                     {
-                        Console.WriteLine(
-                            $"[RETRY STOP] {mac} - retries exhausted. " +
+                        AppLog.Warn($"[RETRY STOP] {mac} - retries exhausted. " +
                             $"actor:{dev.RetryCountActor} boot:{dev.RetryCountBootloader} sensor:{dev.RetryCountSensor}");
-                        UpgradeLogger.Log(logId, mac, "Retries exhausted.", "Info");
+UpgradeLogger.Log(logId, mac, "Retries exhausted.", "Info");
                         break;
                     }
 
@@ -3005,8 +2876,8 @@ try
                         logId
                     ).ConfigureAwait(false);
 
-                    Console.WriteLine($"[RETRY RESULT] {mac} - {resp.StatusCode} - {resp.Message}");
-                    UpgradeLogger.Log(logId, mac, $"Retry result: {resp.StatusCode} - {resp.Message}", resp.Success ? "Success" : "Failed");
+                    AppLog.Warn($"[RETRY RESULT] {mac} - {resp.StatusCode} - {resp.Message}");
+UpgradeLogger.Log(logId, mac, $"Retry result: {resp.StatusCode} - {resp.Message}", resp.Success ? "Success" : "Failed");
 
                     // HARD FAIL: firmware missing / path issues -> never retry
                     if (!resp.Success && resp.Message != null &&
@@ -3023,15 +2894,13 @@ try
                 deviceSw.Stop();
                 addDeviceMs(deviceSw.ElapsedMilliseconds);
 
-                Console.WriteLine(
-                    $">>>> THREAD END - {mac} " +
+                AppLog.Warn($">>>> THREAD END - {mac} " +
                     $"actor:{dev.ActorSuccess}:{dev.RetryCountActor} " +
                     $"bootloader:{dev.BootloaderSuccess}:{dev.RetryCountBootloader} " +
                     $"sensor:{dev.SensorSuccess}:{dev.RetryCountSensor} " +
                     $"restore:{dev.isConfigRestored} " +
                     $"time:{deviceSw.Elapsed.TotalSeconds:F2}s");
-
-                summaries.Add(new DeviceUpgradeSummary
+summaries.Add(new DeviceUpgradeSummary
                 {
                     Mac = mac,
                     DetectorType = dev.DetectotType ?? "",
@@ -3063,9 +2932,8 @@ try
                 deviceSw.Stop();
                 addDeviceMs(deviceSw.ElapsedMilliseconds);
 
-                Console.WriteLine($"[ERROR] {mac} - {ex.GetType().Name}: {ex.Message}");
-
-                summaries.Add(new DeviceUpgradeSummary
+                AppLog.Error($" {mac} - {ex.GetType().Name}: {ex.Message}");
+summaries.Add(new DeviceUpgradeSummary
                 {
                     Mac = mac,
                     DetectorType = dev.DetectotType ?? "",
@@ -3119,8 +2987,8 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                 .ThenBy(s => s.Mac)
                 .ToList();
 
-            Console.WriteLine("[DEVICE SUMMARY]");
-            foreach (var s in ordered)
+            AppLog.Info("[DEVICE SUMMARY]");
+foreach (var s in ordered)
             {
                 string a = s.ActorNeeded ? (s.ActorSuccess ? "A:OK" : "A:FAIL") : "A:-";
                 string b = s.BootloaderNeeded ? (s.BootloaderSuccess ? "B:OK" : "B:FAIL") : "B:-";
@@ -3128,14 +2996,13 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                 string full = s.IsFullyUpgraded ? "FULL:OK" : "FULL:FAIL";
                 string cfg = s.ConfigRestored ? "CFG:OK" : "CFG:-";
 
-                Console.WriteLine(
-                    $"  {s.Mac,-17} {s.DetectorType,-3} " +
+                AppLog.Warn($"  {s.Mac,-17} {s.DetectorType,-3} " +
                     $"cur:{s.CurrentFw,-8} -> tgt:{s.TargetFw,-8} " +
                     $"{a} {b} {se} {cfg} {full} " +
                     $"retry:{s.RetryTotal} (a:{s.RetryActor},b:{s.RetryBootloader},s:{s.RetrySensor}) " +
                     $"time:{s.Seconds,8:F2}s " +
                     $"status:{s.Status}");
-            }
+}
 
             int okCount = ordered.Count(x => x.Status == "OK");
             int errCount = ordered.Count(x => x.Status == "ERROR");
@@ -3147,22 +3014,20 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             double wallPerDevice =
                 totalDevicesProcessed > 0 ? globalSw.Elapsed.TotalSeconds / totalDevicesProcessed : 0.0;
 
-            Console.WriteLine(
-                $"[UPGRADE SUMMARY]\n" +
+            AppLog.Error($"[UPGRADE SUMMARY]\n" +
                 $"  Devices processed  : {totalDevicesProcessed}\n" +
                 $"  OK / ERROR / SKIP  : {okCount} / {errCount} / {skipCount}\n" +
                 $"  Parallel threads   : {numbersOfThreadsInParallel}\n" +
                 $"  Total wall time    : {globalSw.Elapsed.TotalSeconds:F2}s\n" +
                 $"  Avg exec / device  : {avgSecondsPerDevice:F2}s\n" +
-                $"  Wall / device      : {wallPerDevice:F2}s"
-            );
-        }
+                $"  Wall / device      : {wallPerDevice:F2}s");
+}
 
 
         public async Task<ServiceResponse> ProcessingSensorUpgrade(string nodeMac, bool bActor, bool isBootloader, string DetectorType, string FirmwareVersion, string logId) // should be moved to firmware services
         {
-            Console.WriteLine($"Processing Sensor Upgrade started->{nodeMac}");
-            var response = new ServiceResponse();
+            AppLog.Info($"Processing Sensor Upgrade started->{nodeMac}");
+var response = new ServiceResponse();
 
             var connProbe = await ConnectOnlyWithRetryAsync(
                 maxAttempts: 5,
@@ -3201,9 +3066,8 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                     return response;
                 }
                 UpgradeLogger.Log(logId, nodeMac, "NotificationEnabled", "Success");
-                Console.WriteLine($"bootloader mode achieved and Notification enabled status: {notificationEnabled} -> {nodeMac}");
-
-            }
+                AppLog.Info($"bootloader mode achieved and Notification enabled status: {notificationEnabled} -> {nodeMac}");
+}
             else
             {
                 const int maxAttempts = 5;
@@ -3214,11 +3078,11 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                     if (bootModeAchieved)
                     {
                         UpgradeLogger.Log(logId, nodeMac, "BootMode", "Achieved");
-                        Console.WriteLine($"Device entered boot mode after {attempt + 1} attempts.");
-                        break;
+                        AppLog.Info($"Device entered boot mode after {attempt + 1} attempts.");
+break;
                     }
-                    Console.WriteLine($"Attempt {attempt + 1} to enter boot mode failed. Retrying...");
-                    await Task.Delay(3000); // Delay between attempts
+                    AppLog.Warn($"Attempt {attempt + 1} to enter boot mode failed. Retrying...");
+await Task.Delay(3000); // Delay between attempts
                 }
 
                 if (!bootModeAchieved)
@@ -3269,21 +3133,20 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
 
                 if (isActorInBootMode)
                 {
-                    Console.WriteLine($"Actor {nodeMac} is in boot mode.");
-                    break; // Exit the loop if the actor is already in boot mode
+                    AppLog.Info($"Actor {nodeMac} is in boot mode.");
+break; // Exit the loop if the actor is already in boot mode
                 }
                 else
                 {
                     retryCount++;
-                    Console.WriteLine($"Actor {nodeMac} is not in boot mode. Attempting to put it into boot mode. Retry {retryCount}/{maxRetryAttempts}");
-
-                    // Send a command to put the actor into boot mode
+                    AppLog.Warn($"Actor {nodeMac} is not in boot mode. Attempting to put it into boot mode. Retry {retryCount}/{maxRetryAttempts}");
+// Send a command to put the actor into boot mode
                     var jumpToBootloaderSuccess = await SendJumpToBootloader(_gatewayIpAddress, nodeMac, bActor);
 
                     if (!jumpToBootloaderSuccess)
                     {
-                        Console.WriteLine($"Failed to send jump-to-bootloader command for {nodeMac}. Retrying...");
-                    }
+                        AppLog.Warn($"Failed to send jump-to-bootloader command for {nodeMac}. Retrying...");
+}
 
                     // Wait for a while before retrying
                     await Task.Delay(delayBetweenRetries);
@@ -3294,8 +3157,8 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             if (retryCount >= maxRetryAttempts)
             {
                 UpgradeLogger.Log(logId, nodeMac, "Actor BootMode", "Failed");
-                Console.WriteLine($"Failed to put actor {nodeMac} into boot mode after {maxRetryAttempts} attempts.");
-                response.Success = false;
+                AppLog.Warn($"Failed to put actor {nodeMac} into boot mode after {maxRetryAttempts} attempts.");
+response.Success = false;
                 response.StatusCode = 500;
                 response.Message = "Failed to put actor into boot mode.";
                 return response;
@@ -3303,9 +3166,8 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
 
             // Step 2: Enable notifications
 
-            Console.WriteLine($"Bootloader mode achieved for {nodeMac}.");
-
-            // Step 3: Start programming the actor
+            AppLog.Info($"Bootloader mode achieved for {nodeMac}.");
+// Step 3: Start programming the actor
             var programmingResult = ProgramDevice(_gatewayIpAddress, nodeMac, _notificationService, DetectorType, FirmwareVersion, bActor, false);
 
             if (programmingResult)
@@ -3342,8 +3204,8 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
 
         public bool ProgramDevice(string gatewayIpAddress, string nodeMac, CassiaNotificationService cassiaNotificationService, string DetectorType, string FirmwareVersion, bool bActor, bool isBootloader)
         {
-            Console.WriteLine($"Actor is going to be programmed? : {bActor}");
-            try
+            AppLog.Info($"Actor is going to be programmed? : {bActor}");
+try
             {
                 // Remember what we are programming so ProgressUpdate can include the stage
                 // in MQTT progress messages.
@@ -3366,31 +3228,31 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
 
                 // Phase 1 - Return relative path string
                 firmwarePath = FirmwareResolver.ResolveFirmwareFile(DetectorType, FirmwareVersion, bActor, isBootloader);
-                Console.WriteLine($"Firmware path resolved: {firmwarePath}");
-                if (!File.Exists(firmwarePath))
+                AppLog.Info($"Firmware path resolved: {firmwarePath}");
+if (!File.Exists(firmwarePath))
                 {
-                    Console.WriteLine($"[FATAL] Firmware file missing: {firmwarePath}");
-                    return false;
+                    AppLog.Fatal($" Firmware file missing: {firmwarePath}");
+return false;
                 }
                 if (bActor)
                 {
-                    Console.WriteLine($"Programming Actor  - {nodeMac}");
-                    m_comm_data.WriteData = WriteActorData;
+                    AppLog.Info($"Programming Actor  - {nodeMac}");
+m_comm_data.WriteData = WriteActorData;
                     m_comm_data.ReadData = ReadActorData;
                     m_comm_data.MaxTransferSize = 72;
                 }
                 else if (isBootloader)
                 {
-                    Console.WriteLine($"Programming Bootloader  - {nodeMac}");
-                    m_comm_data.WriteData = WriteSensorData;
+                    AppLog.Info($"Programming Bootloader  - {nodeMac}");
+m_comm_data.WriteData = WriteSensorData;
                     m_comm_data.ReadData = ReadData;
                     m_comm_data.MaxTransferSize = 265;
                 }
                 else
                 {
 
-                    Console.WriteLine($"Programming Sensor - {nodeMac}");
-                    m_comm_data.WriteData = WriteSensorData;
+                    AppLog.Info($"Programming Sensor - {nodeMac}");
+m_comm_data.WriteData = WriteSensorData;
                     m_comm_data.ReadData = ReadData;
                     m_comm_data.MaxTransferSize = 265;
                 }
@@ -3425,8 +3287,8 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                 // Handle failure
                 if (local_status != ReturnCodes.CYRET_SUCCESS)
                 {
-                    Console.WriteLine("Programming failed - status: " + local_status);
-                    _deviceStorageService.MarkFirmwareFailed(nodeMac);
+                    AppLog.Warn("Programming failed - status: " + local_status);
+_deviceStorageService.MarkFirmwareFailed(nodeMac);
                 }
 
                 return local_status == ReturnCodes.CYRET_SUCCESS;
@@ -3444,8 +3306,8 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
         {
             string macContext = MacToString(customContext);
             ManualResetEvent _notificationEvent = null;
-            //Console.WriteLine("ReadData called here for actor and sensor | maccontext: " + macContext);
-            try
+            AppLog.Verbose("ReadData called here for actor and sensor | maccontext: " + macContext);
+try
             {
                 // Wait for notification data to be available
 
@@ -3465,14 +3327,12 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
 
                     if (!_notificationEvent.WaitOne(TimeSpan.FromSeconds(20)))
                     {
-                        Console.WriteLine("ReadData timeout waiting for notification");
-
-                        //byte[] lastReadNotif = null;
+                        AppLog.Warn("ReadData timeout waiting for notification");
+//byte[] lastReadNotif = null;
                         //if (_ownInstance._lastNotificationDataRead.TryGetValue(macContext, out lastReadNotif) && lastReadNotif != null)
                         //{
-                        //    Console.WriteLine($"Read data BACKUP {macContext} - " + BitConverter.ToString(lastReadNotif).Replace("-", ""));
-
-                        //    // Copy the notification data into the provided buffer
+                        // AppLog.Verbose($"Read data BACKUP {macContext} - " + BitConverter.ToString(lastReadNotif).Replace("-", ""));
+//    // Copy the notification data into the provided buffer
                         //    int bytesToCopy = Math.Min(size, lastReadNotif.Length);
                         //    Marshal.Copy(lastReadNotif, 0, buffer, bytesToCopy);
 
@@ -3480,8 +3340,8 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
 
                         //    Thread.Sleep(5000);
 
-                        //    //Console.WriteLine($"ReadData succeeded, bytes read: {bytesToCopy}");
-                        //    return ERR_SUCCESS; // Success
+                        //    // AppLog.Verbose($"ReadData succeeded, bytes read: {bytesToCopy}");
+//    return ERR_SUCCESS; // Success
                         //}
                         //else
                         {
@@ -3503,28 +3363,26 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                     if (_notificationQueue.TryDequeue(out var notificationData))
                     {
                         //_ownInstance._lastNotificationDataRead.TryRemove(macContext, out _);
-                        if (_DEBUG)
-                            Console.WriteLine($"Read data queue process {macContext} - size: {size} - " + BitConverter.ToString(notificationData).Replace("-", ""));
-
-                        // Copy the notification data into the provided buffer
+                            AppLog.Verbose($"Read data queue process {macContext} - size: {size} - " + BitConverter.ToString(notificationData).Replace("-", ""));
+// Copy the notification data into the provided buffer
                         int bytesToCopy = Math.Min(size, notificationData.Length);
                         Marshal.Copy(notificationData, 0, buffer, bytesToCopy);
 
                         //_ownInstance._lastNotificationDataRead.TryAdd(macContext, notificationData);
 
-                        //Console.WriteLine($"ReadData succeeded, bytes read: {bytesToCopy}");
-                        return ERR_SUCCESS; // Success
+                        AppLog.Verbose($"ReadData succeeded, bytes read: {bytesToCopy}");
+return ERR_SUCCESS; // Success
                     }
                     else
                     {
-                        Console.WriteLine("ReadData failed: No data available in queue");
-                        return ERR_READ; // No data available
+                        AppLog.Warn("ReadData failed: No data available in queue");
+return ERR_READ; // No data available
                     }
                 }
                 else
                 {
-                    Console.WriteLine("ReadData failed: No notfication queue");
-                    return ERR_READ; // No data available
+                    AppLog.Warn("ReadData failed: No notfication queue");
+return ERR_READ; // No data available
                 }
             }
             finally
@@ -3542,8 +3400,8 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
         {
             string macContext = MacToString(customContext);
             ManualResetEvent _notificationEvent = null;
-            //Console.WriteLine("ReadData called here for actor and sensor | maccontext: " + macContext);
-            try
+            AppLog.Verbose("ReadData called here for actor and sensor | maccontext: " + macContext);
+try
             {
                 // Wait for notification data to be available
                 if (_ownInstance._notificationEvents.TryGetValue(macContext, out _notificationEvent) && _notificationEvent != null)
@@ -3565,9 +3423,8 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                         byte[] lastReadNotif = null;
                         //if (_ownInstance._lastNotificationDataRead.TryGetValue(macContext, out lastReadNotif) && lastReadNotif != null)
                         //{
-                        //    Console.WriteLine($"Read ACTOR BACKUP process {macContext} - " + BitConverter.ToString(lastReadNotif).Replace("-", ""));
-
-                        //    int bytesToSkip = 7;
+                        // AppLog.Verbose($"Read ACTOR BACKUP process {macContext} - " + BitConverter.ToString(lastReadNotif).Replace("-", ""));
+//    int bytesToSkip = 7;
                         //    int bytesToCopy = Math.Min(size, lastReadNotif.Length - bytesToSkip);
 
                         //    // Ensure there are enough bytes to skip
@@ -3575,21 +3432,20 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                         //    {
                         //        Marshal.Copy(lastReadNotif, bytesToSkip, buffer, bytesToCopy);
                         //        _ownInstance._lastNotificationDataRead.TryRemove(macContext, out _);
-                        //        // Console.WriteLine($"Skipped {bytesToSkip} bytes and copied {bytesToCopy} bytes.");
-
-                        //        Thread.Sleep(5000);
+                        //        // AppLog.Verbose($"Skipped {bytesToSkip} bytes and copied {bytesToCopy} bytes.");
+//        Thread.Sleep(5000);
                         //        return ERR_SUCCESS;
                         //    }
                         //    else
                         //    {
-                        //        Console.WriteLine($"Not enough data to skip {bytesToSkip} bytes. Copy operation skipped.");
-                        //        return ERR_READ; // Return an appropriate error code
+                        // AppLog.Verbose($"Not enough data to skip {bytesToSkip} bytes. Copy operation skipped.");
+//        return ERR_READ; // Return an appropriate error code
                         //    }
                         //}
                         //else
                         {
-                            Console.WriteLine("ReadData timeout waiting for notification");
-                            return ERR_READ; // Timeout or no data available
+                            AppLog.Warn("ReadData timeout waiting for notification");
+return ERR_READ; // Timeout or no data available
                         }
                     }
                 }
@@ -3606,9 +3462,8 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                     if (_notificationQueue.TryDequeue(out var notificationData))
                     {
                         //_ownInstance._lastNotificationDataRead.TryRemove(macContext, out _);
-                        if (_DEBUG)
-                            Console.WriteLine($"Read ACTOR data queue process {macContext} - size {size} - " + BitConverter.ToString(notificationData).Replace("-", ""));
-                        // Copy the notification data into the provided buffer
+                            AppLog.Verbose($"Read ACTOR data queue process {macContext} - size {size} - " + BitConverter.ToString(notificationData).Replace("-", ""));
+// Copy the notification data into the provided buffer
                         int bytesToSkip = 7;
                         int bytesToCopy = Math.Min(size, notificationData.Length - bytesToSkip);
 
@@ -3617,28 +3472,28 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                         {
                             Marshal.Copy(notificationData, bytesToSkip, buffer, bytesToCopy);
                             //_ownInstance._lastNotificationDataRead.TryAdd(macContext, notificationData);
-                            // Console.WriteLine($"Skipped {bytesToSkip} bytes and copied {bytesToCopy} bytes.");
-                        }
+                            // AppLog.Verbose($"Skipped {bytesToSkip} bytes and copied {bytesToCopy} bytes.");
+}
                         else
                         {
-                            Console.WriteLine($"Not enough data to skip {bytesToSkip} bytes. Copy operation skipped.");
-                            return ERR_READ; // Return an appropriate error code
+                            AppLog.Info($"Not enough data to skip {bytesToSkip} bytes. Copy operation skipped.");
+return ERR_READ; // Return an appropriate error code
                         }
 
 
-                        //Console.WriteLine($"ReadData succeeded, bytes read: {bytesToCopy}");
-                        return ERR_SUCCESS; // Success
+                        // AppLog.Verbose($"ReadData succeeded, bytes read: {bytesToCopy}");
+return ERR_SUCCESS; // Success
                     }
                     else
                     {
-                        Console.WriteLine("ReadData failed: No data available in queue");
-                        return ERR_READ; // No data available
+                        AppLog.Warn("ReadData failed: No data available in queue");
+return ERR_READ; // No data available
                     }
                 }
                 else
                 {
-                    Console.WriteLine("ReadData failed: No notfication queue");
-                    return ERR_READ; // No data available
+                    AppLog.Warn("ReadData failed: No notfication queue");
+return ERR_READ; // No data available
                 }
             }
             finally
@@ -3678,9 +3533,9 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                 try
                 {
 
-                    //Console.WriteLine($"Data Sent: {hexData} | macContext: {macContext}");
-                    //Console.WriteLine($"size of buffer: {size}");
-                    //SendMessage(data);
+                    // AppLog.Verbose($"Data Sent: {hexData} | macContext: {macContext}");
+// AppLog.Verbose($"size of buffer: {size}");
+//SendMessage(data);
 					_ownInstance.cassiaReadWriteService.WriteBleMessageSync(_ownInstance._gatewayIpAddress, macContext, 14, hexData, "", chip: _ownInstance.GetChipForMac(macContext));
                     Thread.Sleep(RuntimeVariables.WRITE_SLEEP_MS);
 
@@ -3698,11 +3553,11 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                     try
                     {
 
-                        //Console.WriteLine($"Data Sent: {hexData} | macContext: {macContext}");
-                        //Console.WriteLine($"size of buffer: {size}");
-                        //SendMessage(data);
-                        Console.WriteLine($"Trying again... (waited)");
-						_ownInstance.cassiaReadWriteService.WriteBleMessageSync(_ownInstance._gatewayIpAddress, macContext, 14, hexData, "", chip: _ownInstance.GetChipForMac(macContext));
+                        // AppLog.Verbose($"Data Sent: {hexData} | macContext: {macContext}");
+// AppLog.Verbose($"size of buffer: {size}");
+//SendMessage(data);
+                        AppLog.Info($"Trying again... (waited)");
+_ownInstance.cassiaReadWriteService.WriteBleMessageSync(_ownInstance._gatewayIpAddress, macContext, 14, hexData, "", chip: _ownInstance.GetChipForMac(macContext));
                         Thread.Sleep(RuntimeVariables.WRITE_SLEEP_MS);
 
                         status = true;
@@ -3729,9 +3584,8 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             Marshal.Copy(buffer, data, 0, size);
 
             // Log the data being written
-            //Console.WriteLine($"WriteData called: Buffer size={size} Data={BitConverter.ToString(data)}");
-
-            if (GetHidDevice())
+            // AppLog.Verbose($"WriteData called: Buffer size={size} Data={BitConverter.ToString(data)}");
+if (GetHidDevice())
             {
                 // Prepare and send BLE message for actor
                 BleMessage bleMessage = new BleMessage
@@ -3749,38 +3603,37 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                         throw new Exception("Failed to encode BLE telegram.");
 
 
-                    //Console.WriteLine($"macContext: {macContext}");
-                    // Send the BLE message asynchronously
+                    // AppLog.Verbose($"macContext: {macContext}");
+// Send the BLE message asynchronously
                     SendBleMessageAsync(bleMessage, macContext).GetAwaiter().GetResult();
 
                     status = true;
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Error in WriteData: {ex.Message}");
-                }
+                    AppLog.Error("Error in WriteData", ex);
+}
 
                 if (!status)
                 {
                     Thread.Sleep(1000);
                     try
                     {
-                        Console.WriteLine($"Trying again... (waited)");
-
-                        // Encode the message
+                        AppLog.Info($"Trying again... (waited)");
+// Encode the message
                         if (!bleMessage.EncodeGetBleTelegram())
                             throw new Exception("Failed to encode BLE telegram.");
 
-                        //Console.WriteLine($"macContext: {macContext}");
-                        // Send the BLE message asynchronously
+                        // AppLog.Verbose($"macContext: {macContext}");
+// Send the BLE message asynchronously
                         SendBleMessageAsync(bleMessage, macContext).GetAwaiter().GetResult();
 
                         status = true;
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"Error in WriteData: {ex.Message}");
-                    }
+                        AppLog.Error("Error in WriteData", ex);
+}
                 }
 
                 return status ? ERR_SUCCESS : ERR_WRITE;
@@ -3793,9 +3646,8 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
 
         private static async Task SendBleMessageAsync(BleMessage message, string macAddress)
         {
-            //Console.WriteLine($"Sending BLE message of size {message._BleMessageBuffer.Length}");
-
-            if (message._BleMessageBuffer.Length > 80) // Assuming 251 is the MTU size
+            // AppLog.Verbose($"Sending BLE message of size {message._BleMessageBuffer.Length}");
+if (message._BleMessageBuffer.Length > 80) // Assuming 251 is the MTU size
             {
                 int bytesSent = 0;
                 int remainingBytes = message._BleMessageBuffer.Length;
@@ -3810,8 +3662,8 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                     bytesSent += chunkSize;
                     remainingBytes -= chunkSize;
 
-                    //Console.WriteLine($"Sent chunk of size {chunkSize}. Remaining: {remainingBytes}");
-                    if (remainingBytes > 0)
+                    // AppLog.Verbose($"Sent chunk of size {chunkSize}. Remaining: {remainingBytes}");
+if (remainingBytes > 0)
                     {
                         Thread.Sleep(1000);
                     }
@@ -3835,9 +3687,8 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             // Actual sending logic (e.g., via BLE GATT write)
             //CassiaReadWriteService cassiaReadWriteService = new CassiaReadWriteService();
             string hexData = BitConverter.ToString(chunk).Replace("-", "");
-            //Console.WriteLine($"Data Sent: {hexData} -> mac: {macAddress}");
-
-		    // IMPORTANT: Always dispose the HTTP response to return the connection to the pool.
+            // AppLog.Verbose($"Data Sent: {hexData} -> mac: {macAddress}");
+// IMPORTANT: Always dispose the HTTP response to return the connection to the pool.
 		    using var _ = await _ownInstance.cassiaReadWriteService.WriteBleMessageAsync(
 		        _ownInstance._gatewayIpAddress,
 		        macAddress,
@@ -3887,8 +3738,8 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error checking boot mode for {nodeMac}: {ex.Message}");
-                return false;
+                AppLog.Error($"Error checking boot mode for {nodeMac}", ex);
+return false;
             }
         }
 
@@ -3906,9 +3757,8 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                     // Subscribe to notifications
                     cassiaListener.Subscribe(nodeMac, (sender, data) =>
                     {
-                        //Console.WriteLine($"Notification received for {nodeMac}: {data}");
-
-                        // Parse notification data
+                        // AppLog.Verbose($"Notification received for {nodeMac}: {data}");
+// Parse notification data
                         byte[] notificationData = ParseHexStringToByteArray(data);
 
                         // Logic to verify boot mode based on the received data
@@ -3919,18 +3769,18 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
 
                             if (receivedHex == "0118000800092301") // Actor is in boot mode
                             {
-                                Console.WriteLine($"Actor {nodeMac} is in boot mode.");
-                                bootCheckResultTask.TrySetResult(true);
+                                AppLog.Info($"Actor {nodeMac} is in boot mode.");
+bootCheckResultTask.TrySetResult(true);
                             }
                             else if (receivedHex == "0118000800092300") // Actor is not in boot mode
                             {
-                                Console.WriteLine($"Actor {nodeMac} is not in boot mode.");
-                                bootCheckResultTask.TrySetResult(false);
+                                AppLog.Info($"Actor {nodeMac} is not in boot mode.");
+bootCheckResultTask.TrySetResult(false);
                             }
                             else
                             {
-                                Console.WriteLine($"Unexpected response received: {receivedHex}");
-                            }
+                                AppLog.Warn($"Unexpected response received: {receivedHex}");
+}
                         }
                     });
 
@@ -3954,15 +3804,15 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                     else
                     {
                         // Handle timeout
-                        Console.WriteLine($"ActorBootCheck timed out for {nodeMac}");
-                        return false;
+                        AppLog.Warn($"ActorBootCheck timed out for {nodeMac}");
+return false;
                     }
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error in ActorBootCheck: {ex.Message}");
-                return false;
+                AppLog.Error("Error in ActorBootCheck", ex);
+return false;
             }
         }
 
@@ -4025,17 +3875,14 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                         ? globalTotalAfterPurge / _lastInstanceRate.Count
                         : 0.0;
 
-                Console.WriteLine(
-                    $"{Pad($"[{macContext}]", 22)} " +
+                AppLog.Debug($"{Pad($"[{macContext}]", 22)} " +
                     $"{Pad($"Array:{arrayID:X2}", 10)} " +
                     $"{Pad($"Row:{rowNum:X4}", 10)} | " +
                     $"{Pad($"{progress,6:F2}%", 8)} | " +
                     $"{Pad("DONE", 6)} | " +
                     $"{Pad("Total:", 8)} {globalTotalAfterPurge,7:F2}%/min | " +
-                    $"{Pad("Avg:", 6)} {globalAvgAfterPurge,7:F2}%/min (10s avg)"
-                );
-
-                var stage = _ownInstance?._programmingStageByMac.TryGetValue(macContext, out var s1) == true
+                    $"{Pad("Avg:", 6)} {globalAvgAfterPurge,7:F2}%/min (10s avg)");
+var stage = _ownInstance?._programmingStageByMac.TryGetValue(macContext, out var s1) == true
                     ? s1
                     : "";
                 var msg = string.IsNullOrWhiteSpace(stage) ? "Programming" : $"Programming {stage}";
@@ -4061,17 +3908,14 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                     ? globalTotalRatePerMin / _lastInstanceRate.Count
                     : 0.0;
 
-            Console.WriteLine(
-                $"{Pad($"[{macContext}]", 22)} " +
+            AppLog.Debug($"{Pad($"[{macContext}]", 22)} " +
                 $"{Pad($"Array:{arrayID:X2}", 10)} " +
                 $"{Pad($"Row:{rowNum:X4}", 10)} | " +
                 $"{Pad($"{progress,6:F2}%", 8)} | " +
                 $"{Pad($"{ratePerMinThisMac,7:F2}%/min", 14)} | " +
                 $"{Pad("Total:", 8)} {globalTotalRatePerMin,7:F2}%/min | " +
-                $"{Pad("Avg:", 6)} {globalAvgRatePerMin,7:F2}%/min (10s avg)"
-            );
-
-            var stage2 = _ownInstance?._programmingStageByMac.TryGetValue(macContext, out var s2) == true
+                $"{Pad("Avg:", 6)} {globalAvgRatePerMin,7:F2}%/min (10s avg)");
+var stage2 = _ownInstance?._programmingStageByMac.TryGetValue(macContext, out var s2) == true
                 ? s2
                 : "";
             var msg2 = string.IsNullOrWhiteSpace(stage2) ? "Programming" : $"Programming {stage2}";
@@ -4119,8 +3963,8 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             // Unsubscribe from all previous subscriptions
             //foreach (var subscribedMac in _subscribedMacAddresses)
             //{
-            //    Console.WriteLine($"Unsubscribing from notifications for {subscribedMac}");
-            //    cassiaNotificationService.Unsubscribe(subscribedMac);
+            //AppLog.Verbose($"Unsubscribing from notifications for {subscribedMac}");
+//    cassiaNotificationService.Unsubscribe(subscribedMac);
             //}
 
             cassiaNotificationService.Unsubscribe(macAddress);
@@ -4149,10 +3993,8 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             // Subscribe to notifications for the new MAC address
             cassiaNotificationService.Subscribe(macAddress, (sender, data) =>
             {
-                if (_DEBUG)
-                    Console.WriteLine($"Notification received for {macAddress}: {data}");
-
-                // Parse the notification data into a byte array
+                    AppLog.Verbose($"Notification received for {macAddress}: {data}");
+// Parse the notification data into a byte array
                 byte[] parsedData = ParseHexStringToByteArray(data);
 
                 // Enqueue the data into the notification queue
@@ -4179,8 +4021,8 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             if (_notificationQueues.TryGetValue(macAddress, out _tmpCheck) && _tmpCheck != null)
             //if (_subscribedMacAddresses.Contains(macAddress))
             {
-                Console.WriteLine($"Unsubscribing from notifications for {macAddress}");
-                cassiaNotificationService.Unsubscribe(macAddress);
+                AppLog.Info($"Unsubscribing from notifications for {macAddress}");
+cassiaNotificationService.Unsubscribe(macAddress);
                 //_subscribedMacAddresses.Remove(macAddress);
                 _notificationQueues.TryRemove(macAddress, out _tmpCheck);
                 ManualResetEvent evt = null;
@@ -4222,17 +4064,17 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
 
                 if (response.IsSuccessStatusCode)
                 {
-                    Console.WriteLine($"Notification enabled successfully. {nodeMac}");
-                    return true;
+                    AppLog.Info($"Notification enabled successfully. {nodeMac}");
+return true;
                 }
 
-                Console.WriteLine($"Failed to enable notification. Status code: {response.StatusCode}");
-                return false;
+                AppLog.Warn($"Failed to enable notification. Status code: {response.StatusCode}");
+return false;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Exception occurred while enabling notification: {ex.Message}");
-                return false;
+                AppLog.Error($"Exception occurred while enabling notification: {ex.Message}");
+return false;
             }
         }
         // Public entrypoint used by MQTT start-update handler

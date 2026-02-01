@@ -16,5 +16,9 @@ namespace AccessAPP
         // Max concurrent REST requests per chip (keep at 1 for strict ordering; 2 can be faster if stable).
         public static int CASSIA_MAX_INFLIGHT_PER_CHIP = 1;
 
+        public static bool RebootDetectorAfterUpgrade = true;
+        public static bool Restore102DBAfterUpgrade = true;
+        public static bool RestoreSettingsAfterUpgrade = true;
+        public static bool AutoSetSysFailLevelUnderUpdate = true;
     }
 }

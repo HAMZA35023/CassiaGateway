@@ -135,8 +135,8 @@ namespace AccessAPP.Services
                 HttpResponseMessage batchConnectResponse = await _httpClient.PostAsync(batchConnectEndpoint, request);
 
                 string responseContent = await batchConnectResponse.Content.ReadAsStringAsync();
-                Console.WriteLine($"Batch Connect Response: {batchConnectResponse.StatusCode}, Content: {responseContent}");
-                // Return the response formatted as ResponseModel
+                AppLog.Debug($"Batch Connect Response: {batchConnectResponse.StatusCode}, Content: {responseContent}");
+// Return the response formatted as ResponseModel
                 return Helper.CreateResponse("BatchConnect", batchConnectResponse);
             }
             catch (Exception ex)

@@ -150,8 +150,8 @@ namespace AccessAPP.Services.HelperClasses
                 // If no current firmware info, always upgrade bootloader
                 if (string.IsNullOrWhiteSpace(currentFirmwareVersion))
                 {
-                    Console.WriteLine("No current firmware version provided, upgrading bootloader by default.");
-                    return true;
+                    AppLog.Info("No current firmware version provided, upgrading bootloader by default.");
+return true;
                 }
 
                 // 1. Resolve the bootloader file path for the given version
@@ -161,24 +161,22 @@ namespace AccessAPP.Services.HelperClasses
                 string currentBootVer = ExtractBootVersionFromString(currentFirmwareVersion);
                 string expectedBootVer = ExtractBootVersionFromFilename(bootloaderPath);
 
-                Console.WriteLine($"Current Bootloader Version: {currentBootVer} - Expected Bootloader Version: {expectedBootVer}");
-
-                // 3. If either is missing, default to upgrade
+                AppLog.Info($"Current Bootloader Version: {currentBootVer} - Expected Bootloader Version: {expectedBootVer}");
+// 3. If either is missing, default to upgrade
                 if (string.IsNullOrEmpty(currentBootVer) || string.IsNullOrEmpty(expectedBootVer))
                     return true;
 
                 // 4. Compare versions
                 bool required_update = currentBootVer != expectedBootVer;
 
-                Console.WriteLine($"Updating Bootloader = {required_update}");
-
-                // 4. Compare versions
+                AppLog.Info($"Updating Bootloader = {required_update}");
+// 4. Compare versions
                 return required_update;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"FirmwareResolver fallback: {ex.Message}");
-                return true; // fallback to upgrade if anything fails
+                AppLog.Info($"FirmwareResolver fallback: {ex.Message}");
+return true; // fallback to upgrade if anything fails
             }
         }
 
