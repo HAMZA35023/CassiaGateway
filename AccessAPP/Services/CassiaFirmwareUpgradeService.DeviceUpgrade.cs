@@ -1,6 +1,7 @@
 using AccessAPP.Models;
 using AccessAPP.Services.HelperClasses;
-using AccessAPP.Logging;
+using AccessAPP.Services.UpgradeCore;
+using AccessAPP.Services.UpgradePipeline;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -15,350 +16,11 @@ using System.Threading.Tasks;
 
 namespace AccessAPP.Services
 {
-    // Split-out: upgrade queue + live worker (no behavior changes; moved from CassiaFirmwareUpgradeService.cs)
     public partial class CassiaFirmwareUpgradeService
     {
-        // ---------- QUEUE STATE ----------
-        private readonly ConcurrentQueue<UpgradeProgress> _upgradeQueue = new();
-        private readonly ConcurrentDictionary<string, byte> _queuedMacs = new(); // pending membership set
-        private readonly object _upgradeQueueGate = new();
-
-        // Guards mutations of the underlying ConcurrentQueue when we need
-        // stronger-than-eventual-consistency operations (e.g. remove single item).
-        private readonly object _queueEditGate = new();
-
-        // Wake-up signal for worker when new items arrive
-        private readonly SemaphoreSlim _queueSignal = new(0, int.MaxValue);
-
-        private bool _upgradeQueueWorkerRunning;
-        private Task? _upgradeQueueWorkerTask;
-
-        private static string NormalizeMac(string? mac)
-            => (mac ?? string.Empty).Trim().ToUpperInvariant();
-
-        /// <summary>
-        /// Queue-enabled FIFO entrypoint.
-        /// First call starts the worker; subsequent calls only enqueue and return quickly.
-        /// Dedup: won't enqueue same MAC twice while pending or running.
-        /// </summary>
-        private Task UpgradeDevicesInParallel(List<UpgradeProgress> devices, int numbersOfThreadsInParallel = -1)
-        {
-            if (devices == null || devices.Count == 0)
-                return Task.CompletedTask;
-
-            int queued = 0;
-            int skippedDuplicate = 0;
-            int skippedInvalid = 0;
-
-            foreach (var dev in devices)
-            {
-                var mac = NormalizeMac(dev?.MacAddress);
-
-                if (string.IsNullOrWhiteSpace(mac))
-                {
-                    skippedInvalid++;
-                    continue;
-                }
-
-                // Already running anywhere?
-                if (_macsInProgress.ContainsKey(mac))
-                {
-                    skippedDuplicate++;
-                    AppLog.Info($"[UPGRADE QUEUE] SKIP add (already running): {mac}");
-continue;
-                }
-
-                // Already queued pending?
-                if (!_queuedMacs.TryAdd(mac, 0))
-                {
-                    skippedDuplicate++;
-                    AppLog.Info($"[UPGRADE QUEUE] SKIP add (already queued): {mac}");
-continue;
-                }
-
-                dev.MacAddress = mac;
-
-                lock (_queueEditGate)
-                {
-                    _upgradeQueue.Enqueue(dev);
-                }
-                inQueue = _upgradeQueue.Count;
-                queued++;
-
-                AppLog.Info($"[UPGRADE QUEUE] ADDED: {mac} " +
-                    $"type:{dev.DetectotType ?? ""} " +
-                    $"tgt:{dev.FirmwareVersion ?? ""}");
-// Wake the worker so it can start this immediately (if there is capacity)
-                _queueSignal.Release();
-            }
-
-            AppLog.Info($"[UPGRADE QUEUE] Add request: in={devices.Count}, added={queued}, dup/ignored={skippedDuplicate}, invalid={skippedInvalid}, pending={_upgradeQueue.Count}");
-lock (_upgradeQueueGate)
-            {
-                // If the previous worker task died/completed but the flag didn't get cleared due to a race,
-                // allow restart safely.
-                if (_upgradeQueueWorkerRunning && _upgradeQueueWorkerTask is { IsCompleted: false })
-                    return Task.CompletedTask;
-
-                if (_upgradeQueue.IsEmpty)
-                    return Task.CompletedTask;
-
-                _upgradeQueueWorkerRunning = true;
-
-                // Pass -1 to indicate "follow GlobalnumberOfParallelThreads dynamically".
-                // If a caller provides a fixed value, keep it fixed for the run.
-                int threadsParam = numbersOfThreadsInParallel;
-                int threadsEffective = threadsParam == -1 ? GlobalnumberOfParallelThreads : threadsParam;
-
-                AppLog.Info($"[UPGRADE QUEUE] Worker START (threads={threadsEffective})");
-_upgradeQueueWorkerTask = Task.Run(() => UpgradeQueueWorkerLiveAsync(threadsParam));
-                return _upgradeQueueWorkerTask;
-            }
-        }
-
-        /// <summary>
-        /// Live queue worker: starts new device upgrades as soon as there is capacity,
-        /// without waiting for the current "batch" to finish.
-        /// </summary>
-        private async Task UpgradeQueueWorkerLiveAsync(int numbersOfThreadsInParallel)
-        {
-            // Per-run summary (run = from first enqueue until queue+running becomes empty)
-            var globalSw = Stopwatch.StartNew();
-            long totalDeviceMs = 0;
-            int totalDevicesProcessed = 0;
-
-            var summaries = new ConcurrentBag<DeviceUpgradeSummary>();
-
-            // If the worker was started with a fixed value, keep it fixed.
-            // If started with a value derived from GlobalnumberOfParallelThreads (normal case),
-            // allow runtime changes to take effect.
-            bool fixedParallel = numbersOfThreadsInParallel != -1;
-
-            int CurrentMaxThreads()
-            {
-                if (fixedParallel) return Math.Max(1, numbersOfThreadsInParallel);
-                return Math.Max(1, Volatile.Read(ref GlobalnumberOfParallelThreads));
-            }
-
-            var running = new List<Task>(capacity: Math.Max(1, CurrentMaxThreads()));
-
-            try
-            {
-                while (true)
-                {
-                    // Fill capacity immediately from FIFO
-                    var maxThreads = CurrentMaxThreads();
-                    while (running.Count < maxThreads)
-                    {
-                        UpgradeProgress? dev;
-                        lock (_queueEditGate)
-                        {
-                            if (!_upgradeQueue.TryDequeue(out dev))
-                                break;
-                        }
-                        inQueue = _upgradeQueue.Count;
-                        var mac = NormalizeMac(dev?.MacAddress);
-                        if (!string.IsNullOrWhiteSpace(mac))
-                            _queuedMacs.TryRemove(mac, out _); // leaving pending queue
-
-                        if (dev == null)
-                            continue;
-
-                        totalDevicesProcessed++;
-
-						// Start immediately. On Cassia X2000 we can use both BLE chips; when enabled,
-						// each in-flight upgrade is assigned a chip (0/1) and all REST calls for that MAC
-						// are forced to that chip.
-						ChipLease lease;
-						if (RuntimeVariables.USE_BOTH_CASSIA_CHIPS && maxThreads >= 2)
-							lease = await _chipAllocator.AcquireAsync().ConfigureAwait(false);
-						else
-							lease = ChipLease.Fixed(RuntimeVariables.DEFAULT_CASSIA_CHIP);
-
-						running.Add(ProcessSingleDeviceUpgradeAsync(dev, lease, summaries, ms => Interlocked.Add(ref totalDeviceMs, ms)));
-                        inQueue = _upgradeQueue.Count;
-                    }
-
-                    // Clean out completed tasks
-                    for (int i = running.Count - 1; i >= 0; i--)
-                    {
-                        if (running[i].IsCompleted)
-                            running.RemoveAt(i);
-                    }
-
-                    // If nothing queued and nothing running -> stop the run,
-                    // BUT avoid a race where an enqueue happens right as we decide to stop.
-                    // We "linger" briefly waiting for a signal.
-                    if (_upgradeQueue.IsEmpty && running.Count == 0)
-                    {
-                        // If someone enqueued right now, they release _queueSignal.
-                        // Wait a tiny bit to catch it.
-                        bool gotLateSignal = await _queueSignal.WaitAsync(250).ConfigureAwait(false);
-
-                        if (gotLateSignal)
-                        {
-                            // New work arrived during shutdown window; continue loop and drain queue.
-                            continue;
-                        }
-
-                        lock (_upgradeQueueGate)
-                        {
-                            // Double-check again under the gate before stopping.
-                            if (_upgradeQueue.IsEmpty)
-                            {
-                                _upgradeQueueWorkerRunning = false;
-                                _upgradeQueueWorkerTask = null;
-                                break;
-                            }
-                        }
-                    }
-
-
-
-                    // Wait for either:
-                    // - a running device completes (freeing capacity)
-                    // - a new device is enqueued (signal)
-                    //
-                    // IMPORTANT:
-                    // We must never block on the signal if the queue already contains items,
-                    // because the signal tokens can be consumed earlier while we were at capacity.
-                    // In that case, relying on the signal would stall the worker even though work is queued.
-					// If we have queued work AND available worker capacity, start it immediately.
-					// This is critical when multiple items were enqueued while we were at capacity,
-					// because the signal tokens can be consumed earlier. We must not stall here.
-					var maxNow = CurrentMaxThreads();
-					if (!_upgradeQueue.IsEmpty && running.Count < maxNow)
-						continue;
-
-					if (running.Count > 0)
-                    {
-                        Task completion = Task.WhenAny(running);
-                        Task signal = _queueSignal.WaitAsync();
-                        await Task.WhenAny(completion, signal).ConfigureAwait(false);
-                    }
-                    else
-                    {
-                        // No running tasks. If we already have queued work, loop immediately and start it.
-                        if (!_upgradeQueue.IsEmpty)
-                            continue;
-
-                        // Otherwise wait until something is enqueued.
-                        await _queueSignal.WaitAsync().ConfigureAwait(false);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                AppLog.Info($"[UPGRADE QUEUE] Worker crashed: {ex.GetType().Name}: {ex.Message}");
-}
-            finally
-            {
-                globalSw.Stop();
-                AppLog.Info($"[UPGRADE QUEUE] Worker STOP (run complete). wall={globalSw.Elapsed.TotalSeconds:F2}s, processed={totalDevicesProcessed}, pending={_upgradeQueue.Count}");
-// Optional: print run summary at end (same style as before)
-                // Use current (dynamic) configured threads for summary readability.
-                var finalThreads = fixedParallel ? numbersOfThreadsInParallel : Math.Max(1, Volatile.Read(ref GlobalnumberOfParallelThreads));
-                PrintUpgradeRunSummary(summaries, totalDevicesProcessed, totalDeviceMs, finalThreads, globalSw);
-            }
-        }
-
-        /// <summary>
-        /// Clears only pending items in the FIFO queue (does not cancel in-progress upgrades).
-        /// Returns how many were removed.
-        /// </summary>
-        public int ClearUpgradeQueue()
-        {
-            int removed = 0;
-
-            lock (_queueEditGate)
-            {
-                while (_upgradeQueue.TryDequeue(out var dev))
-                {
-                    removed++;
-                    var mac = NormalizeMac(dev?.MacAddress);
-                    if (!string.IsNullOrWhiteSpace(mac))
-                        _queuedMacs.TryRemove(mac, out _);
-                }
-            }
-            inQueue = _upgradeQueue.Count;
-            AppLog.Info($"[UPGRADE QUEUE] Cleared {removed} queued device(s). Pending now: {_upgradeQueue.Count}");
-return removed;
-        }
-
-        /// <summary>
-        /// Removes a single MAC from the pending FIFO queue (does not cancel in-progress upgrades).
-        /// Returns 1 if removed, 0 if not found/pending.
-        /// </summary>
-        public int RemoveFromUpgradeQueue(string mac)
-        {
-            mac = NormalizeMac(mac);
-            if (string.IsNullOrWhiteSpace(mac)) return 0;
-
-            int removed = 0;
-
-            lock (_queueEditGate)
-            {
-                // Quick exit if it isn't marked as queued
-                if (!_queuedMacs.ContainsKey(mac))
-                    return 0;
-
-                var items = new List<UpgradeProgress>(capacity: Math.Max(16, _upgradeQueue.Count));
-                while (_upgradeQueue.TryDequeue(out var dev))
-                {
-                    if (dev is null)
-                        continue;
-
-                    var m = NormalizeMac(dev.MacAddress);
-                    if (string.Equals(m, mac, StringComparison.OrdinalIgnoreCase) && removed == 0)
-                    {
-                        removed = 1;
-                        // do not re-enqueue
-                        continue;
-                    }
-
-                    items.Add(dev);
-                }
-
-                _queuedMacs.Clear();
-
-                foreach (var dev in items)
-                {
-                    var m = NormalizeMac(dev.MacAddress);
-                    if (!string.IsNullOrWhiteSpace(m))
-                        _queuedMacs.TryAdd(m, 0);
-                    _upgradeQueue.Enqueue(dev);
-                }
-
-                if (removed == 1)
-                    _queuedMacs.TryRemove(mac, out _);
-            }
-
-            inQueue = _upgradeQueue.Count;
-            if (removed == 1)
-                AppLog.Info($"[UPGRADE QUEUE] Removed pending device: {mac}. Pending now: {_upgradeQueue.Count}");
-return removed;
-        }
-
-        public static int RemoveFromUpgradeQueuePending(string mac)
-        {
-            var inst = _ownInstance;
-            return inst is null ? 0 : inst.RemoveFromUpgradeQueue(mac);
-        }
-
-        public List<(string Mac, string DetectorType, string TargetFw)> GetUpgradeQueueSnapshot()
-        {
-            return _upgradeQueue
-                .ToArray()
-                .Select(d => (NormalizeMac(d.MacAddress), d.DetectotType ?? "", d.FirmwareVersion ?? ""))
-                .ToList();
-        }
-
-        // ------------------------------------------------------------------------------------
-        // Per-device logic extracted from your original tasks delegate (same behavior)
-        // ------------------------------------------------------------------------------------
-		private async Task ProcessSingleDeviceUpgradeAsync(
+		internal async Task ProcessSingleDeviceUpgradeAsync(
 		    UpgradeProgress dev,
-		    ChipLease chipLease,
+		    ChipAllocationManager.ChipLease chipLease,
 		    ConcurrentBag<DeviceUpgradeSummary> summaries,
 		    Action<long> addDeviceMs)
         {
@@ -374,21 +36,17 @@ deviceSw.Stop();
 		        // Release chip lease for skipped items.
 		        chipLease.Dispose();
 
-                summaries.Add(new DeviceUpgradeSummary
-                {
-                    Mac = mac,
-                    DetectorType = dev.DetectotType ?? "",
-                    TargetFw = dev.FirmwareVersion ?? "",
-                    CurrentFw = dev.CurrentFirmwareVersion ?? "",
-                    Seconds = deviceSw.Elapsed.TotalSeconds,
-                    Status = "SKIPPED"
-                });
+                summaries.Add(UpgradeSummaryFactory.Create(
+                    mac: mac,
+                    dev: dev,
+                    seconds: deviceSw.Elapsed.TotalSeconds,
+                    status: "SKIPPED"));
 
 		        return;
             }
 
 		    // Bind this MAC to a Cassia BLE chip for the duration of the upgrade.
-		    _chipByMac[mac] = chipLease.Chip;
+		    _chipManager.BindMacToChip(mac, chipLease.Chip);
 		    CassiaChipManager.SetChip(mac, chipLease.Chip);
 		        AppLog.Info($"[CHIP] {mac} assigned chip={chipLease.Chip}");
 Interlocked.Increment(ref UpgradeDevicesInProgress);
@@ -425,60 +83,37 @@ try
                 dev.RetryCountSensor = 0;
 
                 AppLog.Info($"[START] {mac}");
-dev.upgradeBootloader = FirmwareResolver.ShouldUpgradeBootloader(
-                    dev.DetectotType,
-                    dev.FirmwareVersion,
-                    dev.CurrentFirmwareVersion
-                );
+                var decisions = UpgradeDecisionCalculator.Compute(dev);
 
-                // Skip sensor upgrade when current App FW matches target, unless forced.
-                dev.upgradeSensor = dev.ForceUpdate || !FirmwareResolver.IsSameAppVersion(dev.CurrentFirmwareVersion, dev.FirmwareVersion);
+                dev.upgradeBootloader = decisions.UpgradeBootloader;
+                dev.upgradeSensor = decisions.UpgradeSensor;
                 if (!dev.upgradeSensor)
                 {
                     UpgradeLogger.Log(logId, mac, "Sensor upgrade skipped (FW already matches target)", "Info", dev.FirmwareVersion);
                     AppLog.Info($"[SKIP] Sensor upgrade for {mac} - current matches target and ForceUpdate=false");
 }
 
-                var isDaliMaster = dev.DetectotType == "P48" || dev.DetectotType == "P47";
-
-                // Skip actor upgrade when current Actor App FW matches target, unless forced.
-                dev.isActorUpgradeNeeded = isDaliMaster && (dev.ForceUpdate || !FirmwareResolver.IsSameActorAppVersion(dev.CurrentFirmwareVersion, dev.FirmwareVersion));
-                if (isDaliMaster && !dev.isActorUpgradeNeeded)
+                dev.isActorUpgradeNeeded = decisions.ActorUpgradeNeeded;
+                if (decisions.IsDaliMaster && !dev.isActorUpgradeNeeded)
                 {
                     UpgradeLogger.Log(logId, mac, "Actor upgrade skipped (FW already matches target)", "Info", dev.FirmwareVersion);
                     AppLog.Info($"[SKIP] Actor upgrade for {mac} - current matches target and ForceUpdate=false");
 }
 
                 // Requirements for success reporting
-                dev.requiresConfigRestore = RuntimeVariables.RestoreSettingsAfterUpgrade && (dev.DetectotType == "P48" || dev.DetectotType == "P47" || dev.DetectotType == "P46" || dev.DetectotType == "P49" || dev.DetectotType == "P41" || dev.DetectotType == "P42");
-                dev.requires102Restore = RuntimeVariables.Restore102DBAfterUpgrade && (dev.DetectotType == "P48" || dev.DetectotType == "P47");
+                dev.requiresConfigRestore = decisions.RequiresConfigRestore;
+                dev.requires102Restore = decisions.Requires102Restore;
 
                 await UpgradeDeviceAsync(
                     dev, mac, dev.Pincode, dev.DetectotType, dev.FirmwareVersion,
                     dev.isActorUpgradeNeeded, dev.upgradeBootloader, dev.upgradeSensor, logId
                 ).ConfigureAwait(false);
 
-                int maxRetriesPerComponent = 5;
-
-                bool CanRetryNow()
-                {
-                    // IMPORTANT: RetryCountActor/Sensor/Bootloader are incremented inside UpgradeDeviceAsync before each attempt.
-                    // So we only *check* here, we do NOT increment here (avoids double-counting and off-by-one behavior).
-                    bool actorOk =
-                        !dev.isActorUpgradeNeeded || dev.ActorSuccess || dev.RetryCountActor < 2 * maxRetriesPerComponent;
-
-                    bool bootOk =
-                        !dev.upgradeBootloader || dev.BootloaderSuccess || dev.RetryCountBootloader < maxRetriesPerComponent;
-
-                    bool sensorOk =
-                        dev.SensorSuccess || dev.RetryCountSensor < maxRetriesPerComponent;
-
-                    return actorOk && bootOk && sensorOk && dev.shouldRetry && dev.RetryCount <= 10;
-                }
+                const int maxRetriesPerComponent = 5;
 
                 while (!dev.IsFullyUpgraded)
                 {
-                    if (!CanRetryNow())
+                    if (!UpgradeRetryPolicy.CanRetryNow(dev, maxRetriesPerComponent))
                     {
                         AppLog.Warn($"[RETRY STOP] {mac} - retries exhausted. " +
                             $"actor:{dev.RetryCountActor} boot:{dev.RetryCountBootloader} sensor:{dev.RetryCountSensor}");
@@ -522,30 +157,11 @@ UpgradeLogger.Log(logId, mac, $"Retry result: {resp.StatusCode} - {resp.Message}
                     $"sensor:{dev.SensorSuccess}:{dev.RetryCountSensor} " +
                     $"restore:{dev.isConfigRestored} " +
                     $"time:{deviceSw.Elapsed.TotalSeconds:F2}s");
-summaries.Add(new DeviceUpgradeSummary
-                {
-                    Mac = mac,
-                    DetectorType = dev.DetectotType ?? "",
-                    TargetFw = dev.FirmwareVersion ?? "",
-                    CurrentFw = dev.CurrentFirmwareVersion ?? "",
-
-                    ActorNeeded = dev.isActorUpgradeNeeded,
-                    BootloaderNeeded = dev.upgradeBootloader,
-
-                    ActorSuccess = dev.ActorSuccess,
-                    BootloaderSuccess = dev.BootloaderSuccess,
-                    SensorSuccess = dev.SensorSuccess,
-                    IsFullyUpgraded = dev.IsFullyUpgraded,
-                    ConfigRestored = dev.isConfigRestored,
-
-                    RetryTotal = dev.RetryCount,
-                    RetryActor = dev.RetryCountActor,
-                    RetryBootloader = dev.RetryCountBootloader,
-                    RetrySensor = dev.RetryCountSensor,
-
-                    Seconds = deviceSw.Elapsed.TotalSeconds,
-                    Status = "OK"
-                });
+                summaries.Add(UpgradeSummaryFactory.Create(
+                    mac: mac,
+                    dev: dev,
+                    seconds: deviceSw.Elapsed.TotalSeconds,
+                    status: "OK"));
 
                 UpgradeLogger.Log(logId, mac, "Device Upgrade Completed.", dev.finalUpgradeResult);
             }
@@ -555,38 +171,20 @@ summaries.Add(new DeviceUpgradeSummary
                 addDeviceMs(deviceSw.ElapsedMilliseconds);
 
                 AppLog.Error($" {mac} - {ex.GetType().Name}: {ex.Message}");
-summaries.Add(new DeviceUpgradeSummary
-                {
-                    Mac = mac,
-                    DetectorType = dev.DetectotType ?? "",
-                    TargetFw = dev.FirmwareVersion ?? "",
-                    CurrentFw = dev.CurrentFirmwareVersion ?? "",
 
-                    ActorNeeded = dev.isActorUpgradeNeeded,
-                    BootloaderNeeded = dev.upgradeBootloader,
-
-                    ActorSuccess = dev.ActorSuccess,
-                    BootloaderSuccess = dev.BootloaderSuccess,
-                    SensorSuccess = dev.SensorSuccess,
-                    IsFullyUpgraded = dev.IsFullyUpgraded,
-                    ConfigRestored = dev.isConfigRestored,
-
-                    RetryTotal = dev.RetryCount,
-                    RetryActor = dev.RetryCountActor,
-                    RetryBootloader = dev.RetryCountBootloader,
-                    RetrySensor = dev.RetryCountSensor,
-
-                    Seconds = deviceSw.Elapsed.TotalSeconds,
-                    Status = "ERROR",
-                    Error = ex.ToString()
-                });
+				summaries.Add(UpgradeSummaryFactory.Create(
+				mac: mac,
+				dev: dev,
+				seconds: deviceSw.Elapsed.TotalSeconds,
+				status: "ERROR",
+				error: ex.ToString()));
             }
             finally
             {
                 _macsInProgress.TryRemove(mac, out _);
 
 				// Release chip assignment + lease
-				_chipByMac.TryRemove(mac, out _);
+				_chipManager.UnbindMac(mac);
 				CassiaChipManager.ReleaseChip(mac);
 				chipLease.Dispose();
 
@@ -596,7 +194,7 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             }
         }
 
-        private void PrintUpgradeRunSummary(
+		internal void PrintUpgradeRunSummary(
             ConcurrentBag<DeviceUpgradeSummary> summaries,
             int totalDevicesProcessed,
             long totalDeviceMs,
@@ -810,19 +408,10 @@ response.Success = false;
             }
         }
 
-        public static UInt64 MacToInt64(string macAddress)
-        {
-            string hex = macAddress.Replace(":", "");
-            return Convert.ToUInt64(hex, 16);
-        }
+        
 
-        public static string MacToString(UInt64 macAddress)
-        {
-            return string.Join(":",
-                                BitConverter.GetBytes(macAddress).Reverse()
-                                .Select(b => b.ToString("X2"))).Substring(6);
-        }
-        Bootloader_Utils.CyBtldr_ProgressUpdate Upd = new Bootloader_Utils.CyBtldr_ProgressUpdate(CassiaFirmwareUpgradeService.ProgressUpdate);
+        
+        
 
         public bool ProgramDevice(string gatewayIpAddress, string nodeMac, CassiaNotificationService cassiaNotificationService, string DetectorType, string FirmwareVersion, bool bActor, bool isBootloader)
         {
@@ -922,6 +511,7 @@ _deviceStorageService.MarkFirmwareFailed(nodeMac);
                 //UnsubscribeNotification(nodeMac, cassiaNotificationService);
             }
         }
+
 
 
 
