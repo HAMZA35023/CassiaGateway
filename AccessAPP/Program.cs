@@ -1,4 +1,5 @@
 ﻿using AccessAPP.Services;
+using AccessAPP.Models;
 using Serilog;
 
 const string VERSION = "0.2.0";
