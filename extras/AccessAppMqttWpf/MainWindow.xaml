@@ -759,6 +759,7 @@
                                     </DataGridTemplateColumn>
 
                                     <DataGridTextColumn Header="Status" Binding="{Binding ProcessStatus}" Width="200" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="Chip" Binding="{Binding ChipUsed}" Width="50" IsReadOnly="True"/>
                                     <DataGridTextColumn Header="%" Binding="{Binding ProcessProgress}" Width="40" IsReadOnly="True"/>
                                     <DataGridTextColumn Header="FW" Binding="{Binding ProcessFirmware}" Width="90" IsReadOnly="True"/>
                                     <DataGridTextColumn Header="Current FW" Binding="{Binding DisplayFw}" Width="90" IsReadOnly="True"/>
@@ -834,6 +835,7 @@
                                     <DataGrid.Columns>
                                         <DataGridTextColumn Header="MAC" Binding="{Binding Mac}" Width="160"/>
                                         <DataGridTextColumn Header="Cassia" Binding="{Binding Cassia}" Width="110"/>
+                                        <DataGridTextColumn Header="Chip" Binding="{Binding ChipUsed}" Width="50"/>
                                         <DataGridTemplateColumn Header="RSSI" Width="220" CanUserSort="False">
                                             <DataGridTemplateColumn.CellTemplate>
                                                 <DataTemplate>

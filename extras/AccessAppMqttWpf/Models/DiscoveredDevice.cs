@@ -22,6 +22,7 @@ public partial class DiscoveredDevice : ObservableObject
 [ObservableProperty] private int processProgress = 0; // 0..100
 [ObservableProperty] private string processCassia = "";
 [ObservableProperty] private string processFirmware = "";
+    [ObservableProperty] private string chipUsed = "";
     [ObservableProperty] private DateTimeOffset? processLastUpdateUtc;
 
     // BLE link status from connect/disconnect plain replies

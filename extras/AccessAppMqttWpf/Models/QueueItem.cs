@@ -16,6 +16,8 @@ public partial class QueueItem : ObservableObject
     [ObservableProperty] private string command = "";
     [ObservableProperty] private string detectorType = "";
     [ObservableProperty] private string firmwareVersion = "";
+    [ObservableProperty] private string chipUsed = "";
+
 
     [ObservableProperty] private string status = "Queued";
     [ObservableProperty] private int progress = 0;
