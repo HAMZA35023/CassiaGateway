@@ -46,6 +46,20 @@ public sealed class SetMqttScopeCommand
 }
 
 
+
+// NEW: change Cassia gateway name at runtime (persists to mqtt.json)
+public sealed class SetCassiaNameCommand
+{
+    public string? Name { get; set; }
+}
+
+// NEW: change both MQTT scope + gateway name (persists to mqtt.json)
+public sealed class SetIdentityCommand
+{
+    public string? NetworkId { get; set; }
+    public string? Name { get; set; }
+}
+
 public sealed class GetFwVersionCommand
 {
     public List<string> Sensors { get; set; } = new();

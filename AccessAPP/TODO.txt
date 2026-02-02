@@ -3,7 +3,8 @@ AccessApp Cassia backend:
 CRITICAL:
 
 MAJOR:
+Set mqtt netowrk scope, by mqtt does not work, and is not saved after a restart - needs to be persisted.
+Also make it possible to set the cassia name by MQTT - also should be persisted
 
 MINOR:
-
 Make all runtime variables changeable by MQTT
