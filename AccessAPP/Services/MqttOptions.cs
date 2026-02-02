@@ -25,6 +25,11 @@ public sealed class MqttOptions
 
     // If true, will also subscribe to ".../cmd/all/#"
     public bool SubscribeToAllTarget { get; set; } = true;
+    // Publish resilience
+    public int PublishTimeoutSeconds { get; set; } = 3;
+    public int PublishFailureReconnectThreshold { get; set; } = 3;
+    public int PublishFailureWindowSeconds { get; set; } = 20;
+    public int ReconnectDebounceSeconds { get; set; } = 10;
 
     [JsonIgnore]
     public string ClientId => $"{Name}-{NetworkId}-{Environment.MachineName}";

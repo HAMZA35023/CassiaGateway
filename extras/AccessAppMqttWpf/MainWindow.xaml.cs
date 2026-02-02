@@ -303,6 +303,141 @@ public partial class MainWindow : Window
         _queueDefaultSortTimer.Tick += QueueDefaultSortTimer_Tick;
         _queueDefaultSortTimer.Start();
 
+        // Build dynamic columns for the Host BLE grid (one RSSI column per Cassia)
+        try
+        {
+            if (DataContext is MainViewModel vm)
+            {
+                BuildHostBleGridColumns(vm);
+                // Allow VM commands (e.g., Update) to request clearing Host BLE selection.
+                vm.RequestClearHostBleSelection -= ClearHostBleSelectionFromVm;
+                vm.RequestClearHostBleSelection += ClearHostBleSelectionFromVm;
+                vm.CassiaGateways.CollectionChanged += (_, __) => BuildHostBleGridColumns(vm);
+                vm.PropertyChanged += (_, args) =>
+                {
+                    if (string.Equals(args.PropertyName, nameof(MainViewModel.HostRssiAverageSeconds), StringComparison.OrdinalIgnoreCase))
+                        BuildHostBleGridColumns(vm);
+                };
+            }
+        }
+        catch { }
+
+    }
+
+    private void ClearHostBleSelectionFromVm()
+    {
+        Dispatcher.Invoke(() =>
+        {
+            if (HostBleGrid == null) return;
+            HostBleGrid.SelectedItem = null;
+            HostBleGrid.SelectedItems?.Clear();
+        });
+    }
+
+
+    private void HostBleGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        try
+        {
+            if (DataContext is MainViewModel vm)
+                vm.ResetHostBleUiTimer();
+        }
+        catch { }
+    }
+
+    private void BuildHostBleGridColumns(MainViewModel vm)
+    {
+        if (HostBleGrid == null) return;
+
+        HostBleGrid.Columns.Clear();
+
+        // Fixed columns
+        HostBleGrid.Columns.Add(new DataGridTextColumn
+        {
+            Header = "MAC",
+            Binding = new Binding(nameof(HostBleScanItem.Mac)),
+            Width = new DataGridLength(180)
+        });
+
+        // Actions should be right after MAC (requested)
+        var actionsCol = new DataGridTemplateColumn { Header = "", Width = new DataGridLength(210) };
+        var panelFactory = new FrameworkElementFactory(typeof(StackPanel));
+        panelFactory.SetValue(StackPanel.OrientationProperty, Orientation.Horizontal);
+
+        FrameworkElementFactory MakeButton(string caption, string commandPath, string styleKey = "TinyGhostButton")
+        {
+            var b = new FrameworkElementFactory(typeof(Button));
+            b.SetValue(Button.ContentProperty, caption);
+            b.SetValue(Button.MinWidthProperty, 58d);
+            b.SetValue(Control.FontSizeProperty, 12d);
+            b.SetValue(UIElement.FocusableProperty, false);
+            b.SetValue(FrameworkElement.StyleProperty, FindResource(styleKey));
+
+            // Command = DataGrid.DataContext.<Command>
+            b.SetBinding(Button.CommandProperty, new Binding(commandPath)
+            {
+                RelativeSource = new RelativeSource(RelativeSourceMode.FindAncestor, typeof(DataGrid), 1)
+            });
+            b.SetBinding(Button.CommandParameterProperty, new Binding());
+            return b;
+        }
+
+        panelFactory.AppendChild(MakeButton("Identify", "DataContext.IdentifyHostCommand", styleKey: "TinyIdentifyButton"));
+        panelFactory.AppendChild(MakeButton("Update", "DataContext.UpdateHostCommand"));
+        panelFactory.AppendChild(MakeButton("Get FW", "DataContext.GetFirmwareHostCommand"));
+
+        var template = new DataTemplate { VisualTree = panelFactory };
+        actionsCol.CellTemplate = template;
+        HostBleGrid.Columns.Add(actionsCol);
+
+        HostBleGrid.Columns.Add(new DataGridTextColumn
+        {
+            Header = "Model",
+            Binding = new Binding(nameof(HostBleScanItem.SensorModel)),
+            Width = new DataGridLength(70)
+        });
+
+        HostBleGrid.Columns.Add(new DataGridTextColumn
+        {
+            Header = $"Host RSSI (avg {vm.HostRssiAverageSeconds}s)",
+            Binding = new Binding(nameof(HostBleScanItem.AvgHostRssi)),
+            Width = new DataGridLength(150)
+        });
+
+        HostBleGrid.Columns.Add(new DataGridTextColumn
+        {
+            Header = "Closest",
+            Binding = new Binding(nameof(HostBleScanItem.ClosestCassia)),
+            Width = new DataGridLength(110)
+        });
+
+        HostBleGrid.Columns.Add(new DataGridTextColumn
+        {
+            Header = "Current FW",
+            Binding = new Binding(nameof(HostBleScanItem.CurrentFw)),
+            Width = new DataGridLength(120)
+        });
+
+        // One column per Cassia RSSI (indexer binding: {Binding [cassia-01]})
+        foreach (var gw in vm.CassiaGateways.OrderBy(g => g.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            var name = gw?.Name;
+            if (string.IsNullOrWhiteSpace(name)) continue;
+
+            HostBleGrid.Columns.Add(new DataGridTextColumn
+            {
+                Header = name,
+                Binding = new Binding($"[{name}]"),
+                Width = new DataGridLength(80)
+            });
+        }
+
+        HostBleGrid.Columns.Add(new DataGridTextColumn
+        {
+            Header = "Last seen",
+            Binding = new Binding(nameof(HostBleScanItem.LastSeenLocal)),
+            Width = new DataGridLength(170)
+        });
     }
 
 
@@ -320,12 +455,89 @@ public partial class MainWindow : Window
             if (sender is not ContextMenu cm) return;
 
             var device = (cm.PlacementTarget as FrameworkElement)?.DataContext as DiscoveredDevice;
-            var assignRoot = cm.Items.OfType<MenuItem>().FirstOrDefault(mi => (mi.Tag as string) == "AssignCassia");
-            if (assignRoot == null) return;
+            if (device == null) return;
 
+            // Rebuild menu each time to avoid duplicate click handlers.
+            cm.Items.Clear();
+
+            var connect = new MenuItem { Header = "Connect" };
+            connect.Click += async (_, __) =>
+            {
+                try { await vm.ConnectDeviceAsync(device).ConfigureAwait(false); } catch { }
+            };
+            cm.Items.Add(connect);
+
+            var disconnect = new MenuItem { Header = "Disconnect" };
+            disconnect.Click += async (_, __) =>
+            {
+                try
+                {
+                    // Requirement: allow multi-select by DataGrid selection (not checkboxes) and disconnect all selected.
+                    var selected = new List<DiscoveredDevice>();
+                    if (DevicesGrid?.SelectedItems != null)
+                        selected.AddRange(DevicesGrid.SelectedItems.OfType<DiscoveredDevice>());
+
+                    if (selected.Count == 0)
+                        selected.Add(device);
+
+                    // Deduplicate and ignore nulls.
+                    selected = selected.Where(d => d != null).Distinct().ToList();
+                    if (selected.Count == 0) return;
+
+                    await vm.DisconnectDevicesAsync(selected).ConfigureAwait(false);
+                }
+                catch { }
+            };
+            cm.Items.Add(disconnect);
+
+            var assignRoot = new MenuItem { Header = "Assign to Cassia" };
+            cm.Items.Add(assignRoot);
+
+            cm.Items.Add(new Separator());
+
+            var wr = new MenuItem { Header = "Write-Read…" };
+            wr.Click += (_, __) =>
+            {
+                try { vm.OpenWriteReadCommand?.Execute(device); } catch { }
+            };
+            cm.Items.Add(wr);
+
+            // Build Assign submenu
             assignRoot.Items.Clear();
 
-            if (device == null || device.CassiaRssi.Count == 0)
+            // Requirement:
+            // - Allow assign when multiple rows are selected (DataGrid selection, NOT checkboxes).
+            // - When multiple selected, do not show RSSI (use gateway list instead).
+            var gridSelected = new List<DiscoveredDevice>();
+            if (DevicesGrid?.SelectedItems != null)
+                gridSelected.AddRange(DevicesGrid.SelectedItems.OfType<DiscoveredDevice>());
+
+            gridSelected = gridSelected.Where(d => d != null).Distinct().ToList();
+            var multiSelect = gridSelected.Count > 1;
+
+            IEnumerable<string> cassiaNames;
+
+            if (!multiSelect && device.CassiaRssi != null && device.CassiaRssi.Count > 0)
+            {
+                // Single-device: use RSSI ordering and show it.
+                cassiaNames = device.CassiaRssi
+                    .OrderByDescending(kv => kv.Value)
+                    .ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
+                    .Select(kv => (kv.Key ?? "").Trim())
+                    .Where(n => !string.IsNullOrWhiteSpace(n));
+            }
+            else
+            {
+                // Multi-select (or no RSSI): allow assigning to any known gateway, no RSSI displayed.
+                cassiaNames = vm.CassiaGateways
+                    .Select(g => (g.Name ?? "").Trim())
+                    .Where(n => !string.IsNullOrWhiteSpace(n))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(n => n, StringComparer.OrdinalIgnoreCase);
+            }
+
+            var cassiaList = cassiaNames.ToList();
+            if (cassiaList.Count == 0)
             {
                 assignRoot.IsEnabled = false;
                 return;
@@ -333,50 +545,61 @@ public partial class MainWindow : Window
 
             assignRoot.IsEnabled = true;
 
-            foreach (var kv in device.CassiaRssi.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase))
+            // Determine "checked" state for multi-select: checked if ALL selected devices share the same assignment.
+            string? commonAssignment = null;
+            if (multiSelect)
             {
-                var cassia = (kv.Key ?? "").Trim();
+                commonAssignment = gridSelected
+                    .Select(d => (d.AssignedCassia ?? "").Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Take(2)
+                    .ToList() is var list && list.Count == 1 ? list[0] : null;
+            }
+
+            foreach (var cassia in cassiaList)
+            {
                 if (string.IsNullOrWhiteSpace(cassia)) continue;
 
-                var mi = new MenuItem
+                string header;
+                if (!multiSelect && device.CassiaRssi != null && device.CassiaRssi.TryGetValue(cassia, out var rssi))
+                    header = $"{cassia} ({rssi})";
+                else
+                    header = cassia;
+
+                var miAssign = new MenuItem
                 {
-                    Header = $"{cassia} ({kv.Value})",
+                    Header = header,
                     IsCheckable = true,
-                    IsChecked = cassia.Equals((device.AssignedCassia ?? "").Trim(), StringComparison.OrdinalIgnoreCase)
+                    IsChecked = multiSelect
+                        ? cassia.Equals(commonAssignment ?? "", StringComparison.OrdinalIgnoreCase)
+                        : cassia.Equals((device.AssignedCassia ?? "").Trim(), StringComparison.OrdinalIgnoreCase)
                 };
 
-                mi.Click += (_, __) =>
+                miAssign.Click += (_, __) =>
                 {
                     try
                     {
-                        // If the user has multiple devices selected in the grid, apply to all of them.
-                        // Fall back to the row that was right-clicked.
-                        var selected = new List<DiscoveredDevice>();
+                        var targets = new List<DiscoveredDevice>();
 
+                        // Prefer DataGrid selection (row multi-select).
                         if (DevicesGrid?.SelectedItems != null)
-                            selected.AddRange(DevicesGrid.SelectedItems.OfType<DiscoveredDevice>());
+                            targets.AddRange(DevicesGrid.SelectedItems.OfType<DiscoveredDevice>());
 
-                        // Also include checkbox-selected rows (IsSelected) if nothing is selected via DataGrid selection.
-                        if (selected.Count == 0 && vm != null)
-                            selected.AddRange(vm.Devices.Where(d => d != null && d.IsSelected));
+                        targets = targets.Where(d => d != null).Distinct().ToList();
 
-                        if (selected.Count == 0 && device != null)
-                            selected.Add(device);
+                        if (targets.Count == 0)
+                            targets.Add(device);
 
-                        foreach (var dev in selected.Distinct())
+                        foreach (var dev in targets)
                         {
                             if (dev == null) continue;
-                            // Only assign if this Cassia can see the device (RSSI known)
-                            if (dev.CassiaRssi != null && dev.CassiaRssi.ContainsKey(cassia))
-                                vm.AssignDeviceToCassia(dev, cassia);
+                            vm.AssignDeviceToCassia(dev, cassia);
                         }
                     }
-                    catch
-                    {
-                        // ignore
-                    }
+                    catch { }
                 };
-                assignRoot.Items.Add(mi);
+
+                assignRoot.Items.Add(miAssign);
             }
         }
         catch { }

@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using System;
 using System.Collections.ObjectModel;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
@@ -14,6 +15,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Data;
 using System.Windows.Threading;
+using Microsoft.VisualBasic;
 using AccessAppMqttWpf;
 
 namespace AccessAppMqttWpf.ViewModels;
@@ -23,6 +25,21 @@ public partial class MainViewModel : ObservableObject
     private readonly MqttClientService _mqtt = new();
     private readonly SettingsStore _store = new();
 
+    private readonly HostBleScannerService _hostBleScanner = new("10:B9:F7");
+    private readonly ConcurrentDictionary<string, HostBleScannerService.HostBleUpdate> _hostBleLatest = new(StringComparer.OrdinalIgnoreCase);
+    private readonly DispatcherTimer _hostBleUiTimer = new() { Interval = TimeSpan.FromSeconds(10) };
+    private readonly Dictionary<string, HostBleScanItem> _hostBleRowsByMac = new(StringComparer.OrdinalIgnoreCase);
+
+    // Identify state per MAC (driven by tele/.../identify stages).
+    // - Pending: user clicked Identify but we haven't received 'logged-in'/'login-skipped-bootmode' yet (UI pulses)
+    // - Ready: we've received 'logged-in' or 'login-skipped-bootmode' for the current request
+    // - Active: logged-in..holding.. until disconnected/failed
+    private readonly ConcurrentDictionary<string, bool> _identifyPendingByMac = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, bool> _identifyConnectedByMac = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, bool> _identifyActiveByMac = new(StringComparer.OrdinalIgnoreCase);
+
+    public event Action? RequestClearHostBleSelection;
+
     // ---- UI update cadence (throttled at MQTT client level) ----
     // Progress updates are emitted every 5 seconds, discovered every 15 seconds.
     // We show countdowns so users understand why numbers/statuses are not "live" per message.
@@ -30,6 +47,9 @@ public partial class MainViewModel : ObservableObject
     private int _progressCountdownSec = 5;
     private int _discoveredCountdownSec = 15;
 
+
+    // Suppress repeated weak-RSSI warnings during bulk/batch queue operations
+    private bool _suppressWeakRssiPrompt;
     [ObservableProperty] private string progressUiCountdownText = "Progress UI update in 5s";
     [ObservableProperty] private string discoveredUiCountdownText = "Discovered UI update in 15s";
 
@@ -37,6 +57,7 @@ public partial class MainViewModel : ObservableObject
     // ---- Firmware manifest (tele/.../fw-manifest) ----
     private readonly DispatcherTimer _fwManifestValidateTimer = new() { Interval = TimeSpan.FromSeconds(1.5) };
     private readonly DispatcherTimer _fwManifestTimeoutTimer = new() { Interval = TimeSpan.FromSeconds(6) };
+    private readonly DispatcherTimer _notesAutosaveTimer = new() { Interval = TimeSpan.FromMinutes(1) };
     private bool _fwManifestTimeoutArmed;
     private string _lastFwManifestMissingHash = "";
 
@@ -51,6 +72,9 @@ public partial class MainViewModel : ObservableObject
     // Track last subscribed NetworkId to avoid duplicate resubscribe spam.
     private string _lastSubscribedNetworkId = "";
 
+    // Auto-adjust parallel-programmers based on queue contents
+    private int _lastAutoParallelProgrammersSent = int.MinValue;
+
 
     private readonly ObservableCollection<DiscoveredDevice> _devices = new();
     private readonly Dictionary<string, DiscoveredDevice> _deviceByMac = new(StringComparer.OrdinalIgnoreCase);
@@ -59,6 +83,29 @@ public partial class MainViewModel : ObservableObject
     public ObservableCollection<DiscoveredDevice> Devices => _devices;
 
     public ICollectionView FilteredDevices { get; }
+
+    public ObservableCollection<HostBleScanItem> HostBleDevices { get; } = new();
+    public ICollectionView HostBleDevicesView { get; }
+
+    public ObservableCollection<int> HostRssiAverageOptions { get; } = new() { 5, 10, 20, 30, 60 };
+
+    [ObservableProperty] private int hostRssiAverageSeconds = 10;
+
+    public ObservableCollection<int> HostBleUiUpdateOptions { get; } = new() { 2, 5, 10, 20, 30, 60 };
+
+    [ObservableProperty] private int hostBleUiUpdateSeconds = 2;
+
+    [ObservableProperty] private bool hostBleAutoUpdate = true;
+// Host BLE model filter
+    public ObservableCollection<string> HostBleModelOptions { get; } = new(new[] { "All" });
+    [ObservableProperty] private string hostBleModelFilter = "All";
+
+    // Host BLE extra filters
+    [ObservableProperty] private bool hostBleHideCompleted;
+    [ObservableProperty] private bool hostBleHideInQueue;
+    [ObservableProperty] private string hostBleSearchText = "";
+
+    [ObservableProperty] private string hostBleUiStatusText = "";
 
     public ObservableCollection<CassiaGateway> CassiaGateways { get; } = new();
 
@@ -98,8 +145,12 @@ public partial class MainViewModel : ObservableObject
 
     // ---- RSSI balancing thresholds (requested to be variables at top of the class) ----
     // Note: RSSI values are negative; e.g. -60 is stronger than -80.
-    private const int RssiAllowBalancingThreshold = -70;   // >= -65: allow balancing among eligible Cassias
-    private const int RssiForceClosestThreshold = -75;     // <= -75: always use the closest Cassia (best RSSI)
+    private const int RssiAllowBalancingThreshold = -65;   // >= -65: allow balancing among eligible Cassias
+    private const int RssiWarnQueueThreshold = -70;        // < -70: show warning before queueing (still allowed)
+
+    // Weights for balancing: lower score wins. Score = (load * weight) - (rssi * 1). Since RSSI is negative, stronger (less negative) lowers score.
+    private const int AssignmentLoadWeight = 10;            // how much 1 queued/programming item counts vs 1 dB RSSI
+    private const int RssiForceClosestThreshold = -999; // unused (kept for compatibility)     // <= -75: always use the closest Cassia (best RSSI)
 
     // Balancing goal: finish fastest by keeping roughly the same amount of work per Cassia.
     // We count "assigned detectors" as part of the load, not only queue/programming, because
@@ -115,10 +166,14 @@ public partial class MainViewModel : ObservableObject
         public int ProcessProgress = 0;
         public string ProcessCassia = "";
         public string ProcessFirmware = "";
+        public string ChipUsed = "";
         public DateTimeOffset LastUpdateUtc = DateTimeOffset.MinValue;
 
         public string CurrentFw = "";
+        public bool CurrentFwFromGetFw = false;
         public bool IsUpgradeSuccess = false;
+        public bool IsUpgradeWarn = false;
+        public bool IsUpgradeFailed = false;
         public string LastTargetFw = "";
         public DateTimeOffset? LastUpgradeSuccessUtc = null;
 
@@ -186,6 +241,11 @@ public partial class MainViewModel : ObservableObject
 
         if (!string.IsNullOrWhiteSpace(cs.CurrentFw)) dev.CurrentFw = cs.CurrentFw;
 
+        // Upgrade result flags come from upgrade-log completion stage.
+        // These are independent from queue/progress UI and are overridden visually by IsInQueue.
+        dev.IsUpgradeWarn = cs.IsUpgradeWarn;
+        dev.IsUpgradeFailed = cs.IsUpgradeFailed;
+
         if (cs.IsUpgradeSuccess)
         {
             dev.IsUpgradeSuccess = true;
@@ -207,9 +267,38 @@ public partial class MainViewModel : ObservableObject
     // Example: "10:B9:F7:0F:F1:EB: connect OK" or "[info] 10:B9:..: disconnect OK".
     private static readonly Regex PlainReplyMacRx =
         new(@"(?<mac>(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex ProductNumberRx =
+        new(@"^\d{3}-\d{6}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex ProductNumberUnderscoreRx =
+        new(@"^\d{3}_\d{6}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static void ApplyDeviceNameWithGuards(DiscoveredDevice d, string? incomingName)
+    {
+        if (d == null) return;
+        var newName = (incomingName ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(newName)) return;
+
+        var cur = (d.Name ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(cur))
+        {
+            d.Name = newName;
+            return;
+        }
+
+        // If we already have a name, never overwrite it with a plain product-number name (xxx-xxxxxx).
+        // Exception: if our current name is itself a product-number variant using '_' instead of '-',
+        // allow upgrading/normalizing it.
+        if (ProductNumberRx.IsMatch(newName) && !ProductNumberUnderscoreRx.IsMatch(cur))
+            return;
+
+        d.Name = newName;
+    }
     public event Action<string, string>? PlainReplyReceived; // mac, message
 
     [ObservableProperty] private DiscoveredDevice? selectedDevice;
+    [ObservableProperty] private HostBleScanItem? selectedHostBleDevice;
     [ObservableProperty] private QueueItem? selectedQueueItem;
     [ObservableProperty] private string? selectedQueueMac;
 
@@ -231,6 +320,8 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private bool useTls;
     [ObservableProperty] private bool ignoreTlsErrors = true;
 
+    [ObservableProperty] private string notesText = "";
+
     // Runtime-only: set/get number of parallel programmers.
     // "All" value is used when pressing Set all / Get all.
     [ObservableProperty] private int parallelProgrammersAllDesired = 3;
@@ -239,6 +330,10 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string networkId = "dk-lab";
     [ObservableProperty] private string commandTopicTemplate = "accessapp/{networkId}/cmd/{cassia}/{command}";
     [ObservableProperty] private string defaultCommand = "start-update";
+
+    // If true, we include forceUpdate=true in start-update payloads.
+    // Default is false on startup.
+    [ObservableProperty] private bool forceUpdateEnabled = false;
 
     // Firmware selection per model (dropdowns). Will later be populated from MQTT; for now hardcoded list.
     public ObservableCollection<string> FirmwareOptionsP41 { get; } = new();
@@ -252,6 +347,12 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string selectedFirmwareP46 = "";
     [ObservableProperty] private string selectedFirmwareP47 = "";
     [ObservableProperty] private string selectedFirmwareP48 = "";
+
+    partial void OnSelectedFirmwareP41Changed(string value) => PersistSelectedFirmware("P41", value);
+    partial void OnSelectedFirmwareP42Changed(string value) => PersistSelectedFirmware("P42", value);
+    partial void OnSelectedFirmwareP46Changed(string value) => PersistSelectedFirmware("P46", value);
+    partial void OnSelectedFirmwareP47Changed(string value) => PersistSelectedFirmware("P47", value);
+    partial void OnSelectedFirmwareP48Changed(string value) => PersistSelectedFirmware("P48", value);
 
     [ObservableProperty] private string connectionStatus = "Disconnected";
     [ObservableProperty] private bool isConnected;
@@ -314,6 +415,8 @@ public partial class MainViewModel : ObservableObject
     private readonly Dictionary<string, string> _latestUpgradeLogIdByMac = new(StringComparer.OrdinalIgnoreCase);
     private bool _latestUpgradeLogMapDirty = true;
 
+    private bool _isInitializing = true;
+
     
     // ---- Progress buffering (prevents UI lag / lost clicks when many % updates arrive) ----
     private readonly object _progressBufLock = new();
@@ -349,9 +452,31 @@ public partial class MainViewModel : ObservableObject
         UseTls = s.mqtt.useTls;
         IgnoreTlsErrors = s.mqtt.ignoreTlsErrors;
 
+        // Notes: load autosaved content (survives restarts)
+        NotesText = NotesService.LoadAutoNotes();
+
+        _notesAutosaveTimer.Tick += (_, __) =>
+        {
+            NotesService.SaveAutoNotes(NotesText);
+        };
+        _notesAutosaveTimer.Start();
+
         NetworkId = s.accessapp.networkId;
         CommandTopicTemplate = s.accessapp.commandTopicTemplate;
         DefaultCommand = s.accessapp.defaultCommand;
+        ForceUpdateEnabled = s.accessapp.forceUpdate;
+
+        // Firmware selections: remember across restarts/resync.
+        try
+        {
+            var fwMap = s.accessapp.selectedFirmwareByModel ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (fwMap.TryGetValue("P41", out var fw41)) SelectedFirmwareP41 = fw41 ?? "";
+            if (fwMap.TryGetValue("P42", out var fw42)) SelectedFirmwareP42 = fw42 ?? "";
+            if (fwMap.TryGetValue("P46", out var fw46)) SelectedFirmwareP46 = fw46 ?? "";
+            if (fwMap.TryGetValue("P47", out var fw47)) SelectedFirmwareP47 = fw47 ?? "";
+            if (fwMap.TryGetValue("P48", out var fw48)) SelectedFirmwareP48 = fw48 ?? "";
+        }
+        catch { /* best-effort */ }
 
         _mqtt.ConnectionChanged += (connected, status) =>
         {
@@ -418,6 +543,36 @@ public partial class MainViewModel : ObservableObject
         LoadFirmwareOptions();
 
         FilteredDevices = CollectionViewSource.GetDefaultView(_devices);
+
+        HostBleDevicesView = CollectionViewSource.GetDefaultView(HostBleDevices);
+        HostBleDevicesView.SortDescriptions.Add(new SortDescription(nameof(HostBleScanItem.AvgHostRssi), ListSortDirection.Descending));
+        HostBleDevicesView.SortDescriptions.Add(new SortDescription(nameof(HostBleScanItem.Mac), ListSortDirection.Ascending));
+
+        HostBleDevicesView.Filter = obj =>
+        {
+            if (obj is not HostBleScanItem r) return false;
+
+            // Search by MAC
+            var q = (HostBleSearchText ?? "").Trim();
+            if (!string.IsNullOrWhiteSpace(q))
+            {
+                if (!(r.Mac?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false))
+                    return false;
+            }
+
+            // Hide if completed / queued
+            if (HostBleHideCompleted && r.IsUpgradeSuccess)
+                return false;
+            if (HostBleHideInQueue && r.IsInQueue)
+                return false;
+
+            var filter = (HostBleModelFilter ?? "All").Trim();
+            if (filter.Length == 0 || filter.Equals("All", StringComparison.OrdinalIgnoreCase))
+                return true;
+            var m = (r.SensorModel ?? "").Trim();
+            if (m.Length == 0) m = "Unknown";
+            return m.Equals(filter, StringComparison.OrdinalIgnoreCase);
+        };
         FilteredDevices.Filter = obj =>
         {
             if (obj is not DiscoveredDevice d) return false;
@@ -512,7 +667,25 @@ if (!string.IsNullOrWhiteSpace(SensorFilter) && !SensorFilter.Equals("All", Stri
 
         CassiaNameOptions.Clear();
         CassiaNameOptions.Add("(auto)");
-    }
+    
+// --- Host BLE scanner (PC side) ---
+// We keep the BLE scanner "hot" (updates every second), but throttle UI refreshes to once per 10 seconds
+// to avoid grid churn while the user is interacting.
+_hostBleScanner.WindowSeconds = HostRssiAverageSeconds;
+_hostBleScanner.Updated += u =>
+{
+    // Just buffer latest values; UI is updated on a timer.
+    _hostBleLatest[u.Mac] = u;
+};
+
+_hostBleUiTimer.Tick += (_, _) => FlushHostBleToUi();
+UpdateHostBleUiStatus();
+if (HostBleAutoUpdate) _hostBleUiTimer.Start();
+
+_hostBleScanner.Start();
+
+        _isInitializing = false;
+}
 
     partial void OnSelectedLogGatewayNameChanged(string value)
     {
@@ -537,6 +710,228 @@ partial void OnUpgradeLogSearchTextChanged(string value)
     {
         MarkLatestUpgradeLogMapDirty();
         UpgradeLogGroupsView.Refresh();
+    }
+
+    partial void OnHostRssiAverageSecondsChanged(int value)
+    {
+        // Update scanner window immediately.
+        try { _hostBleScanner.WindowSeconds = value; } catch { }
+    }
+
+    partial void OnHostBleAutoUpdateChanged(bool value)
+    {
+        try
+        {
+            _hostBleUiTimer.Stop();
+            if (value)
+            {
+                _hostBleUiTimer.Interval = TimeSpan.FromSeconds(Math.Max(1, HostBleUiUpdateSeconds));
+                _hostBleUiTimer.Start();
+            }
+            UpdateHostBleUiStatus();
+        }
+        catch { }
+    }
+
+partial void OnHostBleUiUpdateSecondsChanged(int value)
+    {
+        try
+        {
+            var v = Math.Max(1, value);
+            _hostBleUiTimer.Interval = TimeSpan.FromSeconds(v);
+            ResetHostBleUiTimer();
+        }
+        catch { }
+    }
+
+    partial void OnHostBleModelFilterChanged(string value)
+    {
+        try { HostBleDevicesView.Refresh(); } catch { }
+    }
+
+    partial void OnHostBleHideCompletedChanged(bool value)
+    {
+        try { HostBleDevicesView.Refresh(); } catch { }
+    }
+
+    partial void OnHostBleHideInQueueChanged(bool value)
+    {
+        try { HostBleDevicesView.Refresh(); } catch { }
+    }
+
+    partial void OnHostBleSearchTextChanged(string value)
+    {
+        try { HostBleDevicesView.Refresh(); } catch { }
+    }
+
+    [RelayCommand]
+    private void HostBleRefreshUi()
+    {
+        // Manual refresh button.
+        FlushHostBleToUi();
+        ResetHostBleUiTimer();
+    }
+
+    private void ScheduleHostBleUiRefresh(TimeSpan delay)
+    {
+        try
+        {
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(delay).ConfigureAwait(false);
+                try
+                {
+                    System.Windows.Application.Current?.Dispatcher?.Invoke(() =>
+                    {
+                        try { HostBleRefreshUi(); } catch { }
+                    });
+                }
+                catch { }
+            });
+        }
+        catch { }
+    }
+
+    public void ResetHostBleUiTimer()
+    {
+        // "Freeze" grid churn while the user clicks/reads: next refresh will be N seconds after the last click.
+        try
+        {
+            _hostBleUiTimer.Stop();
+            _hostBleUiTimer.Interval = TimeSpan.FromSeconds(Math.Max(1, HostBleUiUpdateSeconds));
+
+            if (HostBleAutoUpdate)
+                _hostBleUiTimer.Start();
+
+            UpdateHostBleUiStatus();
+        }
+        catch { }
+    }
+
+    private void UpdateHostBleUiStatus()
+    {
+        try
+        {
+            HostBleUiStatusText = HostBleAutoUpdate
+                ? ("Auto-update: " + HostBleUiUpdateSeconds + "s")
+                : "Auto-update: off";
+        }
+        catch { }
+    }
+
+
+    private void FlushHostBleToUi()
+    {
+        // Preserve selection by MAC
+        var selectedMac = SelectedHostBleDevice?.Mac;
+
+        var items = _hostBleLatest.Values
+            .OrderByDescending(x => x.AvgRssi)
+            .ThenBy(x => x.Mac, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        // Update rows in-place so selection doesn't drop and buttons work without a "first click".
+        var alive = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var u in items)
+        {
+            alive.Add(u.Mac);
+
+            if (!_hostBleRowsByMac.TryGetValue(u.Mac, out var row))
+            {
+                row = new HostBleScanItem { Mac = u.Mac };
+                _hostBleRowsByMac[u.Mac] = row;
+                HostBleDevices.Add(row);
+            }
+
+            row.AvgHostRssi = u.AvgRssi;
+            row.LastSeenUtc = u.LastSeenUtc;
+
+            // Identify button state
+            row.IsIdentifyPending = _identifyPendingByMac.TryGetValue(u.Mac, out var ip) && ip;
+            row.IsIdentifying = _identifyActiveByMac.TryGetValue(u.Mac, out var ia) && ia;
+
+            // Merge Cassia RSSIs + closest + current FW from discovered device list (if present)
+            var d = FindDiscoveredDevice(u.Mac);
+            if (d != null)
+            {
+                row.SetCassiaRssi(d.CassiaRssi);
+                row.ClosestCassia = d.BestCassia ?? "";
+                row.SensorModel = (d.SensorModel ?? "").Trim();
+
+                // Only update Host-BLE CurrentFw if it came from Get FW
+                if (_cachedStatusByMac.TryGetValue(u.Mac, out var cs) && cs.CurrentFwFromGetFw)
+                    row.CurrentFw = cs.CurrentFw ?? "";
+                // else: keep existing row.CurrentFw (do NOT overwrite from logs/identify/scan)
+
+                // Coloring semantics (same as device list)
+                row.IsInQueue = d.IsInQueue;
+                row.IsUpgradeSuccess = d.IsUpgradeSuccess;
+                row.IsUpgradeWarn = d.IsUpgradeWarn;
+                row.IsUpgradeFailed = d.IsUpgradeFailed;
+            }
+            else
+            {
+                row.SetCassiaRssi(null);
+                row.ClosestCassia = "";
+                row.SensorModel = row.SensorModel; // keep previous if any
+                // keep CurrentFw (so it doesn't flicker empty if host sees adv before MQTT sees device)
+
+                // Default flags when unknown
+                row.IsInQueue = false;
+                row.IsUpgradeSuccess = false;
+                row.IsUpgradeWarn = false;
+                row.IsUpgradeFailed = false;
+            }
+        }
+
+        // Remove stale rows not present in latest set (keeps grid tight)
+        for (int i = HostBleDevices.Count - 1; i >= 0; i--)
+        {
+            var r = HostBleDevices[i];
+            if (r == null) continue;
+            if (!alive.Contains(r.Mac))
+            {
+                HostBleDevices.RemoveAt(i);
+                _hostBleRowsByMac.Remove(r.Mac);
+            }
+        }
+
+        // Restore selection
+        if (!string.IsNullOrWhiteSpace(selectedMac))
+        {
+            var sel = HostBleDevices.FirstOrDefault(x => string.Equals(x.Mac, selectedMac, StringComparison.OrdinalIgnoreCase));
+            if (sel != null)
+                SelectedHostBleDevice = sel;
+        }
+
+        try { HostBleDevicesView.Refresh(); } catch { }
+
+        // Refresh model filter options (All + distinct models + Unknown)
+        try
+        {
+            var models = HostBleDevices
+                .Where(x => x != null)
+                .Select(x => (x.SensorModel ?? "").Trim())
+                .Select(m => string.IsNullOrWhiteSpace(m) ? "Unknown" : m)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(m => m, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var wanted = new List<string> { "All" };
+            wanted.AddRange(models);
+
+            // keep current selection if possible
+            var current = (HostBleModelFilter ?? "All").Trim();
+
+            HostBleModelOptions.Clear();
+            foreach (var m in wanted) HostBleModelOptions.Add(m);
+
+            if (HostBleModelOptions.Any(x => x.Equals(current, StringComparison.OrdinalIgnoreCase)))
+                HostBleModelFilter = HostBleModelOptions.First(x => x.Equals(current, StringComparison.OrdinalIgnoreCase));
+            else
+                HostBleModelFilter = "All";
+        }
+        catch { }
     }
 
     private void MarkLatestUpgradeLogMapDirty()
@@ -707,6 +1102,13 @@ partial void OnSensorFilterChanged(string value)
 
     private void LoadFirmwareOptions()
     {
+        // Preserve current selections (loaded from appsettings.json) so a resync/restart doesn't reset the dropdowns.
+        var keepP48 = SelectedFirmwareP48;
+        var keepP47 = SelectedFirmwareP47;
+        var keepP46 = SelectedFirmwareP46;
+        var keepP41 = SelectedFirmwareP41;
+        var keepP42 = SelectedFirmwareP42;
+
         FirmwareOptionsP48.Clear();
       
         FirmwareOptionsP47.Clear();
@@ -717,11 +1119,21 @@ partial void OnSensorFilterChanged(string value)
         
         FirmwareOptionsP42.Clear();
       
-        SelectedFirmwareP48 = FirmwareOptionsP48.LastOrDefault() ?? "";
-        SelectedFirmwareP47 = FirmwareOptionsP47.LastOrDefault() ?? "";
-        SelectedFirmwareP46 = FirmwareOptionsP46.LastOrDefault() ?? "";
-        SelectedFirmwareP41 = FirmwareOptionsP41.LastOrDefault() ?? "";
-        SelectedFirmwareP42 = FirmwareOptionsP42.LastOrDefault() ?? "";
+        // Only fall back to "latest" when we don't already have a valid selection.
+        SelectedFirmwareP48 = PreserveFirmwareSelection(FirmwareOptionsP48, keepP48);
+        SelectedFirmwareP47 = PreserveFirmwareSelection(FirmwareOptionsP47, keepP47);
+        SelectedFirmwareP46 = PreserveFirmwareSelection(FirmwareOptionsP46, keepP46);
+        SelectedFirmwareP41 = PreserveFirmwareSelection(FirmwareOptionsP41, keepP41);
+        SelectedFirmwareP42 = PreserveFirmwareSelection(FirmwareOptionsP42, keepP42);
+    }
+
+    private static string PreserveFirmwareSelection(ObservableCollection<string> options, string? current)
+    {
+        var cur = (current ?? "").Trim();
+        if (options == null || options.Count == 0) return cur;
+        if (cur.Length > 0 && options.Any(o => string.Equals((o ?? "").Trim(), cur, StringComparison.OrdinalIgnoreCase)))
+            return cur;
+        return options.LastOrDefault() ?? "";
     }
 
     private void LoadProductMap()
@@ -796,25 +1208,7 @@ partial void OnSensorFilterChanged(string value)
     [RelayCommand]
     private async Task SaveSettings()
     {
-        _store.Save(new AppSettings
-        {
-            mqtt = new MqttSettings
-            {
-                host = MqttHost,
-                port = MqttPort,
-                topic = MqttTopic,
-                username = MqttUser,
-                password = MqttPassword ?? "",
-                useTls = UseTls,
-                ignoreTlsErrors = IgnoreTlsErrors
-            },
-            accessapp = new AccessAppSettings
-            {
-                networkId = NetworkId,
-                commandTopicTemplate = CommandTopicTemplate,
-                defaultCommand = DefaultCommand
-            }
-        });
+        _store.Save(BuildSettingsSnapshot(_store.Load()));
 
         ConnectionStatus = "Saved appsettings.json";
 
@@ -822,6 +1216,106 @@ partial void OnSensorFilterChanged(string value)
         if (IsConnected)
             await ResyncCoreAsync().ConfigureAwait(false);
     }
+
+    [RelayCommand]
+    private async Task SetCassiaMqttScope(string cassiaName)
+    {
+        cassiaName = (cassiaName ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(cassiaName)) return;
+
+        // Named arguments are case-sensitive in C#. Use positional arguments here to avoid issues.
+        var newNet = Interaction.InputBox(
+            $"Enter new NetworkId (MQTT scope) for '{cassiaName}':",
+            "Set MQTT scope",
+            NetworkId ?? "");
+
+        newNet = (newNet ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(newNet)) return;
+
+        try
+        {
+            var topic = BuildCmdTopic(cassiaName, "set-network");
+            await _mqtt.PublishJsonAsync(topic, new { networkId = newNet }, retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+            ConnectionStatus = $"Sent set-network to {cassiaName} → {newNet}";
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = "Error: " + ex.Message;
+        }
+    }
+
+    private AppSettings BuildSettingsSnapshot(AppSettings? baseSettings)
+    {
+        var s = baseSettings ?? new AppSettings();
+
+        s.mqtt = new MqttSettings
+        {
+            host = MqttHost,
+            port = MqttPort,
+            topic = MqttTopic,
+            username = MqttUser,
+            password = MqttPassword ?? "",
+            useTls = UseTls,
+            ignoreTlsErrors = IgnoreTlsErrors
+        };
+
+        // Preserve previous firmware selections unless we explicitly overwrite below.
+        var fwMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            if (s.accessapp?.selectedFirmwareByModel != null)
+            {
+                foreach (var kv in s.accessapp.selectedFirmwareByModel)
+                {
+                    if (!string.IsNullOrWhiteSpace(kv.Key))
+                        fwMap[kv.Key.Trim()] = kv.Value ?? "";
+                }
+            }
+        }
+        catch { }
+
+        // Always write current in-memory selections.
+        fwMap["P41"] = SelectedFirmwareP41 ?? "";
+        fwMap["P42"] = SelectedFirmwareP42 ?? "";
+        fwMap["P46"] = SelectedFirmwareP46 ?? "";
+        fwMap["P47"] = SelectedFirmwareP47 ?? "";
+        fwMap["P48"] = SelectedFirmwareP48 ?? "";
+
+        s.accessapp = new AccessAppSettings
+        {
+            networkId = NetworkId,
+            commandTopicTemplate = CommandTopicTemplate,
+            defaultCommand = DefaultCommand,
+            forceUpdate = ForceUpdateEnabled,
+            selectedFirmwareByModel = fwMap
+        };
+
+        return s;
+    }
+
+    private void PersistSelectedFirmware(string model, string? firmware)
+    {
+        // Avoid writing partial state while the app is still starting up.
+        // (e.g. LoadFirmwareOptions sets defaults and triggers the setter)
+        if (_isInitializing) return;
+
+        try
+        {
+            var s = _store.Load();
+            s.accessapp ??= new AccessAppSettings();
+            s.accessapp.selectedFirmwareByModel ??= new Dictionary<string, string>();
+            s.accessapp.selectedFirmwareByModel[model] = firmware ?? "";
+            _store.Save(BuildSettingsSnapshot(s));
+        }
+        catch
+        {
+            // ignore persistence errors
+        }
+    }
+
+    
+
+
 
     [RelayCommand]
     private void ClearDevices()
@@ -880,6 +1374,61 @@ partial void OnSensorFilterChanged(string value)
 [RelayCommand]
     private void ClearQueue() => QueueItems.Clear();
 
+
+    [RelayCommand]
+    private void CopyNotes()
+    {
+        try { Clipboard.SetText(NotesText ?? ""); } catch { }
+    }
+
+    [RelayCommand]
+    private void ClearNotes()
+    {
+        NotesText = "";
+        NotesService.SaveAutoNotes(NotesText);
+    }
+
+    [RelayCommand]
+    private void LoadNotes()
+    {
+        try
+        {
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*",
+                DefaultExt = ".txt",
+                CheckFileExists = true
+            };
+            if (dlg.ShowDialog() == true)
+            {
+                NotesText = NotesService.LoadFromFile(dlg.FileName);
+                NotesService.SaveAutoNotes(NotesText);
+            }
+        }
+        catch { }
+    }
+
+    [RelayCommand]
+    private void SaveNotes()
+    {
+        try
+        {
+            var dlg = new Microsoft.Win32.SaveFileDialog
+            {
+                Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*",
+                DefaultExt = ".txt",
+                FileName = "notes.txt",
+                OverwritePrompt = true
+            };
+            if (dlg.ShowDialog() == true)
+            {
+                NotesService.SaveToFile(dlg.FileName, NotesText);
+                NotesService.SaveAutoNotes(NotesText);
+            }
+        }
+        catch { }
+    }
+
     // IMPORTANT: Keep method names QueueSingle/QueueSelected so your XAML/code-behind bindings keep working.
     // These are async, so toolkit generates QueueSingleCommand/QueueSelectedCommand as IAsyncRelayCommand.
     [RelayCommand]
@@ -898,6 +1447,40 @@ partial void OnSensorFilterChanged(string value)
 
         if (selected.Count == 0) return;
 
+        // If any selected device has very weak RSSI (< -70), warn once (device is still queueable).
+        var weak = selected
+            .Where(d => d != null && d.CassiaRssi != null && d.CassiaRssi.Count > 0)
+            .Select(d => new
+            {
+                Dev = d,
+                Best = d.CassiaRssi.Where(kv => !string.IsNullOrWhiteSpace(kv.Key)).OrderByDescending(kv => kv.Value).FirstOrDefault()
+            })
+            .Select(x => new { x.Dev, BestCassia = (x.Best.Key ?? "").Trim(), BestRssi = x.Best.Value })
+            .Where(x => x.BestRssi < RssiWarnQueueThreshold)
+            .ToList();
+
+        if (weak.Count > 0)
+        {
+            var lines = weak
+                .OrderBy(x => x.BestRssi)
+                .Take(20)
+                .Select(x => $"{x.Dev.Mac}  best={x.BestCassia}:{x.BestRssi} dBm")
+                .ToList();
+
+            var more = weak.Count > 20 ? $"\n... and {weak.Count - 20} more" : "";
+
+            var res = MessageBox.Show(
+                "Warning: Some devices have weak RSSI (< -70 dBm).\n\n" +
+                string.Join("\n", lines) + more +
+                "\n\nQueue anyway?",
+                "Weak RSSI",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+
+            if (res != MessageBoxResult.Yes)
+                return;
+        }
+
         // Build a preview of what will be queued and where (batch-aware load balancing).
         var plan = ComputeBatchAssignmentPlan(selected);
 
@@ -907,11 +1490,11 @@ partial void OnSensorFilterChanged(string value)
 
         var dlgResult = ShowAssignmentPlanDialog(
             title: "Add to queue",
-            subtitle: "Review suggested Cassia assignment (RSSI + workload balancing) before queueing",
+            subtitle: "Review suggested Cassia assignment (RSSI + load balancing) before queueing",
             rows: dialogRows,
             loadRows: loadRows,
             footer: "Apply = use suggested assignment • Keep current = use current assignment • Cancel = abort",
-            notes: $"Rules: > {RssiAllowBalancingThreshold}: eligible Cassias are those with RSSI > {RssiAllowBalancingThreshold}; <= {RssiForceClosestThreshold}: force closest; otherwise eligible = within {AssignmentRssiSlack} dB of best RSSI.",
+            notes: $"Rules: If best RSSI < {RssiAllowBalancingThreshold} we always pick the closest Cassia. Otherwise we balance using (assigned*{AssignedDetectorsWeight} + queue + programming), preferring ONLINE gateways and using RSSI as tie-break. If best RSSI < {RssiWarnQueueThreshold}, you get a warning.",
             showKeepButton: true);
 
         if (dlgResult == AssignmentPlanDialogResult.Cancel) return;
@@ -921,13 +1504,249 @@ partial void OnSensorFilterChanged(string value)
             ApplySuggestedAssignmentsToDevices(selected, dialogRows);
         }
 
-        foreach (var d in selected)
+        _suppressWeakRssiPrompt = true;
+        try
         {
-            await QueueDeviceAndRequestAsync(d);
-            d.IsSelected = false;
+            foreach (var d in selected)
+            {
+                await QueueDeviceAndRequestAsync(d);
+                d.IsSelected = false;
+            }
+        }
+        finally
+        {
+            _suppressWeakRssiPrompt = false;
         }
     }
 
+    [RelayCommand]
+    private async Task IdentifyHost(HostBleScanItem? item)
+    {
+        item ??= SelectedHostBleDevice;
+        if (item == null || string.IsNullOrWhiteSpace(item.Mac))
+            return;
+
+        if (!IsConnected)
+        {
+            ConnectionStatus = "Not connected";
+            return;
+        }
+
+        var mac = item.Mac.Trim();
+        var target = string.IsNullOrWhiteSpace(item.ClosestCassia) ? "all" : item.ClosestCassia.Trim();
+
+        // New identify command (2026-01): supports pincode/seconds/maxConnectAttempts/requestId and reports stages on tele/.../identify.
+        var requestId = Guid.NewGuid().ToString("N");
+        var topic = BuildCmdTopic(target, "identify");
+        var payload = new
+        {
+            sensors = new[] { mac },
+            pincode = DefaultPincode,
+            seconds = 15,
+            maxConnectAttempts = 1,
+            requestId
+        };
+
+        try
+        {
+            // UI: pulse until we receive 'logged-in' (or 'login-skipped-bootmode'), then turn green until disconnected/failed.
+            _identifyPendingByMac[mac] = true;
+            _identifyConnectedByMac[mac] = false;
+            _identifyActiveByMac[mac] = false;
+
+            item.IsIdentifyPending = true;
+            item.IsIdentifying = false;
+
+            await _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token);
+
+            await AutoAdjustParallelProgrammersAsync().ConfigureAwait(false);
+            ConnectionStatus = $"Identify ({requestId}) sent to {target} for {mac}";
+        }
+        catch (Exception ex)
+        {
+            _identifyPendingByMac[mac] = false;
+            _identifyConnectedByMac[mac] = false;
+            _identifyActiveByMac[mac] = false;
+
+            item.IsIdentifyPending = false;
+            item.IsIdentifying = false;
+            ConnectionStatus = "Identify failed: " + ex.Message;
+        }
+    }
+
+    [RelayCommand]
+    private async Task AddToQueueHost(HostBleScanItem? item)
+    {
+        // Backwards-compat command name. UI uses UpdateHost.
+        await UpdateHost(item);
+    }
+
+    [RelayCommand]
+    private async Task UpdateHost(HostBleScanItem? item)
+    {
+        item ??= SelectedHostBleDevice;
+        if (item == null || string.IsNullOrWhiteSpace(item.Mac))
+            return;
+
+        var mac = item.Mac.Trim();
+        // UX: clear selection immediately when pressing Update (even if user clicked the button on an unselected row).
+        try { RequestClearHostBleSelection?.Invoke(); } catch { }
+
+        // Reuse discovered device object if present; otherwise create a minimal one.
+        var dev = FindDiscoveredDevice(mac);
+        if (dev == null)
+        {
+            dev = new DiscoveredDevice
+            {
+                Mac = mac,
+                Name = "BLE (host scan)",
+            };
+            _devices.Add(dev);
+            _deviceByMac[mac] = dev;
+        }
+
+        // IMPORTANT: Host BLE scan rows keep per-Cassia RSSIs in HostBleScanItem.CassiaRssi.
+        // The balancing algorithm uses DiscoveredDevice.CassiaRssi, so we must sync them here.
+        // Otherwise the algorithm only sees the "closest" Cassia and cannot choose a free alternative.
+        if (item.CassiaRssi != null && item.CassiaRssi.Count > 0)
+        {
+            dev.CassiaRssi.Clear();
+            foreach (var kv in item.CassiaRssi)
+            {
+                var k = (kv.Key ?? "").Trim();
+                if (k.Length == 0) continue;
+                dev.CassiaRssi[k] = kv.Value;
+            }
+
+            // Refresh best Cassia/RSSI fields.
+            var best = dev.CassiaRssi.OrderByDescending(kv => kv.Value).FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(best.Key))
+            {
+                dev.BestCassia = best.Key.Trim();
+                dev.BestRssi = best.Value;
+            }
+        }
+
+        // Suggested Cassia: use the SAME algorithm as Add-to-queue/Reassign.
+        // - If best RSSI < -65 => closest Cassia.
+        // - If best RSSI >= -65 => balance using Cassia reported Queue/Programming, but still prefer closest when similar.
+        if (!TryChooseCassiaForUpdate(dev, plannedLoad: null, out var suggested, out var suggestedReason))
+        {
+            suggested = (item.ClosestCassia ?? "").Trim();
+            if (suggested.Length == 0) suggested = (dev.BestCassia ?? "").Trim();
+            if (suggested.Length == 0) suggested = (dev.AssignedCassia ?? "").Trim();
+            suggestedReason = "closest fallback";
+        }
+
+        var current = (dev.AssignedCassia ?? "").Trim();
+        if (current.Length == 0) current = (dev.BestCassia ?? "").Trim();
+
+        int GetRssiNormalized(string c)
+        {
+            c = (c ?? "").Trim();
+            if (c.Length == 0) return int.MinValue;
+            foreach (var kv in dev.CassiaRssi)
+            {
+                var k = (kv.Key ?? "").Trim();
+                if (string.Equals(k, c, StringComparison.OrdinalIgnoreCase))
+                    return kv.Value;
+            }
+            return int.MinValue;
+        }
+
+        var closestCassia = (dev.BestCassia ?? suggested).Trim();
+        var closestRssi = GetRssiNormalized(closestCassia);
+        var suggestedRssi = GetRssiNormalized(suggested);
+
+        // If weak (< -70) and user hasn't suppressed warnings, warn before queueing (single-device case).
+        if (!_suppressWeakRssiPrompt && suggestedRssi != int.MinValue && suggestedRssi < RssiWarnQueueThreshold)
+        {
+            var res = MessageBox.Show(
+                $"Warning: weak RSSI (< {RssiWarnQueueThreshold} dBm) for {mac}.\n\n" +
+                $"Suggested: {suggested} @ {suggestedRssi} dBm\n\nQueue anyway?",
+                "Weak RSSI",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            if (res != MessageBoxResult.Yes)
+                return;
+        }
+
+        var rows = new ObservableCollection<AssignmentChangeRow>
+        {
+            new AssignmentChangeRow
+            {
+                Mac = mac,
+                ClosestCassia = closestCassia,
+                ClosestRssi = closestRssi == int.MinValue ? 0 : closestRssi,
+                CurrentAssigned = current,
+                SuggestedAssigned = suggested.Length == 0 ? current : suggested,
+                SuggestedRssi = suggestedRssi == int.MinValue ? 0 : suggestedRssi,
+                Reason = suggestedReason
+            }
+        };
+
+        var loadRows = BuildLoadSummaryForPlannedAdds(rows);
+
+        var dlg = ShowAssignmentPlanDialog(
+            title: "Update device",
+            subtitle: $"{mac} • choose Cassia assignment before queueing",
+            rows: rows,
+            loadRows: loadRows,
+            footer: "Apply = set suggested Cassia and queue update • Keep current = queue without changing assignment",
+            notes: $"Suggestion uses the same balancing rules as Add-to-queue/Reassign.\n" +
+                   $"If best RSSI < {RssiAllowBalancingThreshold}: closest Cassia. Otherwise: balance using Cassia Queue/Programming, while still preferring closest when similar.",
+            showKeepButton: true);
+
+        if (dlg == AssignmentPlanDialogResult.Cancel)
+            return;
+
+        if (dlg == AssignmentPlanDialogResult.Apply)
+        {
+            var chosen = (rows.FirstOrDefault()?.SuggestedAssigned ?? "").Trim();
+            if (chosen.Length > 0)
+            {
+                dev.BestCassia = chosen;
+                dev.AssignedCassia = chosen;
+            }
+        }
+
+        // Queue + request FW on the chosen/assigned Cassia
+        await QueueDeviceAndRequestAsync(dev);
+        // UX: refresh Host BLE list shortly after Update so queued/assigned status & FW request results show up.
+        ScheduleHostBleUiRefresh(TimeSpan.FromSeconds(2));
+
+    }
+
+    [RelayCommand]
+    private async Task GetFirmwareHost(HostBleScanItem? item)
+    {
+        item ??= SelectedHostBleDevice;
+        if (item == null || string.IsNullOrWhiteSpace(item.Mac))
+            return;
+
+        var mac = item.Mac.Trim();
+        var dev = FindDiscoveredDevice(mac);
+        if (dev == null)
+        {
+            dev = new DiscoveredDevice
+            {
+                Mac = mac,
+                Name = "BLE (host scan)",
+            };
+            _devices.Add(dev);
+            _deviceByMac[mac] = dev;
+        }
+
+        // Ensure we use the closest Cassia (if known)
+        if (!string.IsNullOrWhiteSpace(item.ClosestCassia))
+        {
+            dev.BestCassia = item.ClosestCassia.Trim();
+            dev.AssignedCassia = item.ClosestCassia.Trim();
+        }
+
+        await SendGetFwVersionAsync(new[] { dev });
+    }
+    
     [RelayCommand]
     private async Task RebalanceQueuedItems()
     {
@@ -961,7 +1780,7 @@ partial void OnSensorFilterChanged(string value)
             rows: rows,
             loadRows: loadRows,
             footer: "Apply = move queue items • Cancel = do nothing",
-            notes: $"Rules: > {RssiAllowBalancingThreshold}: eligible Cassias are those with RSSI > {RssiAllowBalancingThreshold}; <= {RssiForceClosestThreshold}: force closest; otherwise eligible = within {AssignmentRssiSlack} dB of best RSSI.",
+            notes: $"Rules: If best RSSI < {RssiAllowBalancingThreshold} we always pick the closest Cassia. Otherwise we balance using (assigned*{AssignedDetectorsWeight} + queue + programming), preferring ONLINE gateways and using RSSI as tie-break. If best RSSI < {RssiWarnQueueThreshold}, you get a warning.",
             showKeepButton: false);
 
         if (dlgResult != AssignmentPlanDialogResult.Apply)
@@ -1192,6 +2011,14 @@ partial void OnSensorFilterChanged(string value)
     private async Task DisconnectDevice(DiscoveredDevice? device)
         => await DisconnectDeviceAsync(device);
 
+    [RelayCommand]
+    private async Task GetFwForDevice(DiscoveredDevice? device)
+        => await GetFwForDeviceAsync(device);
+
+    [RelayCommand]
+    private async Task GetFwSelected()
+        => await GetFwForSelectedAsync();
+
     internal async Task ConnectDeviceAsync(DiscoveredDevice? device)
     {
         if (device == null) return;
@@ -1201,7 +2028,57 @@ partial void OnSensorFilterChanged(string value)
     internal async Task DisconnectDeviceAsync(DiscoveredDevice? device)
     {
         if (device == null) return;
-        await SendConnectOrDisconnectAsync(device, action: "disconnect");
+        await SendDisconnectAsync(new[] { device });
+    }
+
+    internal async Task DisconnectDevicesAsync(IEnumerable<DiscoveredDevice> devices)
+        => await SendDisconnectAsync(devices);
+
+    internal async Task GetFwForDeviceAsync(DiscoveredDevice? device)
+    {
+        if (device == null) return;
+        await SendGetFwVersionAsync(new[] { device });
+    }
+
+    internal async Task GetFwForSelectedAsync()
+    {
+        var selected = _devices.Where(d => d != null && d.IsSelected).ToList();
+        if (selected.Count == 0) return;
+
+        // If any selected device has very weak RSSI (< -70), warn once (device is still queueable).
+        var weak = selected
+            .Where(d => d != null && d.CassiaRssi != null && d.CassiaRssi.Count > 0)
+            .Select(d => new
+            {
+                Dev = d,
+                Best = d.CassiaRssi.Where(kv => !string.IsNullOrWhiteSpace(kv.Key)).OrderByDescending(kv => kv.Value).FirstOrDefault()
+            })
+            .Select(x => new { x.Dev, BestCassia = (x.Best.Key ?? "").Trim(), BestRssi = x.Best.Value })
+            .Where(x => x.BestRssi < RssiWarnQueueThreshold)
+            .ToList();
+
+        if (weak.Count > 0)
+        {
+            var lines = weak
+                .OrderBy(x => x.BestRssi)
+                .Take(20)
+                .Select(x => $"{x.Dev.Mac}  best={x.BestCassia}:{x.BestRssi} dBm")
+                .ToList();
+
+            var more = weak.Count > 20 ? $"\n... and {weak.Count - 20} more" : "";
+
+            var res = MessageBox.Show(
+                "Warning: Some devices have weak RSSI (< -70 dBm).\n\n" +
+                string.Join("\n", lines) + more +
+                "\n\nQueue anyway?",
+                "Weak RSSI",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+
+            if (res != MessageBoxResult.Yes)
+                return;
+        }
+        await SendGetFwVersionAsync(selected);
     }
 
     [RelayCommand]
@@ -1256,14 +2133,121 @@ partial void OnSensorFilterChanged(string value)
             return;
         }
 
-        var topic = BuildCmdTopic(cassia, "connect"); // same command endpoint; action differentiates
+        // Connect still uses cmd/<cassia>/connect.
+        // Disconnect is now a dedicated cmd/<cassia>/disconnect endpoint.
+        var isDisconnect = action.Equals("disconnect", StringComparison.OrdinalIgnoreCase);
+        var topic = BuildCmdTopic(cassia, isDisconnect ? "disconnect" : "connect");
 
-        object payload = action.Equals("disconnect", StringComparison.OrdinalIgnoreCase)
-            ? new { sensors = new[] { mac }, action = "disconnect" }
-            : new { sensors = new[] { mac } }; // default connect
+        object payload = isDisconnect
+            ? new { sensors = new[] { mac } }
+            : new { sensors = new[] { mac } };
 
         device.BleLink = action.Equals("disconnect", StringComparison.OrdinalIgnoreCase) ? "disconnecting…" : "connecting…";
         await _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+    }
+
+    private const string DefaultPincode = "1234";
+
+    private async Task SendGetFwVersionAsync(IEnumerable<DiscoveredDevice> devices)
+    {
+        if (!IsConnected)
+        {
+            ConnectionStatus = "Not connected";
+            return;
+        }
+
+        var list = devices?.Where(d => d != null && !string.IsNullOrWhiteSpace(d.Mac)).Distinct().ToList() ?? new();
+        if (list.Count == 0) return;
+
+        // Group by target Cassia because the topic contains the cassia name.
+        var groups = list
+            .Select(d => new
+            {
+                Dev = d,
+                Cassia = ResolveCassiaForCommand(d)
+            })
+            .Where(x => !string.IsNullOrWhiteSpace(x.Cassia))
+            .GroupBy(x => x.Cassia, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var g in groups)
+        {
+            var cassia = g.Key;
+            var macs = g.Select(x => (x.Dev.Mac ?? "").Trim()).Where(m => m.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (macs.Length == 0) continue;
+
+            // UI: show that a FW query was requested.
+            foreach (var x in g)
+            {
+                var mac = (x.Dev.Mac ?? "").Trim();
+                var cs = GetOrCreateCache(mac);
+                cs.CurrentFw = "requested";
+                cs.CurrentFwFromGetFw = true;   // ✅ mark as Get FW sourced
+                x.Dev.CurrentFw = "requested";
+            }
+
+            var topic = BuildCmdTopic(cassia, "get-fw-version");
+            var payload = new { sensors = macs, pincode = DefaultPincode };
+
+            try
+            {
+                await _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                ConnectionStatus = $"get-fw-version publish failed: {ex.Message}";
+            }
+        }
+    }
+
+    private async Task SendDisconnectAsync(IEnumerable<DiscoveredDevice> devices)
+    {
+        if (!IsConnected)
+        {
+            ConnectionStatus = "Not connected";
+            return;
+        }
+
+        var list = devices?.Where(d => d != null && !string.IsNullOrWhiteSpace(d.Mac)).Distinct().ToList() ?? new();
+        if (list.Count == 0) return;
+
+        var groups = list
+            .Select(d => new { Dev = d, Cassia = ResolveCassiaForCommand(d) })
+            .Where(x => !string.IsNullOrWhiteSpace(x.Cassia))
+            .GroupBy(x => x.Cassia, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var g in groups)
+        {
+            var cassia = g.Key;
+            var macs = g.Select(x => (x.Dev.Mac ?? "").Trim()).Where(m => m.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (macs.Length == 0) continue;
+
+            foreach (var x in g)
+                x.Dev.BleLink = "disconnecting…";
+
+            var topic = BuildCmdTopic("all", "disconnect");
+            var payload = new { sensors = macs };
+
+            try
+            {
+                await _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                ConnectionStatus = $"disconnect publish failed: {ex.Message}";
+            }
+        }
+    }
+
+    private string ResolveCassiaForCommand(DiscoveredDevice d)
+    {
+        var cassia = (d.AssignedCassia ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(cassia))
+            cassia = (d.BestCassia ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(cassia))
+            cassia = CassiaGateways.FirstOrDefault(g => string.Equals(g.State, "online", StringComparison.OrdinalIgnoreCase))?.Name
+                     ?? CassiaGateways.FirstOrDefault()?.Name
+                     ?? "";
+        return cassia;
     }
 
     internal async Task SendWriteReadAsync(
@@ -1324,6 +2308,25 @@ partial void OnSensorFilterChanged(string value)
             CassiaNameOptions.Add(name);
     }
 
+    private void SortCassiaGatewaysByName()
+    {
+        if (CassiaGateways.Count <= 1) return;
+
+        var ordered = CassiaGateways
+            .Where(g => g != null)
+            .OrderBy(g => g.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        // Reorder in-place (preserves bindings)
+        for (int targetIndex = 0; targetIndex < ordered.Count; targetIndex++)
+        {
+            var item = ordered[targetIndex];
+            var currentIndex = CassiaGateways.IndexOf(item);
+            if (currentIndex >= 0 && currentIndex != targetIndex)
+                CassiaGateways.Move(currentIndex, targetIndex);
+        }
+    }
+
     private void EnsureDeviceAssignmentWiring(DiscoveredDevice d)
     {
         if (d == null) return;
@@ -1365,8 +2368,8 @@ partial void OnSensorFilterChanged(string value)
         if (string.IsNullOrWhiteSpace(cassia)) return 0;
         var gw = CassiaGateways.FirstOrDefault(g => g.Name.Equals(cassia, StringComparison.OrdinalIgnoreCase));
         if (gw == null) return 0;
-        var assigned = Math.Max(0, gw.AssignedGroupA + gw.AssignedGroupB);
-        return (assigned * AssignedDetectorsWeight) + Math.Max(0, gw.Queue) + Math.Max(0, gw.Programming);
+        // Workload must reflect what Cassia reports (queue + programming). Assigned counts are NOT used here.
+        return Math.Max(0, gw.Queue) + Math.Max(0, gw.Programming);
     }
 
     private bool IsDeviceInWork(DiscoveredDevice d)
@@ -1419,117 +2422,151 @@ partial void OnSensorFilterChanged(string value)
         return false;
     }
 
+
 private void EnsureStickyAssignment(DiscoveredDevice d)
-    {
-        if (d == null) return;
-        if (!string.IsNullOrWhiteSpace(d.AssignedCassia)) return; // already assigned (sticky)
+{
+    if (d == null) return;
+    if (!string.IsNullOrWhiteSpace(d.AssignedCassia)) return; // already assigned (sticky)
 
-        // Do not auto-assign devices that are already being worked on (queued/programming).
-        if (IsDeviceInWork(d)) return;
+    // Do not auto-assign devices that are already being worked on (queued/programming).
+    if (IsDeviceInWork(d)) return;
 
-        // Need at least one RSSI reading.
-        if (d.CassiaRssi.Count == 0)
-            return;
+    if (!TryChooseCassiaForUpdate(d, plannedLoad: null, out var chosen, out _))
+        return;
 
-        var best = d.CassiaRssi.OrderByDescending(kv => kv.Value).First();
-        var bestCassia = (best.Key ?? "").Trim();
-        var bestRssi = best.Value;
-        if (string.IsNullOrWhiteSpace(bestCassia)) return;
-
-        // Eligible cassias = within slack of the best RSSI (e.g. best=-55 => eligible >= -65)
-        var eligible = d.CassiaRssi
-            .Where(kv => !string.IsNullOrWhiteSpace(kv.Key) && kv.Value >= bestRssi - AssignmentRssiSlack)
-            .OrderByDescending(kv => kv.Value)
-            .Select(kv => kv.Key)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        if (eligible.Count == 0)
-            eligible.Add(bestCassia);
-
-        var model = (d.SensorModel ?? "").Trim().ToUpperInvariant();
-        var group = GetGroupForModel(model);
-
-        // Prefer balance within the group the user defined.
-        // Tie-break by higher RSSI, then name.
-        string chosen = bestCassia;
-        if (group == 0)
-        {
-            chosen = bestCassia;
-        }
-        else
-        {
-            var groupCounts = GetCurrentGroupCounts(group);
-            var modelCounts = GetCurrentModelCounts(model);
-
-            chosen = eligible
-                .OrderBy(c => GetGatewayLoad(c))
-                .ThenBy(c => groupCounts.TryGetValue(c, out var gc) ? gc : 0)
-                .ThenBy(c => modelCounts.TryGetValue(c, out var mc) ? mc : 0)
-                .ThenByDescending(c => d.CassiaRssi.TryGetValue(c, out var r) ? r : int.MinValue)
-                .ThenBy(c => c, StringComparer.OrdinalIgnoreCase)
-                .FirstOrDefault() ?? bestCassia;
-        }
-
-        d.AssignedCassia = chosen;
-    }
+    d.AssignedCassia = chosen;
+}
 
 
     private (string cassia, string reason) SuggestCassiaForDevice(DiscoveredDevice d)
+{
+    if (d == null) return ("", "no device");
+    if (d.CassiaRssi.Count == 0) return ("", "no RSSI");
+
+    if (!TryChooseCassiaForUpdate(d, plannedLoad: null, out var cassia, out var reason))
+        return ("", reason);
+
+    return (cassia, reason);
+}
+
+/// <summary>
+/// Chooses the best Cassia for updating a device, respecting RSSI threshold and load balancing.
+/// Rules:
+///  - Only Cassias with RSSI >= RssiAllowBalancingThreshold are eligible (e.g. -65).
+///  - Prefer ONLINE gateways when possible.
+///  - Primary sort: lowest effective load (assigned detectors + queue + programming + optional planned load).
+///  - Tie-break: higher RSSI, then name.
+/// Returns false if no eligible Cassia meets the RSSI threshold.
+/// </summary>
+private bool TryChooseCassiaForUpdate(
+    DiscoveredDevice d,
+    Dictionary<string, int>? plannedLoad,
+    out string cassia,
+    out string reason)
+{
+    cassia = "";
+    reason = "";
+
+    if (d == null)
     {
-        if (d == null) return ("", "no device");
-        if (d.CassiaRssi.Count == 0) return ("", "no RSSI");
-
-        var best = d.CassiaRssi.OrderByDescending(kv => kv.Value).First();
-        var bestCassia = (best.Key ?? "").Trim();
-        var bestRssi = best.Value;
-        if (string.IsNullOrWhiteSpace(bestCassia)) return ("", "no Cassia");
-
-        // Eligible cassias = within slack of the best RSSI
-        var eligible = d.CassiaRssi
-            .Where(kv => !string.IsNullOrWhiteSpace(kv.Key) && kv.Value >= bestRssi - AssignmentRssiSlack)
-            .OrderByDescending(kv => kv.Value)
-            .Select(kv => kv.Key)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        if (eligible.Count == 0)
-            eligible.Add(bestCassia);
-
-        var model = (d.SensorModel ?? "").Trim().ToUpperInvariant();
-        var group = GetGroupForModel(model);
-
-        string chosen = bestCassia;
-
-        // Rule: If RSSI is very weak (<= RssiForceClosestThreshold), always pick closest.
-        if (bestRssi <= RssiForceClosestThreshold)
-        {
-            chosen = bestCassia;
-        }
-        else if (group != 0)
-        {
-            var groupCounts = GetCurrentGroupCounts(group);
-            var modelCounts = GetCurrentModelCounts(model);
-
-            chosen = eligible
-                .OrderBy(c => GetGatewayLoad(c))
-                .ThenBy(c => groupCounts.TryGetValue(c, out var gc) ? gc : 0)
-                .ThenBy(c => modelCounts.TryGetValue(c, out var mc) ? mc : 0)
-                .ThenByDescending(c => d.CassiaRssi.TryGetValue(c, out var r) ? r : int.MinValue)
-                .ThenBy(c => c, StringComparer.OrdinalIgnoreCase)
-                .FirstOrDefault() ?? bestCassia;
-        }
-
-        var chosenRssi = d.CassiaRssi.TryGetValue(chosen, out var rr) ? rr : bestRssi;
-        var reason = $"rssi={chosenRssi}, load={GetGatewayLoad(chosen)}";
-        if (bestRssi <= RssiForceClosestThreshold)
-            reason = $"very weak (<= {RssiForceClosestThreshold}): force closest {bestCassia}:{bestRssi}";
-        else if (!chosen.Equals(bestCassia, StringComparison.OrdinalIgnoreCase))
-            reason += $", best={bestCassia}({bestRssi})";
-        return (chosen, reason);
+        reason = "no device";
+        return false;
     }
 
-    private sealed record AssignmentPlanItem(string Mac, string Cassia, string Reason);
+    if (d.CassiaRssi.Count == 0)
+    {
+        reason = "no RSSI";
+        return false;
+    }
+
+    // Determine the closest Cassia (best RSSI).
+    var best = d.CassiaRssi
+        .Where(kv => !string.IsNullOrWhiteSpace(kv.Key))
+        .OrderByDescending(kv => kv.Value)
+        .FirstOrDefault();
+
+    var bestCassia = (best.Key ?? "").Trim();
+    var bestRssi = best.Value;
+
+    if (string.IsNullOrWhiteSpace(bestCassia))
+    {
+        reason = "no RSSI";
+        return false;
+    }
+
+    // Rule: if the strongest RSSI is weaker than the balancing threshold, ALWAYS use the closest Cassia.
+    // This guarantees a device is always queueable and avoids "legal but weak" balancing moves.
+    if (bestRssi < RssiAllowBalancingThreshold)
+    {
+        cassia = bestCassia;
+        reason = $"rssi {bestRssi} (< {RssiAllowBalancingThreshold}): weak link, chose closest={cassia}";
+        return true;
+    }
+
+    // For strong links (>= threshold): allow balancing, but still prefer the closest when choices are otherwise equal.
+    // Eligible: RSSI >= threshold AND within slack of the closest Cassia (so we don't pick a much worse radio just for load).
+    var candidates = d.CassiaRssi
+        .Where(kv => !string.IsNullOrWhiteSpace(kv.Key))
+        .Where(kv => kv.Value >= RssiAllowBalancingThreshold)        .Select(kv => kv.Key.Trim())
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    if (candidates.Count == 0)
+    {
+        // Should not happen because bestRssi >= threshold, but keep it safe.
+        cassia = bestCassia;
+        reason = $"rssi {bestRssi} (>= {RssiAllowBalancingThreshold}): closest fallback={cassia}";
+        return true;
+    }
+
+    int EffectiveLoad(string c)
+    {
+        var baseLoad = GetGatewayLoad(c); // uses latest Cassia-reported queue/programming + assigned group counts
+        var extra = (plannedLoad != null && plannedLoad.TryGetValue(c, out var v)) ? v : 0;
+        return baseLoad + extra;
+    }
+
+    bool IsOnline(string c)
+    {
+        var gw = CassiaGateways.FirstOrDefault(g => g != null && string.Equals(g.Name, c, StringComparison.OrdinalIgnoreCase));
+        return gw != null && string.Equals(gw.State, "online", StringComparison.OrdinalIgnoreCase);
+    }
+
+    var anyOnline = candidates.Any(IsOnline);
+    var pool = anyOnline ? candidates.Where(IsOnline).ToList() : candidates;
+
+    int GetRssi(string c)
+    {
+        foreach (var kv in d.CassiaRssi)
+        {
+            var k = (kv.Key ?? "").Trim();
+            if (string.Equals(k, c, StringComparison.OrdinalIgnoreCase))
+                return kv.Value;
+        }
+        return int.MinValue;
+    }
+
+
+    // Strong-link rule (best RSSI >= threshold):
+    //   1) Always prefer the Cassia with the LOWEST *current* workload (queue + programming) (plus planned batch load)
+    //   2) If tied, prefer the closest Cassia (highest RSSI)
+    // This matches the expected field behavior: if multiple Cassias are "good enough" radio-wise, we spread work first.
+    cassia = pool
+        .OrderBy(c => EffectiveLoad(c))
+        .ThenByDescending(c => GetRssi(c))
+        .ThenBy(c => c, StringComparer.OrdinalIgnoreCase)
+        .FirstOrDefault() ?? bestCassia;
+
+    var chosenRssi = GetRssi(cassia);
+    var extraTxt = plannedLoad != null && plannedLoad.TryGetValue(cassia, out var extra) ? $"+{extra}" : "";
+    reason = $"rssi {chosenRssi} (>= {RssiAllowBalancingThreshold}): balance(load-first), chose={cassia}, load={EffectiveLoad(cassia)} (base={GetGatewayLoad(cassia)}{extraTxt})";
+    return true;
+}
+
+
+
+private sealed record AssignmentPlanItem(string Mac, string Cassia, string Reason);
+
 
     /// <summary>
     /// Computes a batch-aware assignment plan for the given devices.
@@ -1540,127 +2577,64 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
     /// Eligible = within AssignmentRssiSlack dB of best.
     /// Load = (assigned detectors * AssignedDetectorsWeight) + Cassia status (queue+programming) + already planned assignments in this batch.
     /// </summary>
-    private List<AssignmentPlanItem> ComputeBatchAssignmentPlan(IReadOnlyList<DiscoveredDevice> devices)
+    /// <summary>
+/// Computes a batch-aware assignment plan for the given devices.
+/// Rules:
+///  - Only Cassias with RSSI >= RssiAllowBalancingThreshold are eligible (e.g. -65).
+///  - We load-balance across all eligible Cassias using reported workload:
+///      load = (assigned detectors * AssignedDetectorsWeight) + queue + programming + already planned assigns in this batch.
+///  - Prefer ONLINE gateways when possible.
+///  - If no Cassia meets the RSSI threshold for a device, the plan keeps the current assignment (no suggested change).
+/// </summary>
+private List<AssignmentPlanItem> ComputeBatchAssignmentPlan(IReadOnlyList<DiscoveredDevice> devices)
+{
+    var result = new List<AssignmentPlanItem>();
+    if (devices == null || devices.Count == 0) return result;
+
+    // Planned incremental load per Cassia for this batch.
+    var planned = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+    void AddPlanned(string cassia)
     {
-        var result = new List<AssignmentPlanItem>();
-        if (devices == null || devices.Count == 0) return result;
+        cassia = (cassia ?? "").Trim();
+        if (cassia.Length == 0) return;
+        planned[cassia] = planned.TryGetValue(cassia, out var v) ? v + 1 : 1;
+    }
 
-        // Base load from Cassia snapshot.
-        // Goal: finish fastest by keeping roughly the same amount of work per Cassia.
-        // "Work" includes already-assigned detectors, because your workflow tends to keep queueing/upgrading on the assigned Cassia.
-        var baseLoad = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        foreach (var gw in CassiaGateways)
+    // Deterministic order: assign strongest devices first (more options) so later items can still balance well.
+    foreach (var d in devices
+                 .Where(x => x != null)
+                 .OrderByDescending(x => x.CassiaRssi.Count == 0 ? int.MinValue : x.CassiaRssi.Max(kv => kv.Value))
+                 .ThenBy(x => x.Mac, StringComparer.OrdinalIgnoreCase))
+    {
+        var mac = (d.Mac ?? "").Trim();
+        if (mac.Length == 0) continue;
+
+        // If we have no RSSI, keep current assignment (or best known) as "no suggestion".
+        if (d.CassiaRssi.Count == 0)
         {
-            if (gw == null || string.IsNullOrWhiteSpace(gw.Name)) continue;
-            var assigned = Math.Max(0, gw.AssignedGroupA + gw.AssignedGroupB);
-            var q = Math.Max(0, gw.Queue);
-            var p = Math.Max(0, gw.Programming);
-            baseLoad[gw.Name.Trim()] = (assigned * AssignedDetectorsWeight) + q + p;
+            var keep = (d.AssignedCassia ?? d.BestCassia ?? "").Trim();
+            result.Add(new AssignmentPlanItem(mac, keep, "no RSSI"));
+            AddPlanned(keep);
+            continue;
         }
 
-        // Incremental load as we assign within this plan
-        var planned = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-
-        int EffectiveLoad(string cassia)
+        if (TryChooseCassiaForUpdate(d, planned, out var chosen, out var reason))
         {
-            cassia = (cassia ?? "").Trim();
-            if (cassia.Length == 0) return int.MaxValue;
-            var b = baseLoad.TryGetValue(cassia, out var v) ? v : 0;
-            var p = planned.TryGetValue(cassia, out var pv) ? pv : 0;
-            return b + p;
-        }
-
-        string ExplainLoad(string cassia)
-        {
-            cassia = (cassia ?? "").Trim();
-            var gw = CassiaGateways.FirstOrDefault(g => g != null && g.Name.Equals(cassia, StringComparison.OrdinalIgnoreCase));
-            var assigned = gw == null ? 0 : Math.Max(0, gw.AssignedGroupA + gw.AssignedGroupB);
-            var q = gw == null ? 0 : Math.Max(0, gw.Queue);
-            var prog = gw == null ? 0 : Math.Max(0, gw.Programming);
-            var plan = planned.TryGetValue(cassia, out var pv) ? pv : 0;
-            var baseUnits = (assigned * AssignedDetectorsWeight) + q + prog;
-            return $"load={baseUnits}+{plan} (assigned {assigned}*{AssignedDetectorsWeight} + q {q} + p {prog})";
-        }
-
-        void AddPlanned(string cassia)
-        {
-            cassia = (cassia ?? "").Trim();
-            if (cassia.Length == 0) return;
-            planned[cassia] = planned.TryGetValue(cassia, out var v) ? v + 1 : 1;
-        }
-
-        // Deterministic order: assign strong-lock devices first so balancing doesn't steal them.
-        foreach (var d in devices
-                     .Where(x => x != null)
-                     .OrderByDescending(x => x.CassiaRssi.Count == 0 ? int.MinValue : x.CassiaRssi.Max(kv => kv.Value))
-                     .ThenBy(x => x.Mac, StringComparer.OrdinalIgnoreCase))
-        {
-            var mac = (d.Mac ?? "").Trim();
-            if (mac.Length == 0) continue;
-
-            if (d.CassiaRssi.Count == 0)
-            {
-                var fallback = (d.AssignedCassia ?? d.BestCassia ?? "").Trim();
-                result.Add(new AssignmentPlanItem(mac, fallback, "no RSSI"));
-                AddPlanned(fallback);
-                continue;
-            }
-
-            var best = d.CassiaRssi.OrderByDescending(kv => kv.Value).First();
-            var bestCassia = (best.Key ?? "").Trim();
-            var bestRssi = best.Value;
-
-            // Eligible Cassias depend on RSSI:
-            //  - bestRssi > RssiAllowBalancingThreshold: device is strong; eligible are Cassias with RSSI > threshold.
-            //  - otherwise: eligible are Cassias within slack of best.
-            var eligible = (bestRssi > RssiAllowBalancingThreshold)
-                ? d.CassiaRssi
-                    .Where(kv => !string.IsNullOrWhiteSpace(kv.Key) && kv.Value > RssiAllowBalancingThreshold)
-                    .Select(kv => kv.Key.Trim())
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToList()
-                : d.CassiaRssi
-                    .Where(kv => !string.IsNullOrWhiteSpace(kv.Key) && kv.Value >= bestRssi - AssignmentRssiSlack)
-                    .Select(kv => kv.Key.Trim())
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToList();
-            if (eligible.Count == 0 && bestCassia.Length > 0)
-                eligible.Add(bestCassia);
-
-            string chosen;
-            string reason;
-
-            // Rules:
-            //  - Very weak (<= RssiForceClosestThreshold): always pick closest Cassia.
-            //  - Strong (bestRssi > RssiAllowBalancingThreshold): balance between all Cassias that see it strong (RSSI > threshold).
-            //  - Otherwise: load-balance among Cassias within slack of best.
-
-            if (bestRssi <= RssiForceClosestThreshold && bestCassia.Length > 0)
-            {
-                chosen = bestCassia;
-                reason = $"very weak (<= {RssiForceClosestThreshold}): force closest {bestCassia}:{bestRssi}";
-            }
-            else
-            {
-                chosen = eligible
-                    .OrderBy(c => EffectiveLoad(c))
-                    .ThenByDescending(c => d.CassiaRssi.TryGetValue(c, out var r) ? r : int.MinValue)
-                    .ThenBy(c => c, StringComparer.OrdinalIgnoreCase)
-                    .FirstOrDefault() ?? bestCassia;
-
-                var chosenRssi = d.CassiaRssi.TryGetValue(chosen, out var rr) ? rr : bestRssi;
-                if (bestRssi > RssiAllowBalancingThreshold)
-                    reason = $"rssi {bestRssi} (> {RssiAllowBalancingThreshold}): strong, balance, chose={chosen}:{chosenRssi}, {ExplainLoad(chosen)}";
-                else
-                    reason = $"rssi {bestRssi} (<= {RssiAllowBalancingThreshold}): balance (slack {AssignmentRssiSlack} dB), chose={chosen}:{chosenRssi}, {ExplainLoad(chosen)}";
-            }
-
             result.Add(new AssignmentPlanItem(mac, chosen, reason));
             AddPlanned(chosen);
         }
-
-        return result;
+        else
+        {
+            // No eligible Cassia (RSSI < threshold). Keep current assignment so we don't propose illegal moves.
+            var keep = (d.AssignedCassia ?? "").Trim();
+            result.Add(new AssignmentPlanItem(mac, keep, reason));
+            AddPlanned(keep);
+        }
     }
+
+    return result;
+}
 
     private Dictionary<string, int> GetCurrentGroupCounts(int group)
     {
@@ -1746,11 +2720,98 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
         RequestDevicesRefresh();
     }
 
+    private bool TryGetPreferredCassiaFromLatestFailure(string mac, out string cassia, out DateTimeOffset whenLocal)
+    {
+        cassia = "";
+        whenLocal = DateTimeOffset.MinValue;
+        mac = (mac ?? "").Trim();
+        if (mac.Length == 0) return false;
+
+        // Find the latest log group we have for this MAC.
+        UpgradeLogGroup? latest = null;
+        foreach (var g in UpgradeLogGroups)
+        {
+            if (g == null) continue;
+            var gMac = (g.Mac ?? "").Trim();
+            if (gMac.Length == 0) gMac = (g.LatestMac ?? "").Trim();
+            if (gMac.Length == 0) continue;
+            if (!gMac.Equals(mac, StringComparison.OrdinalIgnoreCase)) continue;
+
+            if (latest == null || g.LastTimeLocal > latest.LastTimeLocal)
+                latest = g;
+        }
+
+        if (latest == null) return false;
+        if (!latest.ContainsCompletionFailed) return false;
+
+        var c = (latest.Cassia ?? "").Trim();
+        if (c.Length == 0) return false;
+
+        cassia = c;
+        whenLocal = latest.LastTimeLocal;
+        return true;
+    }
+
+    private string ResolveDetectorTypeForMac(string mac, string fallback)
+    {
+        mac = (mac ?? "").Trim();
+        var model = (fallback ?? "").Trim().ToUpperInvariant();
+        if (!string.IsNullOrWhiteSpace(model)) return model;
+
+        var dev = _devices.FirstOrDefault(d => d != null && string.Equals((d.Mac ?? "").Trim(), mac, StringComparison.OrdinalIgnoreCase));
+        model = (dev?.SensorModel ?? "").Trim().ToUpperInvariant();
+        if (!string.IsNullOrWhiteSpace(model)) return model;
+
+        if (!string.IsNullOrWhiteSpace(dev?.ProductNumber) && _productToModel.TryGetValue(dev.ProductNumber, out var m2))
+            model = (m2 ?? "").Trim().ToUpperInvariant();
+
+        return string.IsNullOrWhiteSpace(model) ? "" : model;
+    }
+
     /// <summary>
     /// Queue + publish start-update immediately.
     /// Status becomes "Requested update" and we wait for tele/progress to mark it really queued.
     /// </summary>
-    private async Task QueueDeviceAndRequestAsync(DiscoveredDevice d)
+    private static bool IsDaliMasterModel(string? model)
+    {
+        model = (model ?? "").Trim().ToUpperInvariant();
+        return model == "P47" || model == "P48";
+    }
+
+    private async Task AutoAdjustParallelProgrammersAsync()
+    {
+        try
+        {
+            // Rule:
+            // - If ALL active (non-done) queue items are DALI masters (P47/P48) => 4 workers
+            // - Otherwise => 2 workers
+            var active = QueueItems.Where(q => q != null && !q.IsDone).ToList();
+
+            var desired = 2;
+            if (active.Count > 0 && active.All(q => IsDaliMasterModel(q.DetectorType)))
+                desired = 4;
+
+            if (desired == _lastAutoParallelProgrammersSent && _lastAutoParallelProgrammersSent != int.MinValue)
+                return;
+
+            _lastAutoParallelProgrammersSent = desired;
+
+            foreach (var gw in CassiaGateways.ToList())
+            {
+                if (gw == null || string.IsNullOrWhiteSpace(gw.Name)) continue;
+                if (!gw.State.Equals("online", StringComparison.OrdinalIgnoreCase)) continue;
+
+                gw.ParallelProgrammersDesired = desired;
+                await SetParallelProgrammersAsync(gw.Name, desired).ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            // best-effort; do not block queueing UX
+        }
+    }
+
+private async Task QueueDeviceAndRequestAsync(DiscoveredDevice d)
     {
         if (d == null || string.IsNullOrWhiteSpace(d.Mac))
             return;
@@ -1770,7 +2831,11 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
                 model = m2;
         }
         if (string.IsNullOrWhiteSpace(model))
-            model = "P46"; // safe default
+        {
+            ConnectionStatus = "Cannot queue: detector model (P4x) is unknown for " + d.Mac;
+            try { MessageBox.Show($"Cannot queue {d.Mac} because detector model (P4x) could not be resolved.\n\nMake sure the device has a SensorModel/ProductNumber, or refresh discovery.", "Unknown model", MessageBoxButton.OK, MessageBoxImage.Warning); } catch { }
+            return;
+        }
 
         // Determine firmware from dropdown selection
         var fw = GetFirmwareForModel(model);
@@ -1780,25 +2845,134 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
         if (!string.IsNullOrWhiteSpace(fw) && !fw.Trim().StartsWith("v", StringComparison.OrdinalIgnoreCase))
             fw = "";
 
-        // Determine cassia (sticky assignment), else best RSSI, else first online cassia, else any cassia
-        var cassia = (d.AssignedCassia ?? "").Trim();
-        if (string.IsNullOrWhiteSpace(cassia))
-            cassia = (d.BestCassia ?? "").Trim();
+        // If the latest upgrade attempt for this MAC failed, prefer using the SAME Cassia again
+        // (it likely holds the settings backup). We only deviate if the device is not within reach
+        // and the user explicitly chooses to use the currently suggested Cassia instead.
+        var preferredFailureCassia = "";
+        DateTimeOffset preferredFailureWhen = DateTimeOffset.MinValue;
+        var hasPreferredFailureCassia = TryGetPreferredCassiaFromLatestFailure(d.Mac, out preferredFailureCassia, out preferredFailureWhen);
 
-        if (string.IsNullOrWhiteSpace(cassia) || cassia.Equals("auto", StringComparison.OrdinalIgnoreCase))
+        
+// Determine Cassia for update:
+//  - If strongest RSSI is < RssiAllowBalancingThreshold: ALWAYS use the closest Cassia (highest RSSI).
+//  - If strongest RSSI is >= RssiAllowBalancingThreshold: allow load-balancing (queue+programming+assigned), but still prefer the closest on ties.
+//  - Device should ALWAYS be queueable. If strongest RSSI is < RssiWarnQueueThreshold: show a warning before queueing.
+var cassia = (d.AssignedCassia ?? "").Trim();
+
+string bestCassia = "";
+int bestRssi = int.MinValue;
+
+if (d.CassiaRssi.Count > 0)
+{
+    var best = d.CassiaRssi
+        .Where(kv => !string.IsNullOrWhiteSpace(kv.Key))
+        .OrderByDescending(kv => kv.Value)
+        .FirstOrDefault();
+
+    bestCassia = (best.Key ?? "").Trim();
+    bestRssi = best.Value;
+
+    if (!_suppressWeakRssiPrompt && bestRssi < RssiWarnQueueThreshold)
+    {
+        var res = MessageBox.Show(
+            $"Warning: Weak RSSI for {d.Mac} (best={bestCassia}:{bestRssi} dBm).\n\n" +
+            $"The device is below {RssiWarnQueueThreshold} dBm, which can cause failures.\n\n" +
+            "Do you still want to queue it?",
+            "Weak RSSI",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+
+        if (res != MessageBoxResult.Yes)
         {
+            ConnectionStatus = $"Not queued: {d.Mac} (weak RSSI)";
+            return;
+        }
+    }
+
+    // Under the balancing threshold -> always closest Cassia.
+    if (!string.IsNullOrWhiteSpace(bestCassia) && bestRssi < RssiAllowBalancingThreshold)
+    {
+        cassia = bestCassia;
+    }
+}
+
+// If still no cassia chosen, try to keep sticky (only if it has strong RSSI), else balance.
+if (string.IsNullOrWhiteSpace(cassia))
+{
+    // Validate sticky assignment against threshold when we have RSSI readings.
+    var sticky = (d.AssignedCassia ?? "").Trim();
+    if (!string.IsNullOrWhiteSpace(sticky) && d.CassiaRssi.Count > 0)
+    {
+        if (d.CassiaRssi.TryGetValue(sticky, out var stickyRssi) && stickyRssi >= RssiAllowBalancingThreshold)
+            cassia = sticky;
+    }
+
+    if (string.IsNullOrWhiteSpace(cassia))
+    {
+        if (d.CassiaRssi.Count > 0)
+        {
+            // Strong RSSI case: balance among eligible Cassias.
+            if (!TryChooseCassiaForUpdate(d, plannedLoad: null, out cassia, out _))
+            {
+                // Fallback: closest Cassia (if any)
+                cassia = bestCassia;
+            }
+        }
+        else
+        {
+            // Fallback: no RSSI at all -> pick first online Cassia to avoid blocking.
             cassia = CassiaGateways.FirstOrDefault(g => string.Equals(g.State, "online", StringComparison.OrdinalIgnoreCase))?.Name
                      ?? CassiaGateways.FirstOrDefault()?.Name
                      ?? "";
         }
-        if (string.IsNullOrWhiteSpace(cassia))
+    }
+}
+
+        // Apply preferred failure Cassia (sticky) if relevant.
+        if (hasPreferredFailureCassia)
         {
-            ConnectionStatus = "No Cassia gateway known yet (cannot send start-update)";
-            return;
+            var pref = (preferredFailureCassia ?? "").Trim();
+            if (pref.Length > 0 && !string.Equals(pref, cassia, StringComparison.OrdinalIgnoreCase))
+            {
+                // Consider "within reach" if we have a reading and it's not extremely weak.
+                var prefHasRssi = d.CassiaRssi.TryGetValue(pref, out var prefRssi);
+                var withinReach = prefHasRssi && prefRssi >= RssiWarnQueueThreshold;
+
+                if (withinReach)
+                {
+                    cassia = pref;
+                }
+                else
+                {
+                    var prefRssiTxt = prefHasRssi ? $"{prefRssi} dBm" : "(no RSSI)";
+                    var suggested = cassia;
+
+                    var res = MessageBox.Show(
+                        $"This device previously FAILED on {pref} ({preferredFailureWhen.ToLocalTime():yyyy-MM-dd HH:mm:ss}).\n" +
+                        $"We should ideally use the same Cassia again because it likely has the settings backup.\n\n" +
+                        $"But RSSI to {pref} is {prefRssiTxt}, so it may be out of reach.\n\n" +
+                        $"Use {pref} anyway?\n\n" +
+                        $"Yes = use {pref} (sticky)\n" +
+                        $"No = use suggested {suggested}",
+                        "Reuse Cassia for failed device",
+                        MessageBoxButton.YesNo,
+                        MessageBoxImage.Warning);
+
+                    if (res == MessageBoxResult.Yes)
+                        cassia = pref;
+                }
+            }
         }
 
-        // Create/update queue item
+if (string.IsNullOrWhiteSpace(cassia))
+{
+    ConnectionStatus = "No Cassia gateway known yet (cannot send start-update)";
+    return;
+}
+
+// Create/update queue item
         var qi = QueueItems.FirstOrDefault(q => q.Mac.Equals(d.Mac, StringComparison.OrdinalIgnoreCase));
+        var wasAlreadyInQueue = (qi != null);
         if (qi == null)
         {
             qi = new QueueItem
@@ -1818,6 +2992,8 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
         qi.Notes = "";
         qi.LastUpdateUtc = DateTimeOffset.UtcNow;
 
+        UpdateQueueRssiForMac(d.Mac);
+
         // Mirror into discovered list immediately
         MirrorQueueToDevice(qi);
 
@@ -1836,9 +3012,26 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
                 DetectorType = model,
                 FirmwareVersion = fw,
                 MacAddress = d.Mac,
-                Pincode = ""
+                Pincode = "",
+                forceUpdate = ForceUpdateEnabled
             }
         };
+
+        // Before queueing: send disconnect to /all to ensure no gateway is stuck on this device.
+        // Only do this if the MAC wasn't already present in our queue list (avoid spamming disconnect).
+        if (!wasAlreadyInQueue)
+        {
+            try
+            {
+                await _mqtt.PublishJsonAsync(BuildCmdTopic("all", "disconnect"),
+                    new { sensors = new[] { d.Mac } },
+                    retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+            }
+            catch { /* best-effort */ }
+        }
+
+        AppendQueuedMacToNotes(d.Mac);
+
 
         try
         {
@@ -1861,6 +3054,10 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
                 }
                 catch { }
             });
+
+            // Auto-tune parallel programmers after queueing.
+            await AutoAdjustParallelProgrammersAsync().ConfigureAwait(false);
+
         }
         catch (Exception ex)
         {
@@ -1890,6 +3087,23 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
         }
     }
 
+
+    private void AppendQueuedMacToNotes(string mac)
+    {
+        if (string.IsNullOrWhiteSpace(mac))
+            return;
+
+        // Always append at the end, on its own line, with timestamp.
+        // Keep whatever the user has written above intact.
+        var t = NotesText ?? string.Empty;
+
+        if (t.Length > 0 && !t.EndsWith(Environment.NewLine, StringComparison.Ordinal))
+            t += Environment.NewLine;
+
+        t += $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} -> {mac.Trim()}{Environment.NewLine}";
+        NotesText = t;
+    }
+
     private DiscoveredDevice EnsureDeviceExistsForProgress(string mac)
     {
         // IMPORTANT: Do NOT create new "discovered devices" from progress/logs.
@@ -1910,6 +3124,10 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
         cs.ProcessProgress = qi.Progress;
         cs.ProcessCassia = qi.Cassia ?? "";
         cs.ProcessFirmware = qi.FirmwareVersion ?? "";
+        if (!string.IsNullOrWhiteSpace(qi.ChipUsed))
+            cs.ChipUsed = qi.ChipUsed;
+        else if (!string.IsNullOrWhiteSpace(cs.ChipUsed))
+            qi.ChipUsed = cs.ChipUsed;
         cs.LastUpdateUtc = qi.LastUpdateUtc;
 
         // Mark queue state for row coloring (ignore items that have been 100% for > 1 minute)
@@ -1920,6 +3138,7 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
         if (dev == null) return;
 
         dev.ProcessStatus = cs.ProcessStatus;
+        dev.ChipUsed = cs.ChipUsed;
         dev.ProcessProgress = cs.ProcessProgress;
         dev.ProcessCassia = cs.ProcessCassia;
         // When a device is queued/programming, force AssignedCassia to the gateway currently handling it
@@ -1929,6 +3148,15 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
         dev.ProcessLastUpdateUtc = cs.LastUpdateUtc;
 
         dev.IsInQueue = cs.IsInQueue;
+
+        // When a device is queued/programming, it is no longer "successful" from a previous run.
+        // Clear result flags so row coloring always prefers queue state.
+        if (dev.IsInQueue)
+        {
+            dev.IsUpgradeSuccess = false;
+            dev.IsUpgradeFailed = false;
+            dev.IsUpgradeWarn = false;
+        }
     }
 
     
@@ -2076,6 +3304,8 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
                     {
                         gw = new CassiaGateway { Name = name, NetworkId = net };
                         CassiaGateways.Add(gw);
+                        SortCassiaGatewaysByName();
+                        SortCassiaGatewaysByName();
                     }
 
                     EnsureCassiaOption(name);
@@ -2154,6 +3384,24 @@ private void EnsureStickyAssignment(DiscoveredDevice d)
             return;
         }
 
+        if (kind == "tele" && leaf == "fw-version")
+        {
+            HandleFwVersionTele(cassia, payload);
+            return;
+        }
+
+        if (kind == "tele" && leaf == "disconnect")
+        {
+            HandleDisconnectTele(cassia, payload);
+            return;
+        }
+
+        if (kind == "tele" && leaf == "identify")
+        {
+            HandleIdentifyTele(cassia, payload);
+            return;
+        }
+
 
         
 if (kind == "tele" && leaf == "progress")
@@ -2223,6 +3471,7 @@ if (kind == "tele" && leaf == "progress")
                         {
                             gw = new CassiaGateway { Name = cassia, NetworkId = net };
                             CassiaGateways.Add(gw);
+                            SortCassiaGatewaysByName();
                         }
 
                         EnsureCassiaOption(gw.Name);
@@ -2266,7 +3515,7 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
                             EnsureDeviceAssignmentWiring(existing);
                             ApplyCachedStatusToDevice(existing);
 
-                            if (!string.IsNullOrWhiteSpace(dn)) existing.Name = dn;
+                            ApplyDeviceNameWithGuards(existing, dn);
                             if (!string.IsNullOrWhiteSpace(fam)) existing.DetectorFamily = fam;
                             if (!string.IsNullOrWhiteSpace(typ)) existing.DetectorType = typ;
 
@@ -2282,6 +3531,7 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
                             }
 
                             existing.UpdateFromCassia(cassia, rssi, ts);
+                            UpdateQueueRssiForMac(mac);
                             EnsureStickyAssignment(existing);
                         }
 
@@ -2577,10 +3827,25 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
         {
             var mac = kvp.Key;
             var g = kvp.Value;
-            var isSuccess = g.ContainsCompletionSuccess;
+            // IMPORTANT:
+            // The per-device result MUST be taken from the "Device Upgrade Completed." line (Warn/Success/Failed).
+            // Do NOT rely on the last informational line.
+            var completion = g.Entries
+                .Where(e => !string.IsNullOrWhiteSpace(e.Stage)
+                            && e.Stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(e => e.TimeLocal)
+                .FirstOrDefault();
+
+            var completionStatus = (completion?.Status ?? "").Trim();
+            var isSuccess = completionStatus.Equals("Success", StringComparison.OrdinalIgnoreCase);
+            var isWarn = completionStatus.Equals("Warn", StringComparison.OrdinalIgnoreCase);
+            var isFailed = completionStatus.Equals("Failed", StringComparison.OrdinalIgnoreCase)
+                           || completionStatus.StartsWith("Fail", StringComparison.OrdinalIgnoreCase);
 
             var cs = GetOrCreateCache(mac);
             cs.IsUpgradeSuccess = isSuccess;
+            cs.IsUpgradeWarn = isWarn;
+            cs.IsUpgradeFailed = isFailed;
             // Use the group's completion timestamp if present.
             if (isSuccess)
             {
@@ -2604,6 +3869,8 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
             if (dev != null)
             {
                 dev.IsUpgradeSuccess = isSuccess;
+                dev.IsUpgradeWarn = isWarn;
+                dev.IsUpgradeFailed = isFailed;
                 dev.LastUpgradeSuccessUtc = cs.LastUpgradeSuccessUtc;
                 dev.LastTargetFw = cs.LastTargetFw;
             }
@@ -2616,6 +3883,8 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
             if (dev == null || string.IsNullOrWhiteSpace(dev.Mac)) continue;
             if (latestByMac.ContainsKey(dev.Mac)) continue;
             dev.IsUpgradeSuccess = false;
+            dev.IsUpgradeWarn = false;
+            dev.IsUpgradeFailed = false;
         }
     }
 
@@ -2812,6 +4081,13 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
 
             // What we want to show in the device/queue lists:
             // Prefer stage, but if stage is empty, show status.
+            var chipUsed = "";
+            if (!string.IsNullOrWhiteSpace(stage))
+            {
+                var cm = Regex.Match(stage, @"using\s+chip\s+(?<c>\d+)", RegexOptions.IgnoreCase);
+                if (cm.Success) chipUsed = cm.Groups["c"].Value.Trim();
+            }
+
             var text = !string.IsNullOrWhiteSpace(stage) ? stage : status;
 
             var isCompletedSuccess = stage.Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase)
@@ -2837,6 +4113,8 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
 
                     qi.Cassia = cassia;
                     qi.Status = queueText.Trim();
+                    if (!string.IsNullOrWhiteSpace(chipUsed))
+                        qi.ChipUsed = chipUsed;
                     if (isCompletedSuccess)
                         qi.Progress = 100;
                     if (LooksLikeFirmwareVersion(fw))
@@ -2853,6 +4131,8 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
 
                 cs.ProcessCassia = cassia;
                 cs.ProcessStatus = text.Trim();
+                if (!string.IsNullOrWhiteSpace(chipUsed))
+                    cs.ChipUsed = chipUsed;
                 if (isCompletedSuccess)
                     cs.ProcessProgress = 100;
 
@@ -2864,6 +4144,7 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
                 if (dev == null) return;
                 dev.ProcessCassia = cassia;
                 dev.ProcessStatus = cs.ProcessStatus;
+                dev.ChipUsed = cs.ChipUsed;
                 if (!string.IsNullOrWhiteSpace(cs.ProcessFirmware))
                     dev.ProcessFirmware = cs.ProcessFirmware;
                 dev.ProcessLastUpdateUtc = tsUtc;
@@ -3182,8 +4463,21 @@ private void RequestUpgradeLogTextRefresh()
         await RemoveFromQueueAsync(fromCassia, new[] { mac }).ConfigureAwait(false);
 
         // Step 2: queue on the new Cassia
-        var model = (qi.DetectorType ?? "").Trim();
+        var model = ResolveDetectorTypeForMac(mac, (qi.DetectorType ?? "").Trim());
         var fw = (qi.FirmwareVersion ?? "").Trim();
+
+        if (string.IsNullOrWhiteSpace(model))
+        {
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                qi.Status = "Cannot move: unknown model";
+                qi.LastUpdateUtc = DateTimeOffset.UtcNow;
+                MirrorQueueToDevice(qi);
+                RequestQueueRefresh();
+            });
+            try { MessageBox.Show($"Cannot move {mac} to {newCassia} because detector model (P4x) could not be resolved. The backend requires DetectorType. Please refresh discovery so the model is known, or re-add the device.", "Unknown model", MessageBoxButton.OK, MessageBoxImage.Warning); } catch { }
+            return;
+        }
 
         Application.Current.Dispatcher.Invoke(() =>
         {
@@ -3192,9 +4486,19 @@ private void RequestUpgradeLogTextRefresh()
             qi.Progress = 0;
             qi.Notes = "";
             qi.LastUpdateUtc = DateTimeOffset.UtcNow;
+            qi.DetectorType = model; // IMPORTANT: carry model to the new Cassia
+            UpdateQueueRssiForMac(mac);
             MirrorQueueToDevice(qi);
             RequestQueueRefresh();
         });
+
+        // Before queueing: send disconnect to /all to ensure no gateway is stuck on this device.
+        try
+        {
+            await _mqtt.PublishJsonAsync(BuildCmdTopic("all", "disconnect"), new { sensors = new[] { mac } }, retain: false, qos: 1, ct: _appCts.Token)
+                      .ConfigureAwait(false);
+        }
+        catch { /* best-effort */ }
 
         await PublishStartUpdateAsync(newCassia, mac, model, fw).ConfigureAwait(false);
     }
@@ -3241,7 +4545,29 @@ private void RequestUpgradeLogTextRefresh()
     private Task SetParallelProgrammersAsync(string cassiaName, int value)
         => _mqtt.PublishJsonAsync(BuildCmdTopic(cassiaName, "set-parallel-programmers"), new { value }, retain: false, qos: 1, ct: _appCts.Token);
 
+    
+
     [RelayCommand]
+    private async Task ClearDeviceSettingsBackupsForCassia(string cassiaName)
+    {
+        if (!IsConnected) { ConnectionStatus = "Not connected"; return; }
+        cassiaName = (cassiaName ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(cassiaName)) return;
+
+        try
+        {
+            // cmd -> clear-device-settings-backups payload {}
+            await _mqtt.PublishJsonAsync(BuildCmdTopic(cassiaName, "clear-device-settings-backups"), new { }, retain: false, qos: 1, ct: _appCts.Token)
+                      .ConfigureAwait(false);
+            ConnectionStatus = $"Sent clear-device-settings-backups to {cassiaName}";
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = $"Clear backups failed ({cassiaName}): {ex.Message}";
+        }
+    }
+
+[RelayCommand]
     private async Task GetParallelProgrammersForCassia(string cassiaName)
     {
         if (!IsConnected) { ConnectionStatus = "Not connected"; return; }
@@ -3343,6 +4669,7 @@ private void RequestUpgradeLogTextRefresh()
                 {
                     gw = new CassiaGateway { Name = cassia, NetworkId = NetworkId };
                     CassiaGateways.Add(gw);
+                    SortCassiaGatewaysByName();
                 }
 
                 gw.FwManifestLastSeenUtc = DateTimeOffset.UtcNow;
@@ -3409,7 +4736,7 @@ private void RequestUpgradeLogTextRefresh()
                         _devices.Add(d);
                     }
 
-                    d.Name = string.IsNullOrWhiteSpace(name) ? d.Name : name;
+                    ApplyDeviceNameWithGuards(d, name);
                     d.ProductNumber = string.IsNullOrWhiteSpace(productNumber) ? d.ProductNumber : productNumber;
                     d.DetectorFamily = string.IsNullOrWhiteSpace(detectorFamily) ? d.DetectorFamily : detectorFamily;
                     d.DetectorType = string.IsNullOrWhiteSpace(detectorType) ? d.DetectorType : detectorType;
@@ -3425,6 +4752,8 @@ private void RequestUpgradeLogTextRefresh()
                     else
                         d.LastSeenUtc = lastSeenUtc;
 
+                    UpdateQueueRssiForMac(mac);
+
                     ApplyCachedStatusToDevice(d);
                     EnsureStickyAssignment(d);
                 }
@@ -3434,6 +4763,20 @@ private void RequestUpgradeLogTextRefresh()
             });
         }
         catch { }
+    }
+
+    private void UpdateQueueRssiForMac(string? mac)
+    {
+        mac = (mac ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(mac)) return;
+
+        var qi = QueueItems.FirstOrDefault(x => x.Mac.Equals(mac, StringComparison.OrdinalIgnoreCase));
+        if (qi == null) return;
+
+        if (_deviceByMac.TryGetValue(mac, out var d))
+        {
+            qi.UpdateRssiEntries(d.CassiaRssi, qi.Cassia);
+        }
     }
 
     private void HandleQueueRemoveTele(string cassia, string payload)
@@ -3532,6 +4875,8 @@ private void RequestUpgradeLogTextRefresh()
                         qi.LastUpdateUtc = now;
                     }
 
+                    UpdateQueueRssiForMac(mac);
+                    UpdateQueueRssiForMac(mac);
                     MirrorQueueToDevice(qi);
                 }
 
@@ -3721,6 +5066,7 @@ private void RequestUpgradeLogTextRefresh()
                 {
                     gw = new CassiaGateway { Name = cassia, NetworkId = NetworkId };
                     CassiaGateways.Add(gw);
+                    SortCassiaGatewaysByName();
                     EnsureCassiaOption(cassia);
                 }
 
@@ -3730,6 +5076,162 @@ private void RequestUpgradeLogTextRefresh()
         }
         catch { }
     }
+
+    private void HandleFwVersionTele(string cassia, string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("results", out var resultsEl) || resultsEl.ValueKind != JsonValueKind.Array)
+                return;
+
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                foreach (var r in resultsEl.EnumerateArray())
+                {
+                    if (r.ValueKind != JsonValueKind.Object) continue;
+                    var mac = r.TryGetProperty("mac", out var m) ? (m.GetString() ?? "") : "";
+                    var ver = r.TryGetProperty("version", out var v) ? (v.GetString() ?? "") : "";
+                    mac = (mac ?? "").Trim();
+                    if (string.IsNullOrWhiteSpace(mac)) continue;
+
+                    // Extract the Sensor App version when the backend returns a full combined string.
+                    var app = "";
+                    var mm = SensorAppFromStatusRx.Match(ver ?? "");
+                    if (mm.Success) app = mm.Groups["app"].Value;
+                    if (string.IsNullOrWhiteSpace(app))
+                        app = (ver ?? "").Trim();
+
+                    var cs = GetOrCreateCache(mac);
+                    cs.CurrentFw = app;
+                    cs.CurrentFwFromGetFw = true;   // ✅ mark as Get FW sourced
+
+
+                    var dev = FindDiscoveredDevice(mac);
+                    if (dev != null)
+                        dev.CurrentFw = app;
+                }
+            });
+        }
+        catch { }
+    }
+
+    private void HandleDisconnectTele(string cassia, string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("results", out var resultsEl) || resultsEl.ValueKind != JsonValueKind.Array)
+                return;
+
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                foreach (var r in resultsEl.EnumerateArray())
+                {
+                    if (r.ValueKind != JsonValueKind.Object) continue;
+                    var mac = r.TryGetProperty("mac", out var m) ? (m.GetString() ?? "") : "";
+                    mac = (mac ?? "").Trim();
+                    if (string.IsNullOrWhiteSpace(mac)) continue;
+
+                    var ok = true;
+                    if (r.TryGetProperty("success", out var s))
+                    {
+                        if (s.ValueKind == JsonValueKind.False) ok = false;
+                        else if (s.ValueKind == JsonValueKind.True) ok = true;
+                    }
+
+                    var dev = FindDiscoveredDevice(mac);
+                    if (dev != null)
+                        dev.BleLink = ok ? "disconnected" : "disconnect failed";
+                }
+            });
+        }
+        catch { }
+    }
+
+    private void HandleIdentifyTele(string cassia, string payload)
+{
+    // Telemetry format:
+    // {
+    //   name, networkId, requestId,
+    //   data: { stage, mac, time, errorStep?, error? }
+    // }
+    try
+    {
+        using var doc = JsonDocument.Parse(payload);
+        var root = doc.RootElement;
+        if (!root.TryGetProperty("data", out var dataEl) || dataEl.ValueKind != JsonValueKind.Object)
+            return;
+
+        var stage = dataEl.TryGetProperty("stage", out var st) ? (st.GetString() ?? "") : "";
+        var mac = dataEl.TryGetProperty("mac", out var m) ? (m.GetString() ?? "") : "";
+        mac = (mac ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(mac)) return;
+
+        var isFinished =
+            stage.Equals("disconnected", StringComparison.OrdinalIgnoreCase) ||
+            stage.Equals("failed", StringComparison.OrdinalIgnoreCase);
+
+        // We only show the button as "active/green" after the gateway reports a successful login:
+        // - logged-in
+        // - login-skipped-bootmode
+        var isLoggedIn =
+            stage.Equals("logged-in", StringComparison.OrdinalIgnoreCase) ||
+            stage.Equals("login-skipped-bootmode", StringComparison.OrdinalIgnoreCase);
+
+        if (isLoggedIn)
+        {
+            _identifyConnectedByMac[mac] = true;   // "ready" marker for this request
+            _identifyPendingByMac[mac] = false;    // stop pulsing
+            _identifyActiveByMac[mac] = true;      // turn green
+        }
+        else if (isFinished)
+        {
+            _identifyPendingByMac[mac] = false;
+            _identifyConnectedByMac[mac] = false;
+            _identifyActiveByMac[mac] = false;
+        }
+        else
+        {
+            // Still working: keep pulsing until we reach logged-in / login-skipped-bootmode
+            var readySeen = _identifyConnectedByMac.TryGetValue(mac, out var cs) && cs;
+            _identifyActiveByMac[mac] = readySeen;
+
+            if (!readySeen)
+                _identifyPendingByMac[mac] = true;
+        }
+
+        // Update Host BLE row immediately (button pulses while pending, turns green while active)
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            if (_hostBleRowsByMac.TryGetValue(mac, out var row) && row != null)
+            {
+                row.IsIdentifyPending = _identifyPendingByMac.TryGetValue(mac, out var ip) && ip;
+                row.IsIdentifying = _identifyActiveByMac.TryGetValue(mac, out var ia) && ia;
+            }
+
+            // Optional: show a brief status line
+            if (!string.IsNullOrWhiteSpace(stage))
+            {
+                var requestId = root.TryGetProperty("requestId", out var rid) ? (rid.GetString() ?? "") : "";
+                if (stage.Equals("failed", StringComparison.OrdinalIgnoreCase))
+                {
+                    var step = dataEl.TryGetProperty("errorStep", out var es) ? (es.GetString() ?? "") : "";
+                    var err = dataEl.TryGetProperty("error", out var ee) ? (ee.GetString() ?? "") : "";
+                    ConnectionStatus = $"Identify failed {mac} {(!string.IsNullOrWhiteSpace(step) ? ("(" + step + ") ") : "")} {err}".Trim();
+                }
+                else
+                {
+                    ConnectionStatus = $"Identify {mac}: {stage}{(string.IsNullOrWhiteSpace(requestId) ? "" : (" (" + requestId + ")"))}";
+                }
+            }
+        });
+    }
+    catch { }
+}
+
 
     private void ShowFwManifestTimeoutIfAny()
     {
@@ -3853,12 +5355,12 @@ private void RequestUpgradeLogTextRefresh()
         apply(FirmwareOptionsP41, "P41");
         apply(FirmwareOptionsP42, "P42");
 
-        // Always auto-select the latest FW (last = highest after sorting)
-        SelectedFirmwareP48 = FirmwareOptionsP48.LastOrDefault() ?? "";
-        SelectedFirmwareP47 = FirmwareOptionsP47.LastOrDefault() ?? "";
-        SelectedFirmwareP46 = FirmwareOptionsP46.LastOrDefault() ?? "";
-        SelectedFirmwareP41 = FirmwareOptionsP41.LastOrDefault() ?? "";
-        SelectedFirmwareP42 = FirmwareOptionsP42.LastOrDefault() ?? "";
+        // Preserve user selection if it still exists; otherwise fall back to latest.
+        SelectedFirmwareP48 = PreserveFirmwareSelection(FirmwareOptionsP48, SelectedFirmwareP48);
+        SelectedFirmwareP47 = PreserveFirmwareSelection(FirmwareOptionsP47, SelectedFirmwareP47);
+        SelectedFirmwareP46 = PreserveFirmwareSelection(FirmwareOptionsP46, SelectedFirmwareP46);
+        SelectedFirmwareP41 = PreserveFirmwareSelection(FirmwareOptionsP41, SelectedFirmwareP41);
+        SelectedFirmwareP42 = PreserveFirmwareSelection(FirmwareOptionsP42, SelectedFirmwareP42);
     }
 
 

@@ -17,7 +17,6 @@ namespace AccessAPP.Services
             _httpClient = httpClient;
             _configuration = configuration;
             _notificationService = notificationService;
-            cassiaReadWrite.semaphore = connectService.semaphore;
         }
 
         public async Task<PincodeCheckResponseModel> CheckPincode(string gatewayIpAddress, string macAddress, string pincode)
@@ -28,8 +27,13 @@ namespace AccessAPP.Services
                 string checkPincodeBytes = new CheckPincodeTelegram(pincode).Create();
 
                 // Write the message to the BLE device
-                
-                var result = await cassiaReadWrite.WriteBleMessage(gatewayIpAddress, macAddress, 19, checkPincodeBytes, "?noresponse=1");
+                // IMPORTANT: Always dispose the HTTP response to return the connection to the pool.
+                using var result = await cassiaReadWrite.WriteBleMessageAsync(
+                    gatewayIpAddress,
+                    macAddress,
+                    19,
+                    checkPincodeBytes,
+                    "?noresponse=1");
 
                 var pincodeCheckResultTask = new TaskCompletionSource<PincodeCheckResponseModel>();
 

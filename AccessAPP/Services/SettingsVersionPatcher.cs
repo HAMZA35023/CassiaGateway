@@ -83,16 +83,14 @@ public static int FirmwareToInt(string firmwareVersion)
         if (rulesRoot?.Rules == null || rulesRoot.Rules.Count == 0) return;
 
         int target = FirmwareToInt(firmwareVersion);
-        Console.WriteLine($"[RestorePatch] FirmwareVersion='{firmwareVersion}' parsedTarget={target}");
-
-        // Apply all rules with From <= target, ascending (later overrides)
+        AppLog.Info($"[RestorePatch] FirmwareVersion='{firmwareVersion}' parsedTarget={target}");
+// Apply all rules with From <= target, ascending (later overrides)
         var applicable = rulesRoot.Rules
             .Where(r => r != null && r.From <= target)
             .OrderBy(r => r.From)
             .ToList();
-        Console.WriteLine($"[RestorePatch] Applicable rules: {string.Join(", ", applicable.Select(a => a.From))}");
-
-        if (applicable.Count == 0) return;
+        AppLog.Info($"[RestorePatch] Applicable rules: {string.Join(", ", applicable.Select(a => a.From))}");
+if (applicable.Count == 0) return;
 
         var eff = new EffectiveVersions();
 
@@ -106,9 +104,8 @@ public static int FirmwareToInt(string firmwareVersion)
             if (s.Wired?.Version != null) eff.Wired = s.Wired.Version;
             if (s.Ble?.Version != null) eff.Ble = s.Ble.Version;
         }
-        Console.WriteLine($"[RestorePatch] Effective: UserCfg={eff.UserCfg?.ToString() ?? "null"}, Wired={eff.Wired?.ToString() ?? "null"}, Dali={eff.Dali?.ToString() ?? "null"}, Ble={eff.Ble?.ToString() ?? "null"}");
-
-        // Patch first byte (first 2 hex chars) on each payload, and log changes
+        AppLog.Info($"[RestorePatch] Effective: UserCfg={eff.UserCfg?.ToString() ?? "null"}, Wired={eff.Wired?.ToString() ?? "null"}, Dali={eff.Dali?.ToString() ?? "null"}, Ble={eff.Ble?.ToString() ?? "null"}");
+// Patch first byte (first 2 hex chars) on each payload, and log changes
         if (eff.UserCfg != null)
             snap.UserConfigHex = PatchFirstByteHexWithLog(
                 fieldName: nameof(snap.UserConfigHex),
@@ -145,9 +142,8 @@ public static int FirmwareToInt(string firmwareVersion)
         // Needs at least 1 byte = 2 hex chars
         if (string.IsNullOrWhiteSpace(beforeHex) || beforeHex.Length < 2)
         {
-            Console.WriteLine(
-                $"[RestorePatch] FW {firmwareVersion}: {fieldName} not patched (empty/too short: '{beforeHex}').");
-            return hex;
+            AppLog.Info($"[RestorePatch] FW {firmwareVersion}: {fieldName} not patched (empty/too short: '{beforeHex}').");
+return hex;
         }
 
         int nb = ClampByte(newByte);
@@ -159,10 +155,8 @@ public static int FirmwareToInt(string firmwareVersion)
 
         string afterHex = newByteHex + beforeHex.Substring(2);
 
-        Console.WriteLine(
-            $"[RestorePatch] FW {firmwareVersion}: {fieldName} first byte {oldByteHex.ToUpperInvariant()} -> {newByteHex}.");
-
-        return afterHex;
+        AppLog.Info($"[RestorePatch] FW {firmwareVersion}: {fieldName} first byte {oldByteHex.ToUpperInvariant()} -> {newByteHex}.");
+return afterHex;
     }
 
     private static int ClampByte(int value)

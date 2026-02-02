@@ -4,6 +4,7 @@ using AccessAPP.Services.HelperClasses;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
 using System.Net;
+using AccessAPP.Logging;
 
 namespace AccessAPP.Controllers
 {
@@ -307,8 +308,8 @@ namespace AccessAPP.Controllers
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine("Error: " + ex.Message + ex.StackTrace);
-                return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred" });
+                AppLog.Error("Error", ex);
+return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred" });
             }
         }
 
@@ -419,8 +420,8 @@ namespace AccessAPP.Controllers
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine("Error during firmware upgrade: " + ex.Message + ex.StackTrace);
-                return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
+                AppLog.Error("Error during firmware upgrade", ex);
+return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
             }
         }
 
@@ -439,8 +440,8 @@ namespace AccessAPP.Controllers
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error during bootloader & sensor upgrade: {ex.Message} {ex.StackTrace}");
-                return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
+                AppLog.Error("Error during bootloader & sensor upgrade", ex);
+return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
             }
         }
 
@@ -470,8 +471,8 @@ namespace AccessAPP.Controllers
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine("Error during firmware upgrade: " + ex.Message + ex.StackTrace);
-                return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
+                AppLog.Error("Error during firmware upgrade", ex);
+return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
             }
         }
 
@@ -496,8 +497,8 @@ namespace AccessAPP.Controllers
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error during bulk actor upgrade: {ex.Message}");
-                return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
+                AppLog.Error("Error during bulk actor upgrade", ex);
+return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
             }
         }
 
@@ -515,8 +516,8 @@ namespace AccessAPP.Controllers
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error during bulk actor upgrade: {ex.Message}");
-                return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
+                AppLog.Error("Error during bulk actor upgrade", ex);
+return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
             }
         }
 
@@ -534,8 +535,8 @@ namespace AccessAPP.Controllers
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error during bulk actor upgrade: {ex.Message}");
-                return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
+                AppLog.Error("Error during bulk actor upgrade", ex);
+return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
             }
         }
 
@@ -550,8 +551,8 @@ namespace AccessAPP.Controllers
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error during bulk actor upgrade: {ex.Message}");
-                return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
+                AppLog.Error("Error during bulk actor upgrade", ex);
+return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
             }
         }
 
@@ -567,8 +568,8 @@ namespace AccessAPP.Controllers
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error during bulk actor upgrade: {ex.Message}");
-                return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
+                AppLog.Error("Error during bulk actor upgrade", ex);
+return StatusCode(500, new { error = "Internal Server Error", message = "An unexpected error occurred." });
             }
         }
 
@@ -596,17 +597,17 @@ namespace AccessAPP.Controllers
                     }
 
                     // Step 2: Send the telegram to the BLE device using WriteBleMessage method
+                    // Step 2: Send the telegram to the BLE device
                     CassiaReadWriteService cassiaReadWrite = new CassiaReadWriteService();
-                    cassiaReadWrite.semaphore = _connectService.semaphore;
-                    var writeResponse = await cassiaReadWrite.WriteBleMessage(_gatewayIpAddress, macAddress, 19, hexLoginValue, "?noresponse=1");
-
-                    if (writeResponse.IsSuccessStatusCode)
+                    try
                     {
+                        // IMPORTANT: Always dispose the HTTP response to return the connection to the pool.
+                        using var _ = await cassiaReadWrite.WriteBleMessageAsync(_gatewayIpAddress, macAddress, 19, hexLoginValue, "?noresponse=1");
                         responses.Add($"Light control telegram sent successfully to device: {macAddress}");
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        responses.Add($"Failed to send telegram to device: {macAddress}, Reason: {writeResponse.ReasonPhrase}");
+                        responses.Add($"Failed to send telegram to device: {macAddress}, Reason: {ex.Message}");
                     }
 
                     //await Task.Delay(500);
@@ -657,14 +658,14 @@ namespace AccessAPP.Controllers
 
                         if (controlResponse.Status.ToString() == "OK")
                         {
-                            Console.WriteLine($"Attempt {attempt}: Successfully controlled light for {macAddress}");
-                            success = true;
+                            AppLog.Debug($"Attempt {attempt}: Successfully controlled light for {macAddress}");
+success = true;
                             break; // If successful, exit the retry loop
                         }
                         else
                         {
-                            Console.WriteLine($"Attempt {attempt}: Failed to control light for {macAddress}, will retry...");
-                            await Task.Delay(500); // Small delay before retrying
+                            AppLog.Warn($"Attempt {attempt}: Failed to control light for {macAddress}, will retry...");
+await Task.Delay(500); // Small delay before retrying
                         }
                     }
 
@@ -735,7 +736,7 @@ namespace AccessAPP.Controllers
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Error with device {macAddress}: {ex.Message}");
+                    AppLog.Error($"Error with device {macAddress}", ex);
                 }
 
                 results[macAddress] = versionSummary;
@@ -775,9 +776,8 @@ namespace AccessAPP.Controllers
                             DisconnectionStatus = "Not attempted"
                         };
 
-                        Console.WriteLine($"Test {i + 1}/{testCycles} for {macAddress}...");
-
-                        // Step 1: Connect to the device
+                        AppLog.Debug($"Test {i + 1}/{testCycles} for {macAddress}...");
+// Step 1: Connect to the device
                         var connectResponse = await _connectService.ConnectToBleDevice(_gatewayIpAddress, _gatewayPort, macAddress);
                         if (connectResponse.Status.ToString() == "OK")
                         {
@@ -797,26 +797,26 @@ namespace AccessAPP.Controllers
                                 if (response.Status.ToString() == "OK")
                                 {
                                     testResult.SuccessCount++;
-                                    Console.WriteLine($"Successful test {i + 1}/{testCycles} for {macAddress}");
-                                }
+                                    AppLog.Debug($"Successful test {i + 1}/{testCycles} for {macAddress}");
+}
                                 else
                                 {
                                     testResult.FailedCount++;
-                                    Console.WriteLine($"No response from {macAddress} on attempt {i + 1}");
-                                }
+                                    AppLog.Warn($"No response from {macAddress} on attempt {i + 1}");
+}
                             }
                             else
                             {
                                 attemptDetails.ConnectionStatus = "Failed (Login Issue)";
                                 testResult.FailedCount++;
-                                Console.WriteLine($"Failed to login to {macAddress} on attempt {i + 1}");
-                            }
+                                AppLog.Warn($"Failed to login to {macAddress} on attempt {i + 1}");
+}
                         }
                         else
                         {
                             testResult.FailedCount++;
-                            Console.WriteLine($"Failed to connect to {macAddress} on attempt {i + 1}");
-                        }
+                            AppLog.Warn($"Failed to connect to {macAddress} on attempt {i + 1}");
+}
 
                         // Step 4: Disconnect from the device
                         var disconnectResponse = await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0);
@@ -879,9 +879,8 @@ namespace AccessAPP.Controllers
             try
             {
                 var currentDir = Directory.GetCurrentDirectory();
-                Console.WriteLine("Current Directory: " + currentDir);
-
-                var logPath = Path.Combine(currentDir, "Logs", "upgrade_logs.txt");
+                AppLog.Debug("Current Directory: " + currentDir);
+var logPath = Path.Combine(currentDir, "Logs", "upgrade_logs.txt");
 
                 if (!System.IO.File.Exists(logPath))
                 {
@@ -982,8 +981,8 @@ namespace AccessAPP.Controllers
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error uploading firmware: {ex.Message} {ex.StackTrace}");
-                return StatusCode(500, new
+                AppLog.Error("Error uploading firmware", ex);
+return StatusCode(500, new
                 {
                     success = false,
                     message = "Internal server error occurred during firmware upload."
@@ -1009,8 +1008,8 @@ namespace AccessAPP.Controllers
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error retrieving firmware versions: {ex.Message}");
-                return StatusCode(500, new
+                AppLog.Error("Error retrieving firmware versions", ex);
+return StatusCode(500, new
                 {
                     success = false,
                     message = "Error retrieving firmware versions."
@@ -1052,8 +1051,8 @@ namespace AccessAPP.Controllers
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error deleting firmware version {version}: {ex.Message}");
-                return StatusCode(500, new
+                AppLog.Error($"Error deleting firmware version {version}", ex);
+return StatusCode(500, new
                 {
                     success = false,
                     message = "Error deleting firmware version."
@@ -1091,8 +1090,8 @@ namespace AccessAPP.Controllers
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error retrieving firmware manifest: {ex.Message}");
-                return StatusCode(500, new
+                AppLog.Error("Error retrieving firmware manifest", ex);
+return StatusCode(500, new
                 {
                     success = false,
                     message = "Error retrieving firmware manifest."
@@ -1137,8 +1136,8 @@ namespace AccessAPP.Controllers
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error adding firmware to manifest: {ex.Message}");
-                return StatusCode(500, new
+                AppLog.Error("Error adding firmware to manifest", ex);
+return StatusCode(500, new
                 {
                     success = false,
                     message = "Error adding firmware to manifest."

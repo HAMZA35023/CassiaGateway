@@ -18,6 +18,10 @@ namespace AccessAPP.Services
         private readonly ConcurrentDictionary<string, DateTime> _lastDevicePublishUtc = new();
         private readonly ConcurrentDictionary<string, DateTime> _lastProgressPublishUtc = new();
 
+        // Track online/offline (stale) transitions so we can always publish a message
+        // when a device goes offline or comes back.
+        private readonly ConcurrentDictionary<string, bool> _isStale = new();
+
         private static readonly TimeSpan DevicePublishInterval = TimeSpan.FromSeconds(10);
         private static readonly TimeSpan ProgressPublishInterval = TimeSpan.FromMilliseconds(1000);
 
@@ -61,8 +65,8 @@ namespace AccessAPP.Services
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[DeviceStorage] PruneStaleDevices error: {ex.Message}");
-                }
+                    AppLog.Error($"[DeviceStorage] PruneStaleDevices error: {ex.Message}");
+}
             }, null, dueTime: StaleCheckInterval, period: StaleCheckInterval);
         }
 
@@ -170,6 +174,8 @@ namespace AccessAPP.Services
             }
 
             // --- Store/update device in global dictionary ---
+            var wasStale = _isStale.TryGetValue(macAddress, out var s0) && s0;
+
             _deviceList.AddOrUpdate(macAddress, device, (key, existingDevice) =>
             {
                 // RSSI is always updated (averaged)
@@ -202,23 +208,26 @@ namespace AccessAPP.Services
                     updatedFromScanData = true;
                 }
                 /*
-                Console.WriteLine(
-                    $"[SCAN UPDATE] MAC={macAddress} | " +
+                AppLog.Info($"[SCAN UPDATE] MAC={macAddress} | " +
                     $"RSSI(avg3m)={avgRssi} | " +
-                    $"ScanDataUpdate={(updatedFromScanData ? "YES" : "NO")}"
-                );
-                */
+                    $"ScanDataUpdate={(updatedFromScanData ? "YES" : "NO")}");
+*/
                 return existingDevice;
             });
 
 
-            //Console.WriteLine($"Device {macAddress} added/updated with RSSI(avg 3m): {avgRssi} (raw={device.rssi})");
-
-            // MQTT publish (throttled) - publish the updated/averaged device
+            AppLog.Verbose($"Device {macAddress} added/updated with RSSI(avg 3m): {avgRssi} (raw={device.rssi})");
+// MQTT publish (throttled) - publish the updated/averaged device
             // (If PublishDeviceThrottled uses the passed device, ensure it publishes avg.
             //  easiest: set device.rssi = avgRssi before publishing)
             device.rssi = avgRssi;
-            PublishDeviceThrottled(macAddress, device);
+
+            // If the device was previously stale/offline, always publish immediately when it comes back.
+            // Otherwise, keep the normal throttled behavior.
+            if (wasStale)
+                _isStale[macAddress] = false;
+
+            PublishDevice(macAddress, device, force: wasStale);
         }
 
         private void MarkStaleDevices()
@@ -257,9 +266,14 @@ namespace AccessAPP.Services
                             if (existing.rssi != -127)
                             {
                                 existing.rssi = -127;
-                                Console.WriteLine($"Device {mac} is stale (>{StaleAfter.TotalMinutes:0}m no announces). RSSI set to -127.");
+                                AppLog.Info($"Device {mac} is stale (>{StaleAfter.TotalMinutes:0}m no announces). RSSI set to -127.");
+// Always notify stale/offline transition.
+                                _isStale[mac] = true;
+                                PublishDevice(mac, existing, force: true);
+                                return existing;
                             }
-                            PublishDeviceThrottled(mac, existing);
+                            // Already stale; keep normal throttled publishes.
+                            PublishDevice(mac, existing, force: false);
                             return existing;
                         });
                 }
@@ -271,8 +285,9 @@ namespace AccessAPP.Services
                     {
                         _rssiState.TryRemove(mac, out _);
                         _lastDevicePublishUtc.TryRemove(mac, out _);
-                        Console.WriteLine($"Device {mac} removed from device-list (>{RemoveAfter.TotalMinutes:0}m not seen).");
-                    }
+                        _isStale.TryRemove(mac, out _);
+                        AppLog.Info($"Device {mac} removed from device-list (>{RemoveAfter.TotalMinutes:0}m not seen).");
+}
                 }
             }
         }
@@ -296,8 +311,9 @@ namespace AccessAPP.Services
                     return existing;
                 });
 
-            // MQTT publish (throttled)
-            PublishProgressThrottled(mac, Math.Min(progress, 100), status);
+            // MQTT publish (throttled, but always sends 100%)
+            var p = Math.Min(progress, 100);
+            PublishProgressThrottled(mac, p, status);
         }
 
         public void MarkFirmwareFailed(string mac)
@@ -354,18 +370,21 @@ namespace AccessAPP.Services
         private static readonly TimeSpan GlobalMinPublishInterval = TimeSpan.FromSeconds(1);
         private DateTime _lastGlobalDevicePublishUtc = DateTime.MinValue;
 
-        private void PublishDeviceThrottled(string mac, ScannedDevicesView device)
+        private void PublishDevice(string mac, ScannedDevicesView device, bool force)
         {
             var now = DateTime.UtcNow;
 
-            // 🔒 Global throttle (ALL MACs)
-            if ((now - _lastGlobalDevicePublishUtc) < GlobalMinPublishInterval)
-                return;
+            if (!force)
+            {
+                // 🔒 Global throttle (ALL MACs)
+                if ((now - _lastGlobalDevicePublishUtc) < GlobalMinPublishInterval)
+                    return;
 
-            // Optional: still keep per-MAC throttling if you want both
-            if (_lastDevicePublishUtc.TryGetValue(mac, out var last) &&
-                (now - last) < DevicePublishInterval)
-                return;
+                // Per-MAC throttle
+                if (_lastDevicePublishUtc.TryGetValue(mac, out var last) &&
+                    (now - last) < DevicePublishInterval)
+                    return;
+            }
 
             _lastDevicePublishUtc[mac] = now;
             _lastGlobalDevicePublishUtc = now;
@@ -375,17 +394,17 @@ namespace AccessAPP.Services
                 await _mqtt.PublishDiscoveredDevicesAsync(new DiscoveredDevicesMessage
                 {
                     Devices =
-            {
-                new DiscoveredDevice
-                {
-                    Mac = mac,
-                    Rssi = device.rssi,
-                    DetectorType = device.DetectorType,
-                    DetectorFamily = device.DetectorFamily,
-                    ProductNumber = device.ProductNumber,
-                    Name = device.name
-                }
-            }
+                    {
+                        new DiscoveredDevice
+                        {
+                            Mac = mac,
+                            Rssi = device.rssi,
+                            DetectorType = device.DetectorType,
+                            DetectorFamily = device.DetectorFamily,
+                            ProductNumber = device.ProductNumber,
+                            Name = device.name
+                        }
+                    }
                 }, ct);
             });
         }
@@ -395,8 +414,12 @@ namespace AccessAPP.Services
         {
             var now = DateTime.UtcNow;
 
-            if (_lastProgressPublishUtc.TryGetValue(mac, out var last) && (now - last) < ProgressPublishInterval)
-                return;
+            bool force = progress >= 100.0 - 0.0001;
+            if (!force)
+            {
+                if (_lastProgressPublishUtc.TryGetValue(mac, out var last) && (now - last) < ProgressPublishInterval)
+                    return;
+            }
 
             _lastProgressPublishUtc[mac] = now;
 
@@ -420,8 +443,8 @@ namespace AccessAPP.Services
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[MQTT] publish failed: {ex.Message}");
-            }
+                AppLog.Warn($"[MQTT] publish failed: {ex.Message}");
+}
         }
     }
 }

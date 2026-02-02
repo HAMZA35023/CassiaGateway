@@ -179,15 +179,14 @@ namespace AccessAPP.Services
                         // Check if the MAC address starts with the desired prefix (e.g., "10:B9:F7")
                         if (!macAddress.StartsWith("10:B9:F7", StringComparison.OrdinalIgnoreCase))
                         {
-                            Console.WriteLine($"Skipping MAC={macAddress} as it does not match the required prefix.");
-                            return; // Skip the processing for this MAC address
+                            AppLog.Info($"Skipping MAC={macAddress} as it does not match the required prefix.");
+return; // Skip the processing for this MAC address
                         }
 
 
                         // Log the received event
-                        Console.WriteLine($"Received Event: MAC={macAddress}, RSSI={eventData.rssi}");
-
-                        // Add or update the device in the global storage if it meets the RSSI threshold
+                        AppLog.Info($"Received Event: MAC={macAddress}, RSSI={eventData.rssi}");
+// Add or update the device in the global storage if it meets the RSSI threshold
                         _deviceStorageService.AddOrUpdateDevice(eventData, minRssi);
                     }, CancellationToken.None);  // Using CancellationToken.None for infinite processing
                 }
@@ -214,9 +213,8 @@ namespace AccessAPP.Services
 
                         string line = await reader.ReadLineAsync();
                         // Process the SSE event
-                        //Console.WriteLine(line);
-
-                        if (!string.IsNullOrEmpty(line) && line != "" && line != ":keep-alive")
+                        AppLog.Verbose(line);
+if (!string.IsNullOrEmpty(line) && line != "" && line != ":keep-alive")
                         {
                             if (line.StartsWith("data:"))
                             {
@@ -232,8 +230,8 @@ namespace AccessAPP.Services
             catch (OperationCanceledException)
             {
                 // Handle cancellation due to timeout
-                Console.WriteLine("SSE event processing canceled due to timeout.");
-            }
+                AppLog.Warn("SSE event processing canceled due to timeout.");
+}
             catch (Exception ex)
             {
                 throw new Exception($"Error processing SSE events: {ex.Message + ex.StackTrace}");

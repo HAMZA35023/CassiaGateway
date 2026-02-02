@@ -1,8 +1,13 @@
 ﻿using AccessAPP.Services;
+using AccessAPP.Models;
+using Serilog;
 
 const string VERSION = "0.2.0";
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Optional: enable Serilog via env var ACCESSAPP_USE_SERILOG=1
+LoggingBootstrapper.TryConfigureSerilog(builder);
 
 // Add services to the container.
 builder.Services.AddControllers();
@@ -87,7 +92,8 @@ using (var scope = app.Services.CreateScope())
                 MacAddress = r.MacAddress!.Trim(),
                 Pincode = r.Pincode ?? "",
                 DetectotType = r.DetectorType ?? "",
-                FirmwareVersion = r.FirmwareVersion ?? ""
+                FirmwareVersion = r.FirmwareVersion ?? "",
+                ForceUpdate = r.ForceUpdate ?? false
             })
             .ToList();
 
@@ -100,10 +106,140 @@ using (var scope = app.Services.CreateScope())
 
     mqttService.GetFwVersionRequested += async cmd =>
     {
-        foreach (var mac in cmd.Sensors)
+        var macs = (cmd.Sensors ?? new List<string>())
+            .Where(m => !string.IsNullOrWhiteSpace(m))
+            .Select(m => m.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var pincode = cmd.Pincode ?? "";
+
+        var results = new List<object>();
+        var failed = new List<object>();
+
+        foreach (var mac in macs)
         {
-           
-            await mqttService.PublishRespAsync("FW version: DUMMY TEST");
+            try
+            {
+                var v = await firmwareUpgradeService.GetFwVersion(mac, pincode, true);
+                if (string.IsNullOrWhiteSpace(v))
+                    failed.Add(new { mac, error = "Could not retrieve FW version" });
+                else
+                    results.Add(new { mac, version = v });
+            }
+            catch (Exception ex)
+            {
+                failed.Add(new { mac, error = ex.Message });
+            }
+        }
+
+        var resp = new
+        {
+            success = failed.Count == 0,
+            message = "FW version query completed",
+            name = mqttService.CurrentOptions.Name,
+            networkId = mqttService.CurrentOptions.NetworkId,
+            time = DateTimeOffset.UtcNow,
+            requested = macs,
+            pincode = string.IsNullOrWhiteSpace(pincode) ? null : "(provided)",
+            results,
+            failed
+        };
+
+        await mqttService.PublishTeleJsonAsync("fw-version", resp);
+    };
+
+    mqttService.DisconnectDevicesRequested += async cmd =>
+    {
+        var macs = (cmd.Sensors ?? new List<string>())
+            .Where(m => !string.IsNullOrWhiteSpace(m))
+            .Select(m => m.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var results = new List<object>();
+
+        bool allOk = true;
+
+        foreach (var mac in macs)
+        {
+            try
+            {
+                var ok = await firmwareUpgradeService.DisconnectDeviceAsync(mac);
+                if (!ok) allOk = false;
+                results.Add(new { mac, success = ok });
+            }
+            catch (Exception ex)
+            {
+                allOk = false;
+                results.Add(new { mac, success = false, error = ex.Message });
+            }
+        }
+
+        var resp = new
+        {
+            success = allOk,
+            message = "Disconnect command processed",
+            name = mqttService.CurrentOptions.Name,
+            networkId = mqttService.CurrentOptions.NetworkId,
+            time = DateTimeOffset.UtcNow,
+            requested = macs,
+            results
+        };
+
+        await mqttService.PublishTeleJsonAsync("disconnect", resp);
+    };
+
+    mqttService.IdentifyRequested += async cmd =>
+    {
+        var macs = (cmd.Sensors ?? new List<string>())
+            .Where(m => !string.IsNullOrWhiteSpace(m))
+            .Select(m => m.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var seconds = cmd.Seconds <= 0 ? 15 : cmd.Seconds;
+        var maxAttempts = cmd.MaxConnectAttempts <= 0 ? 1 : cmd.MaxConnectAttempts;
+        var pincode = cmd.Pincode ?? "";
+
+        // If caller sent a single string via tolerant parsing, it may land in Sensors empty + RequestId etc.
+        // In that case, do nothing and respond with an error.
+        if (macs.Count == 0)
+        {
+            var bad = new
+            {
+                success = false,
+                stage = "failed",
+                message = "No sensors/mac addresses provided. Send payload like {\"sensors\":[\"AA:BB:...\"],\"seconds\":15,\"maxConnectAttempts\":1}.",
+                requestId = cmd.RequestId,
+                name = mqttService.CurrentOptions.Name,
+                networkId = mqttService.CurrentOptions.NetworkId,
+                time = DateTimeOffset.UtcNow
+            };
+
+            await mqttService.PublishTeleJsonAsync("identify", bad);
+            return;
+        }
+
+        // Process sequentially to avoid colliding BLE connect/login flows.
+        foreach (var mac in macs)
+        {
+            await firmwareUpgradeService.IdentifyDeviceAsync(
+                macAddress: mac,
+                pincode: string.IsNullOrWhiteSpace(pincode) ? null : pincode,
+                secondsToStayConnected: seconds,
+                maxConnectAttempts: maxAttempts,
+                ct: CancellationToken.None,
+                report: async (stagePayload) =>
+                {
+                    await mqttService.PublishTeleJsonAsync("identify", new
+                    {
+                        name = mqttService.CurrentOptions.Name,
+                        networkId = mqttService.CurrentOptions.NetworkId,
+                        requestId = cmd.RequestId,
+                        data = stagePayload
+                    });
+                });
         }
     };
 
