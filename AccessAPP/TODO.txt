@@ -6,5 +6,4 @@ MAJOR:
 
 MINOR:
 
-Actor wait best = 1ms
-Bootloader wait best = 30ms
+Make all runtime variables changeable by MQTT

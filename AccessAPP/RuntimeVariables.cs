@@ -17,7 +17,7 @@ namespace AccessAPP
         public static int CASSIA_MAX_INFLIGHT_PER_CHIP = 1;
 
         // Scan for BLE devices while programming more than 1 device
-        public static bool BLE_SCAN_UNDER_PROGRAMMING = false;
+        public static bool BLE_SCAN_UNDER_PROGRAMMING = true;
 
         // Updateflow settings
         public static bool RebootDetectorAfterUpgrade = true;

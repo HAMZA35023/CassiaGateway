@@ -3148,6 +3148,15 @@ if (string.IsNullOrWhiteSpace(cassia))
         dev.ProcessLastUpdateUtc = cs.LastUpdateUtc;
 
         dev.IsInQueue = cs.IsInQueue;
+
+        // When a device is queued/programming, it is no longer "successful" from a previous run.
+        // Clear result flags so row coloring always prefers queue state.
+        if (dev.IsInQueue)
+        {
+            dev.IsUpgradeSuccess = false;
+            dev.IsUpgradeFailed = false;
+            dev.IsUpgradeWarn = false;
+        }
     }
 
     

@@ -389,8 +389,8 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     public sealed class SendUpgradeLogCommand
     {
         public string? LogId { get; set; }          // optional filter
-        public int MaxLines { get; set; } = 5000;   // last N lines (after filter)
-        public int ChunkLines { get; set; } = 100;  // lines per MQTT message
+        public int MaxLines { get; set; } = 20000;   // last N lines (after filter)
+        public int ChunkLines { get; set; } = 300;  // lines per MQTT message
     }
 
     private Task HandleCommandAsync(string topic, string payload)
