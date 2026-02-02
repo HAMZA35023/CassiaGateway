@@ -1,4 +1,5 @@
-﻿using AccessAPP.Models;
+﻿using AccessAPP;
+using AccessAPP.Models;
 using AccessAPP.Services;
 using AccessAPP.Services.HelperClasses;
 using System.Collections.Concurrent;
@@ -54,10 +55,10 @@ public class ScanBleDevice : IDisposable
     {
         while (true)
         {
-            if (_firmUpgradeService.UpgradeDevicesInProgress > 0)
+            if (_firmUpgradeService.UpgradeDevicesInProgress > 1 && !RuntimeVariables.BLE_SCAN_UNDER_PROGRAMMING)
             {
-                //await Task.Delay(10000); // Retry delay
-                //continue;
+                await Task.Delay(2000); // Retry delay
+                continue;
             }
 
             try
@@ -70,9 +71,9 @@ public class ScanBleDevice : IDisposable
 
                 while (true)
                 {
-                    if (_firmUpgradeService.UpgradeDevicesInProgress > 0)
+                    if (_firmUpgradeService.UpgradeDevicesInProgress > 1 && !RuntimeVariables.BLE_SCAN_UNDER_PROGRAMMING)
                     {
-                        //break;
+                        break;
                     }
 
                     string line = await reader.ReadLineAsync();
@@ -86,8 +87,8 @@ public class ScanBleDevice : IDisposable
                         line = line.Substring("data:".Length).Trim();
                         Task.Run(() => ProcessScannedDevice(line));
 
-                        //Console.WriteLine(line);
-                    }
+                        // AppLog.Verbose(line);
+}
                 }
             }
             catch (Exception ex)

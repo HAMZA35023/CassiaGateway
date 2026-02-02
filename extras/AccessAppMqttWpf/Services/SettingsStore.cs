@@ -51,6 +51,9 @@ public sealed class AccessAppSettings
     public string commandTopicTemplate { get; set; } = "accessapp/{networkId}/cmd/{cassia}/{command}";
     public string defaultCommand { get; set; } = "start-update";
 
+    // UI option: reflash sensor firmware even if current FW already matches target
+    public bool forceUpdate { get; set; } = false;
+
     /// <summary>
     /// Remembers the selected firmware per detector model across app restarts/resync.
     /// Keys are typically "P41", "P42", "P46", "P47", "P48".

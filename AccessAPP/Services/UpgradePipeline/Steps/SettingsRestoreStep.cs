@@ -1,0 +1,130 @@
+using System;
+using System.Net;
+using System.Threading.Tasks;
+using AccessAPP.Logging;
+using AccessAPP.Models;
+using AccessAPP.Services.HelperClasses;
+
+namespace AccessAPP.Services.UpgradePipeline.Steps;
+
+internal sealed class SettingsRestoreStep : IDeviceUpgradeStep
+{
+    public async Task<bool> ExecuteAsync(DeviceUpgradeContext ctx)
+    {
+        var svc = ctx.Svc;
+        var dev = ctx.Dev;
+
+        // 3) Restore settings right after sensor upgrade (do NOT reboot here)
+        if (!(RuntimeVariables.RestoreSettingsAfterUpgrade && !ctx.IsInBoot && UpgradePipelineSupport.SupportsSettingsBackup(ctx.DetectorType)))
+            return true;
+
+        await Task.Delay(10000).ConfigureAwait(false);
+
+        AppLog.Info($"Starting settings restore for {ctx.MacAddress} - trying to connect and login");
+
+        var cl = await svc.ConnectAndLoginWithRetryForPipelineAsync(
+            svc.GatewayIpAddress, 80, ctx.MacAddress, ctx.Pincode, ctx.LogId, ctx.FirmwareVersion,
+            maxAttempts: 4,
+            delayBetweenAttemptsMs: 6000).ConfigureAwait(false);
+
+        if (!cl.Success)
+        {
+            UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, $"Restore connect+login failed: {cl.Message}", "Warn", ctx.FirmwareVersion);
+            AppLog.Warn($" Restore connect+login failed for {ctx.MacAddress}: {cl.Message}");
+
+            ctx.Response.Success = false;
+            ctx.Response.StatusCode = (int)HttpStatusCode.InternalServerError;
+            ctx.Response.Message = "Could not connect and login to detector!";
+
+            if (dev.requiresConfigRestore)
+            {
+                dev.LastFailureReason = ctx.Response.Message;
+                dev.shouldRetry = false;
+                return false;
+            }
+
+            // If config restore isn't required, we keep going.
+            return true;
+        }
+
+        AppLog.Info($"Starting settings restore for {ctx.MacAddress} - upload config");
+        ctx.SettingsBackupPath ??= dev.SettingsBackupPath;
+
+        if (string.IsNullOrWhiteSpace(ctx.SettingsBackupPath))
+        {
+            UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Settings restore skipped (no backup file available)", "Failed", ctx.FirmwareVersion);
+            AppLog.Error($" Settings restore skipped for {ctx.MacAddress} - no backup file available");
+
+            if (dev.requiresConfigRestore)
+            {
+                dev.shouldRetry = false;
+                dev.finalUpgradeResult = "Warn";
+            }
+
+            await svc.ConnectService.DisconnectFromBleDevice(svc.GatewayIpAddress, ctx.MacAddress, 0, chip: ctx.ChipId).ConfigureAwait(false);
+            return true;
+        }
+
+        try
+        {
+            ServiceResponse restore = new() { Success = false, StatusCode = 500, Message = "Restore not attempted" };
+            for (int attempt = 1; attempt <= 3; attempt++)
+            {
+                restore = await svc.SettingsBackupService.RestoreFromFileAsync(
+                        ctx.MacAddress,
+                        ctx.Pincode,
+                        ctx.DetectorType,
+                        ctx.FirmwareVersion,
+                        ctx.SettingsBackupPath,
+                        ctx.LogId)
+                    .ConfigureAwait(false);
+
+                UpgradeLogger.Log(
+                    ctx.LogId,
+                    ctx.MacAddress,
+                    $"Settings restore attempt {attempt}/3: {(restore.Success ? "Success" : "Fail")} - {restore.Message}",
+                    restore.Success ? "Success" : "Failed",
+                    ctx.FirmwareVersion);
+
+                AppLog.Info($" Settings restore attempt {attempt}/3 for {ctx.MacAddress} - result: {restore.Success} - {restore.Message}");
+
+                if (restore.Success)
+                    break;
+
+                await Task.Delay(4000).ConfigureAwait(false);
+            }
+
+            dev.isConfigRestored = restore.Success;
+
+            if (!restore.Success && dev.requiresConfigRestore)
+            {
+                ctx.Response.Success = false;
+                ctx.Response.StatusCode = restore.StatusCode;
+                ctx.Response.Message = $"Settings restore failed after retries: {restore.Message}";
+                dev.LastFailureReason = ctx.Response.Message;
+                dev.shouldRetry = false;
+                return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, $"Settings restore failed: {ex.Message}", "Failed", ctx.FirmwareVersion);
+            AppLog.Error($" Settings restore failed for {ctx.MacAddress}: {ex}");
+            dev.isConfigRestored = false;
+
+            if (dev.requiresConfigRestore)
+            {
+                ctx.Response.Success = false;
+                ctx.Response.StatusCode = 500;
+                ctx.Response.Message = $"Settings restore exception: {ex.Message}";
+                dev.LastFailureReason = ctx.Response.Message;
+                dev.shouldRetry = false;
+                dev.finalUpgradeResult = "Warn";
+                return false;
+            }
+        }
+
+        await svc.ConnectService.DisconnectFromBleDevice(svc.GatewayIpAddress, ctx.MacAddress, 0, chip: ctx.ChipId).ConfigureAwait(false);
+        return true;
+    }
+}

@@ -72,9 +72,24 @@ public partial class CassiaGateway : ObservableObject
         StateLower == "offline" ? (System.Windows.Media.Brush)System.Windows.Application.Current.FindResource("BadBrush") :
         (System.Windows.Media.Brush)System.Windows.Application.Current.FindResource("WarnBrush");
 
+    // Left color stripe in the Cassia tile
+    // red = offline
+    // green = programming
+    // yellow = has queue (but not programming)
+    // blue = idle (online, no queue, no programming)
+    public System.Windows.Media.Brush StripeBrush =>
+        StateLower == "offline" ? (System.Windows.Media.Brush)System.Windows.Application.Current.FindResource("BadBrush") :
+        Programming > 0 ? (System.Windows.Media.Brush)System.Windows.Application.Current.FindResource("GoodBrush") :
+        Queue > 0 ? (System.Windows.Media.Brush)System.Windows.Application.Current.FindResource("WarnBrush") :
+        (System.Windows.Media.Brush)System.Windows.Application.Current.FindResource("AccentBrush");
+
     public bool HasFwManifest => FirmwareManifest.Count > 0;
 
-    partial void OnStateChanged(string value) => OnPropertyChanged(nameof(StatusLine));
+    partial void OnStateChanged(string value)
+    {
+        OnPropertyChanged(nameof(StatusLine));
+        OnPropertyChanged(nameof(StripeBrush));
+    }
     partial void OnNameChanged(string value) => OnPropertyChanged(nameof(NameWithVersion));
     partial void OnVersionChanged(string value) => OnPropertyChanged(nameof(NameWithVersion));
     partial void OnLastSeenUtcChanged(DateTimeOffset value)
@@ -87,11 +102,13 @@ public partial class CassiaGateway : ObservableObject
     {
         OnPropertyChanged(nameof(QueueLine));
         OnPropertyChanged(nameof(StatusLine));
+        OnPropertyChanged(nameof(StripeBrush));
     }
     partial void OnProgrammingChanged(int value)
     {
         OnPropertyChanged(nameof(QueueLine));
         OnPropertyChanged(nameof(StatusLine));
+        OnPropertyChanged(nameof(StripeBrush));
     }
 
     partial void OnParallelProgrammersChanged(int value)

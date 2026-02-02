@@ -1,4 +1,5 @@
 using CommunityToolkit.Mvvm.ComponentModel;
+using DocumentFormat.OpenXml.EMMA;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -161,6 +162,27 @@ public partial class UpgradeLogGroup : ObservableObject
     public string StartedAtLocalText =>
         StartedAtLocal == DateTimeOffset.MinValue ? "" : StartedAtLocal.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
 
+    public string TotalDurationText
+    {
+        get
+        {
+            // Both are DateTimeOffset structs, so compare to MinValue
+            if (StartedAtLocal == DateTimeOffset.MinValue || LastTimeLocal == DateTimeOffset.MinValue)
+                return "--:--";
+
+            // Correct order: end - start
+            var duration = LastTimeLocal - StartedAtLocal;
+
+            if (duration < TimeSpan.Zero)
+                duration = TimeSpan.Zero;
+
+            // mm:ss using TOTAL minutes (keeps counting past 60)
+            return $"{(int)duration.TotalMinutes:00}:{duration.Seconds:00}";
+        }
+    }
+
+
+
     public void AddEntry(UpgradeLogEntry e)
     {
         if (e is null) return;
@@ -200,5 +222,7 @@ public partial class UpgradeLogGroup : ObservableObject
         OnPropertyChanged(nameof(StartedAtLocalText));
         OnPropertyChanged(nameof(OldFirmwareText));
         OnPropertyChanged(nameof(TargetFirmware));
+        OnPropertyChanged(nameof(TotalDurationText));
+
     }
 }

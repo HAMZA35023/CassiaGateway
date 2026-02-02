@@ -1,8 +1,119 @@
-
-
+﻿
 MINOR:
+Lets keep upgrade-logs cached on the client, and only make sure to sync it to the cache when we request the full log. - When deleting it on the cassia, also lets delete it from the cache.
+ + Implement a new button called full cache-sync, where we empty the cache, and gets the full log from the cassia.
 
 
-FIXED, But needs to be verified in the field that is works as expected.
--> The auto-assing when adding to queue does not work as expected - it should load-balance it between cassiaes, and take programming and queued devices in to account, so each device hadles even amount if possibe. - if a device has a rssi over -65, is should always be assigned to the device with best rssi. - under -55, the devices can share them even.
-++ -> 
+MAJOR:
+Sort Cassias by name and add a color the the left side of the box, makeit wider, and ref = offline, yellow = in queue / programming, green = programming, blue = no queue or programming
+
+ -> In the queue, show all cassia-rssi for the device, and the one it is queued on, with bold text.
+
+
+ MAJOR:
+ -> add a checkbox to set if force-update should be active or not, default false.
+ -> rightclick menu on the cassia, to change the network scope of the cassia.
+
+
+
+
+ ============================================================
+MQTT CHANGES – ACCESSAPP
+============================================================
+
+This document describes recent MQTT-related changes that may
+affect other applications interacting with AccessAPP.
+
+------------------------------------------------------------
+1. Change MQTT NetworkId at runtime
+------------------------------------------------------------
+
+A new MQTT command allows changing the active NetworkId
+(scope) while AccessAPP is running.
+
+BaseTopic is NOT changed.
+
+Command topics:
+  .../cmd/<target>/set-network
+  .../cmd/<target>/set-scope
+  .../cmd/<target>/set-mqtt-scope
+
+Payload:
+{
+  "networkId": "my-network"
+}
+
+Behavior:
+- Updates NetworkId only
+- MQTT service restarts internally so:
+  - subscriptions
+  - telemetry
+  - command handling
+  immediately use the new NetworkId
+- Response is sent AFTER the change is applied
+
+Success response:
+{
+  "success": true,
+  "message": "NetworkId updated.",
+  "networkId": "my-network",
+  "name": "accessapp"
+}
+
+Error response (example):
+{
+  "success": false,
+  "message": "Missing networkId. Send payload like {\"networkId\":\"my-net\"}.",
+  "networkId": "old-network",
+  "name": "accessapp"
+}
+
+Notes:
+- Safe to call while the system is running
+- Does not affect ongoing firmware queues
+- No BaseTopic changes are performed
+
+
+------------------------------------------------------------
+2. Force firmware update (sensor)
+------------------------------------------------------------
+
+A new option allows forcing a sensor firmware update even when
+the current firmware version already matches the target.
+
+This is an extension to the existing `start-update` command.
+
+Payload field:
+{
+  "forceUpdate": true
+}
+
+Behavior:
+- forceUpdate = false (default or omitted):
+  - Sensor update is SKIPPED if current FW matches target
+- forceUpdate = true:
+  - Sensor firmware is re-programmed even if versions match
+
+Version comparison is normalized:
+- "v02.34"
+- "02.34"
+- "0234"
+are treated as the same version
+
+Example start-update payload:
+{
+  "sensors": ["10:B9:F7:AA:BB:CC"],
+  "firmwareVersion": "v02.34",
+  "forceUpdate": true
+}
+
+Logging / telemetry:
+- When skipped:
+  "Sensor upgrade skipped (FW already matches target)"
+- When forced:
+  "ForceUpdate=true → sensor upgrade executed"
+
+Notes:
+- forceUpdate defaults to FALSE on startup
+- No frontend changes are required to support this later
+- Actor and bootloader update logic is NOT affected

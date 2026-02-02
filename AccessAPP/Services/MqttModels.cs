@@ -30,6 +30,19 @@ public sealed class StartUpdateRequest
 
     [JsonPropertyName("Pincode")]
     public string? Pincode { get; set; }
+
+    /// <summary>
+    /// If true, forces re-programming even when current FW matches target.
+    /// Default is false when omitted.
+    /// </summary>
+    [JsonPropertyName("ForceUpdate")]
+    public bool? ForceUpdate { get; set; }
+}
+
+// NEW: change MQTT scope (only NetworkId) at runtime
+public sealed class SetMqttScopeCommand
+{
+    public string? NetworkId { get; set; }
 }
 
 

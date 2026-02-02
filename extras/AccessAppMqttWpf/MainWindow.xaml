@@ -23,7 +23,7 @@
         <DataTemplate x:Key="CassiaStateBadge">
             <Border x:Name="Badge"
                     CornerRadius="10"
-                    Padding="8,2"
+                    Padding="10,3"
                     Background="#777">
                 <TextBlock x:Name="Txt"
                            Text="UNKNOWN"
@@ -155,229 +155,250 @@
                     <ItemsControl ItemsSource="{Binding CassiaGateways}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Border Background="{StaticResource CardBrush}"
-                    BorderBrush="{StaticResource BorderBrush}"
-                    BorderThickness="1"
-                    CornerRadius="10"
-                    Padding="10"
-                    Margin="0,0,0,8">
+                                                                <Border Background="{StaticResource CardBrush}"
+        BorderBrush="{StaticResource BorderBrush}"
+        BorderThickness="1"
+        CornerRadius="10"
+        Margin="0,0,0,8"
+        Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}">
 
-                                    <Grid>
-                                        <Grid.RowDefinitions>
-                                            <RowDefinition Height="Auto"/>
-                                            <!-- Header -->
-                                            <RowDefinition Height="Auto"/>
-                                            <!-- Metrics + SetParallel -->
-                                            <RowDefinition Height="Auto"/>
-                                            <!-- Assign (one line) -->
-                                        </Grid.RowDefinitions>
+    <Border.ContextMenu>
+        <!-- ContextMenu is rendered in a Popup (separate visual tree), so it cannot use AncestorType=Window.
+             Bind via PlacementTarget instead. -->
+        <ContextMenu>
+            <MenuItem Header="Set MQTT scope (networkId)..."
+                      Command="{Binding PlacementTarget.Tag.SetCassiaMqttScopeCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+        </ContextMenu>
+    </Border.ContextMenu>
 
-                                        <!-- =========================
-                         Row 0: Header
-                         ========================= -->
-                                        <Grid Grid.Row="0">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="Auto"/>
-                                            </Grid.ColumnDefinitions>
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="14"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
 
-                                            <TextBlock Grid.Column="0"
-                                   Text="{Binding NameWithVersion}"
-                                   FontWeight="SemiBold"
-                                   FontSize="14"
-                                   VerticalAlignment="Center"/>
+        <!-- Left color stripe -->
+        <Border Grid.Column="0" Background="{Binding StripeBrush}" CornerRadius="10,0,0,10"/>
 
-                                            <StackPanel Grid.Column="1"
-                                    Orientation="Horizontal"
-                                    VerticalAlignment="Center"
-                                    HorizontalAlignment="Right">
-                                                <ContentControl Content="{Binding}"
-                                            ContentTemplate="{StaticResource CassiaStateBadge}"
-                                            VerticalAlignment="Center"/>
+        <!-- Content spacing -->
+        <Border Grid.Column="1" Padding="10" Background="Transparent">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
 
-                                                <Button Style="{StaticResource CassiaBadgeButtonStyleWarning}"
-                                    Content="🧹"
-                                    Margin="6,0,0,0"
-                                    ToolTip="Clear device settings backups"
-                                    Command="{Binding DataContext.ClearDeviceSettingsBackupsForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                <!-- =========================
+                     Row 0: Header
+                     ========================= -->
+                <Grid Grid.Row="0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Column="0"
+                               Text="{Binding NameWithVersion}"
+                               FontWeight="SemiBold"
+                               FontSize="14"
+                               VerticalAlignment="Center"/>
+
+                    <StackPanel Grid.Column="1"
+                                Orientation="Horizontal"
+                                VerticalAlignment="Center"
+                                HorizontalAlignment="Right"
+                                Margin="8,0,0,0">
+
+                        <ContentControl Content="{Binding}"
+                                        ContentTemplate="{StaticResource CassiaStateBadge}"
+                                        VerticalAlignment="Center"
+                                        Margin="0,0,8,0"/>
+
+                        <Button Style="{StaticResource CassiaBadgeButtonStyleWarning}"
+                                Content="🧹"
+                                Margin="0,0,6,0"
+                                ToolTip="Clear device settings backups"
+                                Command="{Binding DataContext.ClearDeviceSettingsBackupsForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                CommandParameter="{Binding Name}"/>
+
+                        <Button Style="{StaticResource CassiaBadgeButtonStyleWarning}"
+                                Content="↻"
+                                Margin="0,0,6,0"
+                                ToolTip="Refresh firmware manifest"
+                                Command="{Binding DataContext.RefreshFwManifestForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                CommandParameter="{Binding Name}"/>
+
+                        <Button Style="{StaticResource CassiaBadgeButtonStyle}"
+                                Content="📈"
+                                Margin="0,0,0,0"
+                                ToolTip="Open speed graph (up to 12 hours)"
+                                Command="{Binding DataContext.OpenSpeedGraphCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                CommandParameter="{Binding Name}"/>
+                    </StackPanel>
+                </Grid>
+
+                <!-- =========================
+                     Row 1: Metrics + Info + SetParallel
+                     ========================= -->
+                <Grid Grid.Row="1" Margin="0,10,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Left: Metrics + Info -->
+                    <StackPanel Grid.Column="0" Orientation="Vertical">
+
+                        <!-- Metrics row (icons) -->
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+
+                            <!-- Queue -->
+                            <StackPanel Orientation="Horizontal" Margin="0,0,14,0" VerticalAlignment="Center">
+                                <TextBlock Text="⏳" FontSize="13" VerticalAlignment="Center"
+                                           Foreground="{StaticResource MutedBrush}"/>
+                                <TextBlock Text=" " FontSize="12"/>
+                                <TextBlock Text="{Binding Queue}" FontWeight="SemiBold" FontSize="12"/>
+                            </StackPanel>
+
+                            <!-- Programming -->
+                            <StackPanel Orientation="Horizontal" Margin="0,0,14,0" VerticalAlignment="Center">
+                                <TextBlock Text="⚙" FontSize="13" VerticalAlignment="Center"
+                                           Foreground="{StaticResource MutedBrush}"/>
+                                <TextBlock Text=" " FontSize="12"/>
+                                <TextBlock Text="{Binding Programming}" FontWeight="SemiBold" FontSize="12"/>
+                            </StackPanel>
+
+                            <!-- Speed -->
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="📶" FontSize="13" VerticalAlignment="Center"
+                                           Foreground="{StaticResource MutedBrush}"/>
+                                <TextBlock Text=" " FontSize="12"/>
+                                <TextBlock Text="{Binding TotalSpeedpct}" Foreground="Red" FontWeight="SemiBold" FontSize="12"/>
+                                <TextBlock Text=" %/min" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="4,0,0,0"/>
+                            </StackPanel>
+
+                        </StackPanel>
+
+                        <!-- Info grid -->
+                        <Grid Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <TextBlock Grid.Row="0" Grid.Column="0"
+                                       Text="Last:"
+                                       Foreground="{StaticResource MutedBrush}"
+                                       FontSize="12"
+                                       Margin="0,0,10,0"/>
+                            <TextBlock Grid.Row="0" Grid.Column="1"
+                                       Text="{Binding LastSeenLocal}"
+                                       FontWeight="SemiBold"
+                                       FontSize="12"
+                                       TextTrimming="CharacterEllipsis"/>
+
+                            <TextBlock Grid.Row="1" Grid.Column="0"
+                                       Text="Devices:"
+                                       Foreground="{StaticResource MutedBrush}"
+                                       FontSize="12"
+                                       Margin="0,2,10,0"/>
+                            <TextBlock Grid.Row="1" Grid.Column="1"
+                                       Text="{Binding DevicesSeen}"
+                                       FontWeight="SemiBold"
+                                       FontSize="12"
+                                       Margin="0,2,0,0"/>
+
+                            <TextBlock Grid.Row="2" Grid.Column="0"
+                                       Text="Workers:"
+                                       Foreground="{StaticResource MutedBrush}"
+                                       FontSize="12"
+                                       Margin="0,2,10,0"/>
+                            <TextBlock Grid.Row="2" Grid.Column="1"
+                                       Text="{Binding ParallelProgrammers}"
+                                       FontWeight="SemiBold"
+                                       FontSize="12"
+                                       Margin="0,2,0,0"/>
+                        </Grid>
+
+                    </StackPanel>
+
+                    <!-- Right: SetParallel -->
+                    <StackPanel Grid.Column="1" Margin="18,0,0,0" VerticalAlignment="Top">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="Set parallel:"
+                                       Foreground="{StaticResource MutedBrush}"
+                                       FontSize="12"
+                                       VerticalAlignment="Center"/>
+                            <TextBox Width="52" Margin="8,0,0,0" Padding="6,3"
+                                     Text="{Binding ParallelProgrammersDesired, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                            <Button Style="{StaticResource GhostButton}" Padding="12,4" Margin="0,0,6,0"
+                                    Content="⬆ Set"
+                                    Command="{Binding DataContext.SetParallelProgrammersForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                    CommandParameter="{Binding}"/>
+                            <Button Style="{StaticResource GhostButton}" Padding="12,4"
+                                    Content="⬇ Get"
+                                    Command="{Binding DataContext.GetParallelProgrammersForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                     CommandParameter="{Binding Name}"/>
+                        </StackPanel>
+                    </StackPanel>
 
-                                                <Button Style="{StaticResource CassiaBadgeButtonStyleWarning}"
-                                    Content="↻"
-                                    Margin="8,0,0,0"
-                                    ToolTip="Refresh firmware manifest"
-                                    Command="{Binding DataContext.RefreshFwManifestForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                    CommandParameter="{Binding Name}"/>
+                </Grid>
 
-                                                <Button Style="{StaticResource CassiaBadgeButtonStyle}"
-                                    Content="📈"
-                                    Margin="6,0,0,0"
-                                    ToolTip="Open speed graph (up to 12 hours)"
-                                    Command="{Binding DataContext.OpenSpeedGraphCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                    CommandParameter="{Binding Name}"/>
-                                            </StackPanel>
-                                        </Grid>
+                <!-- =========================
+                     Row 2: Assign (ONE LINE)
+                     ========================= -->
+                <Grid Grid.Row="2" Margin="0,10,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
 
-                                        <!-- =========================
-                         Row 1: Metrics (icons) + Last/Devices/Workers + SetParallel (buttons on new line)
-                         ========================= -->
-                                        <Grid Grid.Row="1" Margin="0,10,0,0">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="Auto"/>
-                                            </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0"
+                               Text="Assign:"
+                               Foreground="{StaticResource MutedBrush}"
+                               FontSize="12"
+                               Margin="0,0,12,0"
+                               VerticalAlignment="Center"/>
 
-                                            <!-- Left: Metrics + Info -->
-                                            <StackPanel Grid.Column="0" Orientation="Vertical">
+                    <TextBlock Grid.Column="1"
+                               FontSize="12"
+                               TextTrimming="CharacterEllipsis"
+                               VerticalAlignment="Center">
+                        <Run Text="P41 " Foreground="{StaticResource MutedBrush}"/>
+                        <Run Text="{Binding AssignedP41}" FontWeight="SemiBold"/>
+                        <Run Text="   " />
 
-                                                <!-- Metrics row (icons) -->
-                                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Run Text="P42 " Foreground="{StaticResource MutedBrush}"/>
+                        <Run Text="{Binding AssignedP42}" FontWeight="SemiBold"/>
+                        <Run Text="   " />
 
-                                                    <!-- Queue -->
-                                                    <StackPanel Orientation="Horizontal" Margin="0,0,14,0" VerticalAlignment="Center">
-                                                        <TextBlock Text="⏳" FontSize="13" VerticalAlignment="Center"
-                                               Foreground="{StaticResource MutedBrush}"/>
-                                                        <TextBlock Text=" " FontSize="12"/>
-                                                        <TextBlock Text="{Binding Queue}" FontWeight="SemiBold" FontSize="12"/>
-                                                    </StackPanel>
+                        <Run Text="P46 " Foreground="{StaticResource MutedBrush}"/>
+                        <Run Text="{Binding AssignedP46}" FontWeight="SemiBold"/>
+                        <Run Text="   |   " Foreground="{StaticResource MutedBrush}"/>
 
-                                                    <!-- Programming -->
-                                                    <StackPanel Orientation="Horizontal" Margin="0,0,14,0" VerticalAlignment="Center">
-                                                        <TextBlock Text="⚙" FontSize="13" VerticalAlignment="Center"
-                                               Foreground="{StaticResource MutedBrush}"/>
-                                                        <TextBlock Text=" " FontSize="12"/>
-                                                        <TextBlock Text="{Binding Programming}" FontWeight="SemiBold" FontSize="12"/>
-                                                    </StackPanel>
+                        <Run Text="P47 " Foreground="{StaticResource MutedBrush}"/>
+                        <Run Text="{Binding AssignedP47}" FontWeight="SemiBold"/>
+                        <Run Text="   " />
 
-                                                    <!-- Speed -->
-                                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                                        <TextBlock Text="📶" FontSize="13" VerticalAlignment="Center"
-                                               Foreground="{StaticResource MutedBrush}"/>
-                                                        <TextBlock Text=" " FontSize="12"/>
-                                                        <TextBlock Text="{Binding TotalSpeedpct}" Foreground="Red" FontWeight="SemiBold" FontSize="12"/>
-                                                        <TextBlock Text=" %/min" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="4,0,0,0"/>
-                                                    </StackPanel>
+                        <Run Text="P48 " Foreground="{StaticResource MutedBrush}"/>
+                        <Run Text="{Binding AssignedP48}" FontWeight="SemiBold"/>
+                    </TextBlock>
+                </Grid>
 
-                                                </StackPanel>
-
-                                                <!-- Info grid -->
-                                                <Grid Margin="0,8,0,0">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="Auto"/>
-                                                        <ColumnDefinition Width="*"/>
-                                                    </Grid.ColumnDefinitions>
-                                                    <Grid.RowDefinitions>
-                                                        <RowDefinition Height="Auto"/>
-                                                        <RowDefinition Height="Auto"/>
-                                                        <RowDefinition Height="Auto"/>
-                                                    </Grid.RowDefinitions>
-
-                                                    <TextBlock Grid.Row="0" Grid.Column="0"
-                                           Text="Last:"
-                                           Foreground="{StaticResource MutedBrush}"
-                                           FontSize="12"
-                                           Margin="0,0,10,0"/>
-                                                    <TextBlock Grid.Row="0" Grid.Column="1"
-                                           Text="{Binding LastSeenLocal}"
-                                           FontWeight="SemiBold"
-                                           FontSize="12"
-                                           TextTrimming="CharacterEllipsis"/>
-
-                                                    <TextBlock Grid.Row="1" Grid.Column="0"
-                                           Text="Devices:"
-                                           Foreground="{StaticResource MutedBrush}"
-                                           FontSize="12"
-                                           Margin="0,2,10,0"/>
-                                                    <TextBlock Grid.Row="1" Grid.Column="1"
-                                           Text="{Binding DevicesSeen}"
-                                           FontWeight="SemiBold"
-                                           FontSize="12"
-                                           Margin="0,2,0,0"/>
-
-                                                    <TextBlock Grid.Row="2" Grid.Column="0"
-                                           Text="Workers:"
-                                           Foreground="{StaticResource MutedBrush}"
-                                           FontSize="12"
-                                           Margin="0,2,10,0"/>
-                                                    <TextBlock Grid.Row="2" Grid.Column="1"
-                                           Text="{Binding ParallelProgrammers}"
-                                           FontWeight="SemiBold"
-                                           FontSize="12"
-                                           Margin="0,2,0,0"/>
-                                                </Grid>
-
-                                            </StackPanel>
-
-                                            <!-- Right: SetParallel (buttons on new line) -->
-                                            <StackPanel Grid.Column="1" Margin="18,0,0,0" VerticalAlignment="Top">
-                                                <StackPanel Orientation="Horizontal">
-                                                    <TextBlock Text="Set parallel:"
-                                           Foreground="{StaticResource MutedBrush}"
-                                           FontSize="12"
-                                           VerticalAlignment="Center"/>
-                                                    <TextBox Width="52" Margin="8,0,0,0" Padding="6,3"
-                                         Text="{Binding ParallelProgrammersDesired, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
-                                                </StackPanel>
-
-                                                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                                                    <Button Style="{StaticResource GhostButton}" Padding="12,4" Margin="0,0,6,0"
-                                        Content="⬆ Set"
-                                        Command="{Binding DataContext.SetParallelProgrammersForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                        CommandParameter="{Binding}"/>
-                                                    <Button Style="{StaticResource GhostButton}" Padding="12,4"
-                                        Content="⬇ Get"
-                                        Command="{Binding DataContext.GetParallelProgrammersForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                        CommandParameter="{Binding Name}"/>
-
-                                                </StackPanel>
-                                            </StackPanel>
-
-                                        </Grid>
-
-                                        <!-- =========================
-                         Row 2: Assign (ONE LINE, no wrap)
-                         ========================= -->
-                                        <Grid Grid.Row="2" Margin="0,10,0,0">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="Auto"/>
-                                                <ColumnDefinition Width="*"/>
-                                            </Grid.ColumnDefinitions>
-
-                                            <TextBlock Grid.Column="0"
-                                   Text="Assign:"
-                                   Foreground="{StaticResource MutedBrush}"
-                                   FontSize="12"
-                                   Margin="0,0,12,0"
-                                   VerticalAlignment="Center"/>
-
-                                            <!-- One line: we keep it single-line and trim the end if window is too narrow -->
-                                            <TextBlock Grid.Column="1"
-                                   FontSize="12"
-                                   TextTrimming="CharacterEllipsis"
-                                   VerticalAlignment="Center">
-                            <Run Text="P41 " Foreground="{StaticResource MutedBrush}"/>
-                            <Run Text="{Binding AssignedP41}" FontWeight="SemiBold"/>
-                            <Run Text="   " />
-
-                            <Run Text="P42 " Foreground="{StaticResource MutedBrush}"/>
-                            <Run Text="{Binding AssignedP42}" FontWeight="SemiBold"/>
-                            <Run Text="   " />
-
-                            <Run Text="P46 " Foreground="{StaticResource MutedBrush}"/>
-                            <Run Text="{Binding AssignedP46}" FontWeight="SemiBold"/>
-                            <Run Text="   |   " Foreground="{StaticResource MutedBrush}"/>
-
-                            <Run Text="P47 " Foreground="{StaticResource MutedBrush}"/>
-                            <Run Text="{Binding AssignedP47}" FontWeight="SemiBold"/>
-                            <Run Text="   " />
-
-                            <Run Text="P48 " Foreground="{StaticResource MutedBrush}"/>
-                            <Run Text="{Binding AssignedP48}" FontWeight="SemiBold"/>
-                                            </TextBlock>
-                                        </Grid>
-
-                                    </Grid>
-                                </Border>
+            </Grid>
+        </Border>
+    </Grid>
+</Border>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -738,6 +759,7 @@
                                     </DataGridTemplateColumn>
 
                                     <DataGridTextColumn Header="Status" Binding="{Binding ProcessStatus}" Width="200" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="Chip" Binding="{Binding ChipUsed}" Width="50" IsReadOnly="True"/>
                                     <DataGridTextColumn Header="%" Binding="{Binding ProcessProgress}" Width="40" IsReadOnly="True"/>
                                     <DataGridTextColumn Header="FW" Binding="{Binding ProcessFirmware}" Width="90" IsReadOnly="True"/>
                                     <DataGridTextColumn Header="Current FW" Binding="{Binding DisplayFw}" Width="90" IsReadOnly="True"/>
@@ -774,7 +796,12 @@
                                 </StackPanel>
 
                                 <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
-                                    <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                                    <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center">
+                                        <CheckBox Content="Force update" 
+                                                  ToolTip="Re-program sensor firmware even if current FW already matches target"
+                                                  IsChecked="{Binding ForceUpdateEnabled, Mode=TwoWay}"
+                                                  Margin="0,0,12,0"
+                                                  VerticalAlignment="Center"/>
                                         <Button Style="{StaticResource PrimaryButton}" Content="Update / Queue selected" Padding="12,6" Margin="0,0,8,0" Command="{Binding QueueSelectedCommand}"/>
                                         <Button Style="{StaticResource DangerButton}" Content="Clear queue" Padding="12,6" Margin="0,0,8,0" Command="{Binding ClearQueueCommand}"/>
                                         <Button Style="{StaticResource GhostButton}" Content="Default sort" Padding="12,6" Click="QueueDefaultSort_Click"/>
@@ -808,6 +835,37 @@
                                     <DataGrid.Columns>
                                         <DataGridTextColumn Header="MAC" Binding="{Binding Mac}" Width="160"/>
                                         <DataGridTextColumn Header="Cassia" Binding="{Binding Cassia}" Width="110"/>
+                                        <DataGridTextColumn Header="Chip" Binding="{Binding ChipUsed}" Width="50"/>
+                                        <DataGridTemplateColumn Header="RSSI" Width="220" CanUserSort="False">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <ItemsControl ItemsSource="{Binding RssiEntries}">
+                                                        <ItemsControl.ItemsPanel>
+                                                            <ItemsPanelTemplate>
+                                                                <WrapPanel Orientation="Horizontal"/>
+                                                            </ItemsPanelTemplate>
+                                                        </ItemsControl.ItemsPanel>
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate>
+                                                                <TextBlock Margin="0,0,10,0">
+                                                                    <TextBlock.Style>
+                                                                        <Style TargetType="TextBlock">
+                                                                            <Setter Property="Text" Value="{Binding Text}"/>
+                                                                            <Setter Property="FontWeight" Value="Normal"/>
+                                                                            <Style.Triggers>
+                                                                                <DataTrigger Binding="{Binding IsQueued}" Value="True">
+                                                                                    <Setter Property="FontWeight" Value="Bold"/>
+                                                                                </DataTrigger>
+                                                                            </Style.Triggers>
+                                                                        </Style>
+                                                                    </TextBlock.Style>
+                                                                </TextBlock>
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
                                         <DataGridTextColumn Header="Model" Binding="{Binding DetectorType}" Width="70"/>
                                         <DataGridTextColumn Header="FW" Binding="{Binding FirmwareVersion}" Width="90"/>
                                         <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="260"/>
@@ -978,7 +1036,12 @@
                     </StackPanel>
 
                     <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
-                        <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                        <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center">
+                            <CheckBox Content="Force update" 
+                                      ToolTip="Re-program sensor firmware even if current FW already matches target"
+                                      IsChecked="{Binding ForceUpdateEnabled, Mode=TwoWay}"
+                                      Margin="0,0,12,0"
+                                      VerticalAlignment="Center"/>
                             <!-- no "Update / Queue selected" here -->
                             <Button Style="{StaticResource DangerButton}" Content="Clear queue" Padding="12,6" Margin="0,0,8,0" Command="{Binding ClearQueueCommand}"/>
                             <Button Style="{StaticResource GhostButton}" Content="Default sort" Padding="12,6" Click="QueueDefaultSort_Click"/>
@@ -1014,6 +1077,36 @@
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="MAC" Binding="{Binding Mac}" Width="160"/>
                             <DataGridTextColumn Header="Cassia" Binding="{Binding Cassia}" Width="110"/>
+                            <DataGridTemplateColumn Header="RSSI" Width="220" CanUserSort="False">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <ItemsControl ItemsSource="{Binding RssiEntries}">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <WrapPanel Orientation="Horizontal"/>
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Margin="0,0,10,0">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Text" Value="{Binding Text}"/>
+                                                                <Setter Property="FontWeight" Value="Normal"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsQueued}" Value="True">
+                                                                        <Setter Property="FontWeight" Value="Bold"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                             <DataGridTextColumn Header="Model" Binding="{Binding DetectorType}" Width="70"/>
                             <DataGridTextColumn Header="FW" Binding="{Binding FirmwareVersion}" Width="90"/>
                             <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="260"/>
@@ -1206,17 +1299,21 @@
                                                         </Grid.RowDefinitions>
 
                                                         <StackPanel Orientation="Horizontal" Grid.Row="0">
-                                                            <TextBlock Text="{Binding LogIdMacPart}" FontWeight="SemiBold"/>
-                                                            <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
-                                                            <TextBlock Text="{Binding StartedAtLocalText}" />
-                                                            <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
-                                                            <TextBlock Text="{Binding Cassia}"/>
-                                                            <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
-                                                            <TextBlock Text="{Binding LatestMac}"/>
-                                                            <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
-                                                            <TextBlock Text="{Binding LastTimeLocalText}"/>
+                                                                <TextBlock Text="{Binding LogIdMacPart}" FontWeight="SemiBold"/>
+                                                                <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
+                                                                <TextBlock Text="{Binding StartedAtLocalText}" />
+                                                                <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
+                                                                <TextBlock Text="{Binding Cassia}"/>
+                                                                <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
+                                                                <TextBlock Text="{Binding LatestMac}"/>
+                                                                <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
+                                                                <TextBlock Text="{Binding LastTimeLocalText}"/>
+                                                                <TextBlock Text="  •  TOTAL TIME: " Foreground="{StaticResource MutedBrush}"/>
+                                                                <TextBlock Text="{Binding TotalDurationText}" />
+                                                                <TextBlock Text="m" Foreground="{StaticResource MutedBrush}"/>
 
-                                                            <Border Margin="12,0,0,0"
+
+                                                                <Border Margin="12,0,0,0"
                                                                     Padding="8,2"
                                                                     CornerRadius="10"
                                                                     VerticalAlignment="Center"

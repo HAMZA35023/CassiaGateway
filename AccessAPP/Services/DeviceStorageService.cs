@@ -65,8 +65,8 @@ namespace AccessAPP.Services
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[DeviceStorage] PruneStaleDevices error: {ex.Message}");
-                }
+                    AppLog.Error($"[DeviceStorage] PruneStaleDevices error: {ex.Message}");
+}
             }, null, dueTime: StaleCheckInterval, period: StaleCheckInterval);
         }
 
@@ -208,19 +208,16 @@ namespace AccessAPP.Services
                     updatedFromScanData = true;
                 }
                 /*
-                Console.WriteLine(
-                    $"[SCAN UPDATE] MAC={macAddress} | " +
+                AppLog.Info($"[SCAN UPDATE] MAC={macAddress} | " +
                     $"RSSI(avg3m)={avgRssi} | " +
-                    $"ScanDataUpdate={(updatedFromScanData ? "YES" : "NO")}"
-                );
-                */
+                    $"ScanDataUpdate={(updatedFromScanData ? "YES" : "NO")}");
+*/
                 return existingDevice;
             });
 
 
-            //Console.WriteLine($"Device {macAddress} added/updated with RSSI(avg 3m): {avgRssi} (raw={device.rssi})");
-
-            // MQTT publish (throttled) - publish the updated/averaged device
+            AppLog.Verbose($"Device {macAddress} added/updated with RSSI(avg 3m): {avgRssi} (raw={device.rssi})");
+// MQTT publish (throttled) - publish the updated/averaged device
             // (If PublishDeviceThrottled uses the passed device, ensure it publishes avg.
             //  easiest: set device.rssi = avgRssi before publishing)
             device.rssi = avgRssi;
@@ -269,9 +266,8 @@ namespace AccessAPP.Services
                             if (existing.rssi != -127)
                             {
                                 existing.rssi = -127;
-                                Console.WriteLine($"Device {mac} is stale (>{StaleAfter.TotalMinutes:0}m no announces). RSSI set to -127.");
-
-                                // Always notify stale/offline transition.
+                                AppLog.Info($"Device {mac} is stale (>{StaleAfter.TotalMinutes:0}m no announces). RSSI set to -127.");
+// Always notify stale/offline transition.
                                 _isStale[mac] = true;
                                 PublishDevice(mac, existing, force: true);
                                 return existing;
@@ -290,8 +286,8 @@ namespace AccessAPP.Services
                         _rssiState.TryRemove(mac, out _);
                         _lastDevicePublishUtc.TryRemove(mac, out _);
                         _isStale.TryRemove(mac, out _);
-                        Console.WriteLine($"Device {mac} removed from device-list (>{RemoveAfter.TotalMinutes:0}m not seen).");
-                    }
+                        AppLog.Info($"Device {mac} removed from device-list (>{RemoveAfter.TotalMinutes:0}m not seen).");
+}
                 }
             }
         }
@@ -447,8 +443,8 @@ namespace AccessAPP.Services
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[MQTT] publish failed: {ex.Message}");
-            }
+                AppLog.Warn($"[MQTT] publish failed: {ex.Message}");
+}
         }
     }
 }

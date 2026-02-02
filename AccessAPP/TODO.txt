@@ -6,3 +6,4 @@ MAJOR:
 
 MINOR:
 
+Make all runtime variables changeable by MQTT

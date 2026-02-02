@@ -15,6 +15,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Data;
 using System.Windows.Threading;
+using Microsoft.VisualBasic;
 using AccessAppMqttWpf;
 
 namespace AccessAppMqttWpf.ViewModels;
@@ -70,6 +71,9 @@ public partial class MainViewModel : ObservableObject
 
     // Track last subscribed NetworkId to avoid duplicate resubscribe spam.
     private string _lastSubscribedNetworkId = "";
+
+    // Auto-adjust parallel-programmers based on queue contents
+    private int _lastAutoParallelProgrammersSent = int.MinValue;
 
 
     private readonly ObservableCollection<DiscoveredDevice> _devices = new();
@@ -162,6 +166,7 @@ public partial class MainViewModel : ObservableObject
         public int ProcessProgress = 0;
         public string ProcessCassia = "";
         public string ProcessFirmware = "";
+        public string ChipUsed = "";
         public DateTimeOffset LastUpdateUtc = DateTimeOffset.MinValue;
 
         public string CurrentFw = "";
@@ -326,6 +331,10 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string commandTopicTemplate = "accessapp/{networkId}/cmd/{cassia}/{command}";
     [ObservableProperty] private string defaultCommand = "start-update";
 
+    // If true, we include forceUpdate=true in start-update payloads.
+    // Default is false on startup.
+    [ObservableProperty] private bool forceUpdateEnabled = false;
+
     // Firmware selection per model (dropdowns). Will later be populated from MQTT; for now hardcoded list.
     public ObservableCollection<string> FirmwareOptionsP41 { get; } = new();
     public ObservableCollection<string> FirmwareOptionsP42 { get; } = new();
@@ -455,6 +464,7 @@ public partial class MainViewModel : ObservableObject
         NetworkId = s.accessapp.networkId;
         CommandTopicTemplate = s.accessapp.commandTopicTemplate;
         DefaultCommand = s.accessapp.defaultCommand;
+        ForceUpdateEnabled = s.accessapp.forceUpdate;
 
         // Firmware selections: remember across restarts/resync.
         try
@@ -1207,6 +1217,33 @@ partial void OnSensorFilterChanged(string value)
             await ResyncCoreAsync().ConfigureAwait(false);
     }
 
+    [RelayCommand]
+    private async Task SetCassiaMqttScope(string cassiaName)
+    {
+        cassiaName = (cassiaName ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(cassiaName)) return;
+
+        // Named arguments are case-sensitive in C#. Use positional arguments here to avoid issues.
+        var newNet = Interaction.InputBox(
+            $"Enter new NetworkId (MQTT scope) for '{cassiaName}':",
+            "Set MQTT scope",
+            NetworkId ?? "");
+
+        newNet = (newNet ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(newNet)) return;
+
+        try
+        {
+            var topic = BuildCmdTopic(cassiaName, "set-network");
+            await _mqtt.PublishJsonAsync(topic, new { networkId = newNet }, retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+            ConnectionStatus = $"Sent set-network to {cassiaName} → {newNet}";
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = "Error: " + ex.Message;
+        }
+    }
+
     private AppSettings BuildSettingsSnapshot(AppSettings? baseSettings)
     {
         var s = baseSettings ?? new AppSettings();
@@ -1249,6 +1286,7 @@ partial void OnSensorFilterChanged(string value)
             networkId = NetworkId,
             commandTopicTemplate = CommandTopicTemplate,
             defaultCommand = DefaultCommand,
+            forceUpdate = ForceUpdateEnabled,
             selectedFirmwareByModel = fwMap
         };
 
@@ -1520,6 +1558,8 @@ partial void OnSensorFilterChanged(string value)
             item.IsIdentifying = false;
 
             await _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token);
+
+            await AutoAdjustParallelProgrammersAsync().ConfigureAwait(false);
             ConnectionStatus = $"Identify ({requestId}) sent to {target} for {mac}";
         }
         catch (Exception ex)
@@ -2268,6 +2308,25 @@ partial void OnSensorFilterChanged(string value)
             CassiaNameOptions.Add(name);
     }
 
+    private void SortCassiaGatewaysByName()
+    {
+        if (CassiaGateways.Count <= 1) return;
+
+        var ordered = CassiaGateways
+            .Where(g => g != null)
+            .OrderBy(g => g.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        // Reorder in-place (preserves bindings)
+        for (int targetIndex = 0; targetIndex < ordered.Count; targetIndex++)
+        {
+            var item = ordered[targetIndex];
+            var currentIndex = CassiaGateways.IndexOf(item);
+            if (currentIndex >= 0 && currentIndex != targetIndex)
+                CassiaGateways.Move(currentIndex, targetIndex);
+        }
+    }
+
     private void EnsureDeviceAssignmentWiring(DiscoveredDevice d)
     {
         if (d == null) return;
@@ -2713,7 +2772,46 @@ private List<AssignmentPlanItem> ComputeBatchAssignmentPlan(IReadOnlyList<Discov
     /// Queue + publish start-update immediately.
     /// Status becomes "Requested update" and we wait for tele/progress to mark it really queued.
     /// </summary>
-    private async Task QueueDeviceAndRequestAsync(DiscoveredDevice d)
+    private static bool IsDaliMasterModel(string? model)
+    {
+        model = (model ?? "").Trim().ToUpperInvariant();
+        return model == "P47" || model == "P48";
+    }
+
+    private async Task AutoAdjustParallelProgrammersAsync()
+    {
+        try
+        {
+            // Rule:
+            // - If ALL active (non-done) queue items are DALI masters (P47/P48) => 4 workers
+            // - Otherwise => 2 workers
+            var active = QueueItems.Where(q => q != null && !q.IsDone).ToList();
+
+            var desired = 2;
+            if (active.Count > 0 && active.All(q => IsDaliMasterModel(q.DetectorType)))
+                desired = 4;
+
+            if (desired == _lastAutoParallelProgrammersSent && _lastAutoParallelProgrammersSent != int.MinValue)
+                return;
+
+            _lastAutoParallelProgrammersSent = desired;
+
+            foreach (var gw in CassiaGateways.ToList())
+            {
+                if (gw == null || string.IsNullOrWhiteSpace(gw.Name)) continue;
+                if (!gw.State.Equals("online", StringComparison.OrdinalIgnoreCase)) continue;
+
+                gw.ParallelProgrammersDesired = desired;
+                await SetParallelProgrammersAsync(gw.Name, desired).ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            // best-effort; do not block queueing UX
+        }
+    }
+
+private async Task QueueDeviceAndRequestAsync(DiscoveredDevice d)
     {
         if (d == null || string.IsNullOrWhiteSpace(d.Mac))
             return;
@@ -2894,6 +2992,8 @@ if (string.IsNullOrWhiteSpace(cassia))
         qi.Notes = "";
         qi.LastUpdateUtc = DateTimeOffset.UtcNow;
 
+        UpdateQueueRssiForMac(d.Mac);
+
         // Mirror into discovered list immediately
         MirrorQueueToDevice(qi);
 
@@ -2912,7 +3012,8 @@ if (string.IsNullOrWhiteSpace(cassia))
                 DetectorType = model,
                 FirmwareVersion = fw,
                 MacAddress = d.Mac,
-                Pincode = ""
+                Pincode = "",
+                forceUpdate = ForceUpdateEnabled
             }
         };
 
@@ -2953,6 +3054,10 @@ if (string.IsNullOrWhiteSpace(cassia))
                 }
                 catch { }
             });
+
+            // Auto-tune parallel programmers after queueing.
+            await AutoAdjustParallelProgrammersAsync().ConfigureAwait(false);
+
         }
         catch (Exception ex)
         {
@@ -3019,6 +3124,10 @@ if (string.IsNullOrWhiteSpace(cassia))
         cs.ProcessProgress = qi.Progress;
         cs.ProcessCassia = qi.Cassia ?? "";
         cs.ProcessFirmware = qi.FirmwareVersion ?? "";
+        if (!string.IsNullOrWhiteSpace(qi.ChipUsed))
+            cs.ChipUsed = qi.ChipUsed;
+        else if (!string.IsNullOrWhiteSpace(cs.ChipUsed))
+            qi.ChipUsed = cs.ChipUsed;
         cs.LastUpdateUtc = qi.LastUpdateUtc;
 
         // Mark queue state for row coloring (ignore items that have been 100% for > 1 minute)
@@ -3029,6 +3138,7 @@ if (string.IsNullOrWhiteSpace(cassia))
         if (dev == null) return;
 
         dev.ProcessStatus = cs.ProcessStatus;
+        dev.ChipUsed = cs.ChipUsed;
         dev.ProcessProgress = cs.ProcessProgress;
         dev.ProcessCassia = cs.ProcessCassia;
         // When a device is queued/programming, force AssignedCassia to the gateway currently handling it
@@ -3038,6 +3148,15 @@ if (string.IsNullOrWhiteSpace(cassia))
         dev.ProcessLastUpdateUtc = cs.LastUpdateUtc;
 
         dev.IsInQueue = cs.IsInQueue;
+
+        // When a device is queued/programming, it is no longer "successful" from a previous run.
+        // Clear result flags so row coloring always prefers queue state.
+        if (dev.IsInQueue)
+        {
+            dev.IsUpgradeSuccess = false;
+            dev.IsUpgradeFailed = false;
+            dev.IsUpgradeWarn = false;
+        }
     }
 
     
@@ -3185,6 +3304,8 @@ if (string.IsNullOrWhiteSpace(cassia))
                     {
                         gw = new CassiaGateway { Name = name, NetworkId = net };
                         CassiaGateways.Add(gw);
+                        SortCassiaGatewaysByName();
+                        SortCassiaGatewaysByName();
                     }
 
                     EnsureCassiaOption(name);
@@ -3350,6 +3471,7 @@ if (kind == "tele" && leaf == "progress")
                         {
                             gw = new CassiaGateway { Name = cassia, NetworkId = net };
                             CassiaGateways.Add(gw);
+                            SortCassiaGatewaysByName();
                         }
 
                         EnsureCassiaOption(gw.Name);
@@ -3409,6 +3531,7 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
                             }
 
                             existing.UpdateFromCassia(cassia, rssi, ts);
+                            UpdateQueueRssiForMac(mac);
                             EnsureStickyAssignment(existing);
                         }
 
@@ -3958,6 +4081,13 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
 
             // What we want to show in the device/queue lists:
             // Prefer stage, but if stage is empty, show status.
+            var chipUsed = "";
+            if (!string.IsNullOrWhiteSpace(stage))
+            {
+                var cm = Regex.Match(stage, @"using\s+chip\s+(?<c>\d+)", RegexOptions.IgnoreCase);
+                if (cm.Success) chipUsed = cm.Groups["c"].Value.Trim();
+            }
+
             var text = !string.IsNullOrWhiteSpace(stage) ? stage : status;
 
             var isCompletedSuccess = stage.Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase)
@@ -3983,6 +4113,8 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
 
                     qi.Cassia = cassia;
                     qi.Status = queueText.Trim();
+                    if (!string.IsNullOrWhiteSpace(chipUsed))
+                        qi.ChipUsed = chipUsed;
                     if (isCompletedSuccess)
                         qi.Progress = 100;
                     if (LooksLikeFirmwareVersion(fw))
@@ -3999,6 +4131,8 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
 
                 cs.ProcessCassia = cassia;
                 cs.ProcessStatus = text.Trim();
+                if (!string.IsNullOrWhiteSpace(chipUsed))
+                    cs.ChipUsed = chipUsed;
                 if (isCompletedSuccess)
                     cs.ProcessProgress = 100;
 
@@ -4010,6 +4144,7 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
                 if (dev == null) return;
                 dev.ProcessCassia = cassia;
                 dev.ProcessStatus = cs.ProcessStatus;
+                dev.ChipUsed = cs.ChipUsed;
                 if (!string.IsNullOrWhiteSpace(cs.ProcessFirmware))
                     dev.ProcessFirmware = cs.ProcessFirmware;
                 dev.ProcessLastUpdateUtc = tsUtc;
@@ -4352,6 +4487,7 @@ private void RequestUpgradeLogTextRefresh()
             qi.Notes = "";
             qi.LastUpdateUtc = DateTimeOffset.UtcNow;
             qi.DetectorType = model; // IMPORTANT: carry model to the new Cassia
+            UpdateQueueRssiForMac(mac);
             MirrorQueueToDevice(qi);
             RequestQueueRefresh();
         });
@@ -4533,6 +4669,7 @@ private void RequestUpgradeLogTextRefresh()
                 {
                     gw = new CassiaGateway { Name = cassia, NetworkId = NetworkId };
                     CassiaGateways.Add(gw);
+                    SortCassiaGatewaysByName();
                 }
 
                 gw.FwManifestLastSeenUtc = DateTimeOffset.UtcNow;
@@ -4615,6 +4752,8 @@ private void RequestUpgradeLogTextRefresh()
                     else
                         d.LastSeenUtc = lastSeenUtc;
 
+                    UpdateQueueRssiForMac(mac);
+
                     ApplyCachedStatusToDevice(d);
                     EnsureStickyAssignment(d);
                 }
@@ -4624,6 +4763,20 @@ private void RequestUpgradeLogTextRefresh()
             });
         }
         catch { }
+    }
+
+    private void UpdateQueueRssiForMac(string? mac)
+    {
+        mac = (mac ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(mac)) return;
+
+        var qi = QueueItems.FirstOrDefault(x => x.Mac.Equals(mac, StringComparison.OrdinalIgnoreCase));
+        if (qi == null) return;
+
+        if (_deviceByMac.TryGetValue(mac, out var d))
+        {
+            qi.UpdateRssiEntries(d.CassiaRssi, qi.Cassia);
+        }
     }
 
     private void HandleQueueRemoveTele(string cassia, string payload)
@@ -4722,6 +4875,8 @@ private void RequestUpgradeLogTextRefresh()
                         qi.LastUpdateUtc = now;
                     }
 
+                    UpdateQueueRssiForMac(mac);
+                    UpdateQueueRssiForMac(mac);
                     MirrorQueueToDevice(qi);
                 }
 
@@ -4911,6 +5066,7 @@ private void RequestUpgradeLogTextRefresh()
                 {
                     gw = new CassiaGateway { Name = cassia, NetworkId = NetworkId };
                     CassiaGateways.Add(gw);
+                    SortCassiaGatewaysByName();
                     EnsureCassiaOption(cassia);
                 }
 
