@@ -166,8 +166,17 @@
         <!-- ContextMenu is rendered in a Popup (separate visual tree), so it cannot use AncestorType=Window.
              Bind via PlacementTarget instead. -->
         <ContextMenu>
+            <MenuItem Header="Set Cassia name..."
+                      Command="{Binding PlacementTarget.Tag.SetCassiaNameCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+            <MenuItem Header="Set identity (name + networkId)..."
+                      Command="{Binding PlacementTarget.Tag.SetCassiaIdentityCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
             <MenuItem Header="Set MQTT scope (networkId)..."
                       Command="{Binding PlacementTarget.Tag.SetCassiaMqttScopeCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+            <MenuItem Header="Set runtime variables..."
+                      Command="{Binding PlacementTarget.Tag.OpenRuntimeSettingsCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                       CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
         </ContextMenu>
     </Border.ContextMenu>

@@ -799,7 +799,10 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 var resp = new
                 {
                     success = true,
-                    variables = _runtimeStore.GetAll()
+                    variables = _runtimeStore.GetAll(),
+                    name = CurrentOptions.Name,
+                    networkId = CurrentOptions.NetworkId,
+                    time = DateTimeOffset.UtcNow
                 };
                 return PublishTeleJsonAsync("runtime", resp, CancellationToken.None);
             }

@@ -1,4 +1,5 @@
 using AccessAppMqttWpf.Models;
+using AccessAppMqttWpf.Models;
 using AccessAppMqttWpf.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -65,6 +66,9 @@ public partial class MainViewModel : ObservableObject
     private readonly HashSet<string> _fwManifestRequestedForGw = new(StringComparer.OrdinalIgnoreCase);
     // After each connect we request queue/programming/parallel-programmers once per gateway.
     private readonly HashSet<string> _runtimeStateRequestedForGw = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, IReadOnlyDictionary<string, RuntimeVariableValue>> _runtimeVarsByGw = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, TaskCompletionSource<IReadOnlyDictionary<string, RuntimeVariableValue>>> _runtimeVarsPending = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _runtimeVarsLock = new();
     private readonly HashSet<string> _deviceListRequestedForGw = new(StringComparer.OrdinalIgnoreCase);
     private bool _deviceListRequestedAfterConnect;
     private DateTimeOffset _connectedAtUtc = DateTimeOffset.MinValue;
@@ -296,6 +300,7 @@ public partial class MainViewModel : ObservableObject
         d.Name = newName;
     }
     public event Action<string, string>? PlainReplyReceived; // mac, message
+    public event Action<string, IReadOnlyDictionary<string, RuntimeVariableValue>>? RuntimeVariablesReceived;
 
     [ObservableProperty] private DiscoveredDevice? selectedDevice;
     [ObservableProperty] private HostBleScanItem? selectedHostBleDevice;
@@ -493,6 +498,8 @@ public partial class MainViewModel : ObservableObject
                 _connectedAtUtc = DateTimeOffset.UtcNow;
                 _fwManifestRequestedForGw.Clear();
                 _runtimeStateRequestedForGw.Clear();
+                _runtimeVarsByGw.Clear();
+                _runtimeVarsPending.Clear();
                 _deviceListRequestedForGw.Clear();
                 _deviceListRequestedAfterConnect = false;
             }
@@ -1241,6 +1248,108 @@ partial void OnSensorFilterChanged(string value)
         catch (Exception ex)
         {
             ConnectionStatus = "Error: " + ex.Message;
+        }
+    }
+
+    [RelayCommand]
+    private async Task SetCassiaName(string cassiaName)
+    {
+        cassiaName = (cassiaName ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(cassiaName)) return;
+
+        var newName = Interaction.InputBox(
+            $"Enter new Cassia name for '{cassiaName}':",
+            "Set Cassia name",
+            cassiaName);
+
+        newName = (newName ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(newName)) return;
+
+        try
+        {
+            var topic = BuildCmdTopic(cassiaName, "set-name");
+            await _mqtt.PublishJsonAsync(topic, new { name = newName }, retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+            ConnectionStatus = $"Sent set-name to {cassiaName} → {newName}";
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = "Error: " + ex.Message;
+        }
+    }
+
+    [RelayCommand]
+    private async Task SetCassiaIdentity(string cassiaName)
+    {
+        cassiaName = (cassiaName ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(cassiaName)) return;
+
+        var newName = Interaction.InputBox(
+            $"Enter Cassia name for '{cassiaName}':",
+            "Set Cassia identity",
+            cassiaName);
+
+        newName = (newName ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(newName)) return;
+
+        var newNet = Interaction.InputBox(
+            $"Enter NetworkId for '{newName}':",
+            "Set Cassia identity",
+            NetworkId ?? "");
+
+        newNet = (newNet ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(newNet)) return;
+
+        try
+        {
+            var topic = BuildCmdTopic(cassiaName, "set-identity");
+            await _mqtt.PublishJsonAsync(topic, new { networkId = newNet, name = newName }, retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+            ConnectionStatus = $"Sent set-identity to {cassiaName} → {newName} ({newNet})";
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = "Error: " + ex.Message;
+        }
+    }
+
+    [RelayCommand]
+    private void OpenRuntimeSettings(string cassiaName)
+    {
+        cassiaName = (cassiaName ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(cassiaName)) return;
+
+        try
+        {
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                var wnd = new RuntimeSettingsWindow(this, cassiaName)
+                {
+                    Owner = Application.Current.MainWindow
+                };
+                wnd.Show();
+                wnd.Activate();
+            });
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = "Open runtime settings failed: " + ex.Message;
+        }
+    }
+
+    internal async Task SetRuntimeForCassiaAsync(string cassiaName, IReadOnlyDictionary<string, object?> payload)
+    {
+        if (!IsConnected) { ConnectionStatus = "Not connected"; return; }
+        cassiaName = (cassiaName ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(cassiaName)) return;
+        if (payload == null || payload.Count == 0) return;
+
+        try
+        {
+            await _mqtt.PublishJsonAsync(BuildCmdTopic(cassiaName, "set-runtime"), payload, retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+            ConnectionStatus = $"Sent set-runtime to {cassiaName}";
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = $"set-runtime failed ({cassiaName}): {ex.Message}";
         }
     }
 
@@ -3384,6 +3493,12 @@ if (string.IsNullOrWhiteSpace(cassia))
             return;
         }
 
+        if (kind == "tele" && leaf == "runtime")
+        {
+            HandleRuntimeVariablesTele(cassia, payload);
+            return;
+        }
+
         if (kind == "tele" && leaf == "fw-version")
         {
             HandleFwVersionTele(cassia, payload);
@@ -4595,6 +4710,49 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
     private Task SetParallelProgrammersAsync(string cassiaName, int value)
         => _mqtt.PublishJsonAsync(BuildCmdTopic(cassiaName, "set-parallel-programmers"), new { value }, retain: false, qos: 1, ct: _appCts.Token);
 
+    internal async Task<IReadOnlyDictionary<string, RuntimeVariableValue>?> RequestRuntimeVariablesAsync(string cassiaName, TimeSpan? timeout = null)
+    {
+        if (!IsConnected)
+        {
+            ConnectionStatus = "Not connected";
+            return null;
+        }
+
+        cassiaName = (cassiaName ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(cassiaName)) return null;
+
+        var tcs = new TaskCompletionSource<IReadOnlyDictionary<string, RuntimeVariableValue>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_runtimeVarsLock)
+        {
+            if (_runtimeVarsPending.TryGetValue(cassiaName, out var prev))
+                prev.TrySetCanceled();
+            _runtimeVarsPending[cassiaName] = tcs;
+        }
+
+        try
+        {
+            await _mqtt.PublishJsonAsync(BuildCmdTopic(cassiaName, "get-runtime"), new { }, retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = $"get-runtime failed ({cassiaName}): {ex.Message}";
+            lock (_runtimeVarsLock) { _runtimeVarsPending.Remove(cassiaName); }
+            return null;
+        }
+
+        var wait = Task.Delay(timeout ?? TimeSpan.FromSeconds(5));
+        var completed = await Task.WhenAny(tcs.Task, wait).ConfigureAwait(false);
+        if (completed == tcs.Task)
+            return await tcs.Task.ConfigureAwait(false);
+
+        lock (_runtimeVarsLock) { _runtimeVarsPending.Remove(cassiaName); }
+        if (_runtimeVarsByGw.TryGetValue(cassiaName, out var cached))
+            return cached;
+
+        ConnectionStatus = $"get-runtime timed out ({cassiaName})";
+        return null;
+    }
+
     
 
     [RelayCommand]
@@ -4997,6 +5155,8 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
 
         _fwManifestRequestedForGw.Clear();
         _runtimeStateRequestedForGw.Clear();
+        _runtimeVarsByGw.Clear();
+        _runtimeVarsPending.Clear();
         _deviceListRequestedForGw.Clear();
         _deviceListRequestedAfterConnect = false;
         _connectedAtUtc = DateTimeOffset.UtcNow;
@@ -5123,6 +5283,75 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
                 gw.ParallelProgrammers = value;
                 gw.ParallelProgrammersDesired = value;
             });
+        }
+        catch { }
+    }
+
+    private void HandleRuntimeVariablesTele(string cassia, string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+
+            var varsEl = root;
+            if (root.ValueKind == JsonValueKind.Object &&
+                root.TryGetProperty("variables", out var varsProp))
+            {
+                varsEl = varsProp;
+            }
+
+            if (varsEl.ValueKind != JsonValueKind.Object)
+                return;
+
+            var dict = new Dictionary<string, RuntimeVariableValue>(StringComparer.OrdinalIgnoreCase);
+            foreach (var prop in varsEl.EnumerateObject())
+            {
+                var kind = RuntimeVariableKind.Unknown;
+                object? value = null;
+
+                switch (prop.Value.ValueKind)
+                {
+                    case JsonValueKind.True:
+                    case JsonValueKind.False:
+                        kind = RuntimeVariableKind.Bool;
+                        value = prop.Value.GetBoolean();
+                        break;
+                    case JsonValueKind.Number:
+                        kind = RuntimeVariableKind.Number;
+                        if (prop.Value.TryGetInt64(out var l))
+                            value = l;
+                        else if (prop.Value.TryGetDouble(out var d))
+                            value = d;
+                        break;
+                    case JsonValueKind.String:
+                        kind = RuntimeVariableKind.String;
+                        value = prop.Value.GetString() ?? "";
+                        break;
+                    case JsonValueKind.Null:
+                        kind = RuntimeVariableKind.String;
+                        value = "";
+                        break;
+                    default:
+                        kind = RuntimeVariableKind.Unknown;
+                        value = prop.Value.GetRawText();
+                        break;
+                }
+
+                dict[prop.Name] = new RuntimeVariableValue(prop.Name, kind, value);
+            }
+
+            lock (_runtimeVarsLock)
+            {
+                _runtimeVarsByGw[cassia] = dict;
+                if (_runtimeVarsPending.TryGetValue(cassia, out var tcs))
+                {
+                    _runtimeVarsPending.Remove(cassia);
+                    tcs.TrySetResult(dict);
+                }
+            }
+
+            RuntimeVariablesReceived?.Invoke(cassia, dict);
         }
         catch { }
     }
