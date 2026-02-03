@@ -129,6 +129,10 @@ namespace AccessAPP.Services
                 catch (OperationCanceledException)
                 {
                     lastEx = new TimeoutException("Connect+Login timed out after 10 seconds");
+
+                    await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, 0).ConfigureAwait(false);
+                    await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, 1).ConfigureAwait(false);
+
                     UpgradeLogger.Log(logId, macAddress,
                         $"Connect+Login timeout attempt {attempt}/{maxAttempts}",
                         "Warn", firmwareVersion);
@@ -158,8 +162,9 @@ namespace AccessAPP.Services
                     await Task.Delay(delayBetweenAttemptsMs).ConfigureAwait(false);
             }
 
-			_connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0, chip: GetChipForMac(macAddress)).Wait();
-            
+            await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, 0).ConfigureAwait(false);
+            await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, 1).ConfigureAwait(false);
+
             UpgradeLogger.Log(logId, macAddress,
                 $"Disconnected after all Connect+Login attempts failed",
                 "Info", firmwareVersion);
@@ -214,6 +219,10 @@ namespace AccessAPP.Services
                 else
                     await Task.Delay(delayMs).ConfigureAwait(false);
             }
+            await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, 0).ConfigureAwait(false);
+            await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, 1).ConfigureAwait(false);
+
+            await Task.Delay(5000).ConfigureAwait(false);
 
             return (false, last, lastMsg);
         }
