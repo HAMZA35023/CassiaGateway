@@ -3974,8 +3974,12 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
             var stm = LogLineStatusRx.Match(line);
             if (stm.Success) status = stm.Groups["status"].Value.Trim();
 
-            // Timestamp embedded in log line (used to pick newest across gateways)
-            DateTimeOffset tsUtc = DateTimeOffset.UtcNow;
+            // IMPORTANT: for live UI ordering we must NOT rely on gateway clocks.
+            // Use local arrival time for all "is this newer" comparisons.
+            var arrivalUtc = DateTimeOffset.UtcNow;
+
+            // Timestamp embedded in log line (kept for display/debug, but NOT used for ordering)
+            DateTimeOffset embeddedUtc = arrivalUtc;
             var tm = LogLineTimeRx.Match(line);
             if (tm.Success)
             {
@@ -3986,29 +3990,42 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
                         System.Globalization.DateTimeStyles.AssumeLocal,
                         out var dtLocal))
                 {
-                    tsUtc = new DateTimeOffset(DateTime.SpecifyKind(dtLocal, DateTimeKind.Local)).ToUniversalTime();
+                    embeddedUtc = new DateTimeOffset(DateTime.SpecifyKind(dtLocal, DateTimeKind.Local)).ToUniversalTime();
                 }
             }
 
             // Logs must NOT drive queue/progress UI.
             // We only harvest:
-            //  - Current FW info (from "Current FW Version" lines)
-            //  - Success completion + target FW (fw=v02.xx)
+            //  - Current FW info (from "Sensor: App: ..." text embedded in status)
+            //  - Final completion outcome (Success/Warn/Failed) + target FW (fw=v02.xx)
             var cs = GetOrCreateCache(mac);
 
-            // 1) Completion success
-            var isCompletedSuccess =
-                !string.IsNullOrWhiteSpace(stage) &&
-                stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase) &&
-                !string.IsNullOrWhiteSpace(status) &&
-                status.Trim().Equals("Success", StringComparison.OrdinalIgnoreCase);
-
-            if (isCompletedSuccess)
+            // 1) Completion outcome
+            var isCompletion = stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase);
+            if (isCompletion)
             {
-                // Only accept if newer than previous success record
-                if (!cs.LastUpgradeSuccessUtc.HasValue || tsUtc >= cs.LastUpgradeSuccessUtc.Value)
+                var outcome = (status ?? "").Trim();
+                var isSuccess = outcome.Equals("Success", StringComparison.OrdinalIgnoreCase);
+                var isWarn = outcome.Equals("Warn", StringComparison.OrdinalIgnoreCase) ||
+                             outcome.Equals("Warning", StringComparison.OrdinalIgnoreCase);
+                var isFailed = outcome.Equals("Failed", StringComparison.OrdinalIgnoreCase) ||
+                               outcome.Equals("Error", StringComparison.OrdinalIgnoreCase);
+
+                // Only accept if newer than the last completion we stored for this MAC.
+                // Note: gateway clocks can be skewed, but within a single gateway this is still useful.
+                // The live status text ordering uses arrival time elsewhere.
+                var last = cs.LastUpgradeSuccessUtc ?? DateTimeOffset.MinValue;
+                if (embeddedUtc >= last)
                 {
-                    cs.LastUpgradeSuccessUtc = tsUtc;
+                    cs.LastUpgradeSuccessUtc = embeddedUtc;
+
+                    cs.IsUpgradeSuccess = isSuccess;
+                    cs.IsUpgradeWarn = isWarn;
+                    cs.IsUpgradeFailed = isFailed;
+
+                    // Completion implies no longer in queue unless queue snapshot says otherwise later.
+                    if (isSuccess || isWarn || isFailed)
+                        cs.IsInQueue = false;
 
                     var fwm = LogLineFwRx.Match(line);
                     if (fwm.Success)
@@ -4028,15 +4045,22 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
                 }
             }
 
-            // Apply to discovered device if it exists (without touching ProcessStatus/queue fields)
+            // Apply to discovered device if it exists (without touching ProcessStatus fields)
             var dev = FindDiscoveredDevice(mac);
             if (dev != null)
             {
-                // Do NOT mark device as success here.
-                // Success/green is computed from the latest UpgradeLogGroup per MAC.
                 dev.LastUpgradeSuccessUtc = cs.LastUpgradeSuccessUtc;
                 dev.LastTargetFw = cs.LastTargetFw ?? "";
                 dev.CurrentFw = cs.CurrentFw ?? "";
+
+                // Apply completion outcome immediately so the row turns green/yellow/red without waiting
+                // for any grouping/debounced UI refresh.
+                dev.IsUpgradeSuccess = cs.IsUpgradeSuccess;
+                dev.IsUpgradeWarn = cs.IsUpgradeWarn;
+                dev.IsUpgradeFailed = cs.IsUpgradeFailed;
+
+                if (cs.IsUpgradeSuccess || cs.IsUpgradeWarn || cs.IsUpgradeFailed)
+                    dev.IsInQueue = false;
             }
         }
         catch
@@ -4045,14 +4069,15 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
         }
     }
 
-    
+
     private void ApplyLiveProcessStatusFromUpgradeLogLine(string cassia, string line)
     {
         try
         {
             var mm = LogLineMacRx.Match(line);
             if (!mm.Success) return;
-            var mac = mm.Groups["mac"].Value;
+
+            var mac = mm.Groups["mac"].Value?.Trim();
             if (string.IsNullOrWhiteSpace(mac)) return;
 
             var stage = "";
@@ -4063,24 +4088,10 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
             var stm = LogLineStatusRx.Match(line);
             if (stm.Success) status = stm.Groups["status"].Value.Trim();
 
-            // Timestamp embedded in log line (used to pick newest across gateways)
-            DateTimeOffset tsUtc = DateTimeOffset.UtcNow;
-            var tm = LogLineTimeRx.Match(line);
-            if (tm.Success)
-            {
-                if (DateTime.TryParseExact(
-                        tm.Groups["time"].Value.Trim(),
-                        "yyyy-MM-dd HH:mm:ss",
-                        System.Globalization.CultureInfo.InvariantCulture,
-                        System.Globalization.DateTimeStyles.AssumeLocal,
-                        out var dtLocal))
-                {
-                    tsUtc = new DateTimeOffset(DateTime.SpecifyKind(dtLocal, DateTimeKind.Local)).ToUniversalTime();
-                }
-            }
+            // IMPORTANT: for "latest" ordering we use ARRIVAL time, not gateway timeLocal.
+            var arrivalUtc = DateTimeOffset.UtcNow;
 
-            // What we want to show in the device/queue lists:
-            // Prefer stage, but if stage is empty, show status.
+            // chip from stage text (optional)
             var chipUsed = "";
             if (!string.IsNullOrWhiteSpace(stage))
             {
@@ -4088,66 +4099,105 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
                 if (cm.Success) chipUsed = cm.Groups["c"].Value.Trim();
             }
 
+            // prefer stage; fallback to status
             var text = !string.IsNullOrWhiteSpace(stage) ? stage : status;
-
-            var isCompletedSuccess = stage.Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase)
-                && status.Equals("Success", StringComparison.OrdinalIgnoreCase);
-
-            var queueText = isCompletedSuccess ? "Done" : text;
-
             if (string.IsNullOrWhiteSpace(text)) return;
 
-            // Best effort fw=v02.xx (can be null in JSON)
+            // fw=v02.xx (optional)
             var fw = "";
             var fwm = LogLineFwRx.Match(line);
             if (fwm.Success) fw = fwm.Groups["fw"].Value.Trim();
 
+            var isCompletion = stage.Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase);
+
+            var isSuccess = isCompletion && status.Equals("Success", StringComparison.OrdinalIgnoreCase);
+            var isWarn = isCompletion && (status.Equals("Warn", StringComparison.OrdinalIgnoreCase) ||
+                                          status.Equals("Warning", StringComparison.OrdinalIgnoreCase));
+            var isFailed = isCompletion && (status.Equals("Failed", StringComparison.OrdinalIgnoreCase) ||
+                                            status.Equals("Error", StringComparison.OrdinalIgnoreCase) ||
+                                            status.StartsWith("Fail", StringComparison.OrdinalIgnoreCase));
+
+            // queue text: show Done/Warn/Failed if completion, else normal stage/status
+            var queueText = isCompletion
+                ? (isSuccess ? "Done" : (isWarn ? "Warn" : (isFailed ? "Failed" : text)))
+                : text;
+
             Application.Current.Dispatcher.Invoke(() =>
             {
-                // Update queue row (if exists) so operators can see live stage changes.
+                // Update queue row (if exists)
                 var qi = QueueItems.FirstOrDefault(q => q.Mac.Equals(mac, StringComparison.OrdinalIgnoreCase));
                 if (qi != null)
                 {
-                    if (qi.LastUpdateUtc != default && tsUtc < qi.LastUpdateUtc)
+                    // Use arrivalUtc for ordering (prevents clock skew dropping new lines)
+                    if (qi.LastUpdateUtc != default && arrivalUtc < qi.LastUpdateUtc)
                         return;
 
                     qi.Cassia = cassia;
                     qi.Status = queueText.Trim();
                     if (!string.IsNullOrWhiteSpace(chipUsed))
                         qi.ChipUsed = chipUsed;
-                    if (isCompletedSuccess)
+
+                    if (isCompletion)
                         qi.Progress = 100;
+
                     if (LooksLikeFirmwareVersion(fw))
                         qi.FirmwareVersion = fw;
-                    qi.LastUpdateUtc = tsUtc;
+
+                    qi.LastUpdateUtc = arrivalUtc;
 
                     RequestQueueRefresh();
                 }
 
                 // Cache + device list mirror (without creating devices from logs)
                 var cs = GetOrCreateCache(mac);
-                if (cs.LastUpdateUtc != default && tsUtc < cs.LastUpdateUtc)
+                if (cs.LastUpdateUtc != default && arrivalUtc < cs.LastUpdateUtc)
                     return;
 
                 cs.ProcessCassia = cassia;
                 cs.ProcessStatus = text.Trim();
                 if (!string.IsNullOrWhiteSpace(chipUsed))
                     cs.ChipUsed = chipUsed;
-                if (isCompletedSuccess)
+
+                if (isCompletion)
                     cs.ProcessProgress = 100;
 
                 if (LooksLikeFirmwareVersion(fw))
                     cs.ProcessFirmware = fw;
-                cs.LastUpdateUtc = tsUtc;
+
+                // IMMEDIATE completion result flags (this is what drives row color)
+                if (isCompletion)
+                {
+                    cs.IsUpgradeSuccess = isSuccess;
+                    cs.IsUpgradeWarn = isWarn;
+                    cs.IsUpgradeFailed = isFailed;
+
+                    // completion implies not in queue unless queue snapshot later says otherwise
+                    if (isSuccess || isWarn || isFailed)
+                        cs.IsInQueue = false;
+                }
+
+                cs.LastUpdateUtc = arrivalUtc;
 
                 var dev = FindDiscoveredDevice(mac);
                 if (dev == null) return;
+
                 dev.ProcessCassia = cassia;
                 dev.ProcessStatus = cs.ProcessStatus;
                 dev.ChipUsed = cs.ChipUsed;
                 if (!string.IsNullOrWhiteSpace(cs.ProcessFirmware))
                     dev.ProcessFirmware = cs.ProcessFirmware;
-                dev.ProcessLastUpdateUtc = tsUtc;
+
+                dev.ProcessLastUpdateUtc = arrivalUtc;
+
+                if (isCompletion)
+                {
+                    dev.IsUpgradeSuccess = isSuccess;
+                    dev.IsUpgradeWarn = isWarn;
+                    dev.IsUpgradeFailed = isFailed;
+
+                    if (isSuccess || isWarn || isFailed)
+                        dev.IsInQueue = false; // queue snapshot can set back to true (blue)
+                }
             });
         }
         catch
@@ -4156,7 +4206,7 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
         }
     }
 
-private void RequestUpgradeLogTextRefresh()
+    private void RequestUpgradeLogTextRefresh()
     {
         if (_pendingUpgradeLogTextRefresh) return;
         _pendingUpgradeLogTextRefresh = true;

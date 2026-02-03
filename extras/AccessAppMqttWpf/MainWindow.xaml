@@ -15,7 +15,7 @@
         <conv:StatusToBrushConverter x:Key="StatusToBrush"/>
         <SolidColorBrush x:Key="DoneRowBrush" Color="#2A22C55E"/>
         <SolidColorBrush x:Key="QueueRowBrush" Color="#2A60A5FA"/>
-        <SolidColorBrush x:Key="WarnRowBrush" Color="#2AF59E0B"/>
+        <SolidColorBrush x:Key="WarnRowBrush" Color="#2AFACC15"/>
         <SolidColorBrush x:Key="FailedRowBrush" Color="#2AE74C3C"/>
 
 

@@ -8,8 +8,26 @@ namespace AccessAppMqttWpf.Models;
 
 public partial class QueueItem : ObservableObject
 {
-    public int QueueSortKey => (Status?.Equals("Done", StringComparison.OrdinalIgnoreCase) == true) ? 1 : 0;
+    public int QueueSortKey => IsTerminalStatus(Status) ? 1 : 0;
     public bool IsDone => QueueSortKey == 1;
+
+
+private static bool IsTerminalStatus(string? status)
+{
+    if (string.IsNullOrWhiteSpace(status)) return false;
+    var s = status.Trim();
+
+    // Backends have used: Done / Success / Completed / Failed / Error / Warn
+    if (s.Equals("done", StringComparison.OrdinalIgnoreCase)) return true;
+    if (s.Equals("success", StringComparison.OrdinalIgnoreCase)) return true;
+    if (s.Equals("warn", StringComparison.OrdinalIgnoreCase) || s.Equals("warning", StringComparison.OrdinalIgnoreCase)) return true;
+    if (s.Equals("failed", StringComparison.OrdinalIgnoreCase) || s.Equals("fail", StringComparison.OrdinalIgnoreCase)) return true;
+    if (s.Equals("error", StringComparison.OrdinalIgnoreCase)) return true;
+    if (s.Contains("complete", StringComparison.OrdinalIgnoreCase)) return true;
+    if (s.Contains("fail", StringComparison.OrdinalIgnoreCase) || s.Contains("error", StringComparison.OrdinalIgnoreCase)) return true;
+
+    return false;
+}
 
     [ObservableProperty] private string mac = "";
     [ObservableProperty] private string cassia = "";
