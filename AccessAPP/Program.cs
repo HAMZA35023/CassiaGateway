@@ -43,9 +43,14 @@ builder.Services.AddCors(options =>
 builder.Services.AddSingleton<MqttConfigStore>(sp =>
 {
     var cfg = sp.GetRequiredService<IConfiguration>();
+    var env = sp.GetRequiredService<IHostEnvironment>();
 
     // Put in appsettings.json if you want, fallback is fine on Cassia
-    var path = cfg.GetValue<string>("Mqtt:ConfigPath") ?? "/home/cassia/FWUpgrade/mqtt.json";
+    var path = cfg.GetValue<string>("Mqtt:ConfigPath");
+    if (string.IsNullOrWhiteSpace(path))
+        path = "mqtt.json";
+    if (!Path.IsPathRooted(path))
+        path = Path.Combine(env.ContentRootPath, path);
 
     return new MqttConfigStore(path);
 });

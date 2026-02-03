@@ -23,9 +23,10 @@ namespace AccessAPP.Controllers
         private readonly string _gatewayIpAddress;
         private readonly int _gatewayPort;
         private readonly CassiaNotificationService _notificationService; // ✅ Injected singleton
+        private readonly MqttConfigStore _mqttStore;
 
 
-        public CassiaController(IConfiguration configuration, CassiaScanService scanService, CassiaConnectService connectService, CassiaPinCodeService cassiaPinCodeService, DeviceStorageService deviceStorageService, CassiaFirmwareUpgradeService firmwareUpgradeService, FirmwareUploadService firmwareUploadService, FirmwareManifestService firmwareManifestService, CassiaNotificationService notificationService)
+        public CassiaController(IConfiguration configuration, CassiaScanService scanService, CassiaConnectService connectService, CassiaPinCodeService cassiaPinCodeService, DeviceStorageService deviceStorageService, CassiaFirmwareUpgradeService firmwareUpgradeService, FirmwareUploadService firmwareUploadService, FirmwareManifestService firmwareManifestService, CassiaNotificationService notificationService, MqttConfigStore mqttStore)
         {
             _configuration = configuration;
             _gatewayIpAddress = _configuration.GetValue<string>("GatewayConfiguration:IpAddress");
@@ -38,6 +39,7 @@ namespace AccessAPP.Controllers
             _firmwareUploadService = firmwareUploadService;
             _firmwareManifestService = firmwareManifestService;
             _notificationService = notificationService;
+            _mqttStore = mqttStore;
 
             //_scanService.StartPeriodicScan(_gatewayIpAddress, _gatewayPort);
         }
@@ -45,23 +47,35 @@ namespace AccessAPP.Controllers
         // Add near the top of the CassiaController class:
         private static readonly SemaphoreSlim _mqttConfigLock = new(1, 1);
 
-        private static string MqttConfigPath =>
-            Path.Combine(Directory.GetCurrentDirectory(), "mqtt.json");
-
-        private static AccessAPP.Models.MqttConfig DefaultMqttConfig() => new()
+        private static AccessAPP.Models.MqttConfig ToMqttConfig(MqttOptions opts) => new()
         {
-            Name = "cassia-01",
-            NetworkId = "dk-lab",
-            Host = "prod.statistics.niko-test.nu",
-            Port = 18883,
-            UseTls = false,
-            Username = "accessapp",
-            Password = "",
-            BaseTopic = "accessapp",
-            KeepAliveSeconds = 30,
-            ReconnectDelaySeconds = 10,
-            SubscribeToAllTarget = true
+            Name = opts.Name ?? "",
+            NetworkId = opts.NetworkId ?? "",
+            Host = opts.Host ?? "",
+            Port = opts.Port,
+            UseTls = opts.UseTls,
+            Username = opts.Username ?? "",
+            Password = opts.Password ?? "",
+            BaseTopic = opts.BaseTopic ?? "",
+            KeepAliveSeconds = opts.KeepAliveSeconds,
+            ReconnectDelaySeconds = opts.ReconnectDelaySeconds,
+            SubscribeToAllTarget = opts.SubscribeToAllTarget
         };
+
+        private static void ApplyMqttConfig(MqttOptions opts, AccessAPP.Models.MqttConfig cfg)
+        {
+            opts.Name = cfg.Name ?? "";
+            opts.NetworkId = cfg.NetworkId ?? "";
+            opts.Host = cfg.Host ?? "";
+            opts.Port = cfg.Port;
+            opts.UseTls = cfg.UseTls;
+            opts.Username = string.IsNullOrWhiteSpace(cfg.Username) ? null : cfg.Username;
+            opts.Password = string.IsNullOrWhiteSpace(cfg.Password) ? null : cfg.Password;
+            opts.BaseTopic = cfg.BaseTopic ?? "";
+            opts.KeepAliveSeconds = cfg.KeepAliveSeconds;
+            opts.ReconnectDelaySeconds = cfg.ReconnectDelaySeconds;
+            opts.SubscribeToAllTarget = cfg.SubscribeToAllTarget;
+        }
 
         // Add near the bottom of the CassiaController class:
 
@@ -71,26 +85,8 @@ namespace AccessAPP.Controllers
             await _mqttConfigLock.WaitAsync();
             try
             {
-                if (!System.IO.File.Exists(MqttConfigPath))
-                {
-                    var def = DefaultMqttConfig();
-                    var json = Newtonsoft.Json.JsonConvert.SerializeObject(def, Newtonsoft.Json.Formatting.Indented);
-                    await System.IO.File.WriteAllTextAsync(MqttConfigPath, json);
-                    return Ok(def);
-                }
-
-                var raw = await System.IO.File.ReadAllTextAsync(MqttConfigPath);
-                var cfg = Newtonsoft.Json.JsonConvert.DeserializeObject<AccessAPP.Models.MqttConfig>(raw);
-
-                // If file exists but is empty/invalid, re-create with defaults
-                if (cfg == null)
-                {
-                    cfg = DefaultMqttConfig();
-                    var json = Newtonsoft.Json.JsonConvert.SerializeObject(cfg, Newtonsoft.Json.Formatting.Indented);
-                    await System.IO.File.WriteAllTextAsync(MqttConfigPath, json);
-                }
-
-                return Ok(cfg);
+                var opts = _mqttStore.LoadOrCreateDefault();
+                return Ok(ToMqttConfig(opts));
             }
             catch (Exception ex)
             {
@@ -119,10 +115,11 @@ namespace AccessAPP.Controllers
                 cfg.Password ??= "";
                 cfg.BaseTopic ??= "";
 
-                var json = Newtonsoft.Json.JsonConvert.SerializeObject(cfg, Newtonsoft.Json.Formatting.Indented);
-                await System.IO.File.WriteAllTextAsync(MqttConfigPath, json);
+                var opts = _mqttStore.LoadOrCreateDefault();
+                ApplyMqttConfig(opts, cfg);
+                _mqttStore.Save(opts);
 
-                return Ok(new { success = true, message = "mqtt.json saved", path = MqttConfigPath });
+                return Ok(new { success = true, message = "mqtt.json saved", path = _mqttStore.FilePath });
             }
             catch (Exception ex)
             {
