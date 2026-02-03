@@ -32,6 +32,8 @@ namespace AccessAPP.Services
 
             for (int attempt = 1; attempt <= maxAttempts; attempt++)
             {
+                bool failedThisAttempt = false;
+
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
 
                 try
@@ -45,7 +47,7 @@ namespace AccessAPP.Services
                     var attemptTask = Task.Run(async () =>
                     {
                         // 1) Connect
-						var connectionResult = await _connectService
+                        var connectionResult = await _connectService
 							.ConnectToBleDevice(gatewayIp, gatewayPort, macAddress, chip: GetChipForMac(macAddress))
                             .ConfigureAwait(false);
 
@@ -58,6 +60,8 @@ namespace AccessAPP.Services
                                 Message = $"Connect failed (HTTP {(int)connectionResult.Status} {connectionResult.Status})."
                             };
                         }
+
+                        cts.Token.ThrowIfCancellationRequested();
 
                         bool isAlreadyInBootMode = CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress);
                         if (isAlreadyInBootMode)
@@ -73,9 +77,11 @@ namespace AccessAPP.Services
 
                         UpgradeLogger.Log(logId, macAddress, "Connected", "Success", firmwareVersion);
 
+                        cts.Token.ThrowIfCancellationRequested();
+
                         // 2) Login
                         var loginResult = await _connectService
-                            .AttemptLogin(gatewayIp, macAddress)
+                            .AttemptLogin(gatewayIp, macAddress, cts.Token)
                             .ConfigureAwait(false);
 
                         bool pincodeReq = loginResult.ResponseBody.PincodeRequired;
@@ -125,50 +131,59 @@ namespace AccessAPP.Services
                         return result;
 
                     lastEx = new Exception(result.Message);
-                }
-                catch (OperationCanceledException)
-                {
-                    lastEx = new TimeoutException("Connect+Login timed out after 10 seconds");
+                    failedThisAttempt = true;
 
                     await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, 0).ConfigureAwait(false);
                     await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, 1).ConfigureAwait(false);
 
                     UpgradeLogger.Log(logId, macAddress,
-                        $"Connect+Login timeout attempt {attempt}/{maxAttempts}",
+                        $"Connect+Login failed on attempt {attempt}/{maxAttempts}. Disconnected both chips. Retrying after 3s.",
                         "Warn", firmwareVersion);
+                    AppLog.Info($"Connect+Login failed for {macAddress} (attempt {attempt}/{maxAttempts}). Disconnected both chips; retrying after 3s.");
+                }
+                catch (OperationCanceledException)
+                {
+                    lastEx = new TimeoutException("Connect+Login timed out after 10 seconds");
+                    failedThisAttempt = true;
 
-					_connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0, chip: GetChipForMac(macAddress)).Wait();
+                    await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, 0).ConfigureAwait(false);
+                    await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, 1).ConfigureAwait(false);
+
                     UpgradeLogger.Log(logId, macAddress,
-                        $"Disconnected after timeout on attempt {attempt}/{maxAttempts}",
-                        "Info", firmwareVersion);
-                    await Task.Delay(5000);
+                        $"Connect+Login timeout on attempt {attempt}/{maxAttempts}. Disconnected both chips. Retrying after 3s.",
+                        "Warn", firmwareVersion);
+                    AppLog.Info($"Connect+Login timeout for {macAddress} (attempt {attempt}/{maxAttempts}). Disconnected both chips; retrying after 3s.");
                 }
                 catch (Exception ex)
                 {
                     lastEx = ex;
+                    failedThisAttempt = true;
                     UpgradeLogger.Log(logId, macAddress,
                         $"Connect+Login exception attempt {attempt}/{maxAttempts}: {ex.Message}",
                         "Warn", firmwareVersion);
-					_connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0, chip: GetChipForMac(macAddress)).Wait();
+                    await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, 0).ConfigureAwait(false);
+                    await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, 1).ConfigureAwait(false);
+                    
                     UpgradeLogger.Log(logId, macAddress,
-                        $"Disconnected after exception on attempt {attempt}/{maxAttempts}",
-                        "Info", firmwareVersion);
-                    await Task.Delay(5000);
+                        $"Connect+Login exception on attempt {attempt}/{maxAttempts}. Disconnected both chips. Retrying after 3s.",
+                        "Warn", firmwareVersion);
+                    AppLog.Info($"Connect+Login exception for {macAddress} (attempt {attempt}/{maxAttempts}). Disconnected both chips; retrying after 3s.");
 
 
                 }
 
-                if (attempt < maxAttempts)
-                    await Task.Delay(delayBetweenAttemptsMs).ConfigureAwait(false);
+                if (attempt < maxAttempts && failedThisAttempt)
+                    await Task.Delay(Math.Max(3000, delayBetweenAttemptsMs)).ConfigureAwait(false);
             }
 
             await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, 0).ConfigureAwait(false);
             await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, 1).ConfigureAwait(false);
 
             UpgradeLogger.Log(logId, macAddress,
-                $"Disconnected after all Connect+Login attempts failed",
-                "Info", firmwareVersion);
-            await Task.Delay(5000);
+                $"All Connect+Login attempts failed. Disconnected both chips.",
+                "Warn", firmwareVersion);
+            AppLog.Info($"All Connect+Login attempts failed for {macAddress}. Disconnected both chips.");
+            await Task.Delay(3000).ConfigureAwait(false);
 
             return new ConnectLoginResult
             {
@@ -192,6 +207,8 @@ namespace AccessAPP.Services
 
             for (int attempt = 1; attempt <= maxAttempts; attempt++)
             {
+                bool failedThisAttempt = false;
+
                 try
                 {
                     var cr = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, macAddress, chip: GetChipForMac(macAddress)).ConfigureAwait(false);
@@ -206,18 +223,43 @@ namespace AccessAPP.Services
 
                     UpgradeLogger.Log(logId, macAddress, stageName, $"Failed (attempt {attempt}/{maxAttempts})", FirmwareVersion);
                     lastMsg = $"Connect failed ({cr.Status})";
+                    failedThisAttempt = true;
+
+                    UpgradeLogger.Log(logId, macAddress,
+                        $"{stageName}: disconnecting both chips after failed connect attempt {attempt}/{maxAttempts}.",
+                        "Warn", FirmwareVersion);
+                    AppLog.Info($"{stageName}: failed connect for {macAddress} (attempt {attempt}/{maxAttempts}). Disconnecting both chips.");
+                    await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, 0).ConfigureAwait(false);
+                    await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, 1).ConfigureAwait(false);
+                    UpgradeLogger.Log(logId, macAddress,
+                        $"{stageName}: disconnected both chips after failed attempt {attempt}/{maxAttempts}.",
+                        "Info", FirmwareVersion);
+                    AppLog.Info($"{stageName}: disconnected both chips for {macAddress} after failed attempt {attempt}/{maxAttempts}.");
                 }
                 catch (Exception ex)
                 {
                     UpgradeLogger.Log(logId, macAddress, stageName, $"Exception (attempt {attempt}/{maxAttempts}): {ex.Message}", FirmwareVersion);
                     lastMsg = ex.Message;
+                    failedThisAttempt = true;
+
+                    UpgradeLogger.Log(logId, macAddress,
+                        $"{stageName}: disconnecting both chips after exception attempt {attempt}/{maxAttempts}.",
+                        "Warn", FirmwareVersion);
+                    AppLog.Info($"{stageName}: exception for {macAddress} (attempt {attempt}/{maxAttempts}). Disconnecting both chips.");
+                    await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, 0).ConfigureAwait(false);
+                    await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, 1).ConfigureAwait(false);
+                    UpgradeLogger.Log(logId, macAddress,
+                        $"{stageName}: disconnected both chips after exception attempt {attempt}/{maxAttempts}.",
+                        "Info", FirmwareVersion);
+                    AppLog.Info($"{stageName}: disconnected both chips for {macAddress} after exception attempt {attempt}/{maxAttempts}.");
                 }
 
                 // extra cooldown for 417 right after boot transitions
-                if ((int)last == 417)
-                    await Task.Delay(delayMs + 4000).ConfigureAwait(false);
-                else
-                    await Task.Delay(delayMs).ConfigureAwait(false);
+                if (attempt < maxAttempts && failedThisAttempt)
+                {
+                    int waitMs = (int)last == 417 ? delayMs + 4000 : delayMs;
+                    await Task.Delay(Math.Max(3000, waitMs)).ConfigureAwait(false);
+                }
             }
             await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, 0).ConfigureAwait(false);
             await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, 1).ConfigureAwait(false);

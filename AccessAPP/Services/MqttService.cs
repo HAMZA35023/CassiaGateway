@@ -13,6 +13,7 @@ namespace AccessAPP.Services;
 public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 {
     private readonly MqttConfigStore _store;
+    private readonly RuntimeVariablesStore _runtimeStore;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     // Publish resilience (prevents one stalled publish from freezing all telemetry)
@@ -48,9 +49,10 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     // NEW
     public event Func<GetFirmwareManifestCommand, Task>? GetFirmwareManifestRequested;
 
-    public MqttService(MqttConfigStore store)
+    public MqttService(MqttConfigStore store, RuntimeVariablesStore runtimeStore)
     {
         _store = store;
+        _runtimeStore = runtimeStore;
         CurrentOptions = _store.LoadOrCreateDefault();
     }
 
@@ -238,6 +240,14 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
             leaf = "resp";
         await PublishJsonAsync(TeleTopic(leaf), payload, retain: false, ct).ConfigureAwait(false);
     }
+
+    private async Task PublishTeleJsonAsync(string leaf, object payload, string? networkIdOverride, string? nameOverride, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(leaf))
+            leaf = "resp";
+        await PublishJsonAsync(TeleTopic(leaf, networkIdOverride, nameOverride), payload, retain: false, ct).ConfigureAwait(false);
+    }
+
 
     public async ValueTask DisposeAsync()
     {
@@ -543,6 +553,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 string.Equals(command, "set-mqtt-scope", StringComparison.OrdinalIgnoreCase))
             {
                 AppLog.Debug("HandleCommandAsync: dispatch set-scope");
+
                 SetMqttScopeCommand dto;
                 try
                 {
@@ -567,31 +578,230 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                     return PublishTeleJsonAsync("scope", bad, CancellationToken.None);
                 }
 
+                // Publish ACK on the *old* scope so the sender definitely sees it.
+                var oldNetworkId = CurrentOptions.NetworkId;
+                var oldName = CurrentOptions.Name;
+
+                return Task.Run(async () =>
+                {
+                    try
+                    {
+                        // Update + persist without immediately restarting (so we can ACK first).
+                        await _gate.WaitAsync().ConfigureAwait(false);
+                        try
+                        {
+                            CurrentOptions.NetworkId = dto.NetworkId!.Trim();
+                            _store.Save(CurrentOptions);
+                            UpgradeLogger.NetworkId = CurrentOptions.NetworkId;
+                        }
+                        finally
+                        {
+                            _gate.Release();
+                        }
+
+                        var ok = new
+                        {
+                            success = true,
+                            message = "NetworkId updated. Restarting MQTT connection...",
+                            previousNetworkId = oldNetworkId,
+                            networkId = CurrentOptions.NetworkId,
+                            name = CurrentOptions.Name
+                        };
+
+                        await PublishTeleJsonAsync("scope", ok, networkIdOverride: oldNetworkId, nameOverride: oldName, ct: CancellationToken.None).ConfigureAwait(false);
+
+                        await RestartAsync(CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        var bad = new
+                        {
+                            success = false,
+                            message = $"Failed to update networkId: {ex.Message}",
+                            networkId = CurrentOptions.NetworkId,
+                            name = CurrentOptions.Name
+                        };
+
+                        await PublishTeleJsonAsync("scope", bad, networkIdOverride: oldNetworkId, nameOverride: oldName, ct: CancellationToken.None).ConfigureAwait(false);
+                    }
+                });
+            }
+
+            // NEW: Set gateway/cassia name via MQTT (persisted)
+            if (string.Equals(command, "set-name", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "set-cassia-name", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "set-gateway-name", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch set-name");
+
+                string? newName = null;
                 try
                 {
-                    UpdateScopeAsync(dto.NetworkId!, persist: true, ct: CancellationToken.None).ConfigureAwait(false);
-
-                    var ok = new
+                    if (!string.IsNullOrWhiteSpace(payload))
                     {
-                        success = true,
-                        message = "NetworkId updated.",
-                        networkId = CurrentOptions.NetworkId,
-                        name = CurrentOptions.Name
-                    };
-
-                    return PublishTeleJsonAsync("scope", ok, CancellationToken.None);
+                        var p = payload.Trim();
+                        if (p.StartsWith("\""))
+                        {
+                            newName = JsonSerializer.Deserialize<string>(payload, JsonOptions);
+                        }
+                        else
+                        {
+                            using var doc = JsonDocument.Parse(payload);
+                            if (doc.RootElement.ValueKind == JsonValueKind.Object &&
+                                doc.RootElement.TryGetProperty("name", out var n) &&
+                                n.ValueKind == JsonValueKind.String)
+                            {
+                                newName = n.GetString();
+                            }
+                        }
+                    }
                 }
-                catch (Exception ex)
+                catch { /* ignored */ }
+
+                if (string.IsNullOrWhiteSpace(newName))
                 {
                     var bad = new
                     {
                         success = false,
-                        message = $"Failed to update networkId: {ex.Message}",
+                        message = "Missing name. Send payload like {\"name\":\"cassia-01\"} (or a raw JSON string).",
                         networkId = CurrentOptions.NetworkId,
                         name = CurrentOptions.Name
                     };
-                    return PublishTeleJsonAsync("scope", bad, CancellationToken.None);
+                    return PublishTeleJsonAsync("identity", bad, CancellationToken.None);
                 }
+
+                var oldNetworkId = CurrentOptions.NetworkId;
+                var oldName = CurrentOptions.Name;
+
+                return Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _gate.WaitAsync().ConfigureAwait(false);
+                        try
+                        {
+                            CurrentOptions.Name = newName!.Trim();
+                            _store.Save(CurrentOptions);
+                            UpgradeLogger.NetworkId = CurrentOptions.NetworkId;
+                        }
+                        finally
+                        {
+                            _gate.Release();
+                        }
+
+                        var ok = new
+                        {
+                            success = true,
+                            message = "Name updated. Restarting MQTT connection...",
+                            previousName = oldName,
+                            name = CurrentOptions.Name,
+                            networkId = CurrentOptions.NetworkId
+                        };
+
+                        await PublishTeleJsonAsync("identity", ok, networkIdOverride: oldNetworkId, nameOverride: oldName, ct: CancellationToken.None).ConfigureAwait(false);
+
+                        await RestartAsync(CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        var bad = new
+                        {
+                            success = false,
+                            message = $"Failed to update name: {ex.Message}",
+                            networkId = CurrentOptions.NetworkId,
+                            name = CurrentOptions.Name
+                        };
+
+                        await PublishTeleJsonAsync("identity", bad, networkIdOverride: oldNetworkId, nameOverride: oldName, ct: CancellationToken.None).ConfigureAwait(false);
+                    }
+                });
+            }
+
+            // NEW: Set one or more runtime variables via MQTT (persisted)
+            if (string.Equals(command, "set-runtime", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "set-runtime-variables", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "set-runtime-vars", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "set-var", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "set-vars", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch set-runtime-vars");
+
+                if (string.IsNullOrWhiteSpace(payload))
+                {
+                    var bad = new
+                    {
+                        success = false,
+                        message = "Missing payload. Send e.g. {\"WRITE_SLEEP_MS\":50,\"USE_BOTH_CASSIA_CHIPS\":true} or {\"name\":\"WRITE_SLEEP_MS\",\"value\":50}.",
+                        variables = _runtimeStore.GetAll()
+                    };
+                    return PublishTeleJsonAsync("runtime", bad, CancellationToken.None);
+                }
+
+                return Task.Run(async () =>
+                {
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(payload);
+                        var root = doc.RootElement;
+
+                        int applied = 0;
+                        List<string> errors = new();
+
+                        // Shape A: {"name":"X","value":...}
+                        if (root.ValueKind == JsonValueKind.Object &&
+                            root.TryGetProperty("name", out var n) &&
+                            n.ValueKind == JsonValueKind.String &&
+                            root.TryGetProperty("value", out var v))
+                        {
+                            if (_runtimeStore.SetSingle(n.GetString() ?? "", v, out var err))
+                                applied = 1;
+                            else if (!string.IsNullOrWhiteSpace(err))
+                                errors.Add(err);
+                        }
+                        else
+                        {
+                            // Shape B: {"X":..., "Y":...}
+                            var (appliedNames, errorMap) = _runtimeStore.SetFromJsonObject(root);
+                            applied = appliedNames.Count;
+                            foreach (var kv in errorMap)
+                                errors.Add($"{kv.Key}: {kv.Value}");
+                        }
+
+                        var resp = new
+                        {
+                            success = applied > 0 && errors.Count == 0,
+                            applied,
+                            errors,
+                            variables = _runtimeStore.GetAll()
+                        };
+
+                        await PublishTeleJsonAsync("runtime", resp, CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        var bad = new
+                        {
+                            success = false,
+                            message = $"Failed to set runtime variables: {ex.Message}",
+                            variables = _runtimeStore.GetAll()
+                        };
+
+                        await PublishTeleJsonAsync("runtime", bad, CancellationToken.None).ConfigureAwait(false);
+                    }
+                });
+            }
+
+            // NEW: Get all runtime variables (current values)
+            if (string.Equals(command, "get-runtime", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "get-runtime-variables", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "get-runtime-vars", StringComparison.OrdinalIgnoreCase))
+            {
+                var resp = new
+                {
+                    success = true,
+                    variables = _runtimeStore.GetAll()
+                };
+                return PublishTeleJsonAsync("runtime", resp, CancellationToken.None);
             }
 
             if (string.Equals(command, "send-upgrade-log", StringComparison.OrdinalIgnoreCase))
@@ -1236,8 +1446,8 @@ var logPath = Path.Combine(currentDir, "Logs", "upgrade_logs.txt");
 
     // ---------------- Topic helpers ----------------
 
-    private string TeleTopic(string leaf)
-        => $"{CurrentOptions.BaseTopic}/{CurrentOptions.NetworkId}/tele/{CurrentOptions.Name}/{leaf}";
+    private string TeleTopic(string leaf, string? networkIdOverride = null, string? nameOverride = null)
+        => $"{CurrentOptions.BaseTopic}/{(networkIdOverride ?? CurrentOptions.NetworkId)}/tele/{(nameOverride ?? CurrentOptions.Name)}/{leaf}";
 
     private string CmdTopic(string target, string leaf)
         => $"{CurrentOptions.BaseTopic}/{CurrentOptions.NetworkId}/cmd/{target}/{leaf}";

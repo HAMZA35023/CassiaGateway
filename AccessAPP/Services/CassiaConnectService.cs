@@ -286,14 +286,26 @@ namespace AccessAPP.Services
         }
         public async Task<LoginResponseModel> AttemptLogin(string gatewayIpAddress, string macAddress)
         {
+            return await AttemptLoginInternal(gatewayIpAddress, macAddress, CancellationToken.None).ConfigureAwait(false);
+        }
+
+        public async Task<LoginResponseModel> AttemptLogin(string gatewayIpAddress, string macAddress, CancellationToken ct)
+        {
+            return await AttemptLoginInternal(gatewayIpAddress, macAddress, ct).ConfigureAwait(false);
+        }
+
+        private async Task<LoginResponseModel> AttemptLoginInternal(string gatewayIpAddress, string macAddress, CancellationToken ct)
+        {
             try
             {
+                ct.ThrowIfCancellationRequested();
+
                 string hexLoginValue = new LoginTelegram().Create();
                 
                 // IMPORTANT: Dispose the HTTP response when the login attempt completes (end of method scope).
                 using var result = await cassiaReadWrite.WriteBleMessage(gatewayIpAddress, macAddress, 19, hexLoginValue, "?noresponse=1");
 
-                var loginResultTask = new TaskCompletionSource<LoginResponseModel>();
+                var loginResultTask = new TaskCompletionSource<LoginResponseModel>(TaskCreationOptions.RunContinuationsAsynchronously);
 
                 Guid subToken = Guid.Empty;
 
@@ -315,8 +327,10 @@ namespace AccessAPP.Services
                     }
                 });
 
+                using var _ = ct.Register(() => loginResultTask.TrySetCanceled(ct));
+
                 // ✅ Wait for login result or timeout
-                var completedTask = await Task.WhenAny(loginResultTask.Task, Task.Delay(TimeSpan.FromSeconds(120)));
+                var completedTask = await Task.WhenAny(loginResultTask.Task, Task.Delay(TimeSpan.FromSeconds(120), ct));
 
                 if (completedTask == loginResultTask.Task)
                 {
@@ -327,6 +341,20 @@ namespace AccessAPP.Services
                 {
                     // ✅ Handle timeout and unsubscribe
                     if (subToken != Guid.Empty) _notificationService.Unsubscribe(macAddress, subToken);
+                    if (ct.IsCancellationRequested)
+                    {
+                        return new LoginResponseModel
+                        {
+                            Status = "Canceled",
+                            ResponseBody = new ResponseModel
+                            {
+                                MacAddress = macAddress,
+                                Data = "Login canceled by retry timeout.",
+                                Time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                                Status = HttpStatusCode.RequestTimeout
+                            }
+                        };
+                    }
                     return new LoginResponseModel
                     {
                         Status = "Timeout",
@@ -339,6 +367,20 @@ namespace AccessAPP.Services
                         }
                     };
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                return new LoginResponseModel
+                {
+                    Status = "Canceled",
+                    ResponseBody = new ResponseModel
+                    {
+                        MacAddress = macAddress,
+                        Data = "Login canceled by retry timeout.",
+                        Time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                        Status = HttpStatusCode.RequestTimeout
+                    }
+                };
             }
             catch (Exception ex)
             {

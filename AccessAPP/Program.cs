@@ -50,6 +50,10 @@ builder.Services.AddSingleton<MqttConfigStore>(sp =>
     return new MqttConfigStore(path);
 });
 
+
+// --- Runtime variables persistence ---
+builder.Services.AddSingleton<RuntimeVariablesStore>();
+
 builder.Services.AddSingleton<IMqttService, MqttService>();
 
 var app = builder.Build();

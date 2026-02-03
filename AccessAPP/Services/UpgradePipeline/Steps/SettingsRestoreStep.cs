@@ -24,7 +24,7 @@ internal sealed class SettingsRestoreStep : IDeviceUpgradeStep
 
         var cl = await svc.ConnectAndLoginWithRetryForPipelineAsync(
             svc.GatewayIpAddress, 80, ctx.MacAddress, ctx.Pincode, ctx.LogId, ctx.FirmwareVersion,
-            maxAttempts: 4,
+            maxAttempts: 10,
             delayBetweenAttemptsMs: 6000).ConfigureAwait(false);
 
         if (!cl.Success)
@@ -40,6 +40,7 @@ internal sealed class SettingsRestoreStep : IDeviceUpgradeStep
             {
                 dev.LastFailureReason = ctx.Response.Message;
                 dev.shouldRetry = false;
+
                 return false;
             }
 

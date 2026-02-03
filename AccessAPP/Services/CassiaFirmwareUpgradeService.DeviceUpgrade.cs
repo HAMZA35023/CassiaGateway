@@ -250,8 +250,8 @@ foreach (var s in ordered)
 var response = new ServiceResponse();
 
             var connProbe = await ConnectOnlyWithRetryAsync(
-                maxAttempts: 5,
-                delayMs: 2000,
+                maxAttempts: 10,
+                delayMs: 5000,
                 stageName: "Connected (ProcessingSensorUpgrade probe)",
                 logSuccess: false,
                 macAddress: nodeMac,

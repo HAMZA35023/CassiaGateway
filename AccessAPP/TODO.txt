@@ -6,4 +6,4 @@ MAJOR:
 
 MINOR:
 
-Make all runtime variables changeable by MQTT
+MQTT scope, and name is not saved after a reboot - save to the mqtt.json file.
