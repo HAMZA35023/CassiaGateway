@@ -31,7 +31,7 @@ public sealed class MqttConfigStore
                     Port = 18883,
                     UseTls = false,
                     Username = "accessapp",
-                    Password = "",
+                    Password = "Niko1234",
                     BaseTopic = "accessapp",
                     KeepAliveSeconds = 30,
                     ReconnectDelaySeconds = 10,
