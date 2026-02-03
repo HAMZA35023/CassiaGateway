@@ -3,6 +3,7 @@ using System.Net;
 using System.Threading.Tasks;
 using AccessAPP.Logging;
 using AccessAPP.Services.HelperClasses;
+using AccessAPP.Services;
 
 namespace AccessAPP.Services.UpgradePipeline.Steps;
 
@@ -64,6 +65,12 @@ internal sealed class ProbeAndBootModeStep : IDeviceUpgradeStep
         {
             AppLog.Info($"Device is in application mode, checking FW version: {ctx.MacAddress}");
             UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Device in application mode, checking FW version", "Info", ctx.FirmwareVersion);
+        }
+
+        if (!ctx.IsInBoot && !ctx.DetectorNameLogged && DeviceStorageService.TryGetDeviceName(ctx.MacAddress, out var name))
+        {
+            UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Device Name", name, ctx.FirmwareVersion, name);
+            ctx.DetectorNameLogged = true;
         }
 
         return true;

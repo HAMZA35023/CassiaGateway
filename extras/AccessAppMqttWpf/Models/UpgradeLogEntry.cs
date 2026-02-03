@@ -11,6 +11,7 @@ public partial class UpgradeLogEntry : ObservableObject
     [ObservableProperty] private string stage = "";
     [ObservableProperty] private string status = "";
     [ObservableProperty] private string firmware = "";
+    [ObservableProperty] private string deviceName = "";
 
     /// <summary>
     /// Best-effort local timestamp parsed from the log line or timeLocal.

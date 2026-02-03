@@ -103,6 +103,23 @@ public partial class UpgradeLogGroup : ObservableObject
     public string LatestMac =>
         Entries.OrderByDescending(e => e.TimeLocal).FirstOrDefault()?.Mac ?? Mac ?? "";
 
+    public string LatestDeviceName =>
+        Entries.OrderByDescending(e => e.TimeLocal)
+            .Select(e => e.DeviceName)
+            .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? "";
+
+    public string LatestMacWithName
+    {
+        get
+        {
+            var mac = (LatestMac ?? "").Trim();
+            var name = (LatestDeviceName ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(name)) return mac;
+            if (string.IsNullOrWhiteSpace(mac)) return name;
+            return $"{mac} ({name})";
+        }
+    }
+
     // Friendly header preview (no raw log text)
     public string LatestSummary
     {
@@ -216,6 +233,8 @@ public partial class UpgradeLogGroup : ObservableObject
         OnPropertyChanged(nameof(DisplayBadgeStatus));
         OnPropertyChanged(nameof(LatestFirmware));
         OnPropertyChanged(nameof(LatestMac));
+        OnPropertyChanged(nameof(LatestDeviceName));
+        OnPropertyChanged(nameof(LatestMacWithName));
         OnPropertyChanged(nameof(LatestSummary));
         OnPropertyChanged(nameof(LogIdMacPart));
         OnPropertyChanged(nameof(StartedAtLocal));

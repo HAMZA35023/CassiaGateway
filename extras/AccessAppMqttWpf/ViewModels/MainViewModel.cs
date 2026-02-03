@@ -1020,6 +1020,7 @@ partial void OnHostBleUiUpdateSecondsChanged(int value)
             if (!ContainsIgnoreCase(g.LogId, s)
                 && !ContainsIgnoreCase(g.Mac, s)
                 && !ContainsIgnoreCase(g.Cassia, s)
+                && !ContainsIgnoreCase(g.LatestDeviceName, s)
                 && !ContainsIgnoreCase(g.LatestFirmware, s)
                 && !ContainsIgnoreCase(g.LatestStage, s)
                 && !ContainsIgnoreCase(g.LatestStatus, s)
@@ -3334,6 +3335,12 @@ if (string.IsNullOrWhiteSpace(cassia))
     private static readonly Regex LogLineFwRx =
         new(@"\bfw=(?<fw>[^\s]+)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    private static readonly Regex LogLineNameRx =
+        new(@"\bname=(?<name>[^\s]+)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex LogLineDetectorRx =
+        new(@"\bdetector=(?<det>[^\s]+)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     private static readonly Regex SensorAppFromStatusRx =
         new(@"Sensor:\s*App:\s*(?<app>[^\s|]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
@@ -3342,6 +3349,19 @@ if (string.IsNullOrWhiteSpace(cassia))
 
     private static readonly Regex LogLineTimeRx =
         new(@"\btime=(?<time>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static string ExtractDeviceName(string? stage, string? status, string? nameFromLine)
+    {
+        if (!string.IsNullOrWhiteSpace(nameFromLine))
+            return nameFromLine.Trim();
+
+        var st = (stage ?? "").Trim();
+        if (st.Equals("Device Name", StringComparison.OrdinalIgnoreCase)
+            || st.Equals("Detector Name", StringComparison.OrdinalIgnoreCase))
+            return (status ?? "").Trim();
+
+        return "";
+    }
 
     private void OnMqttMessage(string topic, string payload)
     {
@@ -3828,6 +3848,16 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
             var fwm = LogLineFwRx.Match(line);
             var fw = fwm.Success ? fwm.Groups["fw"].Value.Trim() : "";
 
+            var nameFromLine = "";
+            var nm = LogLineNameRx.Match(line);
+            if (nm.Success) nameFromLine = nm.Groups["name"].Value.Trim();
+
+            if (string.IsNullOrWhiteSpace(nameFromLine))
+            {
+                var detm = LogLineDetectorRx.Match(line);
+                nameFromLine = detm.Success ? detm.Groups["det"].Value.Trim() : "";
+            }
+
             var timem = LogLineTimeRx.Match(line);
             var timeLocal = ParseLocalTime(timem.Success ? timem.Groups["time"].Value : null);
 
@@ -3839,6 +3869,7 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
                 Stage = stage,
                 Status = status,
                 Firmware = fw,
+                DeviceName = ExtractDeviceName(stage, status, nameFromLine),
                 TimeLocal = timeLocal,
                 Line = line
             };
@@ -3862,6 +3893,9 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
             var mac = root.TryGetProperty("mac", out var macEl) ? (macEl.GetString() ?? "") : "";
             var stage = root.TryGetProperty("stage", out var stEl) ? (stEl.GetString() ?? "") : "";
             var status = root.TryGetProperty("status", out var sEl) ? (sEl.GetString() ?? "") : "";
+            var name = root.TryGetProperty("name", out var nameEl) ? (nameEl.GetString() ?? "") : "";
+            var detector = root.TryGetProperty("detector", out var detEl) ? (detEl.GetString() ?? "") : "";
+            if (string.IsNullOrWhiteSpace(name)) name = detector;
             var fw = root.TryGetProperty("fw", out var fwEl) ? (fwEl.GetString() ?? "") : "";
             var timeStr = root.TryGetProperty("timeLocal", out var tlEl) ? (tlEl.GetString() ?? "") : "";
             line = root.TryGetProperty("line", out var lEl) ? (lEl.GetString() ?? "") : "";
@@ -3869,7 +3903,8 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
             if (string.IsNullOrWhiteSpace(line))
             {
                 // Fallback recreate a readable line
-                line = $"[logId={logId}] stage={stage} time={timeStr} mac={mac} fw={fw} status={status}";
+                var namePart = string.IsNullOrWhiteSpace(name) ? "" : $" name={name}";
+                line = $"[logId={logId}] stage={stage} time={timeStr} mac={mac}{namePart} fw={fw} status={status}";
             }
 
             var entry = new UpgradeLogEntry
@@ -3880,6 +3915,7 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
                 Stage = stage.Trim(),
                 Status = status.Trim(),
                 Firmware = fw.Trim(),
+                DeviceName = ExtractDeviceName(stage, status, name),
                 TimeLocal = ParseLocalTime(timeStr),
                 Line = line
             };
@@ -5824,15 +5860,16 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
             var ws1 = wb.Worksheets.Add("Summary");
             ws1.Cell(1, 1).Value = "Cassia";
             ws1.Cell(1, 2).Value = "MAC";
-            ws1.Cell(1, 3).Value = "LogId";
-            ws1.Cell(1, 4).Value = "Started time";
-            ws1.Cell(1, 5).Value = "Last time";
-            ws1.Cell(1, 6).Value = "Old FW";
-            ws1.Cell(1, 7).Value = "FW (target)";
-            ws1.Cell(1, 8).Value = "Latest stage";
-            ws1.Cell(1, 9).Value = "Latest status";
-            ws1.Cell(1, 10).Value = "Has newer entry";
-            ws1.Cell(1, 11).Value = "Summary";
+            ws1.Cell(1, 3).Value = "Name";
+            ws1.Cell(1, 4).Value = "LogId";
+            ws1.Cell(1, 5).Value = "Started time";
+            ws1.Cell(1, 6).Value = "Last time";
+            ws1.Cell(1, 7).Value = "Old FW";
+            ws1.Cell(1, 8).Value = "FW (target)";
+            ws1.Cell(1, 9).Value = "Latest stage";
+            ws1.Cell(1, 10).Value = "Latest status";
+            ws1.Cell(1, 11).Value = "Has newer entry";
+            ws1.Cell(1, 12).Value = "Summary";
 
             for (int i = 0; i < groups.Count; i++)
             {
@@ -5840,31 +5877,33 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
                 var r = i + 2;
                 ws1.Cell(r, 1).Value = g.Cassia;
                 ws1.Cell(r, 2).Value = g.Mac;
-                ws1.Cell(r, 3).Value = g.LogId;
-                ws1.Cell(r, 4).Value = g.StartedAtLocalText;
-                ws1.Cell(r, 5).Value = g.LastTimeLocalText;
-                ws1.Cell(r, 6).Value = g.OldFirmwareText;
-                ws1.Cell(r, 7).Value = g.TargetFirmware;
-                ws1.Cell(r, 8).Value = g.LatestStage;
-                ws1.Cell(r, 9).Value = g.LatestStatus;
-                ws1.Cell(r, 10).Value = g.HasNewerForMac ? "Yes" : "No";
-                ws1.Cell(r, 11).Value = g.LatestSummary;
+                ws1.Cell(r, 3).Value = g.LatestDeviceName;
+                ws1.Cell(r, 4).Value = g.LogId;
+                ws1.Cell(r, 5).Value = g.StartedAtLocalText;
+                ws1.Cell(r, 6).Value = g.LastTimeLocalText;
+                ws1.Cell(r, 7).Value = g.OldFirmwareText;
+                ws1.Cell(r, 8).Value = g.TargetFirmware;
+                ws1.Cell(r, 9).Value = g.LatestStage;
+                ws1.Cell(r, 10).Value = g.LatestStatus;
+                ws1.Cell(r, 11).Value = g.HasNewerForMac ? "Yes" : "No";
+                ws1.Cell(r, 12).Value = g.LatestSummary;
             }
 
             ws1.Columns().AdjustToContents();
-            ws1.Column(11).Width = 80;
+            ws1.Column(12).Width = 80;
 
             // ---------------- Details ----------------
             var ws2 = wb.Worksheets.Add("Details");
             ws2.Cell(1, 1).Value = "Cassia";
             ws2.Cell(1, 2).Value = "MAC";
-            ws2.Cell(1, 3).Value = "LogId";
-            ws2.Cell(1, 4).Value = "Time";
-            ws2.Cell(1, 5).Value = "Stage";
-            ws2.Cell(1, 6).Value = "Status";
-            ws2.Cell(1, 7).Value = "Display status";
-            ws2.Cell(1, 8).Value = "Firmware";
-            ws2.Cell(1, 9).Value = "Line";
+            ws2.Cell(1, 3).Value = "Name";
+            ws2.Cell(1, 4).Value = "LogId";
+            ws2.Cell(1, 5).Value = "Time";
+            ws2.Cell(1, 6).Value = "Stage";
+            ws2.Cell(1, 7).Value = "Status";
+            ws2.Cell(1, 8).Value = "Display status";
+            ws2.Cell(1, 9).Value = "Firmware";
+            ws2.Cell(1, 10).Value = "Line";
 
             int row = 2;
             foreach (var g in groups)
@@ -5873,19 +5912,20 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
                 {
                     ws2.Cell(row, 1).Value = e.Cassia;
                     ws2.Cell(row, 2).Value = e.Mac;
-                    ws2.Cell(row, 3).Value = e.LogId;
-                    ws2.Cell(row, 4).Value = e.TimeLocalText;
-                    ws2.Cell(row, 5).Value = e.Stage;
-                    ws2.Cell(row, 6).Value = e.Status;
-                    ws2.Cell(row, 7).Value = e.DisplayStatus;
-                    ws2.Cell(row, 8).Value = e.Firmware;
-                    ws2.Cell(row, 9).Value = e.Line;
+                    ws2.Cell(row, 3).Value = e.DeviceName;
+                    ws2.Cell(row, 4).Value = e.LogId;
+                    ws2.Cell(row, 5).Value = e.TimeLocalText;
+                    ws2.Cell(row, 6).Value = e.Stage;
+                    ws2.Cell(row, 7).Value = e.Status;
+                    ws2.Cell(row, 8).Value = e.DisplayStatus;
+                    ws2.Cell(row, 9).Value = e.Firmware;
+                    ws2.Cell(row, 10).Value = e.Line;
                     row++;
                 }
             }
 
-            ws2.Columns(1, 8).AdjustToContents();
-            ws2.Column(9).Width = 120;
+            ws2.Columns(1, 9).AdjustToContents();
+            ws2.Column(10).Width = 120;
 
             wb.SaveAs(dlg.FileName);
 

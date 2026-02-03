@@ -25,6 +25,7 @@ internal sealed class DeviceUpgradeContext
     public string? SettingsBackupPath { get; set; }
     public int ChipId { get; set; }
     public bool IsInBoot { get; set; }
+    public bool DetectorNameLogged { get; set; }
 
     public Stopwatch Stopwatch { get; } = new();
 

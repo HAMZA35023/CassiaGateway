@@ -48,7 +48,7 @@ public static class UpgradeLogger
         _ = Task.Run(() => PublisherLoopAsync(ct), ct);
     }
 
-    public static void Log(string logId, string mac, string stage, string status, string fwVersion = null)
+    public static void Log(string logId, string mac, string stage, string status, string fwVersion = null, string deviceName = null)
     {
         // Ensure publisher loop is running (safe if called multiple times)
         if (_publisherStarted == 0) StartMqttPublisher();
@@ -65,6 +65,9 @@ public static class UpgradeLogger
 
             if (!string.IsNullOrEmpty(mac))
                 logEntry += $" mac={mac}";
+
+            if (!string.IsNullOrEmpty(deviceName))
+                logEntry += $" name={deviceName}";
 
             if (!string.IsNullOrEmpty(fwVersion))
                 logEntry += $" fw={fwVersion}";
@@ -83,6 +86,8 @@ public static class UpgradeLogger
             Stage = stage,
             Status = status,
             Fw = fwVersion,
+            Name = deviceName,
+            Detector = deviceName,
             TimeLocal = timestamp,
             Line = logEntry,
             NetworkId = NetworkId
@@ -113,6 +118,8 @@ public static class UpgradeLogger
                     mac = item.Mac,
                     stage = item.Stage,
                     status = item.Status,
+                    name = item.Name,
+                    detector = item.Detector,
                     fw = item.Fw,
                     timeLocal = item.TimeLocal,
                     line = item.Line
@@ -231,6 +238,8 @@ public static class UpgradeLogger
         public string Mac { get; set; } = "";
         public string Stage { get; set; } = "";
         public string Status { get; set; } = "";
+        public string? Name { get; set; }
+        public string? Detector { get; set; }
         public string? Fw { get; set; }
         public string TimeLocal { get; set; } = "";
         public string Line { get; set; } = "";

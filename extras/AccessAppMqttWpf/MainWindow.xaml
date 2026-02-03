@@ -1314,7 +1314,7 @@
                                                                 <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
                                                                 <TextBlock Text="{Binding Cassia}"/>
                                                                 <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
-                                                                <TextBlock Text="{Binding LatestMac}"/>
+                                                                <TextBlock Text="{Binding LatestMacWithName}"/>
                                                                 <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
                                                                 <TextBlock Text="{Binding LastTimeLocalText}"/>
                                                                 <TextBlock Text="  •  TOTAL TIME: " Foreground="{StaticResource MutedBrush}"/>
