@@ -14,6 +14,7 @@ internal sealed class DeviceUpgradePipeline
         {
             new ProbeAndBootModeStep(),
             new SettingsBackupStep(),
+            new ActorPreUpgradeStep(),
             new FirmwareUpgradeStep(),
             new SettingsRestoreStep(),
             new ActorUpgradeStep(),

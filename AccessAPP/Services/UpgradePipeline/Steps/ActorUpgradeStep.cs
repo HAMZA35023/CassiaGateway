@@ -24,7 +24,7 @@ internal sealed class ActorUpgradeStep : IDeviceUpgradeStep
             .ConfigureAwait(false);
         ctx.Stopwatch.Stop();
 
-        AppLog.Warn($"Retry Actor upgrade after sensor application completed for {ctx.MacAddress}. Time taken: {ctx.Stopwatch.Elapsed.TotalSeconds} seconds - result: {actorUpgradeResult.Success}");
+        AppLog.Info($"Actor upgrade completed for {ctx.MacAddress}. Time taken: {ctx.Stopwatch.Elapsed.TotalSeconds} seconds - result: {actorUpgradeResult.Success}");
         dev.ActorSuccess = actorUpgradeResult.Success;
 
         if (!actorUpgradeResult.Success)
