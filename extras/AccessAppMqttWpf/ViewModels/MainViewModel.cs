@@ -2896,9 +2896,10 @@ private List<AssignmentPlanItem> ComputeBatchAssignmentPlan(IReadOnlyList<Discov
             // - If ALL active (non-done) queue items are DALI masters (P47/P48) => 4 workers
             // - Otherwise => 2 workers
             var active = QueueItems.Where(q => q != null && !q.IsDone).ToList();
+            var known = active.Where(q => !string.IsNullOrWhiteSpace(q.DetectorType)).ToList();
 
             var desired = 2;
-            if (active.Count > 0 && active.All(q => IsDaliMasterModel(q.DetectorType)))
+            if (known.Count > 0 && known.All(q => IsDaliMasterModel(q.DetectorType)))
                 desired = 4;
 
             if (desired == _lastAutoParallelProgrammersSent && _lastAutoParallelProgrammersSent != int.MinValue)
