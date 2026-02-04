@@ -535,6 +535,8 @@ return resp;
                         3 => 5000,
                         _ => 8000
                     };
+                    if (RuntimeVariables.UPGRADE_DELAY_AFTER_FAILED_CONNECT_MS > 0)
+                        delay += RuntimeVariables.UPGRADE_DELAY_AFTER_FAILED_CONNECT_MS;
                     await Task.Delay(delay);
                 }
 
@@ -604,7 +606,8 @@ return resp;
                     UpgradeLogger.Log(logId, nodeMac, "JumpToBootloader", $"Sent (attempt {attempt}/{bootJumpMaxAttempts})");
 
                     // Give device time to switch to bootloader
-                    await Task.Delay(10000);
+                    int jumpDelay = 10000 + Math.Max(0, RuntimeVariables.UPGRADE_DELAY_AFTER_BOOT_JUMP_MS);
+                    await Task.Delay(jumpDelay);
 
                     // Reconnect after jump (robust)
                     if (!await ConnectWithRetryAsync("Connect After JumpToBoot"))
@@ -707,7 +710,9 @@ await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chi
                 // continue anyway (device might already have dropped)
             }
 
-            await Task.Delay(3000);
+            int bootJumpDelayMs = RuntimeVariables.UPGRADE_DELAY_AFTER_BOOT_JUMP_MS;
+            int postDisconnectDelay = 3000 + Math.Max(0, bootJumpDelayMs);
+            await Task.Delay(postDisconnectDelay);
 
             // Now do the actual programming flow
             return await ProcessingSensorUpgrade(nodeMac, bActor, isBootloader, DetectorType, FirmwareVersion, logId);
@@ -754,6 +759,8 @@ await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chi
                         3 => 5000,
                         _ => 8000
                     };
+                    if (RuntimeVariables.UPGRADE_DELAY_AFTER_FAILED_CONNECT_MS > 0)
+                        delay += RuntimeVariables.UPGRADE_DELAY_AFTER_FAILED_CONNECT_MS;
                     await Task.Delay(delay);
                 }
 
@@ -883,6 +890,9 @@ await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chi
             UpgradeLogger.Log(logId, nodeMac, "Actor BootMode", "Achieved");
 
             // Proceed to programming step (existing flow)
+            if (RuntimeVariables.UPGRADE_DELAY_AFTER_BOOT_JUMP_MS > 0)
+                await Task.Delay(RuntimeVariables.UPGRADE_DELAY_AFTER_BOOT_JUMP_MS);
+
             return await ProcessingActorUpgrade(nodeMac, bActor, DetectorType, FirmwareVersion, logId);
         }
 
@@ -936,6 +946,8 @@ await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chi
                 // Always disconnect at the end, identical to the original implementation.
                 await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0, chip: ctx.ChipId).ConfigureAwait(false);
                 UpgradeLogger.Log(logId, macAddress, "Disconnected at the end of upgrade process", "Info", FirmwareVersion);
+                if (RuntimeVariables.UPGRADE_DELAY_AFTER_END_DISCONNECT_MS > 0)
+                    await Task.Delay(RuntimeVariables.UPGRADE_DELAY_AFTER_END_DISCONNECT_MS).ConfigureAwait(false);
             }
         }
 

@@ -25,6 +25,11 @@ namespace AccessAPP
         public static bool RestoreSettingsAfterUpgrade = true;
         public static bool AutoSetSysFailLevelUnderUpdate = true;
 
+        // Upgrade delay tuning (runtime-only)
+        public static int UPGRADE_DELAY_AFTER_END_DISCONNECT_MS = 0;
+        public static int UPGRADE_DELAY_AFTER_BOOT_JUMP_MS = 0;
+        public static int UPGRADE_DELAY_AFTER_FAILED_CONNECT_MS = 0;
+
         
     }
 }

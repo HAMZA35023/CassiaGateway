@@ -265,33 +265,45 @@ bool ok = true;
             if (profile.UserConfig && !string.IsNullOrWhiteSpace(snap.UserConfigHex))
             {
                 AppLog.Info($"[Restore] Writing UserConfig...");
-bool r = await _ble.SetUserConfig(macAddress, snap.UserConfigHex).ConfigureAwait(false);
+                bool r = await WriteWithRetryAsync(
+                        () => _ble.SetUserConfig(macAddress, snap.UserConfigHex),
+                        "UserConfig")
+                    .ConfigureAwait(false);
                 AppLog.Info($"[Restore] UserConfig result={r}");
-ok &= r;
+                ok &= r;
             }
 
             if (profile.WiredPushButtons && !string.IsNullOrWhiteSpace(snap.PushButtonsHex))
             {
                 AppLog.Info($"[Restore] Writing Wired PushButtons...");
-bool r = await _ble.SetWiredPushButtonList(macAddress, snap.PushButtonsHex).ConfigureAwait(false);
+                bool r = await WriteWithRetryAsync(
+                        () => _ble.SetWiredPushButtonList(macAddress, snap.PushButtonsHex),
+                        "Wired PushButtons")
+                    .ConfigureAwait(false);
                 AppLog.Info($"[Restore] Wired PushButtons result={r}");
-ok &= r;
+                ok &= r;
             }
 
             if (profile.DaliPushButtons && !string.IsNullOrWhiteSpace(snap.DaliPushButtonsHex))
             {
                 AppLog.Info($"[Restore] Writing DALI PushButtons...");
-bool r = await _ble.SetDaliPushButtonList(macAddress, snap.DaliPushButtonsHex).ConfigureAwait(false);
+                bool r = await WriteWithRetryAsync(
+                        () => _ble.SetDaliPushButtonList(macAddress, snap.DaliPushButtonsHex),
+                        "DALI PushButtons")
+                    .ConfigureAwait(false);
                 AppLog.Info($"[Restore] DALI PushButtons result={r}");
-ok &= r;
+                ok &= r;
             }
 
             if (profile.BlePushButtons && !string.IsNullOrWhiteSpace(snap.BlePushButtonsHex))
             {
                 AppLog.Info($"[Restore] Writing BLE PushButtons...");
-bool r = await _ble.SetBLEPushButtonList(macAddress, snap.BlePushButtonsHex).ConfigureAwait(false);
+                bool r = await WriteWithRetryAsync(
+                        () => _ble.SetBLEPushButtonList(macAddress, snap.BlePushButtonsHex),
+                        "BLE PushButtons")
+                    .ConfigureAwait(false);
                 AppLog.Info($"[Restore] BLE PushButtons result={r}");
-ok &= r;
+                ok &= r;
             }
 
             AppLog.Info($"[Restore] END ok={ok}");
@@ -309,6 +321,33 @@ return new ServiceResponse
         {
             if (string.IsNullOrWhiteSpace(hex)) return "<null>";
             return hex.Length <= max ? hex : hex.Substring(0, max) + "...";
+        }
+
+        private static async Task<bool> WriteWithRetryAsync(
+            Func<Task<bool>> action,
+            string label,
+            int maxAttempts = 3,
+            int delayMs = 2000)
+        {
+            for (int attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                try
+                {
+                    var ok = await action().ConfigureAwait(false);
+                    if (ok) return true;
+
+                    AppLog.Warn($"[Restore] {label} failed (attempt {attempt}/{maxAttempts}).");
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Warn($"[Restore] {label} exception (attempt {attempt}/{maxAttempts}): {ex.Message}");
+                }
+
+                if (attempt < maxAttempts)
+                    await Task.Delay(delayMs).ConfigureAwait(false);
+            }
+
+            return false;
         }
 
 
