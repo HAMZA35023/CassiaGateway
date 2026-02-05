@@ -367,6 +367,7 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty] private string connectionStatus = "Disconnected";
     [ObservableProperty] private bool isConnected;
+    [ObservableProperty] private string statusBarText = "Ready";
 
     // ---- LED range visualization (connect/login/LED by RSSI) ----
     public ObservableCollection<LedRangeDeviceRow> LedRangeConnectedDevices { get; } = new();
@@ -427,7 +428,11 @@ public partial class MainViewModel : ObservableObject
             ? $"{UpgradeLogStatus} • {UpgradeLogReceivedLines}/{UpgradeLogTotalLines} lines"
             : UpgradeLogStatus;
 
-    partial void OnUpgradeLogStatusChanged(string value) => OnPropertyChanged(nameof(UpgradeLogSummary));
+    partial void OnUpgradeLogStatusChanged(string value)
+    {
+        OnPropertyChanged(nameof(UpgradeLogSummary));
+        AppendStatusBar("Upgrade log", value);
+    }
     partial void OnUpgradeLogTotalLinesChanged(int value) => OnPropertyChanged(nameof(UpgradeLogSummary));
     partial void OnUpgradeLogReceivedLinesChanged(int value) => OnPropertyChanged(nameof(UpgradeLogSummary));
 
@@ -656,7 +661,7 @@ if (!string.IsNullOrWhiteSpace(SensorFilter) && !SensorFilter.Equals("All", Stri
                     if (!string.Equals(gw.State, "offline", StringComparison.OrdinalIgnoreCase))
                         gw.State = "offline";
                 }
-                // NOTE: do NOT force online here — only force offline when stale.
+                gw.UpdateDerivedTimes(nowUtc);
             }
         };
 
@@ -762,6 +767,16 @@ partial void OnUpgradeLogSearchTextChanged(string value)
             UpdateHostBleUiStatus();
         }
         catch { }
+    }
+
+    partial void OnConnectionStatusChanged(string value) => AppendStatusBar("MQTT", value);
+    partial void OnHostBleUiStatusTextChanged(string value) => AppendStatusBar("Host BLE", value);
+    partial void OnLedRangeStatusTextChanged(string value) => AppendStatusBar("LED range", value);
+
+    private void AppendStatusBar(string source, string message)
+    {
+        if (string.IsNullOrWhiteSpace(message)) return;
+        StatusBarText = $"{DateTime.Now:HH:mm:ss} {source}: {message}";
     }
 
 partial void OnHostBleUiUpdateSecondsChanged(int value)
@@ -3471,22 +3486,41 @@ if (string.IsNullOrWhiteSpace(cassia))
             CassiaGateway? gw = null;
 
             if (!string.IsNullOrWhiteSpace(cassiaName))
-                gw = CassiaGateways.FirstOrDefault(g => string.Equals(g.Name, cassiaName, StringComparison.OrdinalIgnoreCase));
-
-            gw ??= CassiaGateways.FirstOrDefault();
-
-            if (gw == null) return;
-
-            SelectedSpeedGateway = gw;
-
-            var wnd = new SpeedGraphWindow(this)
             {
-                Owner = Application.Current.MainWindow
-            };
-            wnd.Show();
-            wnd.Activate();
+                if (cassiaName.Equals("all", StringComparison.OrdinalIgnoreCase) ||
+                    cassiaName.Equals("(all gateways)", StringComparison.OrdinalIgnoreCase))
+                    gw = _speedAllGateways;
+                else if (cassiaName.Equals("(total)", StringComparison.OrdinalIgnoreCase))
+                    gw = _speedTotalGateways;
+                else
+                    gw = CassiaGateways.FirstOrDefault(g => string.Equals(g.Name, cassiaName, StringComparison.OrdinalIgnoreCase));
+            }
+
+            gw ??= CassiaGateways.FirstOrDefault() ?? _speedAllGateways;
+
+            OpenSpeedGraphForGateway(gw);
         }
         catch { }
+    }
+
+    [RelayCommand]
+    private void OpenSpeedGraphAll()
+    {
+        try { OpenSpeedGraphForGateway(_speedAllGateways); } catch { }
+    }
+
+    private void OpenSpeedGraphForGateway(CassiaGateway? gw)
+    {
+        if (gw == null) return;
+
+        SelectedSpeedGateway = gw;
+
+        var wnd = new SpeedGraphWindow(this)
+        {
+            Owner = Application.Current.MainWindow
+        };
+        wnd.Show();
+        wnd.Activate();
     }
 
     [RelayCommand]
@@ -3499,6 +3533,25 @@ if (string.IsNullOrWhiteSpace(cassia))
             else if (string.IsNullOrWhiteSpace(LedRangeCassia) || LedRangeCassia.Equals("all", StringComparison.OrdinalIgnoreCase))
                 LedRangeCassia = CassiaGateways.FirstOrDefault()?.Name ?? "all";
 
+            var wnd = new LedRangeVisualizerWindow(this)
+            {
+                Owner = Application.Current.MainWindow
+            };
+            wnd.Show();
+            wnd.Activate();
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = $"Open LED visualizer failed: {ex.Message}";
+        }
+    }
+
+    [RelayCommand]
+    private void OpenLedRangeVisualizerAll()
+    {
+        try
+        {
+            LedRangeCassia = "all";
             var wnd = new LedRangeVisualizerWindow(this)
             {
                 Owner = Application.Current.MainWindow
@@ -3624,6 +3677,12 @@ if (string.IsNullOrWhiteSpace(cassia))
                 int queue = root.TryGetProperty("queue", out var q) ? q.GetInt32() : 0;
                 int programming = root.TryGetProperty("programming", out var pr) ? pr.GetInt32() : 0;
                 double totalSpeedpct = root.TryGetProperty("totalSpeedpct", out var sp) ? sp.GetDouble() : 0;
+                long uptimeSeconds = 0;
+                if (root.TryGetProperty("uptimeSeconds", out var upEl))
+                {
+                    if (upEl.ValueKind == JsonValueKind.Number) uptimeSeconds = upEl.GetInt64();
+                    else if (upEl.ValueKind == JsonValueKind.String && long.TryParse(upEl.GetString(), out var uv)) uptimeSeconds = uv;
+                }
                 Application.Current.Dispatcher.Invoke(() =>
                 {
                     var gw = CassiaGateways.FirstOrDefault(x => x.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
@@ -3651,6 +3710,11 @@ if (string.IsNullOrWhiteSpace(cassia))
                     gw.Programming = programming;
                     gw.TotalSpeedpct = totalSpeedpct;
                     gw.AddSpeedSample(ts, totalSpeedpct);
+                    if (uptimeSeconds > 0)
+                    {
+                        gw.UptimeSeconds = uptimeSeconds;
+                        gw.UptimeReportedUtc = ts;
+                    }
 
 
                     // When a gateway announces itself, ask it for FW manifest once per connect.
@@ -5174,10 +5238,91 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
     }
 
     [RelayCommand]
+    private async Task SetParallelProgrammersForAllCassiasPrompt()
+    {
+        if (!IsConnected) { ConnectionStatus = "Not connected"; return; }
+
+        var valueText = Interaction.InputBox(
+            "Set parallel programmers for ALL Cassias:",
+            "Set parallel (all)",
+            ParallelProgrammersAllDesired.ToString());
+
+        if (string.IsNullOrWhiteSpace(valueText)) return;
+        if (!int.TryParse(valueText.Trim(), out var value) || value <= 0)
+        {
+            try { MessageBox.Show("Please enter a positive integer value.", "Set parallel (all)", MessageBoxButton.OK, MessageBoxImage.Warning); } catch { }
+            return;
+        }
+
+        ParallelProgrammersAllDesired = value;
+        await SetParallelProgrammersForAllCassias().ConfigureAwait(false);
+    }
+
+    [RelayCommand]
+    private async Task SetParallelProgrammersForCassiaPrompt(object? cassiaGateway)
+    {
+        if (!IsConnected) { ConnectionStatus = "Not connected"; return; }
+        if (cassiaGateway is not CassiaGateway gw) return;
+        if (string.IsNullOrWhiteSpace(gw.Name)) return;
+
+        var valueText = Interaction.InputBox(
+            $"Set parallel programmers for {gw.Name}:",
+            "Set parallel",
+            gw.ParallelProgrammersDesired.ToString());
+
+        if (string.IsNullOrWhiteSpace(valueText)) return;
+        if (!int.TryParse(valueText.Trim(), out var value) || value <= 0)
+        {
+            try { MessageBox.Show("Please enter a positive integer value.", "Set parallel", MessageBoxButton.OK, MessageBoxImage.Warning); } catch { }
+            return;
+        }
+
+        gw.ParallelProgrammersDesired = value;
+        await SetParallelProgrammersAsync(gw.Name, value).ConfigureAwait(false);
+    }
+
+    [RelayCommand]
     private async Task RefreshFwManifestForCassia(string cassiaName)
     {
         if (string.IsNullOrWhiteSpace(cassiaName)) return;
         await RequestFirmwareManifestAsync(cassiaName, manual: true).ConfigureAwait(false);
+    }
+
+    [RelayCommand]
+    private async Task RefreshFwManifestForAllCassias()
+    {
+        if (!IsConnected) { ConnectionStatus = "Not connected"; return; }
+        foreach (var gw in CassiaGateways.ToList())
+        {
+            if (string.IsNullOrWhiteSpace(gw?.Name)) continue;
+            await RequestFirmwareManifestAsync(gw.Name, manual: true).ConfigureAwait(false);
+        }
+    }
+
+    [RelayCommand]
+    private async Task ClearDeviceSettingsBackupsForAllCassias()
+    {
+        if (!IsConnected) { ConnectionStatus = "Not connected"; return; }
+
+        var confirm = false;
+        try
+        {
+            var result = MessageBox.Show(
+                "Clear device settings backups on ALL Cassias?\n\nThis cannot be undone.",
+                "Clear backups (all)",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            confirm = result == MessageBoxResult.Yes;
+        }
+        catch { }
+
+        if (!confirm) return;
+
+        foreach (var gw in CassiaGateways.ToList())
+        {
+            if (string.IsNullOrWhiteSpace(gw?.Name)) continue;
+            await ClearDeviceSettingsBackupsForCassia(gw.Name).ConfigureAwait(false);
+        }
     }
 
     private async Task RequestFirmwareManifestAsync(string? cassiaName, bool manual)
@@ -6391,3 +6536,4 @@ private void HandleIdentifyTele(string cassia, string payload)
     }
 
 }
+

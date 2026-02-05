@@ -1,0 +1,204 @@
+/* You can add global styles to this file, and also import other style files */
+.toast-glass {
+    position: fixed;
+    bottom: 80px; /* ⬆ raise above the bottom a bit */
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(193, 230, 240, 0.85);
+    backdrop-filter: blur(12px);
+    color: #000;
+    font-weight: 500;
+    padding: 0.9rem 1.5rem;
+    border-radius: 12px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
+    font-size: 1rem;
+    animation: fadeInOut 3s ease-in-out;
+    z-index: 9999;
+  }
+  
+  
+  @keyframes fadeInOut {
+    0% { opacity: 0; transform: translate(-50%, 20px); }
+    10% { opacity: 1; transform: translate(-50%, 0); }
+    90% { opacity: 1; transform: translate(-50%, 0); }
+    100% { opacity: 0; transform: translate(-50%, 20px); }
+  }
+  
+
+  .loader-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    backdrop-filter: blur(0.5px); /* <- smooth background blur */
+    background-color: rgba(255, 255, 255, 0.3); /* optional white haze */
+    z-index: 9999;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+  
+  /* Loader animation */
+  .dots-loader {
+    display: flex;
+    gap: 10px;
+  }
+  
+  .dots-loader span {
+    width: 12px;
+    height: 12px;
+    background: #007bff;
+    border-radius: 50%;
+    animation: bounce 0.6s infinite ease-in-out alternate;
+  }
+  
+  .dots-loader span:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+  .dots-loader span:nth-child(3) {
+    animation-delay: 0.4s;
+  }
+  
+  @keyframes bounce {
+    to {
+      transform: translateY(-12px);
+      opacity: 0.6;
+    }
+  }
+  
+
+  /* Toggle UI */
+.theme-toggle {
+    display: flex;
+    align-items: center;
+    margin-bottom: 1rem;
+    gap: 0.5rem;
+  }
+  
+  .switch {
+    position: relative;
+    display: inline-block;
+    width: 50px;
+    height: 26px;
+  }
+  
+  .switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+  
+  .slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-color: #ccc;
+    transition: .4s;
+    border-radius: 26px;
+  }
+  
+  .slider:before {
+    position: absolute;
+    content: "";
+    height: 20px; width: 20px;
+    left: 3px; bottom: 3px;
+    background-color: white;
+    transition: .4s;
+    border-radius: 50%;
+  }
+  
+  input:checked + .slider {
+    background-color: #007bff;
+  }
+  
+  input:checked + .slider:before {
+    transform: translateX(24px);
+  }
+  
+ /* 🌌 Modern Wygwam-Inspired Dark Mode Theme */
+[data-theme="dark"] {
+  background: linear-gradient(to bottom right, #1e003e, #5e0a5d);
+  color: #f0f0f0;
+}
+
+[data-theme="dark"] .dashboard-wrapper {
+  background-color: rgba(30, 0, 62, 0.85);
+  box-shadow: 0 0 20px rgba(255, 0, 153, 0.3);
+  border-radius: 12px;
+}
+
+[data-theme="dark"] .dashboard-title {
+  color: #ffffff;
+}
+
+[data-theme="dark"] .device-table {
+  background-color: #2d003a;
+  color: #eaeaea;
+  border-collapse: separate;
+  border-spacing: 0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+[data-theme="dark"] .device-table th {
+  background-color: #42005e;
+  color: #ffffff;
+  border-bottom: 1px solid #6a1b9a;
+}
+
+[data-theme="dark"] .device-table td {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+[data-theme="dark"] .dropdown,
+[data-theme="dark"] .upgrade-button {
+  background-color: #3a0050;
+  color: #fdfdfd;
+  border: 1px solid #8a2be2;
+}
+
+[data-theme="dark"] .upgrade-button:hover {
+  background-color: #a000c3;
+  color: white;
+}
+
+[data-theme="dark"] .modal-box {
+  background-color: #3b004d;
+  color: #ffffff;
+  box-shadow: 0 0 10px rgba(255, 0, 153, 0.4);
+  border-radius: 10px;
+}
+
+[data-theme="dark"] .tab {
+  background: #320045;
+  color: #dddddd;
+  border-color: #4a0072;
+}
+
+[data-theme="dark"] .tab.active {
+  background: #5e0a5d;
+  border-top: 3px solid #ff0080;
+  color: #ffccff;
+  font-weight: bold;
+}
+
+[data-theme="dark"] .tab:hover {
+  background: #4b0055;
+}
+
+[data-theme="dark"] .table-container {
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+[data-theme="dark"] .form-group label {
+  color: #e0d6f8;
+}
+
+[data-theme="dark"] .dots-loader span {
+  background-color: #ff00cc;
+}
+
+html, body { height: 100%; }
+body { margin: 0; font-family: Roboto, "Helvetica Neue", sans-serif; }

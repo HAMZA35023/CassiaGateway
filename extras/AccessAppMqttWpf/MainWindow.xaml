@@ -119,7 +119,31 @@
 
     </Window.Resources>
 
-    <Grid Margin="18">
+    <DockPanel Margin="18">
+        <Menu DockPanel.Dock="Top">
+            <MenuItem Header="Cassia">
+                <MenuItem Header="Speed graph (all)" Command="{Binding OpenSpeedGraphAllCommand}"/>
+                <MenuItem Header="LED range visualizer (all)" Command="{Binding OpenLedRangeVisualizerAllCommand}"/>
+                <Separator/>
+                <MenuItem Header="Refresh FW manifest (all)" Command="{Binding RefreshFwManifestForAllCassiasCommand}"/>
+                <MenuItem Header="Clear backups (all)" Command="{Binding ClearDeviceSettingsBackupsForAllCassiasCommand}"/>
+                <Separator/>
+                <MenuItem Header="Set parallel (all)" Command="{Binding SetParallelProgrammersForAllCassiasPromptCommand}"/>
+                <MenuItem Header="Get parallel (all)" Command="{Binding GetParallelProgrammersForAllCassiasCommand}"/>
+            </MenuItem>
+        </Menu>
+
+        <StatusBar DockPanel.Dock="Bottom"
+                   Background="{StaticResource CardBrush}"
+                   BorderBrush="{StaticResource BorderBrush}"
+                   BorderThickness="1"
+                   Margin="0,10,0,0">
+            <StatusBarItem>
+                <TextBlock Text="{Binding StatusBarText}" Foreground="{StaticResource MutedBrush}"/>
+            </StatusBarItem>
+        </StatusBar>
+
+        <Grid>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="440"/>
             <ColumnDefinition Width="18"/>
@@ -136,23 +160,12 @@
                                FontSize="18"
                                FontWeight="SemiBold"
                                Margin="0,0,0,10"/>
-
-                    <!-- Runtime control of parallel programmers (ALL gateways) -->
-                    <Border Background="{StaticResource Card2Brush}" CornerRadius="10" Padding="10" Margin="0,0,0,10">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="Parallel programmers (all):" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"/>
-                            <TextBox Width="52" Margin="10,0,6,0" Padding="6,3"
-                                     Text="{Binding ParallelProgrammersAllDesired, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
-                            <Button Style="{StaticResource GhostButton}" Padding="12,6" Margin="0,0,6,0"
-                                    Content="⬆ Set all"
-                                    Command="{Binding SetParallelProgrammersForAllCassiasCommand}"/>
-                            <Button Style="{StaticResource GhostButton}" Padding="12,6" Margin="0,0,0,0"
-                                    Content="⬇ Get all"
-                                    Command="{Binding GetParallelProgrammersForAllCassiasCommand}"/>
-                        </StackPanel>
-                    </Border>
-
                     <ItemsControl ItemsSource="{Binding CassiaGateways}">
+                        <ItemsControl.ItemContainerStyle>
+                            <Style TargetType="ContentPresenter">
+                                <Setter Property="HorizontalAlignment" Value="Stretch"/>
+                            </Style>
+                        </ItemsControl.ItemContainerStyle>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                                                 <Border Background="{StaticResource CardBrush}"
@@ -160,6 +173,7 @@
         BorderThickness="1"
         CornerRadius="10"
         Margin="0,0,0,8"
+        HorizontalAlignment="Stretch"
         Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}">
 
     <Border.ContextMenu>
@@ -193,6 +207,10 @@
         <!-- Content spacing -->
         <Border Grid.Column="1" Padding="10" Background="Transparent">
             <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
@@ -202,7 +220,7 @@
                 <!-- =========================
                      Row 0: Header
                      ========================= -->
-                <Grid Grid.Row="0">
+                <Grid Grid.Row="0" Grid.Column="0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
@@ -214,34 +232,44 @@
                                FontSize="14"
                                VerticalAlignment="Center"/>
 
-                    <StackPanel Grid.Column="1"
-                                Orientation="Horizontal"
-                                VerticalAlignment="Center"
-                                HorizontalAlignment="Right"
-                                Margin="8,0,0,0">
+                    <ContentControl Grid.Column="1"
+                                    Content="{Binding}"
+                                    ContentTemplate="{StaticResource CassiaStateBadge}"
+                                    VerticalAlignment="Center"
+                                    Margin="8,0,0,0"/>
+                </Grid>
 
-                        <ContentControl Content="{Binding}"
-                                        ContentTemplate="{StaticResource CassiaStateBadge}"
-                                        VerticalAlignment="Center"
-                                        Margin="0,0,8,0"/>
+                <!-- Right button column spans full card height -->
+                <UniformGrid Grid.Row="0" Grid.RowSpan="2" Grid.Column="1"
+                             Columns="2"
+                             VerticalAlignment="Top"
+                             HorizontalAlignment="Right"
+                             Margin="8,0,0,0">
 
                         <Button Style="{StaticResource CassiaBadgeButtonStyleWarning}"
                                 Content="🧹"
-                                Margin="0,0,6,0"
+                                Margin="0,0,0,6"
                                 ToolTip="Clear device settings backups"
                                 Command="{Binding DataContext.ClearDeviceSettingsBackupsForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                 CommandParameter="{Binding Name}"/>
 
                         <Button Style="{StaticResource CassiaBadgeButtonStyleWarning}"
                                 Content="↻"
-                                Margin="0,0,6,0"
+                                Margin="0,0,0,6"
                                 ToolTip="Refresh firmware manifest"
                                 Command="{Binding DataContext.RefreshFwManifestForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                 CommandParameter="{Binding Name}"/>
 
+
+                        <Button Style="{StaticResource CassiaBadgeButtonStyle}"
+                                Content="Workers"
+                                Margin="0,0,0,6"
+                                ToolTip="Set parallel programmers"
+                                Command="{Binding DataContext.SetParallelProgrammersForCassiaPromptCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                CommandParameter="{Binding}"/>
                         <Button Style="{StaticResource CassiaBadgeButtonStyle}"
                                 Content="LED"
-                                Margin="0,0,6,0"
+                                Margin="0,0,0,6"
                                 ToolTip="Open LED range visualizer"
                                 Command="{Binding DataContext.OpenLedRangeVisualizerCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                 CommandParameter="{Binding Name}"/>
@@ -252,20 +280,15 @@
                                 ToolTip="Open speed graph (up to 12 hours)"
                                 Command="{Binding DataContext.OpenSpeedGraphCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                 CommandParameter="{Binding Name}"/>
-                    </StackPanel>
-                </Grid>
+                </UniformGrid>
 
-                <!-- =========================
-                     Row 1: Metrics + Info + SetParallel
+                                <!-- =========================
+                     Row 1: Metrics + Info
                      ========================= -->
-                <Grid Grid.Row="1" Margin="0,10,0,0">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
+                <Grid Grid.Row="1" Grid.Column="0" Margin="0,10,0,0">
 
-                    <!-- Left: Metrics + Info -->
-                    <StackPanel Grid.Column="0" Orientation="Vertical">
+                    <!-- Metrics + Info -->
+                    <StackPanel Orientation="Vertical">
 
                         <!-- Metrics row (icons) -->
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
@@ -301,10 +324,11 @@
                         <Grid Margin="0,8,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
                             <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
@@ -313,9 +337,21 @@
                                        Text="Last:"
                                        Foreground="{StaticResource MutedBrush}"
                                        FontSize="12"
-                                       Margin="0,0,10,0"/>
+                                       Margin="0,0,6,0"/>
                             <TextBlock Grid.Row="0" Grid.Column="1"
-                                       Text="{Binding LastSeenLocal}"
+                                       Text="{Binding LastSeenAgoText}"
+                                       FontWeight="SemiBold"
+                                       FontSize="12"
+                                       Margin="0,0,18,0"
+                                       TextTrimming="CharacterEllipsis"/>
+
+                            <TextBlock Grid.Row="0" Grid.Column="2"
+                                       Text="Uptime:"
+                                       Foreground="{StaticResource MutedBrush}"
+                                       FontSize="12"
+                                       Margin="0,0,6,0"/>
+                            <TextBlock Grid.Row="0" Grid.Column="3"
+                                       Text="{Binding UptimeText}"
                                        FontWeight="SemiBold"
                                        FontSize="12"
                                        TextTrimming="CharacterEllipsis"/>
@@ -324,19 +360,19 @@
                                        Text="Devices:"
                                        Foreground="{StaticResource MutedBrush}"
                                        FontSize="12"
-                                       Margin="0,2,10,0"/>
+                                       Margin="0,2,6,0"/>
                             <TextBlock Grid.Row="1" Grid.Column="1"
                                        Text="{Binding DevicesSeen}"
                                        FontWeight="SemiBold"
                                        FontSize="12"
-                                       Margin="0,2,0,0"/>
+                                       Margin="0,2,18,0"/>
 
-                            <TextBlock Grid.Row="2" Grid.Column="0"
+                            <TextBlock Grid.Row="1" Grid.Column="2"
                                        Text="Workers:"
                                        Foreground="{StaticResource MutedBrush}"
                                        FontSize="12"
-                                       Margin="0,2,10,0"/>
-                            <TextBlock Grid.Row="2" Grid.Column="1"
+                                       Margin="0,2,6,0"/>
+                            <TextBlock Grid.Row="1" Grid.Column="3"
                                        Text="{Binding ParallelProgrammers}"
                                        FontWeight="SemiBold"
                                        FontSize="12"
@@ -344,36 +380,12 @@
                         </Grid>
 
                     </StackPanel>
-
-                    <!-- Right: SetParallel -->
-                    <StackPanel Grid.Column="1" Margin="18,0,0,0" VerticalAlignment="Top">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="Set parallel:"
-                                       Foreground="{StaticResource MutedBrush}"
-                                       FontSize="12"
-                                       VerticalAlignment="Center"/>
-                            <TextBox Width="52" Margin="8,0,0,0" Padding="6,3"
-                                     Text="{Binding ParallelProgrammersDesired, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
-                        </StackPanel>
-
-                        <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                            <Button Style="{StaticResource GhostButton}" Padding="12,4" Margin="0,0,6,0"
-                                    Content="⬆ Set"
-                                    Command="{Binding DataContext.SetParallelProgrammersForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                    CommandParameter="{Binding}"/>
-                            <Button Style="{StaticResource GhostButton}" Padding="12,4"
-                                    Content="⬇ Get"
-                                    Command="{Binding DataContext.GetParallelProgrammersForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                    CommandParameter="{Binding Name}"/>
-                        </StackPanel>
-                    </StackPanel>
-
                 </Grid>
 
                 <!-- =========================
                      Row 2: Assign (ONE LINE)
                      ========================= -->
-                <Grid Grid.Row="2" Margin="0,10,0,0">
+                <Grid Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,10,0,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
@@ -454,11 +466,7 @@
                                 Content="Save"
                                 Command="{Binding SaveSettingsCommand}"
                                 Margin="8,0,0,0"/>
-                    </StackPanel>
-
-                    <TextBlock Text="{Binding ConnectionStatus}" Foreground="{StaticResource MutedBrush}" Margin="0,10,0,0"/>
-
-                    <Separator Margin="0,12,0,12"/>
+                    </StackPanel>                    <Separator Margin="0,12,0,12"/>
 
                     <!-- ===== Scope / Network ===== -->
                     <TextBlock Text="Scope" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10"/>
@@ -993,9 +1001,7 @@
                     </WrapPanel>
                 </Grid>
 
-                <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" HorizontalAlignment="Right" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding HostBleUiStatusText}" Foreground="{StaticResource MutedBrush}"/>
-                </StackPanel>
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" HorizontalAlignment="Right" VerticalAlignment="Center">                </StackPanel>
             </DockPanel>
             <Grid>
                 <Grid.RowDefinitions>
@@ -1297,10 +1303,22 @@
                             </StackPanel>
                         </StackPanel>
 
-                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                            <ItemsControl ItemsSource="{Binding UpgradeLogGroupsView}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
+                        <ListBox ItemsSource="{Binding UpgradeLogGroupsView}"
+                                 BorderThickness="0"
+                                 Background="Transparent"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                 ScrollViewer.IsDeferredScrollingEnabled="True"
+                                 ScrollViewer.CanContentScroll="True"
+                                 VirtualizingPanel.IsVirtualizing="True"
+                                 VirtualizingPanel.VirtualizationMode="Recycling">
+                            <ListBox.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <VirtualizingStackPanel/>
+                                </ItemsPanelTemplate>
+                            </ListBox.ItemsPanel>
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
                                         <Border Background="{StaticResource CardBrush}"
                                                 BorderThickness="2"
                                                 Padding="10"
@@ -1386,9 +1404,8 @@
                                             </Expander>
                                         </Border>
                                     </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </ScrollViewer>
+                                </ListBox.ItemTemplate>
+                        </ListBox>
 
                     </DockPanel>
                 </Border>
@@ -1448,5 +1465,14 @@
             </TabItem>
 </TabControl>
         </DockPanel>
-    </Grid>
+        </Grid>
+    </DockPanel>
 </Window>
+
+
+
+
+
+
+
+

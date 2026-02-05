@@ -1,0 +1,75 @@
+<div class="dialog-container" *ngIf="data">
+  <h2>Prepare Devices for Upgrade</h2>
+
+  <div class="scrollable-content">
+  <!-- Unknown Detectors -->
+  <div *ngIf="data && data.unknownDevices && data.unknownDevices.length > 0">
+    <h3>Unknown Detectors</h3>
+    <div *ngFor="let device of data.unknownDevices" class="device-row">
+      <p><strong>MAC:</strong> {{ device.mac }}</p>
+      <mat-form-field appearance="fill" class="full-width">
+        <mat-label>Detector Type</mat-label>
+        <mat-select [(ngModel)]="device.version">
+          <mat-option *ngFor="let option of detectorOptions" [value]="option">
+            {{ option }}
+          </mat-option>
+        </mat-select>
+      </mat-form-field>
+    </div>
+  </div>
+
+  <!-- Locked Detectors -->
+  <div *ngIf="data && data.lockedDevices && data.lockedDevices.length > 0">
+    <h3>Locked Detectors</h3>
+    <div *ngFor="let device of data.lockedDevices" class="device-row">
+      <p><strong>MAC:</strong> {{ device.mac }}</p>
+      <div class="pin-input-group">
+        <mat-form-field class="pin" appearance="outline">
+          <input
+            matInput
+            maxlength="1"
+            [(ngModel)]="device.pin1"
+            (input)="onPinInput($event, device, 'pin1')"
+            [value]="device.pin1 ?? '0'"
+          />
+        </mat-form-field>
+        <span>-</span>
+        <mat-form-field class="pin" appearance="outline">
+          <input
+            matInput
+            maxlength="1"
+            [(ngModel)]="device.pin2"
+            (input)="onPinInput($event, device, 'pin2')"
+            [value]="device.pin2 ?? '0'"
+          />
+        </mat-form-field>
+        <span>-</span>
+        <mat-form-field class="pin" appearance="outline">
+          <input
+            matInput
+            maxlength="1"
+            [(ngModel)]="device.pin3"
+            (input)="onPinInput($event, device, 'pin3')"
+            [value]="device.pin3 ?? '0'"
+          />
+        </mat-form-field>
+        <span>-</span>
+        <mat-form-field class="pin" appearance="outline">
+          <input
+            matInput
+            maxlength="1"
+            [(ngModel)]="device.pin4"
+            (input)="onPinInput($event, device, 'pin4')"
+            [value]="device.pin4 ?? '0'"
+          />
+        </mat-form-field>
+      </div>
+    </div>
+  </div>
+</div>
+  <!-- Actions -->
+  <div class="button-row">
+    <button mat-stroked-button (click)="cancel()">Cancel</button>
+    <button mat-flat-button color="primary" (click)="confirm()">Continue</button>
+  </div>
+</div>

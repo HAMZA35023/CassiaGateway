@@ -1,3 +1,7 @@
 ﻿MAJOR:
 
--> Reassign does not work - new cassia does not update correct, so we are proberly not sending the connect parameters along with the udpate-command
+-> The % progress - lets make a background with as a progress bar
+-> Buttons with a text should be single on a row, icons should be 2 on a row.
+-> Lets finde an icon for the "LED" button (range test)
+-> Looks lihe the main window has a marigin into the content - we dont want that
+-> Lets put the "UI update cadance" in the right sidsde of the buttom stauts bar instead.

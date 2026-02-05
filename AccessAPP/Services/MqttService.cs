@@ -293,7 +293,8 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                     State = "online",
                     queue = CassiaFirmwareUpgradeService.inQueue,
                     programming = CassiaFirmwareUpgradeService.GetProgrammingCount(),
-                    totalSpeedpct = CassiaFirmwareUpgradeService.totalSpeed
+                    totalSpeedpct = CassiaFirmwareUpgradeService.totalSpeed,
+                    uptimeSeconds = Math.Max(0, Environment.TickCount64 / 1000)
 
                 };
                 await PublishJsonAsync(TeleTopic("status"), online, retain: false, ct).ConfigureAwait(false);
@@ -314,7 +315,8 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                             State = "online",
                             queue = CassiaFirmwareUpgradeService.inQueue,
                     programming = CassiaFirmwareUpgradeService.GetProgrammingCount(),
-                            totalSpeedpct = CassiaFirmwareUpgradeService.totalSpeed
+                            totalSpeedpct = CassiaFirmwareUpgradeService.totalSpeed,
+                            uptimeSeconds = Math.Max(0, Environment.TickCount64 / 1000)
                         };
 
                         await PublishJsonAsync(TeleTopic("status"), heartbeat, retain: false, ct)

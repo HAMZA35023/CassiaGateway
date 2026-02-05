@@ -118,6 +118,8 @@ public sealed class StatusMessage
     public int programming { get; set; }
 
     public double totalSpeedpct { get; set; }
+    // OS uptime (seconds). Derived from Environment.TickCount64.
+    public long uptimeSeconds { get; set; }
     }
 
 /// <summary>

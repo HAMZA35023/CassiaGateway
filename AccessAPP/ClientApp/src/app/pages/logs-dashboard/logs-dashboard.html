@@ -1,0 +1,103 @@
+<app-tabs></app-tabs>
+<div class="log-dashboard-wrapper">
+  <h2 class="title">Upgrade Logs</h2>
+
+  <!-- Filter Controls -->
+  <div class="filter-controls">
+  <mat-form-field appearance="outline" class="filter-item small-field">
+    <mat-label>Filter by MAC Address</mat-label>
+    <input matInput [(ngModel)]="macFilter" (input)="applyFilters()" placeholder="e.g., 10:B9:F7" />
+  </mat-form-field>
+
+  <mat-form-field appearance="outline" class="filter-item small-field">
+    <mat-label>Start Date</mat-label>
+    <input matInput [matDatepicker]="startPicker" [(ngModel)]="startDate" (dateChange)="applyFilters()" />
+    <mat-datepicker-toggle matSuffix [for]="startPicker"></mat-datepicker-toggle>
+    <mat-datepicker #startPicker></mat-datepicker>
+  </mat-form-field>
+
+  <mat-form-field appearance="outline" class="filter-item small-field">
+    <mat-label>End Date</mat-label>
+    <input matInput [matDatepicker]="endPicker" [(ngModel)]="endDate" (dateChange)="applyFilters()" />
+    <mat-datepicker-toggle matSuffix [for]="endPicker"></mat-datepicker-toggle>
+    <mat-datepicker #endPicker></mat-datepicker>
+  </mat-form-field>
+</div>
+
+
+  <!-- Log Table -->
+  <table class="logs-table">
+    <thead>
+      <tr>
+        <th>Mac Address</th>
+        <th>Old FW</th>
+        <th>New FW</th>
+        <th>Start Time</th>
+        <th>Status</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      <ng-container *ngFor="let log of paginatedLogs">
+        <tr>
+          <td>{{ log.mac }}</td>
+          <td>{{ log.oldFw ?? '-' }}</td>
+          <td>{{ log.fw }}</td>
+          <td>{{ log.start }}</td>
+          <td>
+            <span [ngClass]="{
+              'success': log.result === 'Success',
+              'failure': log.result === 'Failed'
+            }">
+              {{ log.result }}
+            </span>
+          </td>
+          <td>
+            <button class="toggle-btn" (click)="toggle(log)">
+              {{ log.expanded ? '−' : '+' }}
+            </button>
+          </td>
+        </tr>
+        <tr *ngIf="log.expanded">
+          <td colspan="6">
+            <div class="log-details">
+              <table class="sub-log-table">
+                <thead>
+                  <tr>
+                    <th style="width: 200px;">Timestamp</th>
+                    <th style="width: 200px;">Status</th>
+                    <th style="width: 200px;">Result</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr *ngFor="let stage of log.stages">
+                    <td>{{ stage.time }}</td>
+                    <td>{{ stage.stage }}</td>
+                    <td>
+                      <span [ngClass]="{
+                        'success': stage.status === 'success',
+                        'failure': stage.status === 'fail',
+                        'pending': !stage.status
+                      }">
+                        {{ stage.status || 'Pending' }}
+                      </span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </td>
+        </tr>
+      </ng-container>
+    </tbody>
+  </table>
+
+  <!-- Pagination -->
+  <mat-paginator
+    [length]="filteredLogs.length"
+    [pageSize]="pageSize"
+    [pageSizeOptions]="[5, 10, 25, 50]"
+    showFirstLastButtons
+    (page)="onPageChange($event)">
+  </mat-paginator>
+</div>

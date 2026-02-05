@@ -1,0 +1,10 @@
+<div class="modal-backdrop" *ngIf="showConfirmation">
+  <div class="modal-box">
+    <h3>Confirm Upgrade</h3>
+    <p>You are about to upgrade {{ pendingDevices.length }} devices.<br /> Proceed?</p>
+    <div class="modal-actions">
+      <button class="ok-btn" (click)="onConfirm.emit()">OK</button>
+      <button class="cancel-btn" (click)="onCancel.emit()">Cancel</button>
+    </div>
+  </div>
+</div>

@@ -22,6 +22,10 @@ public partial class CassiaGateway : ObservableObject
     // Editable value in UI (what the user wants to set). Kept separate from ParallelProgrammers.
     [ObservableProperty] private int parallelProgrammersDesired = 0;
     [ObservableProperty] private double totalSpeedpct = 1;
+    [ObservableProperty] private long uptimeSeconds;
+    [ObservableProperty] private DateTimeOffset uptimeReportedUtc = DateTimeOffset.MinValue;
+    [ObservableProperty] private string lastSeenAgoText = "";
+    [ObservableProperty] private string uptimeText = "";
 
     // Client-side speed history for graphing (max 12 hours kept)
     public ObservableCollection<SpeedSample> SpeedHistory { get; } = new();
@@ -96,6 +100,7 @@ public partial class CassiaGateway : ObservableObject
     {
         OnPropertyChanged(nameof(StatusLine));
         OnPropertyChanged(nameof(LastSeenLocal));
+        UpdateDerivedTimes(DateTimeOffset.UtcNow);
     }
     partial void OnDevicesSeenChanged(int value) => OnPropertyChanged(nameof(StatusLine));
     partial void OnQueueChanged(int value)
@@ -126,6 +131,40 @@ public partial class CassiaGateway : ObservableObject
     partial void OnAssignedP48Changed(int value) => OnPropertyChanged(nameof(AssignedLine));
     partial void OnFwManifestLastSeenUtcChanged(DateTimeOffset value) => OnPropertyChanged(nameof(FwManifestLastSeenLocal));
     partial void OnFirmwareManifestChanged(Dictionary<string, string[]> value) => OnPropertyChanged(nameof(HasFwManifest));
+
+    partial void OnUptimeSecondsChanged(long value) => UpdateDerivedTimes(DateTimeOffset.UtcNow);
+    partial void OnUptimeReportedUtcChanged(DateTimeOffset value) => UpdateDerivedTimes(DateTimeOffset.UtcNow);
+
+    public void UpdateDerivedTimes(DateTimeOffset nowUtc)
+    {
+        if (LastSeenUtc == DateTimeOffset.MinValue)
+        {
+            LastSeenAgoText = "";
+        }
+        else
+        {
+            var delta = nowUtc - LastSeenUtc;
+            if (delta < TimeSpan.Zero) delta = TimeSpan.Zero;
+            var totalMinutes = (int)Math.Floor(delta.TotalMinutes);
+            var seconds = delta.Seconds;
+            LastSeenAgoText = $"{totalMinutes:00}:{seconds:00}";
+        }
+
+        if (UptimeSeconds <= 0 || UptimeReportedUtc == DateTimeOffset.MinValue)
+        {
+            UptimeText = "";
+        }
+        else
+        {
+            var extra = nowUtc - UptimeReportedUtc;
+            if (extra < TimeSpan.Zero) extra = TimeSpan.Zero;
+            var totalSeconds = UptimeSeconds + (long)extra.TotalSeconds;
+            if (totalSeconds < 0) totalSeconds = 0;
+            var ts = TimeSpan.FromSeconds(totalSeconds);
+            var days = (int)ts.TotalDays;
+            UptimeText = $"{days:00}:{ts.Hours:00}:{ts.Minutes:00}";
+        }
+    }
 }
 
 public sealed record SpeedSample(DateTimeOffset TimeUtc, double SpeedPctPerMin);
