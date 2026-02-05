@@ -8,7 +8,10 @@ using System.Collections.ObjectModel;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.IO;
+using System.IO.Compression;
 using System.Linq;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -3732,10 +3735,62 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
             var type = root.TryGetProperty("type", out var t) ? (t.GetString() ?? "") : "";
             type = type.Trim().ToLowerInvariant();
 
+            List<string>? compressedLines = null;
+            int compressedTotalLines = 0;
+            string compressedTimeLocal = "";
+
+            if (type == "saved-log-gzip" &&
+                TryGetSavedLogLinesFromCompressedPayload(root, out var linesFromCompressed, out var totalLinesFromCompressed, out var timeLocalFromCompressed))
+            {
+                compressedLines = linesFromCompressed;
+                compressedTotalLines = totalLinesFromCompressed;
+                compressedTimeLocal = timeLocalFromCompressed;
+            }
+
             Application.Current.Dispatcher.Invoke(() =>
             {
                 // Default the gateway picker (handy when you only have one cassia)
                 SelectedLogGateway ??= CassiaGateways.FirstOrDefault();
+
+                if (type == "saved-log-gzip" && compressedLines != null)
+                {
+                    if (UpgradeLogLines.Count == 0)
+                    {
+                        UpgradeLogLines.Clear();
+                        _upgradeLogSb.Clear();
+                    }
+                    else
+                    {
+                        var sep = $"----- {cassia} saved-log-gzip -----";
+                        UpgradeLogLines.Add(sep);
+                        _upgradeLogSb.AppendLine(sep);
+                    }
+
+                    UpgradeLogTotalLines = compressedTotalLines > 0 ? compressedTotalLines : compressedLines.Count;
+                    UpgradeLogReceivedLines = 0;
+                    UpgradeLogStatus = string.IsNullOrWhiteSpace(compressedTimeLocal)
+                        ? $"Receiving full log from {cassia}..."
+                        : $"Receiving full log from {cassia}... (saved {compressedTimeLocal})";
+                    UpgradeLogText = "";
+
+                    foreach (var line in compressedLines)
+                    {
+                        if (string.IsNullOrEmpty(line)) continue;
+                        UpgradeLogLines.Add(line);
+                        _upgradeLogSb.AppendLine(line);
+                        UpgradeLogReceivedLines++;
+
+                        AddUpgradeLogEntryFromLine(cassia, line);
+                        ApplyStatusFromUpgradeLogLine(cassia, line);
+                        ApplyLiveProcessStatusFromUpgradeLogLine(cassia, line);
+                    }
+
+                    UpgradeLogStatus = UpgradeLogTotalLines > 0
+                        ? $"Done ({UpgradeLogReceivedLines}/{UpgradeLogTotalLines} lines)"
+                        : $"Done ({UpgradeLogReceivedLines} lines)";
+                    RequestUpgradeLogTextRefresh();
+                    return;
+                }
 
                 if (type == "saved-log-begin")
                 {
@@ -3831,6 +3886,44 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
         catch
         {
             // ignore malformed chunks
+        }
+    }
+
+    private static bool TryGetSavedLogLinesFromCompressedPayload(JsonElement root, out List<string> lines, out int totalLines, out string timeLocal)
+    {
+        lines = new List<string>();
+        totalLines = 0;
+        timeLocal = "";
+
+        try
+        {
+            var encoded = root.TryGetProperty("data", out var dataEl) ? (dataEl.GetString() ?? "") : "";
+            if (string.IsNullOrWhiteSpace(encoded))
+                return false;
+
+            totalLines = root.TryGetProperty("totalLines", out var tl) && tl.TryGetInt32(out var total) ? total : 0;
+            timeLocal = root.TryGetProperty("timeLocal", out var tlc) ? (tlc.GetString() ?? "") : "";
+
+            var compressedBytes = Convert.FromBase64String(encoded);
+            using var input = new MemoryStream(compressedBytes);
+            using var gzip = new GZipStream(input, CompressionMode.Decompress);
+            using var output = new MemoryStream();
+            gzip.CopyTo(output);
+            var text = Encoding.UTF8.GetString(output.ToArray());
+
+            if (string.IsNullOrEmpty(text))
+                return true;
+
+            lines = text
+                .Split(new[] { "\r\n", "\n" }, StringSplitOptions.None)
+                .Where(l => !string.IsNullOrWhiteSpace(l))
+                .ToList();
+
+            return true;
+        }
+        catch
+        {
+            return false;
         }
     }
 
@@ -4445,7 +4538,11 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
 
         try
         {
-            await _mqtt.PublishAsync(topic, "{}", retain: false).ConfigureAwait(false);
+            var req = JsonSerializer.Serialize(new
+            {
+                compressed = true
+            });
+            await _mqtt.PublishAsync(topic, req, retain: false).ConfigureAwait(false);
         }
         catch
         {

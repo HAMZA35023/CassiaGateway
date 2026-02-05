@@ -400,7 +400,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     {
         public string? LogId { get; set; }          // optional filter
         public int MaxLines { get; set; } = 20000;   // last N lines (after filter)
-        public int ChunkLines { get; set; } = 300;  // lines per MQTT message
+        public bool Compressed { get; set; } = true;
     }
 
     private Task HandleCommandAsync(string topic, string payload)
@@ -827,7 +827,6 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 return UpgradeLogger.PublishSavedLogAsync(
                     logIdFilter: dto.LogId,
                     maxLines: dto.MaxLines <= 0 ? 5000 : dto.MaxLines,
-                    chunkLines: dto.ChunkLines <= 0 ? 100 : dto.ChunkLines,
                     ct: CancellationToken.None
                 );
             }
