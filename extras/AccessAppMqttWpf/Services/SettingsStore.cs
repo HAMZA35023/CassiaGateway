@@ -54,6 +54,10 @@ public sealed class AccessAppSettings
     // UI option: reflash sensor firmware even if current FW already matches target
     public bool forceUpdate { get; set; } = false;
 
+    // If true, auto-set parallel programmers based on queued model mix:
+    // DALI master only (P47/P48) => 4, otherwise => 2.
+    public bool autoSetWorkersByModel { get; set; } = true;
+
     /// <summary>
     /// Remembers the selected firmware per detector model across app restarts/resync.
     /// Keys are typically "P41", "P42", "P46", "P47", "P48".

@@ -11,6 +11,7 @@ using System.Net;
 using System.Net.Mail;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using AccessAPP.Logging;
 
 
@@ -291,6 +292,53 @@ return false;
 if (!ok)
                 AppLog.Warn($"[DALI] SysFailLevel set rejected: MAC={nodeMac}, Level=0x{levelHex}, Cmd={cmd}, Reply={reply}");
 return ok;
+        }
+
+        public async Task<byte?> DaliGetDeviceSysFailLevelAsync(string nodeMac)
+        {
+            // DaliDeviceCommonParam:
+            // 01-10-04-07-00-34-6A
+            const string cmd = "0110040700346A";
+
+            var sensorResponse = await _connectService.GetDataFromBleDevice(
+                _gatewayIpAddress,
+                _gatewayPort,
+                nodeMac,
+                cmd);
+
+            if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
+            {
+                AppLog.Warn($"[DALI] CommonParam read failed: MAC={nodeMac}, Status={sensorResponse.Status}, RAW={sensorResponse.Data}");
+                return null;
+            }
+
+            var raw = sensorResponse.Data.Trim();
+            var byteMatches = Regex.Matches(raw, @"[0-9A-Fa-f]{2}");
+            if (byteMatches.Count < 8)
+            {
+                AppLog.Warn($"[DALI] CommonParam parse failed (expected >=8 bytes): MAC={nodeMac}, RAW={raw}");
+                return null;
+            }
+
+            var bytes = byteMatches
+                .Cast<Match>()
+                .Select(m => byte.Parse(m.Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture))
+                .ToArray();
+
+            // Response layout (1 byte each):
+            // [0] Status, [1] MaxLevel, [2] MinLevel, [3] PowerOnLevel,
+            // [4] SysFailLevel, [5] FadeTime, [6] FadeRate, [7] ExtendedFadeTime
+            var status = bytes[0];
+            var sysFail = bytes[4];
+
+            if (status != 0x00)
+            {
+                AppLog.Warn($"[DALI] CommonParam status not OK: MAC={nodeMac}, Status=0x{status:X2}, RAW={raw}");
+                return null;
+            }
+
+            AppLog.Info($"[DALI] CommonParam read: MAC={nodeMac}, SysFailLevel=0x{sysFail:X2}, RAW={raw}");
+            return sysFail;
         }
 
         public async Task<string> GetBLEPushButtonList(string nodeMac)

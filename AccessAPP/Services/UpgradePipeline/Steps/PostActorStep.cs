@@ -40,10 +40,13 @@ internal sealed class PostActorStep : IDeviceUpgradeStep
 
             if (RuntimeVariables.AutoSetSysFailLevelUnderUpdate)
             {
-                if (await svc.DaliSetDeviceSysFailLevelAsync(ctx.MacAddress, 0xFE).ConfigureAwait(false))
-                    UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "DALI SysFail Level set to 0xFE", "Success", ctx.FirmwareVersion);
+                var restoreValue = ctx.OriginalDaliSysFailLevel ?? (byte)0xFE;
+                var restoreHex = $"0x{restoreValue:X2}";
+
+                if (await svc.DaliSetDeviceSysFailLevelAsync(ctx.MacAddress, restoreValue).ConfigureAwait(false))
+                    UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, $"DALI SysFail Level restored to {restoreHex}", "Success", ctx.FirmwareVersion);
                 else
-                    UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "DALI SysFail Level set failed", "Warn", ctx.FirmwareVersion);
+                    UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, $"DALI SysFail Level restore failed ({restoreHex})", "Warn", ctx.FirmwareVersion);
             }
         }
 

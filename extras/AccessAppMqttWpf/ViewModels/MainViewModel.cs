@@ -340,6 +340,10 @@ public partial class MainViewModel : ObservableObject
     // Default is false on startup.
     [ObservableProperty] private bool forceUpdateEnabled = false;
 
+    // If true, auto-adjust workers from queued model mix:
+    // DALI master only (P47/P48) => 4, otherwise => 2.
+    [ObservableProperty] private bool autoSetWorkersByModelEnabled = false;
+
     // Firmware selection per model (dropdowns). Will later be populated from MQTT; for now hardcoded list.
     public ObservableCollection<string> FirmwareOptionsP41 { get; } = new();
     public ObservableCollection<string> FirmwareOptionsP42 { get; } = new();
@@ -470,6 +474,7 @@ public partial class MainViewModel : ObservableObject
         CommandTopicTemplate = s.accessapp.commandTopicTemplate;
         DefaultCommand = s.accessapp.defaultCommand;
         ForceUpdateEnabled = s.accessapp.forceUpdate;
+        AutoSetWorkersByModelEnabled = s.accessapp.autoSetWorkersByModel;
 
         // Firmware selections: remember across restarts/resync.
         try
@@ -1397,6 +1402,7 @@ partial void OnSensorFilterChanged(string value)
             commandTopicTemplate = CommandTopicTemplate,
             defaultCommand = DefaultCommand,
             forceUpdate = ForceUpdateEnabled,
+            autoSetWorkersByModel = AutoSetWorkersByModelEnabled,
             selectedFirmwareByModel = fwMap
         };
 
@@ -2890,6 +2896,9 @@ private List<AssignmentPlanItem> ComputeBatchAssignmentPlan(IReadOnlyList<Discov
 
     private async Task AutoAdjustParallelProgrammersAsync()
     {
+        if (!AutoSetWorkersByModelEnabled)
+            return;
+
         try
         {
             // Rule:
@@ -4703,15 +4712,16 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
         catch { /* best-effort */ }
 
         await PublishStartUpdateAsync(newCassia, mac, model, fw).ConfigureAwait(false);
+        await AutoAdjustParallelProgrammersAsync().ConfigureAwait(false);
     }
 
     private Task PublishStartUpdateAsync(string cassia, string mac, string model, string fw)
     {
-        var topic = CommandTopicTemplate
-            .Replace("{networkId}", NetworkId)
-            .Replace("{cassia}", cassia)
-            .Replace("{command}", DefaultCommand);
+        cassia = (cassia ?? "").Trim();
+        var topic = BuildCmdTopic(cassia, DefaultCommand);
 
+        // Keep legacy start-update shape (raw request array) for maximum backend compatibility.
+        // Include routing hints inside each request so newer backends can use them.
         var payload = new[]
         {
             new
@@ -4719,11 +4729,29 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
                 DetectorType = model,
                 FirmwareVersion = fw,
                 MacAddress = mac,
-                Pincode = ""
+                Pincode = "",
+                forceUpdate = ForceUpdateEnabled
             }
         };
 
         return _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token);
+    }
+
+    partial void OnAutoSetWorkersByModelEnabledChanged(bool value)
+    {
+        if (_isInitializing) return;
+
+        _lastAutoParallelProgrammersSent = int.MinValue;
+
+        try
+        {
+            var s = _store.Load();
+            _store.Save(BuildSettingsSnapshot(s));
+        }
+        catch
+        {
+            // best effort
+        }
     }
 
     public void AssignDeviceToCassia(DiscoveredDevice device, string cassia)

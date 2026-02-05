@@ -26,6 +26,7 @@ internal sealed class DeviceUpgradeContext
     public int ChipId { get; set; }
     public bool IsInBoot { get; set; }
     public bool DetectorNameLogged { get; set; }
+    public byte? OriginalDaliSysFailLevel { get; set; }
 
     public Stopwatch Stopwatch { get; } = new();
 

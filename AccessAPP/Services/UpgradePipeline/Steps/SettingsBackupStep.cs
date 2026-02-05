@@ -64,6 +64,21 @@ internal sealed class SettingsBackupStep : IDeviceUpgradeStep
 
             if (RuntimeVariables.AutoSetSysFailLevelUnderUpdate && (ctx.DetectorType == "P48" || ctx.DetectorType == "P47"))
             {
+                var original = await svc.DaliGetDeviceSysFailLevelAsync(ctx.MacAddress).ConfigureAwait(false);
+                ctx.OriginalDaliSysFailLevel = original;
+
+                if (original.HasValue)
+                {
+                    var oldHex = $"0x{original.Value:X2}";
+                    AppLog.Info($"DALI SysFail Level original value for {ctx.MacAddress}: {oldHex}");
+                    UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, $"DALI SysFail Level original: {oldHex}", "Info", ctx.FirmwareVersion);
+                }
+                else
+                {
+                    AppLog.Warn($"Could not read original DALI SysFail Level for {ctx.MacAddress}");
+                    UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "DALI SysFail Level original read failed", "Warn", ctx.FirmwareVersion);
+                }
+
                 if (await svc.DaliSetDeviceSysFailLevelAsync(ctx.MacAddress, 0xFF).ConfigureAwait(false))
                 {
                     AppLog.Info($"DALI SysFail Level set to 0xFF for {ctx.MacAddress}");
