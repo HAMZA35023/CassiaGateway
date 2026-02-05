@@ -46,6 +46,10 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     // Identify device (connect/login/wait/disconnect)
     public event Func<IdentifyCommand, Task>? IdentifyRequested;
 
+    // LED range visualization
+    public event Func<LedRangeVisualizeCommand, Task>? LedRangeVisualizeRequested;
+    public event Func<LedRangeDisconnectCommand, Task>? LedRangeDisconnectRequested;
+
     // NEW
     public event Func<GetFirmwareManifestCommand, Task>? GetFirmwareManifestRequested;
 
@@ -521,6 +525,51 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 }
 
                 return IdentifyRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "led-range-visualize", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "led-range-start", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch led-range-visualize");
+                LedRangeVisualizeCommand dto;
+                try
+                {
+                    if (string.IsNullOrWhiteSpace(payload))
+                    {
+                        dto = new LedRangeVisualizeCommand();
+                    }
+                    else
+                    {
+                        dto = JsonSerializer.Deserialize<LedRangeVisualizeCommand>(payload, JsonOptions) ?? new LedRangeVisualizeCommand();
+                    }
+                }
+                catch
+                {
+                    dto = new LedRangeVisualizeCommand();
+                }
+
+                return LedRangeVisualizeRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "led-range-disconnect", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch led-range-disconnect");
+                LedRangeDisconnectCommand dto;
+                try
+                {
+                    if (string.IsNullOrWhiteSpace(payload))
+                        dto = new LedRangeDisconnectCommand();
+                    else if (payload.TrimStart().StartsWith("["))
+                        dto = new LedRangeDisconnectCommand { Sensors = JsonSerializer.Deserialize<List<string>>(payload, JsonOptions) ?? new List<string>() };
+                    else
+                        dto = JsonSerializer.Deserialize<LedRangeDisconnectCommand>(payload, JsonOptions) ?? new LedRangeDisconnectCommand();
+                }
+                catch
+                {
+                    dto = new LedRangeDisconnectCommand();
+                }
+
+                return LedRangeDisconnectRequested?.Invoke(dto) ?? Task.CompletedTask;
             }
 
             if (string.Equals(command, "disconnect-devices", StringComparison.OrdinalIgnoreCase) ||

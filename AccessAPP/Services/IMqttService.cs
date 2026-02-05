@@ -42,6 +42,12 @@ public interface IMqttService : IAsyncDisposable
     // Identify device: Connect (+ optional pincode check + optional login), wait X seconds, disconnect.
     event Func<IdentifyCommand, Task>? IdentifyRequested;
 
+    // LED range visualization: connect/login/set LED based on RSSI and keep links open.
+    event Func<LedRangeVisualizeCommand, Task>? LedRangeVisualizeRequested;
+
+    // Explicit disconnect for previously held LED-range links.
+    event Func<LedRangeDisconnectCommand, Task>? LedRangeDisconnectRequested;
+
     // New: FW manifest request command
     event Func<GetFirmwareManifestCommand, Task>? GetFirmwareManifestRequested;
 }
@@ -78,4 +84,22 @@ public sealed class IdentifyCommand
 
     /// <summary>Optional correlation id.</summary>
     public string? RequestId { get; set; }
+}
+
+public sealed class LedRangeVisualizeCommand
+{
+    public string? RequestId { get; set; }
+    public string? Pincode { get; set; }
+    public int? MinRssi { get; set; }
+    public List<string> Sensors { get; set; } = new();
+    public List<string> Models { get; set; } = new();
+    public int MaxConnectAttempts { get; set; } = 3;
+    public bool UseBothChips { get; set; } = true;
+}
+
+public sealed class LedRangeDisconnectCommand
+{
+    public string? RequestId { get; set; }
+    public List<string> Sensors { get; set; } = new();
+    public bool ForceAll { get; set; }
 }

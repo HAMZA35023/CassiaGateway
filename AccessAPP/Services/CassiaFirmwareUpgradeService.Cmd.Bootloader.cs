@@ -35,27 +35,40 @@ namespace AccessAPP.Services
             string endpoint = $"http://{gatewayIpAddress}/gatt/nodes/{nodeMac}/characteristics";
 
             HttpClient _httpClientTmp = new HttpClient();
-            try
-            {
-                // Use synchronous version of HttpClient with GetAwaiter().GetResult()
-                var response = _httpClientTmp.GetAsync(endpoint).GetAwaiter().GetResult();
+            var maxAttempts = Math.Max(1, RuntimeVariables.BOOTMODE_RETRY_COUNT);
+            var retryDelayMs = Math.Max(0, RuntimeVariables.BOOTMODE_RETRY_DELAY_MS);
 
-                if (response.StatusCode == HttpStatusCode.OK)
+            for (var attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                try
                 {
-                    var jsonResponse = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-                    var characteristics = JsonConvert.DeserializeObject<List<CharacteristicModel>>(jsonResponse);
+                    // Use synchronous version of HttpClient with GetAwaiter().GetResult()
+                    using var response = _httpClientTmp.GetAsync(endpoint).GetAwaiter().GetResult();
 
-                    // Check if the characteristic UUID is present
-                    return characteristics.Any(charac => charac.Uuid == "00060001-f8ce-11e4-abf4-0002a5d5c51b");
+                    if (response.StatusCode == HttpStatusCode.OK)
+                    {
+                        var jsonResponse = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                        var characteristics = JsonConvert.DeserializeObject<List<CharacteristicModel>>(jsonResponse);
+
+                        // Check if the characteristic UUID is present
+                        return characteristics.Any(charac => charac.Uuid == "00060001-f8ce-11e4-abf4-0002a5d5c51b");
+                    }
+
+                    return false;
                 }
+                catch (HttpRequestException ex) when (attempt < maxAttempts && ex.InnerException is System.Net.Sockets.SocketException se && se.SocketErrorCode == System.Net.Sockets.SocketError.ConnectionRefused)
+                {
+                    if (retryDelayMs > 0)
+                        Thread.Sleep(retryDelayMs);
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Error($"Error checking boot mode for {nodeMac}", ex);
+                    return false;
+                }
+            }
 
-                return false;
-            }
-            catch (Exception ex)
-            {
-                AppLog.Error($"Error checking boot mode for {nodeMac}", ex);
-return false;
-            }
+            return false;
         }
 
         public async Task<bool> ActorBootCheck(string gatewayIpAddress, string nodeMac)

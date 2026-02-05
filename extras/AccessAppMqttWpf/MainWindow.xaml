@@ -121,7 +121,7 @@
 
     <Grid Margin="18">
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="420"/>
+            <ColumnDefinition Width="440"/>
             <ColumnDefinition Width="18"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
@@ -237,6 +237,13 @@
                                 Margin="0,0,6,0"
                                 ToolTip="Refresh firmware manifest"
                                 Command="{Binding DataContext.RefreshFwManifestForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                CommandParameter="{Binding Name}"/>
+
+                        <Button Style="{StaticResource CassiaBadgeButtonStyle}"
+                                Content="LED"
+                                Margin="0,0,6,0"
+                                ToolTip="Open LED range visualizer"
+                                Command="{Binding DataContext.OpenLedRangeVisualizerCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                 CommandParameter="{Binding Name}"/>
 
                         <Button Style="{StaticResource CassiaBadgeButtonStyle}"

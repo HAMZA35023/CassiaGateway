@@ -252,6 +252,48 @@ using (var scope = app.Services.CreateScope())
         }
     };
 
+    mqttService.LedRangeVisualizeRequested += async cmd =>
+    {
+        var snapshot = DeviceStorageService.GetDeviceListSnapshot();
+        var requestId = string.IsNullOrWhiteSpace(cmd.RequestId) ? Guid.NewGuid().ToString("N") : cmd.RequestId!;
+        cmd.RequestId = requestId;
+
+        await firmwareUpgradeService.RunLedRangeVisualizationAsync(
+            snapshot,
+            cmd,
+            report: async stagePayload =>
+            {
+                await mqttService.PublishTeleJsonAsync("led-range", new
+                {
+                    name = mqttService.CurrentOptions.Name,
+                    networkId = mqttService.CurrentOptions.NetworkId,
+                    requestId,
+                    data = stagePayload
+                });
+            },
+            ct: CancellationToken.None);
+    };
+
+    mqttService.LedRangeDisconnectRequested += async cmd =>
+    {
+        var requestId = string.IsNullOrWhiteSpace(cmd.RequestId) ? Guid.NewGuid().ToString("N") : cmd.RequestId!;
+        cmd.RequestId = requestId;
+
+        await firmwareUpgradeService.DisconnectLedRangeAsync(
+            cmd,
+            report: async stagePayload =>
+            {
+                await mqttService.PublishTeleJsonAsync("led-range", new
+                {
+                    name = mqttService.CurrentOptions.Name,
+                    networkId = mqttService.CurrentOptions.NetworkId,
+                    requestId,
+                    data = stagePayload
+                });
+            },
+            ct: CancellationToken.None);
+    };
+
     mqttService.GetFirmwareManifestRequested += async cmd =>
     {
         var resp = manifestSvc.GetFirmwareManifest();

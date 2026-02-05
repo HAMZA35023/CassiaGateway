@@ -1,5 +1,4 @@
 using AccessAppMqttWpf.Models;
-using AccessAppMqttWpf.Models;
 using AccessAppMqttWpf.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -368,6 +367,23 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty] private string connectionStatus = "Disconnected";
     [ObservableProperty] private bool isConnected;
+
+    // ---- LED range visualization (connect/login/LED by RSSI) ----
+    public ObservableCollection<LedRangeDeviceRow> LedRangeConnectedDevices { get; } = new();
+    public ObservableCollection<LedRangeDeviceRow> LedRangeFailedDevices { get; } = new();
+    [ObservableProperty] private string ledRangeCassia = "all";
+    [ObservableProperty] private int ledRangeMinRssi = -75;
+    public ObservableCollection<string> LedRangeModelOptions { get; } = new(new[] { "All", "MASTER", "SECONDARY", "BMS" });
+    [ObservableProperty] private string selectedLedRangeModel = "All";
+    [ObservableProperty] private int ledRangeMaxConnectAttempts = 3;
+    [ObservableProperty] private string ledRangePincode = "1234";
+    [ObservableProperty] private string ledRangeStatusText = "Idle";
+    [ObservableProperty] private int ledRangeRequestedTotal;
+    [ObservableProperty] private int ledRangeTriedCount;
+    [ObservableProperty] private int ledRangeConnectedCount;
+    [ObservableProperty] private int ledRangeFailedCount;
+    [ObservableProperty] private double ledRangeProgressPercent;
+    [ObservableProperty] private string ledRangeProgressText = "0 / 0 tried";
 
     // ---- Upgrade log viewer (tele/.../upgrade-log) ----
     // Raw lines (kept for debugging / copy-paste)
@@ -1690,6 +1706,152 @@ partial void OnSensorFilterChanged(string value)
             item.IsIdentifyPending = false;
             item.IsIdentifying = false;
             ConnectionStatus = "Identify failed: " + ex.Message;
+        }
+    }
+
+    [RelayCommand]
+    private async Task StartLedRangeVisualization()
+    {
+        if (!IsConnected)
+        {
+            ConnectionStatus = "Not connected";
+            return;
+        }
+
+        var target = string.IsNullOrWhiteSpace(LedRangeCassia) ? "all" : LedRangeCassia.Trim();
+        var requestId = Guid.NewGuid().ToString("N");
+        var selectedModel = (SelectedLedRangeModel ?? "All").Trim();
+        var models = string.Equals(selectedModel, "All", StringComparison.OrdinalIgnoreCase)
+            ? Array.Empty<string>()
+            : new[] { selectedModel };
+
+        LedRangeConnectedDevices.Clear();
+        LedRangeFailedDevices.Clear();
+        LedRangeRequestedTotal = 0;
+        LedRangeTriedCount = 0;
+        LedRangeConnectedCount = 0;
+        LedRangeFailedCount = 0;
+        LedRangeProgressPercent = 0;
+        LedRangeProgressText = "0 / 0 tried";
+        LedRangeStatusText = $"Starting on {target}...";
+
+        await SendLedRangeVisualizeRequestAsync(target, requestId, models, null).ConfigureAwait(false);
+    }
+
+    [RelayCommand]
+    private async Task DisconnectLedRangeSession()
+    {
+        if (!IsConnected)
+        {
+            ConnectionStatus = "Not connected";
+            return;
+        }
+
+        var target = string.IsNullOrWhiteSpace(LedRangeCassia) ? "all" : LedRangeCassia.Trim();
+        var requestId = Guid.NewGuid().ToString("N");
+        var payload = new { requestId, forceAll = false };
+
+        try
+        {
+            await _mqtt.PublishJsonAsync(BuildCmdTopic(target, "led-range-disconnect"), payload, retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+            ConnectionStatus = $"LED range disconnect requested on {target} ({requestId})";
+            LedRangeStatusText = $"Disconnect requested on {target} ({requestId})";
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = $"LED range disconnect failed: {ex.Message}";
+            LedRangeStatusText = $"Disconnect request failed: {ex.Message}";
+        }
+    }
+
+    [RelayCommand]
+    private async Task ForceDisconnectAllLedRangeSession()
+    {
+        if (!IsConnected)
+        {
+            ConnectionStatus = "Not connected";
+            return;
+        }
+
+        var target = string.IsNullOrWhiteSpace(LedRangeCassia) ? "all" : LedRangeCassia.Trim();
+        var requestId = Guid.NewGuid().ToString("N");
+        var payload = new { requestId, forceAll = true };
+
+        try
+        {
+            await _mqtt.PublishJsonAsync(BuildCmdTopic(target, "led-range-disconnect"), payload, retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+            ConnectionStatus = $"LED range force-disconnect requested on {target} ({requestId})";
+            LedRangeStatusText = $"Force disconnect requested on {target} ({requestId})";
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = $"LED range force-disconnect failed: {ex.Message}";
+            LedRangeStatusText = $"Force disconnect request failed: {ex.Message}";
+        }
+    }
+
+    [RelayCommand]
+    private async Task RetryFailedLedRangeDevices()
+    {
+        if (!IsConnected)
+        {
+            ConnectionStatus = "Not connected";
+            return;
+        }
+
+        var failedMacs = LedRangeFailedDevices
+            .Select(x => (x.Mac ?? "").Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (failedMacs.Count == 0)
+        {
+            LedRangeStatusText = "No failed devices to retry.";
+            return;
+        }
+
+        var target = string.IsNullOrWhiteSpace(LedRangeCassia) ? "all" : LedRangeCassia.Trim();
+        var requestId = Guid.NewGuid().ToString("N");
+        var selectedModel = (SelectedLedRangeModel ?? "All").Trim();
+        var models = string.Equals(selectedModel, "All", StringComparison.OrdinalIgnoreCase)
+            ? Array.Empty<string>()
+            : new[] { selectedModel };
+
+        LedRangeTriedCount = 0;
+        LedRangeConnectedCount = 0;
+        LedRangeFailedCount = 0;
+        LedRangeProgressPercent = 0;
+        LedRangeProgressText = $"0 / {failedMacs.Count} tried";
+        LedRangeRequestedTotal = failedMacs.Count;
+        LedRangeStatusText = $"Retrying {failedMacs.Count} failed devices...";
+
+        await SendLedRangeVisualizeRequestAsync(target, requestId, models, failedMacs).ConfigureAwait(false);
+    }
+
+    private async Task SendLedRangeVisualizeRequestAsync(string target, string requestId, IReadOnlyList<string> models, IReadOnlyList<string>? sensors)
+    {
+        var payload = new
+        {
+            requestId,
+            pincode = string.IsNullOrWhiteSpace(LedRangePincode) ? null : LedRangePincode.Trim(),
+            minRssi = LedRangeMinRssi,
+            models,
+            sensors,
+            maxConnectAttempts = Math.Max(3, LedRangeMaxConnectAttempts),
+            useBothChips = true
+        };
+
+        try
+        {
+            await _mqtt.PublishJsonAsync(BuildCmdTopic(target, "led-range-visualize"), payload, retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+            ConnectionStatus = $"LED range visualize requested on {target} ({requestId})";
+            LedRangeStatusText = $"Requested on {target} ({requestId})";
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = $"LED range request failed: {ex.Message}";
+            LedRangeStatusText = $"Failed to request: {ex.Message}";
         }
     }
 
@@ -3327,6 +3489,29 @@ if (string.IsNullOrWhiteSpace(cassia))
         catch { }
     }
 
+    [RelayCommand]
+    private void OpenLedRangeVisualizer(string? cassiaName)
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(cassiaName))
+                LedRangeCassia = cassiaName.Trim();
+            else if (string.IsNullOrWhiteSpace(LedRangeCassia) || LedRangeCassia.Equals("all", StringComparison.OrdinalIgnoreCase))
+                LedRangeCassia = CassiaGateways.FirstOrDefault()?.Name ?? "all";
+
+            var wnd = new LedRangeVisualizerWindow(this)
+            {
+                Owner = Application.Current.MainWindow
+            };
+            wnd.Show();
+            wnd.Activate();
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = $"Open LED visualizer failed: {ex.Message}";
+        }
+    }
+
 // ---- MQTT parsing ----
     // accessapp/dk-lab/tele/cassia-01/status
     // accessapp/dk-lab/tele/cassia-01/discovered
@@ -3547,6 +3732,12 @@ if (string.IsNullOrWhiteSpace(cassia))
         if (kind == "tele" && leaf == "identify")
         {
             HandleIdentifyTele(cassia, payload);
+            return;
+        }
+
+        if (kind == "tele" && leaf == "led-range")
+        {
+            HandleLedRangeTele(cassia, payload);
             return;
         }
 
@@ -5592,7 +5783,7 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
         catch { }
     }
 
-    private void HandleIdentifyTele(string cassia, string payload)
+private void HandleIdentifyTele(string cassia, string payload)
 {
     // Telemetry format:
     // {
@@ -5672,6 +5863,142 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
     }
     catch { }
 }
+
+    private void HandleLedRangeTele(string cassia, string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("data", out var dataEl) || dataEl.ValueKind != JsonValueKind.Object)
+                return;
+
+            var stage = dataEl.TryGetProperty("stage", out var st) ? (st.GetString() ?? "") : "";
+            var mac = dataEl.TryGetProperty("mac", out var m) ? (m.GetString() ?? "") : "";
+            var model = dataEl.TryGetProperty("model", out var mo) ? (mo.GetString() ?? "") : "";
+            var color = dataEl.TryGetProperty("color", out var c) ? (c.GetString() ?? "") : "";
+            var error = dataEl.TryGetProperty("error", out var e) ? (e.GetString() ?? "") : "";
+            var rssi = dataEl.TryGetProperty("rssi", out var rs) && rs.ValueKind == JsonValueKind.Number ? rs.GetInt32() : 0;
+            var chip = dataEl.TryGetProperty("chip", out var ch) && ch.ValueKind == JsonValueKind.Number ? ch.GetInt32() : 0;
+            var requestId = root.TryGetProperty("requestId", out var rid) ? (rid.GetString() ?? "") : "";
+
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                if (stage.Equals("connected", StringComparison.OrdinalIgnoreCase))
+                {
+                    UpsertLedRangeRow(LedRangeConnectedDevices, mac, model, rssi, chip, color, "connected", "");
+                    RemoveLedRangeRow(LedRangeFailedDevices, mac);
+                    LedRangeStatusText = $"{cassia}: connected {mac} ({color}, RSSI {rssi})";
+                }
+                else if (stage.Equals("failed", StringComparison.OrdinalIgnoreCase))
+                {
+                    UpsertLedRangeRow(LedRangeFailedDevices, mac, model, rssi, chip, color, "failed", error);
+                    RemoveLedRangeRow(LedRangeConnectedDevices, mac);
+                    LedRangeStatusText = $"{cassia}: failed {mac} ({error})";
+                }
+                else if (stage.Equals("disconnected", StringComparison.OrdinalIgnoreCase))
+                {
+                    RemoveLedRangeRow(LedRangeConnectedDevices, mac);
+                    LedRangeStatusText = $"{cassia}: disconnected {mac}";
+                }
+                else if (stage.Equals("disconnect-failed", StringComparison.OrdinalIgnoreCase))
+                {
+                    UpsertLedRangeRow(LedRangeFailedDevices, mac, model, rssi, chip, color, "disconnect-failed", error);
+                    LedRangeStatusText = $"{cassia}: disconnect failed {mac} ({error})";
+                }
+                else if (stage.Equals("started", StringComparison.OrdinalIgnoreCase))
+                {
+                    var requested = dataEl.TryGetProperty("requested", out var rq) && rq.ValueKind == JsonValueKind.Number ? rq.GetInt32() : 0;
+                    var minRssi = dataEl.TryGetProperty("minRssi", out var mr) && mr.ValueKind == JsonValueKind.Number ? mr.GetInt32() : LedRangeMinRssi;
+                    LedRangeRequestedTotal = requested;
+                    LedRangeTriedCount = 0;
+                    LedRangeConnectedCount = 0;
+                    LedRangeFailedCount = 0;
+                    LedRangeProgressPercent = requested > 0 ? 0 : 100;
+                    LedRangeProgressText = $"0 / {requested} tried";
+                    LedRangeStatusText = $"{cassia}: started, requested {requested}, min RSSI {minRssi}";
+                }
+                else if (stage.Equals("completed", StringComparison.OrdinalIgnoreCase))
+                {
+                    var requested = dataEl.TryGetProperty("requested", out var req) && req.ValueKind == JsonValueKind.Number ? req.GetInt32() : LedRangeRequestedTotal;
+                    var tried = dataEl.TryGetProperty("tried", out var tr) && tr.ValueKind == JsonValueKind.Number ? tr.GetInt32() : LedRangeTriedCount;
+                    var connected = dataEl.TryGetProperty("connected", out var con) && con.ValueKind == JsonValueKind.Number ? con.GetInt32() : 0;
+                    var failed = dataEl.TryGetProperty("failed", out var fa) && fa.ValueKind == JsonValueKind.Number ? fa.GetInt32() : 0;
+                    LedRangeRequestedTotal = requested;
+                    LedRangeTriedCount = tried;
+                    LedRangeConnectedCount = connected;
+                    LedRangeFailedCount = failed;
+                    LedRangeProgressPercent = requested > 0 ? Math.Clamp((100.0 * tried) / requested, 0, 100) : 100;
+                    LedRangeProgressText = $"{tried} / {requested} tried";
+                    LedRangeStatusText = $"{cassia}: completed. Connected {connected}, failed {failed}";
+                }
+                else if (stage.Equals("canceled", StringComparison.OrdinalIgnoreCase))
+                {
+                    var requested = dataEl.TryGetProperty("requested", out var req) && req.ValueKind == JsonValueKind.Number ? req.GetInt32() : LedRangeRequestedTotal;
+                    var tried = dataEl.TryGetProperty("tried", out var tr) && tr.ValueKind == JsonValueKind.Number ? tr.GetInt32() : LedRangeTriedCount;
+                    var connected = dataEl.TryGetProperty("connected", out var con) && con.ValueKind == JsonValueKind.Number ? con.GetInt32() : LedRangeConnectedCount;
+                    var failed = dataEl.TryGetProperty("failed", out var fa) && fa.ValueKind == JsonValueKind.Number ? fa.GetInt32() : LedRangeFailedCount;
+                    LedRangeRequestedTotal = requested;
+                    LedRangeTriedCount = tried;
+                    LedRangeConnectedCount = connected;
+                    LedRangeFailedCount = failed;
+                    LedRangeProgressPercent = requested > 0 ? Math.Clamp((100.0 * tried) / requested, 0, 100) : 100;
+                    LedRangeProgressText = $"{tried} / {requested} tried";
+                    LedRangeStatusText = $"{cassia}: canceled. Tried {tried}/{requested}.";
+                }
+                else if (stage.Equals("disconnect-completed", StringComparison.OrdinalIgnoreCase))
+                {
+                    var forceAll = dataEl.TryGetProperty("forceAll", out var faAll) && faAll.ValueKind == JsonValueKind.True;
+                    var disconnected = dataEl.TryGetProperty("disconnected", out var dis) && dis.ValueKind == JsonValueKind.Number ? dis.GetInt32() : 0;
+                    var failed = dataEl.TryGetProperty("failed", out var fa) && fa.ValueKind == JsonValueKind.Number ? fa.GetInt32() : 0;
+                    LedRangeStatusText = forceAll
+                        ? $"{cassia}: force disconnect completed. Disconnected {disconnected}, failed {failed}"
+                        : $"{cassia}: disconnect completed. Disconnected {disconnected}, failed {failed}";
+                }
+
+                var requestedFromStage = dataEl.TryGetProperty("requested", out var reqStage) && reqStage.ValueKind == JsonValueKind.Number ? reqStage.GetInt32() : LedRangeRequestedTotal;
+                var triedFromStage = dataEl.TryGetProperty("tried", out var trStage) && trStage.ValueKind == JsonValueKind.Number ? trStage.GetInt32() : LedRangeTriedCount;
+                var connectedFromStage = dataEl.TryGetProperty("connected", out var conStage) && conStage.ValueKind == JsonValueKind.Number ? conStage.GetInt32() : LedRangeConnectedCount;
+                var failedFromStage = dataEl.TryGetProperty("failed", out var faStage) && faStage.ValueKind == JsonValueKind.Number ? faStage.GetInt32() : LedRangeFailedCount;
+                LedRangeRequestedTotal = requestedFromStage;
+                LedRangeTriedCount = triedFromStage;
+                LedRangeConnectedCount = connectedFromStage;
+                LedRangeFailedCount = failedFromStage;
+                LedRangeProgressPercent = requestedFromStage > 0 ? Math.Clamp((100.0 * triedFromStage) / requestedFromStage, 0, 100) : 100;
+                LedRangeProgressText = $"{triedFromStage} / {requestedFromStage} tried";
+
+                if (!string.IsNullOrWhiteSpace(requestId))
+                    ConnectionStatus = $"LED range {stage} ({requestId})";
+            });
+        }
+        catch { }
+    }
+
+    private static void UpsertLedRangeRow(ObservableCollection<LedRangeDeviceRow> rows, string mac, string model, int rssi, int chip, string color, string status, string error)
+    {
+        if (string.IsNullOrWhiteSpace(mac)) return;
+        var row = rows.FirstOrDefault(x => x.Mac.Equals(mac, StringComparison.OrdinalIgnoreCase));
+        if (row == null)
+        {
+            row = new LedRangeDeviceRow { Mac = mac };
+            rows.Add(row);
+        }
+
+        row.Model = model ?? "";
+        row.Rssi = rssi;
+        row.Chip = chip;
+        row.Color = color ?? "";
+        row.Status = status ?? "";
+        row.Error = error ?? "";
+    }
+
+    private static void RemoveLedRangeRow(ObservableCollection<LedRangeDeviceRow> rows, string mac)
+    {
+        if (string.IsNullOrWhiteSpace(mac)) return;
+        var row = rows.FirstOrDefault(x => x.Mac.Equals(mac, StringComparison.OrdinalIgnoreCase));
+        if (row != null)
+            rows.Remove(row);
+    }
 
 
     private void ShowFwManifestTimeoutIfAny()

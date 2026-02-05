@@ -40,10 +40,8 @@ namespace AccessAPP.Services
                                     : (url + "?" + keyEq + Uri.EscapeDataString(value ?? ""));
         }
 
-        public async Task<ResponseModel> ConnectToBleDevice(string gatewayIpAddress, int gatewayPort, string macAddress, int chip = -1)
+        public async Task<ResponseModel> ConnectToBleDevice(string gatewayIpAddress, int gatewayPort, string macAddress, int chip = -1, bool useGlobalLock = true)
         {
-            var client = new HttpClient();
-
             // Define the request URL
             string url = $"http://{gatewayIpAddress}:{gatewayPort}/gap/nodes/{macAddress}/connection";
             if (chip >= 0) url = AppendQueryParam(url, "chip", chip.ToString());
@@ -65,34 +63,37 @@ namespace AccessAPP.Services
             {
                 HttpResponseMessage response = new HttpResponseMessage(HttpStatusCode.InternalServerError);
 
-                await semaphore.WaitAsync(); //lock connect requests
+                if (useGlobalLock)
+                {
+                    await semaphore.WaitAsync(); // lock connect requests (legacy behavior)
+                }
 
                 try
                 {
                     // Send the request
-                    response = await client.SendAsync(request);
+                    response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
                 }
-                catch(Exception e)
+                catch (Exception e)
                 {
                     throw e;
                 }
                 finally
                 {
-                    semaphore.Release();
+                    if (useGlobalLock)
+                        semaphore.Release();
                 }
 
-                // Ensure the request succeeded
-                response.EnsureSuccessStatusCode();
+                string? body = null;
+                try
+                {
+                    body = await response.Content.ReadAsStringAsync();
+                }
+                catch { }
 
-                // Read and display the response content
-                if (response.IsSuccessStatusCode)
-                {
-                    return Helper.CreateResponse(macAddress, response);
-                }
-                else
-                {
-                    return Helper.CreateResponse(macAddress, response);
-                }
+                if (!string.IsNullOrWhiteSpace(body))
+                    return Helper.CreateResponseWithMessage(macAddress, response, body, false);
+
+                return Helper.CreateResponse(macAddress, response);
             }
             catch (HttpRequestException e)
             {
@@ -102,7 +103,7 @@ namespace AccessAPP.Services
                     Data = $"Connection failed: {e.Message}",
                     Time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                     Retries = 0,
-                    Status = HttpStatusCode.ExpectationFailed, // or use 0 if unknown
+                    Status = HttpStatusCode.ServiceUnavailable, // connection issues to Cassia
                     PincodeRequired = false,
                     PinCodeAccepted = false
                 };
