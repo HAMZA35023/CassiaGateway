@@ -74,14 +74,14 @@ public partial class UpgradeLogGroup : ObservableObject
     /// The last entry may be informational, so we scan the group.
     /// </summary>
     public bool ContainsCompletionSuccess =>
-        Entries.Any(e =>
+        Entries.Where(e => e != null).Any(e =>
             !string.IsNullOrWhiteSpace(e.Stage)
             && e.Stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase)
             && !string.IsNullOrWhiteSpace(e.Status)
             && e.Status.Trim().Equals("Success", StringComparison.OrdinalIgnoreCase));
 
     public bool ContainsCompletionFailed =>
-        Entries.Any(e =>
+        Entries.Where(e => e != null).Any(e =>
             !string.IsNullOrWhiteSpace(e.Stage)
             && e.Stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase)
             && !string.IsNullOrWhiteSpace(e.Status)
@@ -89,7 +89,7 @@ public partial class UpgradeLogGroup : ObservableObject
                 || e.Status.Trim().StartsWith("Fail", StringComparison.OrdinalIgnoreCase)));
 
     public bool ContainsCompletionWarn =>
-        Entries.Any(e =>
+        Entries.Where(e => e != null).Any(e =>
             !string.IsNullOrWhiteSpace(e.Stage)
             && e.Stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase)
             && !string.IsNullOrWhiteSpace(e.Status)
@@ -170,7 +170,9 @@ public partial class UpgradeLogGroup : ObservableObject
         get
         {
             // best effort: find earliest "Current FW Version" stage and parse Sensor App
-            var e = Entries.OrderBy(x => x.TimeLocal).FirstOrDefault(x => (x.Stage ?? "").Contains("Current FW Version", StringComparison.OrdinalIgnoreCase));
+            var e = Entries.Where(x => x != null)
+                .OrderBy(x => x.TimeLocal)
+                .FirstOrDefault(x => (x.Stage ?? "").Contains("Current FW Version", StringComparison.OrdinalIgnoreCase));
             if (e == null) return "";
             var s = e.Status ?? "";
             var m = Regex.Match(s, @"Sensor:\s*App:\s*(?<app>[^\s|]+)");
@@ -178,7 +180,7 @@ public partial class UpgradeLogGroup : ObservableObject
         }
     }
 
-    public string TargetFirmware => Entries.OrderByDescending(e => e.TimeLocal).FirstOrDefault()?.Firmware ?? "";
+    public string TargetFirmware => Entries.Where(e => e != null).OrderByDescending(e => e.TimeLocal).FirstOrDefault()?.Firmware ?? "";
 
     public string StartedAtLocalText =>
         StartedAtLocal == DateTimeOffset.MinValue ? "" : StartedAtLocal.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");

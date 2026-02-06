@@ -4475,13 +4475,13 @@ private static bool TryGetSavedLogLinesFromCompressedPayload(JsonElement root, o
             if (isSuccess)
             {
                 var t = g.Entries
-                    .Where(e =>
-                        !string.IsNullOrWhiteSpace(e.Stage)
-                        && e.Stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase)
-                        && !string.IsNullOrWhiteSpace(e.Status)
-                        && e.Status.Trim().Equals("Success", StringComparison.OrdinalIgnoreCase))
-                    .OrderByDescending(e => e.TimeLocal)
-                    .FirstOrDefault()?.TimeLocal ?? DateTimeOffset.MinValue;
+    .Where(e => e != null
+        && !string.IsNullOrWhiteSpace(e.Stage)
+        && e.Stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase)
+        && !string.IsNullOrWhiteSpace(e.Status)
+        && e.Status.Trim().Equals("Success", StringComparison.OrdinalIgnoreCase))
+    .OrderByDescending(e => e.TimeLocal)
+    .FirstOrDefault()?.TimeLocal ?? DateTimeOffset.MinValue;
 
                 if (t != DateTimeOffset.MinValue)
                     cs.LastUpgradeSuccessUtc = t.ToUniversalTime();
@@ -6669,5 +6669,7 @@ private void HandleIdentifyTele(string cassia, string payload)
     }
 
 }
+
+
 
 
