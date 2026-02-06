@@ -129,7 +129,7 @@ public partial class UpgradeLogGroup : ObservableObject
     {
         get
         {
-            var e = Entries.OrderByDescending(x => x.TimeLocal).FirstOrDefault();
+            var e = Entries.Where(x => x != null).OrderByDescending(x => x.TimeLocal).FirstOrDefault();
             if (e is null) return "";
             var t = e.TimeLocal == DateTimeOffset.MinValue ? "" : e.TimeLocal.ToLocalTime().ToString("HH:mm:ss");
             var fw = string.IsNullOrWhiteSpace(e.Firmware) ? "" : e.Firmware.Trim();

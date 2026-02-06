@@ -139,7 +139,7 @@ public partial class MainViewModel : ObservableObject
     private static readonly TimeSpan GatewayOfflineAfter = TimeSpan.FromMinutes(1);
 
     public string ConnectButtonText => IsConnected ? "Disconnect" : "Connect";
-    public string DevicesSubtitle => $"{FilteredDevices.Cast<object>().Count()} device(s) • model: {SensorFilter} • filter: {DeviceFilter}";
+    public string DevicesSubtitle => $"{FilteredDevices.Cast<object>().Count()} device(s) - model: {SensorFilter} - filter: {DeviceFilter}";
 
     private readonly System.Collections.Generic.Dictionary<string, System.Collections.Generic.HashSet<string>> _gwSeenMacs
     = new(StringComparer.OrdinalIgnoreCase);
@@ -429,7 +429,7 @@ public partial class MainViewModel : ObservableObject
 
     public string UpgradeLogSummary =>
         UpgradeLogTotalLines > 0
-            ? $"{UpgradeLogStatus} • {UpgradeLogReceivedLines}/{UpgradeLogTotalLines} lines"
+            ? $"{UpgradeLogStatus} - {UpgradeLogReceivedLines}/{UpgradeLogTotalLines} lines"
             : UpgradeLogStatus;
 
     partial void OnUpgradeLogStatusChanged(string value)
@@ -1687,7 +1687,7 @@ partial void OnSensorFilterChanged(string value)
             subtitle: "Review suggested Cassia assignment (RSSI + load balancing) before queueing",
             rows: dialogRows,
             loadRows: loadRows,
-            footer: "Apply = use suggested assignment • Keep current = use current assignment • Cancel = abort",
+            footer: "Apply = use suggested assignment - Keep current = use current assignment - Cancel = abort",
             notes: $"Rules: If best RSSI < {RssiAllowBalancingThreshold} we always pick the closest Cassia. Otherwise we balance using (assigned*{AssignedDetectorsWeight} + queue + programming), preferring ONLINE gateways and using RSSI as tie-break. If best RSSI < {RssiWarnQueueThreshold}, you get a warning.",
             showKeepButton: true);
 
@@ -2029,10 +2029,10 @@ partial void OnSensorFilterChanged(string value)
 
         var dlg = ShowAssignmentPlanDialog(
             title: "Update device",
-            subtitle: $"{mac} • choose Cassia assignment before queueing",
+            subtitle: $"{mac} - choose Cassia assignment before queueing",
             rows: rows,
             loadRows: loadRows,
-            footer: "Apply = set suggested Cassia and queue update • Keep current = queue without changing assignment",
+            footer: "Apply = set suggested Cassia and queue update - Keep current = queue without changing assignment",
             notes: $"Suggestion uses the same balancing rules as Add-to-queue/Reassign.\n" +
                    $"If best RSSI < {RssiAllowBalancingThreshold}: closest Cassia. Otherwise: balance using Cassia Queue/Programming, while still preferring closest when similar.",
             showKeepButton: true);
@@ -2119,7 +2119,7 @@ partial void OnSensorFilterChanged(string value)
             subtitle: "Suggested moves based on RSSI + workload balancing",
             rows: rows,
             loadRows: loadRows,
-            footer: "Apply = move queue items • Cancel = do nothing",
+            footer: "Apply = move queue items - Cancel = do nothing",
             notes: $"Rules: If best RSSI < {RssiAllowBalancingThreshold} we always pick the closest Cassia. Otherwise we balance using (assigned*{AssignedDetectorsWeight} + queue + programming), preferring ONLINE gateways and using RSSI as tie-break. If best RSSI < {RssiWarnQueueThreshold}, you get a warning.",
             showKeepButton: false);
 

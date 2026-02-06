@@ -1011,12 +1011,12 @@
                                         </DataGridTemplateColumn.CellEditingTemplate>
                                     </DataGridTemplateColumn>
 
-                                    <DataGridTextColumn Header="Status" Binding="{Binding ProcessStatus}" Width="200" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="Status" Binding="{Binding ProcessStatus}" Width="230" IsReadOnly="True"/>
                                     <DataGridTextColumn Header="Chip" Binding="{Binding ChipUsed}" Width="50" IsReadOnly="True"/>
-                                    <DataGridTemplateColumn Header="%" Width="40"
+                                    <DataGridTemplateColumn Header="%" Width="120"
                                                             CellTemplate="{StaticResource ProcessProgressBarCellTemplate}"/>
-                                    <DataGridTextColumn Header="FW" Binding="{Binding ProcessFirmware}" Width="90" IsReadOnly="True"/>
-                                    <DataGridTextColumn Header="Current FW" Binding="{Binding DisplayFw}" Width="90" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="FW" Binding="{Binding ProcessFirmware}" Width="50" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="Current FW" Binding="{Binding DisplayFw}" Width="50" IsReadOnly="True"/>
 
                                     <DataGridTemplateColumn Header="Get FW" Width="90" CanUserSort="False">
                                         <DataGridTemplateColumn.CellTemplate>
@@ -1092,7 +1092,7 @@
                                         </Style>
                                     </DataGrid.RowStyle>
                                     <DataGrid.Columns>
-                                        <DataGridTextColumn Header="MAC" Binding="{Binding Mac}" Width="100"/>
+                                        <DataGridTextColumn Header="MAC" Binding="{Binding Mac}" Width="110"/>
                                         <DataGridTextColumn Header="Cassia" Binding="{Binding Cassia}" Width="110"/>
                                         <DataGridTextColumn Header="Chip" Binding="{Binding ChipUsed}" Width="50"/>
                                         <DataGridTemplateColumn Header="RSSI" Width="700" CanUserSort="False">
