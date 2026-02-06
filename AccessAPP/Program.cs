@@ -1,5 +1,6 @@
-﻿using AccessAPP.Services;
+using AccessAPP.Services;
 using AccessAPP.Models;
+using AccessAPP.Logging;
 using Serilog;
 
 const string VERSION = "0.2.0";
@@ -28,7 +29,7 @@ builder.Services.AddSingleton<CassiaFirmwareUpgradeService>();
 builder.Services.AddScoped<FirmwareUploadService>();
 builder.Services.AddSingleton<FirmwareManifestService>();
 
-// ✅ Add CORS policy
+// ? Add CORS policy
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAngularApp", policy =>
@@ -252,46 +253,72 @@ using (var scope = app.Services.CreateScope())
         }
     };
 
-    mqttService.LedRangeVisualizeRequested += async cmd =>
+    mqttService.LedRangeVisualizeRequested += cmd =>
     {
         var snapshot = DeviceStorageService.GetDeviceListSnapshot();
         var requestId = string.IsNullOrWhiteSpace(cmd.RequestId) ? Guid.NewGuid().ToString("N") : cmd.RequestId!;
         cmd.RequestId = requestId;
 
-        await firmwareUpgradeService.RunLedRangeVisualizationAsync(
-            snapshot,
-            cmd,
-            report: async stagePayload =>
+        _ = Task.Run(async () =>
+        {
+            try
             {
-                await mqttService.PublishTeleJsonAsync("led-range", new
-                {
-                    name = mqttService.CurrentOptions.Name,
-                    networkId = mqttService.CurrentOptions.NetworkId,
-                    requestId,
-                    data = stagePayload
-                });
-            },
-            ct: CancellationToken.None);
+                await firmwareUpgradeService.RunLedRangeVisualizationAsync(
+                    snapshot,
+                    cmd,
+                    report: async stagePayload =>
+                    {
+                        await mqttService.PublishTeleJsonAsync("led-range", new
+                        {
+                            name = mqttService.CurrentOptions.Name,
+                            networkId = mqttService.CurrentOptions.NetworkId,
+                            requestId,
+                            data = stagePayload
+                        });
+                    },
+                    ct: CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error($"LED range visualize failed ({requestId}): {ex.Message}", ex);
+            }
+        });
+
+        return Task.CompletedTask;
     };
 
-    mqttService.LedRangeDisconnectRequested += async cmd =>
+    mqttService.LedRangeDisconnectRequested += cmd =>
     {
         var requestId = string.IsNullOrWhiteSpace(cmd.RequestId) ? Guid.NewGuid().ToString("N") : cmd.RequestId!;
         cmd.RequestId = requestId;
 
-        await firmwareUpgradeService.DisconnectLedRangeAsync(
-            cmd,
-            report: async stagePayload =>
+        firmwareUpgradeService.RequestStopLedRangeVisualization();
+
+        _ = Task.Run(async () =>
+        {
+            try
             {
-                await mqttService.PublishTeleJsonAsync("led-range", new
-                {
-                    name = mqttService.CurrentOptions.Name,
-                    networkId = mqttService.CurrentOptions.NetworkId,
-                    requestId,
-                    data = stagePayload
-                });
-            },
-            ct: CancellationToken.None);
+                await firmwareUpgradeService.DisconnectLedRangeAsync(
+                    cmd,
+                    report: async stagePayload =>
+                    {
+                        await mqttService.PublishTeleJsonAsync("led-range", new
+                        {
+                            name = mqttService.CurrentOptions.Name,
+                            networkId = mqttService.CurrentOptions.NetworkId,
+                            requestId,
+                            data = stagePayload
+                        });
+                    },
+                    ct: CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error($"LED range disconnect failed ({requestId}): {ex.Message}", ex);
+            }
+        });
+
+        return Task.CompletedTask;
     };
 
     mqttService.GetFirmwareManifestRequested += async cmd =>
@@ -336,3 +363,5 @@ app.Lifetime.ApplicationStopping.Register(() =>
 });
 
 app.Run();
+
+

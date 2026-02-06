@@ -162,7 +162,7 @@ public partial class CassiaGateway : ObservableObject
             if (totalSeconds < 0) totalSeconds = 0;
             var ts = TimeSpan.FromSeconds(totalSeconds);
             var days = (int)ts.TotalDays;
-            UptimeText = $"{days:00}:{ts.Hours:00}:{ts.Minutes:00}";
+            UptimeText = $"{days}d, {ts.Hours:00}:{ts.Minutes:00}";
         }
     }
 }

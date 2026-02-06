@@ -10,6 +10,7 @@ namespace AccessAPP.Services
         private readonly ConcurrentDictionary<string, int> _ledRangeHeldConnections = new(StringComparer.OrdinalIgnoreCase);
         private readonly SemaphoreSlim _ledRangeGate = new(1, 1);
         private CancellationTokenSource? _ledRangeRunCts;
+        private int _ledRangeStopRequested;
 
         private const string LedBreathBlueCmd = "0106020900A5C70102";
         private const string LedBreathGreenCmd = "0106020900A5C70202";
@@ -44,6 +45,7 @@ namespace AccessAPP.Services
             CancellationTokenSource? runCts = null;
             try
             {
+                Interlocked.Exchange(ref _ledRangeStopRequested, 0);
                 var requestId = string.IsNullOrWhiteSpace(command.RequestId) ? Guid.NewGuid().ToString("N") : command.RequestId!.Trim();
                 var minRssi = command.MinRssi ?? RuntimeVariables.LED_RANGE_MIN_RSSI;
                 var pincode = command.Pincode ?? "";
@@ -166,6 +168,8 @@ namespace AccessAPP.Services
 
                 async Task ProcessDeviceAsync(int chip, DeviceListItem dev)
                 {
+                    if (Volatile.Read(ref _ledRangeStopRequested) != 0)
+                        return;
                     runCt.ThrowIfCancellationRequested();
                     var mac = (dev.MacAddress ?? "").Trim().ToUpperInvariant();
                     if (string.IsNullOrWhiteSpace(mac))
@@ -185,6 +189,12 @@ namespace AccessAPP.Services
                     var triedNow = Interlocked.Increment(ref triedCount);
                     if (success)
                     {
+                        if (Volatile.Read(ref _ledRangeStopRequested) != 0 || runCt.IsCancellationRequested)
+                        {
+                            await SafeDisconnectAsync(mac, chip).ConfigureAwait(false);
+                            _chipManager.UnbindMac(mac);
+                            return;
+                        }
                         _ledRangeHeldConnections[mac] = chip;
                         var (connectedNow, failedNow) = RecordOutcome(mac, true);
 
@@ -236,7 +246,9 @@ namespace AccessAPP.Services
                     var workers = Enumerable.Range(0, Math.Min(parallelPerChip, devices.Count))
                         .Select(async _ =>
                         {
-                            while (!runCt.IsCancellationRequested && queue.TryDequeue(out var dev))
+                            while (!runCt.IsCancellationRequested
+                                   && Volatile.Read(ref _ledRangeStopRequested) == 0
+                                   && queue.TryDequeue(out var dev))
                             {
                                 await ProcessDeviceAsync(chip, dev).ConfigureAwait(false);
                             }
@@ -384,6 +396,7 @@ namespace AccessAPP.Services
             Func<object, Task>? report = null,
             CancellationToken ct = default)
         {
+            Interlocked.Exchange(ref _ledRangeStopRequested, 1);
             _ledRangeRunCts?.Cancel();
 
             await _ledRangeGate.WaitAsync(ct).ConfigureAwait(false);
@@ -532,6 +545,12 @@ namespace AccessAPP.Services
             }
         }
 
+        public void RequestStopLedRangeVisualization()
+        {
+            Interlocked.Exchange(ref _ledRangeStopRequested, 1);
+            _ledRangeRunCts?.Cancel();
+        }
+
         private async Task<(bool Success, string Error)> TryConnectLoginAndSetLedAsync(
             string mac,
             string pincode,
@@ -549,6 +568,8 @@ namespace AccessAPP.Services
             {
                 try
                 {
+                    if (Volatile.Read(ref _ledRangeStopRequested) != 0)
+                        return (false, "canceled");
                     ct.ThrowIfCancellationRequested();
 
                     var connect = await _connectService.ConnectToBleDevice(_gatewayIpAddress, _gatewayPort, mac, chip: chip, useGlobalLock: false).ConfigureAwait(false);
