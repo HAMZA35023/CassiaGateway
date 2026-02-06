@@ -368,6 +368,7 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string connectionStatus = "Disconnected";
     [ObservableProperty] private bool isConnected;
     [ObservableProperty] private string statusBarText = "Ready";
+    [ObservableProperty] private string totalSpeedStatusText = "Speed: -- %/min";
 
     // ---- LED range visualization (connect/login/LED by RSSI) ----
     public ObservableCollection<LedRangeDeviceRow> LedRangeConnectedDevices { get; } = new();
@@ -420,6 +421,9 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty] private string selectedUpgradeLogShowOption = "All";
     [ObservableProperty] private bool upgradeLogLatestOnlyPerMac = false;
+
+    private bool _pendingUpgradeLogViewRefresh;
+    private readonly Dictionary<string, UpgradeLogGroup> _upgradeLogGroupByKey = new(StringComparer.OrdinalIgnoreCase);
 
 
 
@@ -556,7 +560,20 @@ public partial class MainViewModel : ObservableObject
 
 
         // Speed graph options: keep a separate list with virtual items.
-        CassiaGateways.CollectionChanged += (_, __) => RebuildSpeedGraphGateways();
+        CassiaGateways.CollectionChanged += (s, e) =>
+        {
+            RebuildSpeedGraphGateways();
+
+            if (e.NewItems != null)
+                foreach (CassiaGateway gw in e.NewItems)
+                    gw.PropertyChanged += OnGatewayPropertyChanged;
+
+            if (e.OldItems != null)
+                foreach (CassiaGateway gw in e.OldItems)
+                    gw.PropertyChanged -= OnGatewayPropertyChanged;
+
+            UpdateTotalSpeedStatus();
+        };
         RebuildSpeedGraphGateways();
 
         _fwManifestValidateTimer.Tick += (_, _) =>
@@ -777,6 +794,33 @@ partial void OnUpgradeLogSearchTextChanged(string value)
     {
         if (string.IsNullOrWhiteSpace(message)) return;
         StatusBarText = $"{DateTime.Now:HH:mm:ss} {source}: {message}";
+    }
+
+    private void OnGatewayPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(CassiaGateway.TotalSpeedpct)
+            || e.PropertyName == nameof(CassiaGateway.State))
+        {
+            UpdateTotalSpeedStatus();
+        }
+    }
+
+    private void UpdateTotalSpeedStatus()
+    {
+        var all = CassiaGateways.Where(g => g != null).ToList();
+        var online = all.Where(g => string.Equals(g.State, "online", StringComparison.OrdinalIgnoreCase)).ToList();
+        var list = online.Count > 0 ? online : all;
+
+        if (list.Count == 0)
+        {
+            TotalSpeedStatusText = "Speed: -- %/min";
+            return;
+        }
+
+        var total = list.Sum(g => g.TotalSpeedpct);
+        var optimal = 60.0 * list.Count;
+        var pctOfOptimal = optimal > 0 ? (total / optimal) * 100.0 : 0.0;
+        TotalSpeedStatusText = $"Speed total: {total:0.#}%/min";
     }
 
 partial void OnHostBleUiUpdateSecondsChanged(int value)
@@ -3978,173 +4022,232 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
     }
 
     private void HandleUpgradeLogTele(string cassia, string payload)
+{
+    _ = HandleUpgradeLogTeleAsync(cassia, payload);
+}
+
+private async Task HandleUpgradeLogTeleAsync(string cassia, string payload)
+{
+    // Example messages seen in mqtt.log:
+    //  {"type":"saved-log-begin","totalLines":2340,"timeLocal":"2026-01-12 15:48:28"}
+    //  {"type":"saved-log-chunk","seq":0,"lines":["..."]}
+    try
     {
-        // Example messages seen in mqtt.log:
-        //  {"type":"saved-log-begin","totalLines":2340,"timeLocal":"2026-01-12 15:48:28"}
-        //  {"type":"saved-log-chunk","seq":0,"lines":["..."]}
-        try
+        using var doc = JsonDocument.Parse(payload);
+        var root = doc.RootElement;
+
+        var type = root.TryGetProperty("type", out var t) ? (t.GetString() ?? "") : "";
+        type = type.Trim().ToLowerInvariant();
+
+        List<string>? compressedLines = null;
+        int compressedTotalLines = 0;
+        string compressedTimeLocal = "";
+
+        if (type == "saved-log-gzip" &&
+            TryGetSavedLogLinesFromCompressedPayload(root, out var linesFromCompressed, out var totalLinesFromCompressed, out var timeLocalFromCompressed))
         {
-            using var doc = JsonDocument.Parse(payload);
-            var root = doc.RootElement;
-
-            var type = root.TryGetProperty("type", out var t) ? (t.GetString() ?? "") : "";
-            type = type.Trim().ToLowerInvariant();
-
-            List<string>? compressedLines = null;
-            int compressedTotalLines = 0;
-            string compressedTimeLocal = "";
-
-            if (type == "saved-log-gzip" &&
-                TryGetSavedLogLinesFromCompressedPayload(root, out var linesFromCompressed, out var totalLinesFromCompressed, out var timeLocalFromCompressed))
-            {
-                compressedLines = linesFromCompressed;
-                compressedTotalLines = totalLinesFromCompressed;
-                compressedTimeLocal = timeLocalFromCompressed;
-            }
-
-            Application.Current.Dispatcher.Invoke(() =>
-            {
-                // Default the gateway picker (handy when you only have one cassia)
-                SelectedLogGateway ??= CassiaGateways.FirstOrDefault();
-
-                if (type == "saved-log-gzip" && compressedLines != null)
-                {
-                    if (UpgradeLogLines.Count == 0)
-                    {
-                        UpgradeLogLines.Clear();
-                        _upgradeLogSb.Clear();
-                    }
-                    else
-                    {
-                        var sep = $"----- {cassia} saved-log-gzip -----";
-                        UpgradeLogLines.Add(sep);
-                        _upgradeLogSb.AppendLine(sep);
-                    }
-
-                    UpgradeLogTotalLines = compressedTotalLines > 0 ? compressedTotalLines : compressedLines.Count;
-                    UpgradeLogReceivedLines = 0;
-                    UpgradeLogStatus = string.IsNullOrWhiteSpace(compressedTimeLocal)
-                        ? $"Receiving full log from {cassia}..."
-                        : $"Receiving full log from {cassia}... (saved {compressedTimeLocal})";
-                    UpgradeLogText = "";
-
-                    foreach (var line in compressedLines)
-                    {
-                        if (string.IsNullOrEmpty(line)) continue;
-                        UpgradeLogLines.Add(line);
-                        _upgradeLogSb.AppendLine(line);
-                        UpgradeLogReceivedLines++;
-
-                        AddUpgradeLogEntryFromLine(cassia, line);
-                        ApplyStatusFromUpgradeLogLine(cassia, line);
-                        ApplyLiveProcessStatusFromUpgradeLogLine(cassia, line);
-                    }
-
-                    UpgradeLogStatus = UpgradeLogTotalLines > 0
-                        ? $"Done ({UpgradeLogReceivedLines}/{UpgradeLogTotalLines} lines)"
-                        : $"Done ({UpgradeLogReceivedLines} lines)";
-                    RequestUpgradeLogTextRefresh();
-                    return;
-                }
-
-                if (type == "saved-log-begin")
-                {
-                    // When requesting from multiple gateways, each gateway will send a begin.
-                    // Only clear if this is the first begin in the current view.
-                    if (UpgradeLogLines.Count == 0)
-                    {
-                        UpgradeLogLines.Clear();
-                        _upgradeLogSb.Clear();
-                    }
-                    else
-                    {
-                        var sep = $"----- {cassia} saved-log-begin -----";
-                        UpgradeLogLines.Add(sep);
-                        _upgradeLogSb.AppendLine(sep);
-                    }
-
-                    UpgradeLogTotalLines = root.TryGetProperty("totalLines", out var tl) && tl.TryGetInt32(out var total) ? total : 0;
-                    UpgradeLogReceivedLines = 0;
-                    var timeLocal = root.TryGetProperty("timeLocal", out var tlc) ? (tlc.GetString() ?? "") : "";
-                    UpgradeLogStatus = string.IsNullOrWhiteSpace(timeLocal)
-                        ? $"Receiving log from {cassia}â€¦"
-                        : $"Receiving log from {cassia}â€¦ (saved {timeLocal})";
-
-                    UpgradeLogText = "";
-                    return;
-                }
-
-                if (type == "saved-log-chunk")
-                {
-                    if (root.TryGetProperty("lines", out var linesEl) && linesEl.ValueKind == JsonValueKind.Array)
-                    {
-                        foreach (var le in linesEl.EnumerateArray())
-                        {
-                            var line = le.GetString() ?? "";
-                            if (string.IsNullOrEmpty(line)) continue;
-                            UpgradeLogLines.Add(line);
-                            _upgradeLogSb.AppendLine(line);
-                            UpgradeLogReceivedLines++;
-
-                            // Grouped view
-                            AddUpgradeLogEntryFromLine(cassia, line);
-                            // Harvest Current FW + completion success for UI fields (safe for saved log playback)
-                            ApplyStatusFromUpgradeLogLine(cassia, line);
-                            ApplyLiveProcessStatusFromUpgradeLogLine(cassia, line);
-
-
-                        }
-
-                        RequestUpgradeLogTextRefresh();
-                        UpgradeLogStatus = UpgradeLogTotalLines > 0
-                            ? $"Receivingâ€¦ {UpgradeLogReceivedLines}/{UpgradeLogTotalLines} lines"
-                            : $"Receivingâ€¦ {UpgradeLogReceivedLines} lines";
-                    }
-                    return;
-                }
-
-                // Some deployments publish a single JSON log entry (no "type"):
-                // {
-                //   "logId":"...", "mac":"..", "stage":"...", "status":"...", "fw":"...", "timeLocal":"...", "line":"[...]"
-                // }
-                if (string.IsNullOrWhiteSpace(type) && root.ValueKind == JsonValueKind.Object)
-                {
-                    if (TryAddUpgradeLogEntryFromJson(cassia, root, out var line2))
-                    {
-                        if (!string.IsNullOrWhiteSpace(line2))
-                        {
-                            UpgradeLogLines.Add(line2);
-                            _upgradeLogSb.AppendLine(line2);
-                            UpgradeLogReceivedLines++;
-                            ApplyStatusFromUpgradeLogLine(cassia, line2);
-                            ApplyLiveProcessStatusFromUpgradeLogLine(cassia, line2);
-                            RequestUpgradeLogTextRefresh();
-                        }
-                        UpgradeLogStatus = "upgrade-log";
-                        return;
-                    }
-                }
-
-                if (type == "saved-log-end")
-                {
-                    UpgradeLogStatus = UpgradeLogTotalLines > 0
-                        ? $"Done ({UpgradeLogReceivedLines}/{UpgradeLogTotalLines} lines)"
-                        : $"Done ({UpgradeLogReceivedLines} lines)";
-                    RequestUpgradeLogTextRefresh();
-                    return;
-                }
-
-                // fallback
-                UpgradeLogStatus = string.IsNullOrWhiteSpace(type) ? "upgrade-log" : type;
-            });
+            compressedLines = linesFromCompressed;
+            compressedTotalLines = totalLinesFromCompressed;
+            compressedTimeLocal = timeLocalFromCompressed;
         }
-        catch
+
+        await Application.Current.Dispatcher.InvokeAsync(() =>
         {
-            // ignore malformed chunks
+            // Default the gateway picker (handy when you only have one cassia)
+            SelectedLogGateway ??= CassiaGateways.FirstOrDefault();
+        });
+
+        if (type == "saved-log-gzip" && compressedLines != null)
+        {
+            await Application.Current.Dispatcher.InvokeAsync(() =>
+            {
+                if (UpgradeLogLines.Count == 0)
+                {
+                    UpgradeLogLines.Clear();
+                    _upgradeLogSb.Clear();
+                }
+                else
+                {
+                    var sep = $"----- {cassia} saved-log-gzip -----";
+                    UpgradeLogLines.Add(sep);
+                    _upgradeLogSb.AppendLine(sep);
+                }
+
+                UpgradeLogTotalLines = compressedTotalLines > 0 ? compressedTotalLines : compressedLines.Count;
+                UpgradeLogReceivedLines = 0;
+                UpgradeLogStatus = string.IsNullOrWhiteSpace(compressedTimeLocal)
+                    ? $"Receiving full log from {cassia}..."
+                    : $"Receiving full log from {cassia}... (saved {compressedTimeLocal})";
+                UpgradeLogText = "";
+            });
+
+            await AppendUpgradeLogLinesInBatchesAsync(cassia, compressedLines);
+
+            await Application.Current.Dispatcher.InvokeAsync(() =>
+            {
+                UpgradeLogStatus = UpgradeLogTotalLines > 0
+                    ? $"Done ({UpgradeLogReceivedLines}/{UpgradeLogTotalLines} lines)"
+                    : $"Done ({UpgradeLogReceivedLines} lines)";
+                RequestUpgradeLogTextRefresh();
+            });
+            return;
+        }
+
+        if (type == "saved-log-begin")
+        {
+            await Application.Current.Dispatcher.InvokeAsync(() =>
+            {
+                // When requesting from multiple gateways, each gateway will send a begin.
+                // Only clear if this is the first begin in the current view.
+                if (UpgradeLogLines.Count == 0)
+                {
+                    UpgradeLogLines.Clear();
+                    _upgradeLogSb.Clear();
+                }
+                else
+                {
+                    var sep = $"----- {cassia} saved-log-begin -----";
+                    UpgradeLogLines.Add(sep);
+                    _upgradeLogSb.AppendLine(sep);
+                }
+
+                UpgradeLogTotalLines = root.TryGetProperty("totalLines", out var tl) && tl.TryGetInt32(out var total) ? total : 0;
+                UpgradeLogReceivedLines = 0;
+                var timeLocal = root.TryGetProperty("timeLocal", out var tlc) ? (tlc.GetString() ?? "") : "";
+                UpgradeLogStatus = string.IsNullOrWhiteSpace(timeLocal)
+                    ? $"Receiving log from {cassia}…"
+                    : $"Receiving log from {cassia}… (saved {timeLocal})";
+
+                UpgradeLogText = "";
+            });
+            return;
+        }
+
+        if (type == "saved-log-chunk")
+        {
+            if (root.TryGetProperty("lines", out var linesEl) && linesEl.ValueKind == JsonValueKind.Array)
+            {
+                var lines = new List<string>();
+                foreach (var le in linesEl.EnumerateArray())
+                {
+                    var line = le.GetString() ?? "";
+                    if (!string.IsNullOrEmpty(line)) lines.Add(line);
+                }
+
+                await AppendUpgradeLogLinesInBatchesAsync(cassia, lines);
+
+                await Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    RequestUpgradeLogTextRefresh();
+                    UpgradeLogStatus = UpgradeLogTotalLines > 0
+                        ? $"Receiving… {UpgradeLogReceivedLines}/{UpgradeLogTotalLines} lines"
+                        : $"Receiving… {UpgradeLogReceivedLines} lines";
+                });
+            }
+            return;
+        }
+
+        // Some deployments publish a single JSON log entry (no "type"):
+        // {
+        //   "logId":"...", "mac":"..", "stage":"...", "status":"...", "fw":"...", "timeLocal":"...", "line":"[...]"
+        // }
+        if (string.IsNullOrWhiteSpace(type) && root.ValueKind == JsonValueKind.Object)
+        {
+            if (TryAddUpgradeLogEntryFromJson(cassia, root, out var line2))
+            {
+                await Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    if (!string.IsNullOrWhiteSpace(line2))
+                    {
+                        UpgradeLogLines.Add(line2);
+                        _upgradeLogSb.AppendLine(line2);
+                        UpgradeLogReceivedLines++;
+                        ApplyStatusFromUpgradeLogLine(cassia, line2);
+                        ApplyLiveProcessStatusFromUpgradeLogLine(cassia, line2);
+                        RequestUpgradeLogTextRefresh();
+                    }
+                    UpgradeLogStatus = "upgrade-log";
+                });
+                return;
+            }
+        }
+
+        if (type == "saved-log-end")
+        {
+            await Application.Current.Dispatcher.InvokeAsync(() =>
+            {
+                UpgradeLogStatus = UpgradeLogTotalLines > 0
+                    ? $"Done ({UpgradeLogReceivedLines}/{UpgradeLogTotalLines} lines)"
+                    : $"Done ({UpgradeLogReceivedLines} lines)";
+                RequestUpgradeLogTextRefresh();
+            });
+            return;
+        }
+
+        // fallback
+        await Application.Current.Dispatcher.InvokeAsync(() =>
+        {
+            UpgradeLogStatus = string.IsNullOrWhiteSpace(type) ? "upgrade-log" : type;
+        });
+    }
+    catch
+    {
+        // ignore malformed chunks
+    }
+}
+
+private async Task AppendUpgradeLogLinesInBatchesAsync(string cassia, IEnumerable<string> lines)
+{
+    const int batchSize = 200;
+    var batch = new List<string>(batchSize);
+
+    foreach (var line in lines)
+    {
+        if (string.IsNullOrEmpty(line)) continue;
+        batch.Add(line);
+
+        if (batch.Count >= batchSize)
+        {
+            var chunk = batch.ToArray();
+            batch.Clear();
+            await Application.Current.Dispatcher.InvokeAsync(() =>
+            {
+                foreach (var l in chunk)
+                {
+                    UpgradeLogLines.Add(l);
+                    _upgradeLogSb.AppendLine(l);
+                    UpgradeLogReceivedLines++;
+
+                    AddUpgradeLogEntryFromLine(cassia, l);
+                    ApplyStatusFromUpgradeLogLine(cassia, l);
+                    ApplyLiveProcessStatusFromUpgradeLogLine(cassia, l);
+                }
+            });
+            await Task.Delay(1);
         }
     }
 
-    private static bool TryGetSavedLogLinesFromCompressedPayload(JsonElement root, out List<string> lines, out int totalLines, out string timeLocal)
+    if (batch.Count > 0)
+    {
+        var chunk = batch.ToArray();
+        batch.Clear();
+        await Application.Current.Dispatcher.InvokeAsync(() =>
+        {
+            foreach (var l in chunk)
+            {
+                UpgradeLogLines.Add(l);
+                _upgradeLogSb.AppendLine(l);
+                UpgradeLogReceivedLines++;
+
+                AddUpgradeLogEntryFromLine(cassia, l);
+                ApplyStatusFromUpgradeLogLine(cassia, l);
+                ApplyLiveProcessStatusFromUpgradeLogLine(cassia, l);
+            }
+        });
+    }
+}
+
+private static bool TryGetSavedLogLinesFromCompressedPayload(JsonElement root, out List<string> lines, out int totalLines, out string timeLocal)
     {
         lines = new List<string>();
         totalLines = 0;
@@ -4289,18 +4392,33 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
 
     private void AddUpgradeLogEntry(UpgradeLogEntry entry)
     {
-        // Find group
-        var g = UpgradeLogGroups.FirstOrDefault(x => x.LogId.Equals(entry.LogId, StringComparison.OrdinalIgnoreCase)
-                                                 && x.Cassia.Equals(entry.Cassia, StringComparison.OrdinalIgnoreCase));
-        if (g == null)
+        if (entry == null) return;
+
+        var entryCassia = (entry.Cassia ?? "").Trim();
+        var entryLogId = (entry.LogId ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(entryLogId))
+            return;
+
+        var key = $"{entryCassia}||{entryLogId}";
+        if (!_upgradeLogGroupByKey.TryGetValue(key, out var g))
         {
-            g = new UpgradeLogGroup
+            g = UpgradeLogGroups.FirstOrDefault(x =>
+                x != null
+                && string.Equals(x.LogId, entryLogId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(x.Cassia, entryCassia, StringComparison.OrdinalIgnoreCase));
+
+            if (g == null)
             {
-                Cassia = entry.Cassia,
-                LogId = entry.LogId,
-                Mac = entry.Mac
-            };
-            UpgradeLogGroups.Add(g);
+                g = new UpgradeLogGroup
+                {
+                    Cassia = entryCassia,
+                    LogId = entryLogId,
+                    Mac = entry.Mac ?? ""
+                };
+                UpgradeLogGroups.Add(g);
+            }
+
+            _upgradeLogGroupByKey[key] = g;
         }
 
         if (string.IsNullOrWhiteSpace(g.Mac) && !string.IsNullOrWhiteSpace(entry.Mac))
@@ -4308,10 +4426,7 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
 
         g.AddEntry(entry);
         MarkLatestUpgradeLogMapDirty();
-        // IMPORTANT: Device "green" (IsUpgradeSuccess) must only be true when the latest
-        // logId grouping for a MAC contains a successful "Device Upgrade Completed." entry.
-        RefreshUpgradeSuccessFromLatestGroups();
-        UpgradeLogGroupsView.Refresh();
+        RequestUpgradeLogViewRefresh();
     }
 
     /// <summary>
@@ -4340,7 +4455,8 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
             // The per-device result MUST be taken from the "Device Upgrade Completed." line (Warn/Success/Failed).
             // Do NOT rely on the last informational line.
             var completion = g.Entries
-                .Where(e => !string.IsNullOrWhiteSpace(e.Stage)
+                .Where(e => e != null
+                            && !string.IsNullOrWhiteSpace(e.Stage)
                             && e.Stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase))
                 .OrderByDescending(e => e.TimeLocal)
                 .FirstOrDefault();
@@ -4728,6 +4844,20 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
         });
     }
 
+    private void RequestUpgradeLogViewRefresh()
+    {
+        if (_pendingUpgradeLogViewRefresh) return;
+        _pendingUpgradeLogViewRefresh = true;
+
+        Application.Current.Dispatcher.InvokeAsync(async () =>
+        {
+            await Task.Delay(250);
+            _pendingUpgradeLogViewRefresh = false;
+            RefreshUpgradeSuccessFromLatestGroups();
+            UpgradeLogGroupsView.Refresh();
+        });
+    }
+
     [RelayCommand]
     private async Task RequestUpgradeLogAsync()
     {
@@ -4742,6 +4872,7 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
         {
             UpgradeLogLines.Clear();
             UpgradeLogGroups.Clear();
+            _upgradeLogGroupByKey.Clear();
             UpgradeLogText = "";
             _upgradeLogSb.Clear();
             UpgradeLogReceivedLines = 0;
@@ -4872,6 +5003,7 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
         {
             UpgradeLogLines.Clear();
             UpgradeLogGroups.Clear();
+            _upgradeLogGroupByKey.Clear();
             UpgradeLogGroupsView?.Refresh();
             _upgradeLogSb.Clear();
             UpgradeLogText = "";
@@ -5630,6 +5762,7 @@ if (!_deviceByMac.TryGetValue(mac, out var existing))
             // Upgrade log views
             UpgradeLogLines.Clear();
             UpgradeLogGroups.Clear();
+            _upgradeLogGroupByKey.Clear();
             UpgradeLogText = "";
             _upgradeLogSb.Clear();
             UpgradeLogReceivedLines = 0;
@@ -6536,4 +6669,5 @@ private void HandleIdentifyTele(string cassia, string payload)
     }
 
 }
+
 

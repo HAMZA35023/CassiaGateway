@@ -23,13 +23,15 @@ public partial class UpgradeLogGroup : ObservableObject
     private readonly HashSet<string> _seen = new(StringComparer.Ordinal);
 
     public DateTimeOffset LastTimeLocal =>
-        Entries.Count == 0 ? DateTimeOffset.MinValue : Entries.Max(e => e.TimeLocal);
+        Entries.Count == 0
+            ? DateTimeOffset.MinValue
+            : Entries.Where(e => e != null).Select(e => e.TimeLocal).DefaultIfEmpty(DateTimeOffset.MinValue).Max();
 
     public string LastTimeLocalText =>
         LastTimeLocal == DateTimeOffset.MinValue ? "" : LastTimeLocal.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
 
     public string LatestStage =>
-        Entries.OrderByDescending(e => e.TimeLocal).FirstOrDefault()?.Stage ?? "";
+        Entries.Where(e => e != null).OrderByDescending(e => e.TimeLocal).FirstOrDefault()?.Stage ?? "";
 
     public string LatestStatus
     {
@@ -39,6 +41,7 @@ public partial class UpgradeLogGroup : ObservableObject
             // If we have a "Device Upgrade Completed." line, the group status MUST be taken from that line's Status.
             // (Warn/Success/Failed) and not from whatever the last informational line happens to be.
             var completion = Entries
+                .Where(e => e != null)
                 .Where(e => !string.IsNullOrWhiteSpace(e.Stage)
                             && e.Stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase))
                 .OrderByDescending(e => e.TimeLocal)
@@ -55,7 +58,7 @@ public partial class UpgradeLogGroup : ObservableObject
             }
 
             // Fallback: no completion line yet. Use the last entry, but never claim "Success" unless completion exists.
-            var last = Entries.OrderByDescending(e => e.TimeLocal).FirstOrDefault();
+            var last = Entries.Where(e => e != null).OrderByDescending(e => e.TimeLocal).FirstOrDefault();
             if (last == null) return "";
 
             if (!string.IsNullOrWhiteSpace(last.Status)
@@ -98,13 +101,14 @@ public partial class UpgradeLogGroup : ObservableObject
             : LatestStatus;
 
     public string LatestFirmware =>
-        Entries.OrderByDescending(e => e.TimeLocal).FirstOrDefault()?.Firmware ?? "";
+        Entries.Where(e => e != null).OrderByDescending(e => e.TimeLocal).FirstOrDefault()?.Firmware ?? "";
 
     public string LatestMac =>
-        Entries.OrderByDescending(e => e.TimeLocal).FirstOrDefault()?.Mac ?? Mac ?? "";
+        Entries.Where(e => e != null).OrderByDescending(e => e.TimeLocal).FirstOrDefault()?.Mac ?? Mac ?? "";
 
     public string LatestDeviceName =>
-        Entries.OrderByDescending(e => e.TimeLocal)
+        Entries.Where(e => e != null)
+            .OrderByDescending(e => e.TimeLocal)
             .Select(e => e.DeviceName)
             .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? "";
 

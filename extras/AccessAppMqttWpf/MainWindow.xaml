@@ -7,8 +7,7 @@
         mc:Ignorable="d"
         Title="AC Controller for AccessAPP - v0.5.0"
         Height="941" Width="1715"
-        WindowStartupLocation="CenterScreen"
-        xmlns:scm="clr-namespace:System.ComponentModel;assembly=WindowsBase">
+        WindowStartupLocation="CenterScreen">
 
     <Window.Resources>
 
@@ -117,9 +116,223 @@
             <Setter Property="BorderThickness" Value="0"/>
         </Style>
 
+        <DataTemplate x:Key="ProgressBarCellTemplate">
+            <Grid Height="16" MinWidth="50">
+                <ProgressBar Minimum="0"
+                             Maximum="100"
+                             Value="{Binding Progress}"
+                             Background="#FFE5E7EB"
+                             Foreground="#FF60A5FA"/>
+                <TextBlock Text="{Binding Progress, StringFormat={}{0}%}"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           FontSize="11"
+                           FontWeight="SemiBold"/>
+                <Grid.Style>
+                    <Style TargetType="Grid">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Status}" Value="">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Status}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Status}" Value="queued">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Status}" Value="Queued">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Grid.Style>
+            </Grid>
+        </DataTemplate>
+
+        <DataTemplate x:Key="ProcessProgressBarCellTemplate">
+            <Grid Height="16" MinWidth="40">
+                <ProgressBar Minimum="0"
+                             Maximum="100"
+                             Value="{Binding ProcessProgress}"
+                             Background="#FFE5E7EB"
+                             Foreground="#FF34D399"/>
+                <TextBlock Text="{Binding ProcessProgress, StringFormat={}{0}%}"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           FontSize="11"
+                           FontWeight="SemiBold"/>
+            </Grid>
+        </DataTemplate>
+        <DataTemplate x:Key="UpgradeLogTabPlaceholderTemplate">
+            <Border Style="{StaticResource Card}">
+                <Grid>
+                    <TextBlock Text="Upgrade log will load when you open this tab."
+                               Foreground="{StaticResource MutedBrush}"
+                               FontSize="13"
+                               VerticalAlignment="Center"
+                               HorizontalAlignment="Center"/>
+                </Grid>
+            </Border>
+        </DataTemplate>
+
+        <DataTemplate x:Key="UpgradeLogTabContentTemplate">
+            <Border Style="{StaticResource Card}">
+                <DockPanel>
+
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10" VerticalAlignment="Center">
+                        <TextBlock Text="Upgrade log" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        <TextBlock Text="  " />
+                        <TextBlock Text="{Binding UpgradeLogSummary}" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"/>
+
+                        <TextBlock Text="   Search:" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="18,0,0,0"/>
+                        <TextBox Width="220"
+                                 Text="{Binding UpgradeLogSearchText, UpdateSourceTrigger=PropertyChanged}"
+                                 Margin="8,0,0,0"
+                                 VerticalAlignment="Center"/>
+
+                        <!-- UPDATED: add (LogId dropdown) + keep existing gateway dropdown + request/clear buttons -->
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="18,0,0,0">
+                                <ComboBox Width="160"
+                                      ItemsSource="{Binding LogGatewayOptions}"
+                                      SelectedItem="{Binding SelectedLogGatewayName}"
+                                      Margin="0,0,8,0"/>
+
+                                <ComboBox Width="130"
+                                      ItemsSource="{Binding UpgradeLogShowOptions}"
+                                      SelectedItem="{Binding SelectedUpgradeLogShowOption}"
+                                      Margin="0,0,8,0"/>
+
+                            <CheckBox Content="Latest per MAC"
+                                      IsChecked="{Binding UpgradeLogLatestOnlyPerMac, Mode=TwoWay}"
+                                      VerticalAlignment="Center"
+                                      Margin="0,0,12,0"/>
+
+                            <Button Style="{StaticResource GhostButton}"
+                                    Content="Export"
+                                    Padding="12,6"
+                                    Command="{Binding ExportUpgradeLogToExcelCommand}"
+                                    Margin="0,0,8,0"/>
+
+
+                            <Button Style="{StaticResource PrimaryButton}"
+                                    Content="Request"
+                                    Command="{Binding RequestUpgradeLogCommand}"
+                                    Margin="0,0,8,0"/>
+                            <Button Style="{StaticResource GhostButton}"
+                                    Content="Clear on Cassia"
+                                    Command="{Binding ClearUpgradeLogOnCassiaCommand}"
+                                    Margin="0,0,8,0"/>
+                            <Button Style="{StaticResource GhostButton}"
+                                    Content="Clear"
+                                    Command="{Binding ClearUpgradeLogCommand}"/>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <ListBox ItemsSource="{Binding UpgradeLogGroupsView}"
+                             BorderThickness="0"
+                             Background="Transparent"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                             ScrollViewer.IsDeferredScrollingEnabled="True"
+                             ScrollViewer.CanContentScroll="True"
+                             VirtualizingPanel.IsVirtualizing="True"
+                             VirtualizingPanel.VirtualizationMode="Recycling"
+                             HorizontalContentAlignment="Stretch">
+                        <ListBox.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <VirtualizingStackPanel/>
+                            </ItemsPanelTemplate>
+                        </ListBox.ItemsPanel>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                    <Border Background="{StaticResource CardBrush}"
+                                            BorderThickness="2"
+                                            Padding="10"
+                                            Margin="0,0,0,10"
+                                            CornerRadius="10"
+                                            BorderBrush="{Binding DisplayBadgeStatus, Converter={StaticResource StatusToBrush}}"
+                                            HorizontalAlignment="Stretch">
+                                        <Expander IsExpanded="False" Loaded="UpgradeLogExpander_Loaded" Expanded="UpgradeLogExpander_Expanded" Collapsed="UpgradeLogExpander_Collapsed">
+
+                                            <Expander.Header>
+                                                <Grid>
+                                                    <Grid.RowDefinitions>
+                                                        <RowDefinition Height="Auto"/>
+                                                        <RowDefinition Height="Auto"/>
+                                                    </Grid.RowDefinitions>
+
+                                                    <StackPanel Orientation="Horizontal" Grid.Row="0">
+                                                            <TextBlock Text="{Binding LogIdMacPart}" FontWeight="SemiBold"/>
+                                                            <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
+                                                            <TextBlock Text="{Binding StartedAtLocalText}" />
+                                                            <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
+                                                            <TextBlock Text="{Binding Cassia}"/>
+                                                            <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
+                                                            <TextBlock Text="{Binding LatestMacWithName}"/>
+                                                            <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
+                                                            <TextBlock Text="{Binding LastTimeLocalText}"/>
+                                                            <TextBlock Text="  •  TOTAL TIME: " Foreground="{StaticResource MutedBrush}"/>
+                                                            <TextBlock Text="{Binding TotalDurationText}" />
+                                                            <TextBlock Text="m" Foreground="{StaticResource MutedBrush}"/>
+
+
+                                                            <Border Margin="12,0,0,0"
+                                                                Padding="8,2"
+                                                                CornerRadius="10"
+                                                                VerticalAlignment="Center"
+                                                                Background="{Binding DisplayBadgeStatus, Converter={StaticResource StatusToBrush}}">
+                                                            <TextBlock Text="{Binding DisplayBadgeStatus}"
+                                                                       FontWeight="SemiBold"
+                                                                       Foreground="White"/>
+                                                        </Border>
+                                                    </StackPanel>
+
+                                                    <TextBlock Grid.Row="1"
+                                                               Margin="0,4,0,0"
+                                                               Foreground="{StaticResource MutedBrush}"
+                                                               Text="{Binding LatestSummary}"
+                                                               TextTrimming="CharacterEllipsis"/>
+                                                </Grid>
+                                            </Expander.Header>
+
+                                            <DataGrid ItemsSource="{Binding Entries}"
+                                                      Margin="0,10,0,0"
+                                                      MaxHeight="420"
+                                                      AutoGenerateColumns="False"
+                                                      IsReadOnly="True"
+                                                      HeadersVisibility="Column"
+                                                      CanUserAddRows="False"
+                                                      CanUserResizeRows="False"
+                                                      CanUserSortColumns="False"
+                                                      GridLinesVisibility="None" EnableRowVirtualization="True" EnableColumnVirtualization="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.IsDeferredScrollingEnabled="True" ScrollViewer.CanContentScroll="True">
+                                                <DataGrid.Columns>
+                                                    <DataGridTextColumn Header="Time" Binding="{Binding TimeLocalText}" Width="140"/>
+                                                    <DataGridTextColumn Header="Stage" Binding="{Binding Stage}" Width="400"/>
+                                                    <DataGridTextColumn Header="FW" Binding="{Binding Firmware}" Width="80"/>
+                                                    <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="*">
+                                                        <DataGridTextColumn.ElementStyle>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="FontWeight" Value="SemiBold"/>
+                                                                <Setter Property="Foreground"
+                                                                        Value="{Binding Status, Converter={StaticResource StatusToBrush}}"/>
+                                                            </Style>
+                                                        </DataGridTextColumn.ElementStyle>
+                                                    </DataGridTextColumn>
+                                                </DataGrid.Columns>
+                                            </DataGrid>
+                                        </Expander>
+                                    </Border>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                    </ListBox>
+
+                </DockPanel>
+            </Border>
+        </DataTemplate>
+
     </Window.Resources>
 
-    <DockPanel Margin="18">
+    <DockPanel Margin="0">
         <Menu DockPanel.Dock="Top">
             <MenuItem Header="Cassia">
                 <MenuItem Header="Speed graph (all)" Command="{Binding OpenSpeedGraphAllCommand}"/>
@@ -139,7 +352,24 @@
                    BorderThickness="1"
                    Margin="0,10,0,0">
             <StatusBarItem>
-                <TextBlock Text="{Binding StatusBarText}" Foreground="{StaticResource MutedBrush}"/>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{Binding StatusBarText}" Foreground="{StaticResource MutedBrush}"/>
+                </StackPanel>
+            </StatusBarItem>
+            <StatusBarItem HorizontalAlignment="Right" HorizontalContentAlignment="Right">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="UI update cadence" Opacity="0.85" Margin="0,0,10,0"/>
+                    <TextBlock Text="{Binding ProgressUiCountdownText}" Margin="0,0,14,0" Opacity="0.85"/>
+                    <TextBlock Text="{Binding DiscoveredUiCountdownText}" Opacity="0.85"/>
+                    <TextBlock Text="   " Opacity="0.85"/>
+                    <TextBlock Text="{Binding TotalSpeedStatusText}" Foreground="{StaticResource MutedBrush}"/>
+                    <Button Style="{StaticResource GhostButton}"
+                            Content="Refresh UI"
+                            Padding="12,6"
+                            Margin="14,0,0,0"
+                            Command="{Binding RefreshUiNowCommand}"
+                            Visibility="Collapsed"/>
+                </StackPanel>
             </StatusBarItem>
         </StatusBar>
 
@@ -205,7 +435,7 @@
         <Border Grid.Column="0" Background="{Binding StripeBrush}" CornerRadius="10,0,0,10"/>
 
         <!-- Content spacing -->
-        <Border Grid.Column="1" Padding="10" Background="Transparent">
+        <Border Grid.Column="1" Padding="6" Background="Transparent">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -237,55 +467,72 @@
                                     ContentTemplate="{StaticResource CassiaStateBadge}"
                                     VerticalAlignment="Center"
                                     Margin="8,0,0,0"/>
+                </Grid>                <!-- Right button column spans full card height -->
+                <Grid Grid.Row="0" Grid.RowSpan="2" Grid.Column="1"
+                      VerticalAlignment="Top"
+                      HorizontalAlignment="Right"
+                      Margin="8,0,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- Icon buttons: two per row -->
+                    <Button Grid.Row="0" Grid.Column="0"
+                            Style="{StaticResource CassiaBadgeButtonStyleWarning}"
+                            Content="🧹"
+                            Margin="0,0,6,6"
+                            ToolTip="Clear device settings backups"
+                            Command="{Binding DataContext.ClearDeviceSettingsBackupsForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                            CommandParameter="{Binding Name}"/>
+
+                    <Button Grid.Row="0" Grid.Column="1"
+                            Style="{StaticResource CassiaBadgeButtonStyleWarning}"
+                            Content="↻"
+                            Margin="0,0,0,6"
+                            ToolTip="Refresh firmware manifest"
+                            Command="{Binding DataContext.RefreshFwManifestForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                            CommandParameter="{Binding Name}"/>
+
+                    <Button Grid.Row="1" Grid.Column="0"
+                            Style="{StaticResource CassiaBadgeButtonStyle}"
+                            Content="📈"
+                            Margin="0,0,6,6"
+                            ToolTip="Open speed graph (up to 12 hours)"
+                            Command="{Binding DataContext.OpenSpeedGraphCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                            CommandParameter="{Binding Name}"/>
+                    <Button Grid.Row="1" Grid.Column="1"
+                            Style="{StaticResource CassiaBadgeButtonStyle}"
+                            Margin="0,0,0,6"
+                            ToolTip="Open LED range visualizer"
+                            Command="{Binding DataContext.OpenLedRangeVisualizerCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                            CommandParameter="{Binding Name}">
+                        <TextBlock FontFamily="Segoe MDL2 Assets"
+                                   Text="&#xE706;"/>
+                    </Button>
+
+                    <Border Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2"/>
+
+                    <!-- Text buttons: single per row -->
+                    <Button Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2"
+                            Style="{StaticResource CassiaBadgeButtonStyle}"
+                            Content="Workers"
+                            Margin="0,0,0,6"
+                            ToolTip="Set parallel programmers"
+                            Command="{Binding DataContext.SetParallelProgrammersForCassiaPromptCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                            CommandParameter="{Binding}"/>
                 </Grid>
-
-                <!-- Right button column spans full card height -->
-                <UniformGrid Grid.Row="0" Grid.RowSpan="2" Grid.Column="1"
-                             Columns="2"
-                             VerticalAlignment="Top"
-                             HorizontalAlignment="Right"
-                             Margin="8,0,0,0">
-
-                        <Button Style="{StaticResource CassiaBadgeButtonStyleWarning}"
-                                Content="🧹"
-                                Margin="0,0,0,6"
-                                ToolTip="Clear device settings backups"
-                                Command="{Binding DataContext.ClearDeviceSettingsBackupsForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                CommandParameter="{Binding Name}"/>
-
-                        <Button Style="{StaticResource CassiaBadgeButtonStyleWarning}"
-                                Content="↻"
-                                Margin="0,0,0,6"
-                                ToolTip="Refresh firmware manifest"
-                                Command="{Binding DataContext.RefreshFwManifestForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                CommandParameter="{Binding Name}"/>
-
-
-                        <Button Style="{StaticResource CassiaBadgeButtonStyle}"
-                                Content="Workers"
-                                Margin="0,0,0,6"
-                                ToolTip="Set parallel programmers"
-                                Command="{Binding DataContext.SetParallelProgrammersForCassiaPromptCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                CommandParameter="{Binding}"/>
-                        <Button Style="{StaticResource CassiaBadgeButtonStyle}"
-                                Content="LED"
-                                Margin="0,0,0,6"
-                                ToolTip="Open LED range visualizer"
-                                Command="{Binding DataContext.OpenLedRangeVisualizerCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                CommandParameter="{Binding Name}"/>
-
-                        <Button Style="{StaticResource CassiaBadgeButtonStyle}"
-                                Content="📈"
-                                Margin="0,0,0,0"
-                                ToolTip="Open speed graph (up to 12 hours)"
-                                Command="{Binding DataContext.OpenSpeedGraphCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                CommandParameter="{Binding Name}"/>
-                </UniformGrid>
 
                                 <!-- =========================
                      Row 1: Metrics + Info
                      ========================= -->
-                <Grid Grid.Row="1" Grid.Column="0" Margin="0,10,0,0">
+                <Grid Grid.Row="1" Grid.Column="0" Margin="0,6,0,0">
 
                     <!-- Metrics + Info -->
                     <StackPanel Orientation="Vertical">
@@ -385,7 +632,7 @@
                 <!-- =========================
                      Row 2: Assign (ONE LINE)
                      ========================= -->
-                <Grid Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,10,0,0">
+                <Grid Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,6,0,0" Visibility="Hidden">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
@@ -506,24 +753,6 @@
 
         <!-- ================= RIGHT PANEL ================= -->
         <DockPanel Grid.Column="2">
-            <!-- Throttled UI update cadence indicator -->
-            <Border DockPanel.Dock="Top" Style="{StaticResource Card}" Margin="0,0,0,10">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-
-                    <TextBlock Text="UI update cadence" FontWeight="SemiBold" Opacity="0.85"/>
-
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
-                        <TextBlock Text="{Binding ProgressUiCountdownText}" Margin="0,0,14,0" Opacity="0.85"/>
-                        <TextBlock Text="{Binding DiscoveredUiCountdownText}" Opacity="0.85"/>
-                        <Button Style="{StaticResource GhostButton}" Content="Refresh UI" Padding="12,6" Margin="14,0,0,0" Command="{Binding RefreshUiNowCommand}" Visibility="Collapsed"/>
-                    </StackPanel>
-                </Grid>
-            </Border>
-
             <TabControl Style="{StaticResource TabControlStyle}">
 
 
@@ -784,7 +1013,8 @@
 
                                     <DataGridTextColumn Header="Status" Binding="{Binding ProcessStatus}" Width="200" IsReadOnly="True"/>
                                     <DataGridTextColumn Header="Chip" Binding="{Binding ChipUsed}" Width="50" IsReadOnly="True"/>
-                                    <DataGridTextColumn Header="%" Binding="{Binding ProcessProgress}" Width="40" IsReadOnly="True"/>
+                                    <DataGridTemplateColumn Header="%" Width="40"
+                                                            CellTemplate="{StaticResource ProcessProgressBarCellTemplate}"/>
                                     <DataGridTextColumn Header="FW" Binding="{Binding ProcessFirmware}" Width="90" IsReadOnly="True"/>
                                     <DataGridTextColumn Header="Current FW" Binding="{Binding DisplayFw}" Width="90" IsReadOnly="True"/>
 
@@ -862,10 +1092,10 @@
                                         </Style>
                                     </DataGrid.RowStyle>
                                     <DataGrid.Columns>
-                                        <DataGridTextColumn Header="MAC" Binding="{Binding Mac}" Width="160"/>
+                                        <DataGridTextColumn Header="MAC" Binding="{Binding Mac}" Width="100"/>
                                         <DataGridTextColumn Header="Cassia" Binding="{Binding Cassia}" Width="110"/>
                                         <DataGridTextColumn Header="Chip" Binding="{Binding ChipUsed}" Width="50"/>
-                                        <DataGridTemplateColumn Header="RSSI" Width="220" CanUserSort="False">
+                                        <DataGridTemplateColumn Header="RSSI" Width="700" CanUserSort="False">
                                             <DataGridTemplateColumn.CellTemplate>
                                                 <DataTemplate>
                                                     <ItemsControl ItemsSource="{Binding RssiEntries}">
@@ -898,33 +1128,7 @@
                                         <DataGridTextColumn Header="Model" Binding="{Binding DetectorType}" Width="70"/>
                                         <DataGridTextColumn Header="FW" Binding="{Binding FirmwareVersion}" Width="90"/>
                                         <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="260"/>
-                                        <DataGridTemplateColumn Header="%" Width="60">
-                                            <DataGridTemplateColumn.CellTemplate>
-                                                <DataTemplate>
-                                                    <TextBlock>
-                                                        <TextBlock.Style>
-                                                            <Style TargetType="TextBlock">
-                                                                <Setter Property="Text" Value="{Binding Progress, StringFormat={}{0}%}"/>
-                                                                <Style.Triggers>
-                                                                    <DataTrigger Binding="{Binding Status}" Value="">
-                                                                        <Setter Property="Text" Value=""/>
-                                                                    </DataTrigger>
-                                                                    <DataTrigger Binding="{Binding Status}" Value="{x:Null}">
-                                                                        <Setter Property="Text" Value=""/>
-                                                                    </DataTrigger>
-                                                                    <DataTrigger Binding="{Binding Status}" Value="queued">
-                                                                        <Setter Property="Text" Value=""/>
-                                                                    </DataTrigger>
-                                                                    <DataTrigger Binding="{Binding Status}" Value="Queued">
-                                                                        <Setter Property="Text" Value=""/>
-                                                                    </DataTrigger>
-                                                                </Style.Triggers>
-                                                            </Style>
-                                                        </TextBlock.Style>
-                                                    </TextBlock>
-                                                </DataTemplate>
-                                            </DataGridTemplateColumn.CellTemplate>
-                                        </DataGridTemplateColumn>
+                                        <DataGridTemplateColumn Header="%" Width="100" CellTemplate="{StaticResource ProgressBarCellTemplate}"/>
                                         <DataGridTextColumn Header="Notes" Binding="{Binding Notes}" Width="*"/>
                                     </DataGrid.Columns>
                                 </DataGrid>
@@ -1142,33 +1346,7 @@
                             <DataGridTextColumn Header="Model" Binding="{Binding DetectorType}" Width="70"/>
                             <DataGridTextColumn Header="FW" Binding="{Binding FirmwareVersion}" Width="90"/>
                             <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="260"/>
-                            <DataGridTemplateColumn Header="%" Width="60">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <TextBlock>
-                                            <TextBlock.Style>
-                                                <Style TargetType="TextBlock">
-                                                    <Setter Property="Text" Value="{Binding Progress, StringFormat={}{0}%}"/>
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding Status}" Value="">
-                                                            <Setter Property="Text" Value=""/>
-                                                        </DataTrigger>
-                                                        <DataTrigger Binding="{Binding Status}" Value="{x:Null}">
-                                                            <Setter Property="Text" Value=""/>
-                                                        </DataTrigger>
-                                                        <DataTrigger Binding="{Binding Status}" Value="queued">
-                                                            <Setter Property="Text" Value=""/>
-                                                        </DataTrigger>
-                                                        <DataTrigger Binding="{Binding Status}" Value="Queued">
-                                                            <Setter Property="Text" Value=""/>
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </TextBlock.Style>
-                                        </TextBlock>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="%" Width="60" CellTemplate="{StaticResource ProgressBarCellTemplate}"/>
                             <DataGridTextColumn Header="Created" Binding="{Binding CreatedLocal}" Width="160"/>
                         </DataGrid.Columns>
                     </DataGrid>
@@ -1215,200 +1393,27 @@
                                 <DataGridTextColumn Header="Model" Binding="{Binding DetectorType}" Width="70"/>
                                 <DataGridTextColumn Header="FW" Binding="{Binding FirmwareVersion}" Width="90"/>
                                 <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="140"/>
-                                <DataGridTemplateColumn Header="%" Width="60">
-                                    <DataGridTemplateColumn.CellTemplate>
-                                        <DataTemplate>
-                                            <TextBlock>
-                                                <TextBlock.Style>
-                                                    <Style TargetType="TextBlock">
-                                                        <Setter Property="Text" Value="{Binding Progress, StringFormat={}{0}%}"/>
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding Status}" Value="">
-                                                                <Setter Property="Text" Value=""/>
-                                                            </DataTrigger>
-                                                            <DataTrigger Binding="{Binding Status}" Value="{x:Null}">
-                                                                <Setter Property="Text" Value=""/>
-                                                            </DataTrigger>
-                                                            <DataTrigger Binding="{Binding Status}" Value="queued">
-                                                                <Setter Property="Text" Value=""/>
-                                                            </DataTrigger>
-                                                            <DataTrigger Binding="{Binding Status}" Value="Queued">
-                                                                <Setter Property="Text" Value=""/>
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </TextBlock.Style>
-                                            </TextBlock>
-                                        </DataTemplate>
-                                    </DataGridTemplateColumn.CellTemplate>
-                                </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Header="%" Width="60" CellTemplate="{StaticResource ProgressBarCellTemplate}"/>
                             </DataGrid.Columns>
                         </DataGrid>
 
                     </DockPanel>
                 </Border>
             </TabItem>
-
             <!-- ===== Upgrade log ===== -->
             <TabItem Header="Upgrade log">
-                <Border Style="{StaticResource Card}">
-                    <DockPanel>
-
-                        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10" VerticalAlignment="Center">
-                            <TextBlock Text="Upgrade log" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                            <TextBlock Text="  " />
-                            <TextBlock Text="{Binding UpgradeLogSummary}" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"/>
-
-                            <TextBlock Text="   Search:" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="18,0,0,0"/>
-                            <TextBox Width="220"
-                                     Text="{Binding UpgradeLogSearchText, UpdateSourceTrigger=PropertyChanged}"
-                                     Margin="8,0,0,0"
-                                     VerticalAlignment="Center"/>
-
-                            <!-- UPDATED: add (LogId dropdown) + keep existing gateway dropdown + request/clear buttons -->
-                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="18,0,0,0">
-                                    <ComboBox Width="160"
-                                          ItemsSource="{Binding LogGatewayOptions}"
-                                          SelectedItem="{Binding SelectedLogGatewayName}"
-                                          Margin="0,0,8,0"/>
-
-                                    <ComboBox Width="130"
-                                          ItemsSource="{Binding UpgradeLogShowOptions}"
-                                          SelectedItem="{Binding SelectedUpgradeLogShowOption}"
-                                          Margin="0,0,8,0"/>
-
-                                <CheckBox Content="Latest per MAC"
-                                          IsChecked="{Binding UpgradeLogLatestOnlyPerMac, Mode=TwoWay}"
-                                          VerticalAlignment="Center"
-                                          Margin="0,0,12,0"/>
-
-                                <Button Style="{StaticResource GhostButton}"
-                                        Content="Export"
-                                        Padding="12,6"
-                                        Command="{Binding ExportUpgradeLogToExcelCommand}"
-                                        Margin="0,0,8,0"/>
-
-
-                                <Button Style="{StaticResource PrimaryButton}"
-                                        Content="Request"
-                                        Command="{Binding RequestUpgradeLogCommand}"
-                                        Margin="0,0,8,0"/>
-                                <Button Style="{StaticResource GhostButton}"
-                                        Content="Clear on Cassia"
-                                        Command="{Binding ClearUpgradeLogOnCassiaCommand}"
-                                        Margin="0,0,8,0"/>
-                                <Button Style="{StaticResource GhostButton}"
-                                        Content="Clear"
-                                        Command="{Binding ClearUpgradeLogCommand}"/>
-                            </StackPanel>
-                        </StackPanel>
-
-                        <ListBox ItemsSource="{Binding UpgradeLogGroupsView}"
-                                 BorderThickness="0"
-                                 Background="Transparent"
-                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                 ScrollViewer.IsDeferredScrollingEnabled="True"
-                                 ScrollViewer.CanContentScroll="True"
-                                 VirtualizingPanel.IsVirtualizing="True"
-                                 VirtualizingPanel.VirtualizationMode="Recycling">
-                            <ListBox.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <VirtualizingStackPanel/>
-                                </ItemsPanelTemplate>
-                            </ListBox.ItemsPanel>
-                            <ListBox.ItemTemplate>
-                                <DataTemplate>
-                                        <Border Background="{StaticResource CardBrush}"
-                                                BorderThickness="2"
-                                                Padding="10"
-                                                Margin="0,0,0,10"
-                                                CornerRadius="10"
-                                                BorderBrush="{Binding DisplayBadgeStatus, Converter={StaticResource StatusToBrush}}">
-                                            <Expander IsExpanded="False" Loaded="UpgradeLogExpander_Loaded" Expanded="UpgradeLogExpander_Expanded" Collapsed="UpgradeLogExpander_Collapsed">
-                                                
-                                                <Expander.Resources>
-                                                    <CollectionViewSource x:Key="EntriesView" Source="{Binding Entries}">
-                                                        <CollectionViewSource.SortDescriptions>
-                                                            <scm:SortDescription PropertyName="TimeLocal" Direction="Descending"/>
-                                                        </CollectionViewSource.SortDescriptions>
-                                                    </CollectionViewSource>
-                                                </Expander.Resources>
-
-                                                <Expander.Header>
-                                                    <Grid>
-                                                        <Grid.RowDefinitions>
-                                                            <RowDefinition Height="Auto"/>
-                                                            <RowDefinition Height="Auto"/>
-                                                        </Grid.RowDefinitions>
-
-                                                        <StackPanel Orientation="Horizontal" Grid.Row="0">
-                                                                <TextBlock Text="{Binding LogIdMacPart}" FontWeight="SemiBold"/>
-                                                                <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
-                                                                <TextBlock Text="{Binding StartedAtLocalText}" />
-                                                                <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
-                                                                <TextBlock Text="{Binding Cassia}"/>
-                                                                <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
-                                                                <TextBlock Text="{Binding LatestMacWithName}"/>
-                                                                <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
-                                                                <TextBlock Text="{Binding LastTimeLocalText}"/>
-                                                                <TextBlock Text="  •  TOTAL TIME: " Foreground="{StaticResource MutedBrush}"/>
-                                                                <TextBlock Text="{Binding TotalDurationText}" />
-                                                                <TextBlock Text="m" Foreground="{StaticResource MutedBrush}"/>
-
-
-                                                                <Border Margin="12,0,0,0"
-                                                                    Padding="8,2"
-                                                                    CornerRadius="10"
-                                                                    VerticalAlignment="Center"
-                                                                    Background="{Binding DisplayBadgeStatus, Converter={StaticResource StatusToBrush}}">
-                                                                <TextBlock Text="{Binding DisplayBadgeStatus}"
-                                                                           FontWeight="SemiBold"
-                                                                           Foreground="White"/>
-                                                            </Border>
-                                                        </StackPanel>
-
-                                                        <TextBlock Grid.Row="1"
-                                                                   Margin="0,4,0,0"
-                                                                   Foreground="{StaticResource MutedBrush}"
-                                                                   Text="{Binding LatestSummary}"
-                                                                   TextTrimming="CharacterEllipsis"/>
-                                                    </Grid>
-                                                </Expander.Header>
-
-                                                <DataGrid ItemsSource="{Binding Source={StaticResource EntriesView}}"
-                                                          Margin="0,10,0,0"
-                                                          MaxHeight="420"
-                                                          AutoGenerateColumns="False"
-                                                          IsReadOnly="True"
-                                                          HeadersVisibility="Column"
-                                                          CanUserAddRows="False"
-                                                          CanUserResizeRows="False"
-                                                          CanUserSortColumns="False"
-                                                          GridLinesVisibility="None" EnableRowVirtualization="True" EnableColumnVirtualization="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.IsDeferredScrollingEnabled="True" ScrollViewer.CanContentScroll="True">
-                                                    <DataGrid.Columns>
-                                                        <DataGridTextColumn Header="Time" Binding="{Binding TimeLocalText}" Width="140"/>
-                                                        <DataGridTextColumn Header="Stage" Binding="{Binding Stage}" Width="400"/>
-                                                        <DataGridTextColumn Header="FW" Binding="{Binding Firmware}" Width="80"/>
-                                                        <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="*">
-                                                            <DataGridTextColumn.ElementStyle>
-                                                                <Style TargetType="TextBlock">
-                                                                    <Setter Property="FontWeight" Value="SemiBold"/>
-                                                                    <Setter Property="Foreground"
-                                                                            Value="{Binding Status, Converter={StaticResource StatusToBrush}}"/>
-                                                                </Style>
-                                                            </DataGridTextColumn.ElementStyle>
-                                                        </DataGridTextColumn>
-                                                    </DataGrid.Columns>
-                                                </DataGrid>
-                                            </Expander>
-                                        </Border>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                        </ListBox>
-
-                    </DockPanel>
-                </Border>
+                <ContentControl Content="{Binding}">
+                    <ContentControl.Style>
+                        <Style TargetType="ContentControl">
+                            <Setter Property="ContentTemplate" Value="{StaticResource UpgradeLogTabPlaceholderTemplate}"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=TabItem}}" Value="True">
+                                    <Setter Property="ContentTemplate" Value="{StaticResource UpgradeLogTabContentTemplate}"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ContentControl.Style>
+                </ContentControl>
             </TabItem>
 
         
@@ -1468,6 +1473,8 @@
         </Grid>
     </DockPanel>
 </Window>
+
+
 
 
 

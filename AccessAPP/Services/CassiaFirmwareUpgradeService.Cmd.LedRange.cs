@@ -397,6 +397,9 @@ namespace AccessAPP.Services
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
 
+                if (requested.Count == 0)
+                    forceAll = true;
+
                 if (!forceAll && requested.Count == 0)
                 {
                     requested = _ledRangeHeldConnections.Keys
