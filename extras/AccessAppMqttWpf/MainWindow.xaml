@@ -1,4 +1,4 @@
-<Window x:Class="AccessAppMqttWpf.MainWindow"
+﻿<Window x:Class="AccessAppMqttWpf.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:conv="clr-namespace:AccessAppMqttWpf.Converters"
@@ -48,7 +48,7 @@
             <Setter Property="Padding" Value="8,2"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Foreground" Value="Black"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
             <Setter Property="Background" Value="#777"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Cursor" Value="Hand"/>
@@ -67,9 +67,11 @@
             <Style.Triggers>
                 <DataTrigger Binding="{Binding State}" Value="online">
                     <Setter Property="Background" Value="#2ECC71"/>
+                    <Setter Property="Foreground" Value="White"/>
                 </DataTrigger>
                 <DataTrigger Binding="{Binding State}" Value="offline">
                     <Setter Property="Background" Value="#E74C3C"/>
+                    <Setter Property="Foreground" Value="White"/>
                 </DataTrigger>
             </Style.Triggers>
         </Style>
@@ -78,7 +80,7 @@
             <Setter Property="Padding" Value="8,2"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Foreground" Value="Black"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
             <Setter Property="Background" Value="#777"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Cursor" Value="Hand"/>
@@ -97,23 +99,56 @@
             <Style.Triggers>
                 <DataTrigger Binding="{Binding State}" Value="online">
                     <Setter Property="Background" Value="Orange"/>
+                    <Setter Property="Foreground" Value="White"/>
                 </DataTrigger>
                 <DataTrigger Binding="{Binding State}" Value="offline">
                     <Setter Property="Background" Value="#E74C3C"/>
+                    <Setter Property="Foreground" Value="White"/>
                 </DataTrigger>
             </Style.Triggers>
         </Style>
 
         <Style x:Key="MetaLabel" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="Margin" Value="0,8,0,4"/>
         </Style>
 
         <!-- Simple tabs styling -->
         <Style x:Key="TabControlStyle" TargetType="TabControl">
-            <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Background" Value="{DynamicResource CardBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+
+        <Style TargetType="TabItem">
+            <Setter Property="Background" Value="{DynamicResource Card2Brush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+            <Setter Property="Padding" Value="12,7"/>
+            <Setter Property="Margin" Value="0,0,6,0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="8,8,0,0"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter ContentSource="Header"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource CardBrush}"/>
+                </Trigger>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource CardBrush}"/>
+                </Trigger>
+            </Style.Triggers>
         </Style>
 
         <DataTemplate x:Key="ProgressBarCellTemplate">
@@ -121,13 +156,14 @@
                 <ProgressBar Minimum="0"
                              Maximum="100"
                              Value="{Binding Progress}"
-                             Background="#FFE5E7EB"
-                             Foreground="#FF60A5FA"/>
+                             Background="{DynamicResource Card2Brush}"
+                             Foreground="{DynamicResource AccentBrush}"/>
                 <TextBlock Text="{Binding Progress, StringFormat={}{0}%}"
                            HorizontalAlignment="Center"
                            VerticalAlignment="Center"
                            FontSize="11"
-                           FontWeight="SemiBold"/>
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource TextBrush}"/>
                 <Grid.Style>
                     <Style TargetType="Grid">
                         <Style.Triggers>
@@ -154,20 +190,21 @@
                 <ProgressBar Minimum="0"
                              Maximum="100"
                              Value="{Binding ProcessProgress}"
-                             Background="#FFE5E7EB"
-                             Foreground="#FF34D399"/>
+                             Background="{DynamicResource Card2Brush}"
+                             Foreground="{DynamicResource GoodBrush}"/>
                 <TextBlock Text="{Binding ProcessProgress, StringFormat={}{0}%}"
                            HorizontalAlignment="Center"
                            VerticalAlignment="Center"
                            FontSize="11"
-                           FontWeight="SemiBold"/>
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource TextBrush}"/>
             </Grid>
         </DataTemplate>
         <DataTemplate x:Key="UpgradeLogTabPlaceholderTemplate">
             <Border Style="{StaticResource Card}">
                 <Grid>
                     <TextBlock Text="Upgrade log will load when you open this tab."
-                               Foreground="{StaticResource MutedBrush}"
+                               Foreground="{DynamicResource MutedBrush}"
                                FontSize="13"
                                VerticalAlignment="Center"
                                HorizontalAlignment="Center"/>
@@ -182,9 +219,9 @@
                     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10" VerticalAlignment="Center">
                         <TextBlock Text="Upgrade log" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
                         <TextBlock Text="  " />
-                        <TextBlock Text="{Binding UpgradeLogSummary}" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Visibility="Collapsed"/>
+                        <TextBlock Text="{Binding UpgradeLogSummary}" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" Visibility="Collapsed"/>
 
-                        <TextBlock Text="   Search:" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="18,0,0,0"/>
+                        <TextBlock Text="   Search:" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" Margin="18,0,0,0"/>
                         <TextBox Width="220"
                                  Text="{Binding UpgradeLogSearchText, UpdateSourceTrigger=PropertyChanged}"
                                  Margin="8,0,0,0"
@@ -245,7 +282,7 @@
                         </ListBox.ItemsPanel>
                         <ListBox.ItemTemplate>
                             <DataTemplate>
-                                    <Border Background="{StaticResource CardBrush}"
+                                    <Border Background="{DynamicResource CardBrush}"
                                             BorderThickness="2"
                                             Padding="10"
                                             Margin="0,0,0,10"
@@ -263,17 +300,17 @@
 
                                                     <StackPanel Orientation="Horizontal" Grid.Row="0">
                                                             <TextBlock Text="{Binding LogIdMacPart}" FontWeight="SemiBold"/>
-                                                            <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
+                                                            <TextBlock Text="  â€¢  " Foreground="{DynamicResource MutedBrush}"/>
                                                             <TextBlock Text="{Binding StartedAtLocalText}" />
-                                                            <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
+                                                            <TextBlock Text="  â€¢  " Foreground="{DynamicResource MutedBrush}"/>
                                                             <TextBlock Text="{Binding Cassia}"/>
-                                                            <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
+                                                            <TextBlock Text="  â€¢  " Foreground="{DynamicResource MutedBrush}"/>
                                                             <TextBlock Text="{Binding LatestMacWithName}"/>
-                                                            <TextBlock Text="  •  " Foreground="{StaticResource MutedBrush}"/>
+                                                            <TextBlock Text="  â€¢  " Foreground="{DynamicResource MutedBrush}"/>
                                                             <TextBlock Text="{Binding LastTimeLocalText}"/>
-                                                            <TextBlock Text="  •  TOTAL TIME: " Foreground="{StaticResource MutedBrush}"/>
+                                                            <TextBlock Text="  â€¢  TOTAL TIME: " Foreground="{DynamicResource MutedBrush}"/>
                                                             <TextBlock Text="{Binding TotalDurationText}" />
-                                                            <TextBlock Text="m" Foreground="{StaticResource MutedBrush}"/>
+                                                            <TextBlock Text="m" Foreground="{DynamicResource MutedBrush}"/>
 
 
                                                             <Border Margin="12,0,0,0"
@@ -289,7 +326,7 @@
 
                                                     <TextBlock Grid.Row="1"
                                                                Margin="0,4,0,0"
-                                                               Foreground="{StaticResource MutedBrush}"
+                                                               Foreground="{DynamicResource MutedBrush}"
                                                                Text="{Binding LatestSummary}"
                                                                TextTrimming="CharacterEllipsis"/>
                                                 </Grid>
@@ -332,8 +369,10 @@
 
     </Window.Resources>
 
-    <DockPanel Margin="0">
-        <Menu DockPanel.Dock="Top">
+    <DockPanel Margin="0" Background="{DynamicResource BgBrush}">
+        <Menu DockPanel.Dock="Top"
+              Background="{DynamicResource CardBrush}"
+              Foreground="{DynamicResource TextBrush}">
             <MenuItem Header="Cassia">
                 <MenuItem Header="Speed graph (all)" Command="{Binding OpenSpeedGraphAllCommand}"/>
                 <MenuItem Header="LED range visualizer (all)" Command="{Binding OpenLedRangeVisualizerAllCommand}"/>
@@ -344,16 +383,26 @@
                 <MenuItem Header="Set parallel (all)" Command="{Binding SetParallelProgrammersForAllCassiasPromptCommand}"/>
                 <MenuItem Header="Get parallel (all)" Command="{Binding GetParallelProgrammersForAllCassiasCommand}"/>
             </MenuItem>
+            <MenuItem Header="Theme">
+                <MenuItem x:Name="ThemeLightMenuItem"
+                          Header="Light"
+                          IsCheckable="True"
+                          Click="ThemeLight_Click"/>
+                <MenuItem x:Name="ThemeDarkMenuItem"
+                          Header="Dark"
+                          IsCheckable="True"
+                          Click="ThemeDark_Click"/>
+            </MenuItem>
         </Menu>
 
         <StatusBar DockPanel.Dock="Bottom"
-                   Background="{StaticResource CardBrush}"
-                   BorderBrush="{StaticResource BorderBrush}"
+                   Background="{DynamicResource CardBrush}"
+                   BorderBrush="{DynamicResource BorderBrush}"
                    BorderThickness="1"
                    Margin="0,10,0,0">
             <StatusBarItem>
                 <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="{Binding StatusBarText}" Foreground="{StaticResource MutedBrush}"/>
+                    <TextBlock Text="{Binding StatusBarText}" Foreground="{DynamicResource MutedBrush}"/>
                 </StackPanel>
             </StatusBarItem>
             <StatusBarItem HorizontalAlignment="Right" HorizontalContentAlignment="Right">
@@ -362,7 +411,7 @@
                     <TextBlock Text="{Binding ProgressUiCountdownText}" Margin="0,0,14,0" Opacity="0.85"/>
                     <TextBlock Text="{Binding DiscoveredUiCountdownText}" Opacity="0.85"/>
                     <TextBlock Text="   " Opacity="0.85"/>
-                    <TextBlock Text="{Binding TotalSpeedStatusText}" Foreground="{StaticResource MutedBrush}"/>
+                    <TextBlock Text="{Binding TotalSpeedStatusText}" Foreground="{DynamicResource MutedBrush}"/>
                     <Button Style="{StaticResource GhostButton}"
                             Content="Refresh UI"
                             Padding="12,6"
@@ -373,7 +422,7 @@
             </StatusBarItem>
         </StatusBar>
 
-        <Grid>
+        <Grid Background="{DynamicResource BgBrush}">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="440"/>
             <ColumnDefinition Width="18"/>
@@ -398,8 +447,8 @@
                         </ItemsControl.ItemContainerStyle>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                                                <Border Background="{StaticResource CardBrush}"
-        BorderBrush="{StaticResource BorderBrush}"
+                                                                <Border Background="{DynamicResource CardBrush}"
+        BorderBrush="{DynamicResource BorderBrush}"
         BorderThickness="1"
         CornerRadius="10"
         Margin="0,0,0,8"
@@ -486,7 +535,7 @@
                     <!-- Icon buttons: two per row -->
                     <Button Grid.Row="0" Grid.Column="0"
                             Style="{StaticResource CassiaBadgeButtonStyleWarning}"
-                            Content="🧹"
+                            Content="ðŸ§¹"
                             Margin="0,0,6,6"
                             ToolTip="Clear device settings backups"
                             Command="{Binding DataContext.ClearDeviceSettingsBackupsForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
@@ -494,7 +543,7 @@
 
                     <Button Grid.Row="0" Grid.Column="1"
                             Style="{StaticResource CassiaBadgeButtonStyleWarning}"
-                            Content="↻"
+                            Content="â†»"
                             Margin="0,0,0,6"
                             ToolTip="Refresh firmware manifest"
                             Command="{Binding DataContext.RefreshFwManifestForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
@@ -502,7 +551,7 @@
 
                     <Button Grid.Row="1" Grid.Column="0"
                             Style="{StaticResource CassiaBadgeButtonStyle}"
-                            Content="📈"
+                            Content="ðŸ“ˆ"
                             Margin="0,0,6,6"
                             ToolTip="Open speed graph (up to 12 hours)"
                             Command="{Binding DataContext.OpenSpeedGraphCommand, RelativeSource={RelativeSource AncestorType=Window}}"
@@ -542,27 +591,27 @@
 
                             <!-- Queue -->
                             <StackPanel Orientation="Horizontal" Margin="0,0,14,0" VerticalAlignment="Center">
-                                <TextBlock Text="⏳" FontSize="13" VerticalAlignment="Center"
-                                           Foreground="{StaticResource MutedBrush}"/>
+                                <TextBlock Text="â³" FontSize="13" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource MutedBrush}"/>
                                 <TextBlock Text=" " FontSize="12"/>
                                 <TextBlock Text="{Binding Queue}" FontWeight="SemiBold" FontSize="12"/>
                             </StackPanel>
 
                             <!-- Programming -->
                             <StackPanel Orientation="Horizontal" Margin="0,0,14,0" VerticalAlignment="Center">
-                                <TextBlock Text="⚙" FontSize="13" VerticalAlignment="Center"
-                                           Foreground="{StaticResource MutedBrush}"/>
+                                <TextBlock Text="âš™" FontSize="13" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource MutedBrush}"/>
                                 <TextBlock Text=" " FontSize="12"/>
                                 <TextBlock Text="{Binding Programming}" FontWeight="SemiBold" FontSize="12"/>
                             </StackPanel>
 
                             <!-- Speed -->
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="📶" FontSize="13" VerticalAlignment="Center"
-                                           Foreground="{StaticResource MutedBrush}"/>
+                                <TextBlock Text="ðŸ“¶" FontSize="13" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource MutedBrush}"/>
                                 <TextBlock Text=" " FontSize="12"/>
                                 <TextBlock Text="{Binding TotalSpeedpct}" Foreground="Red" FontWeight="SemiBold" FontSize="12"/>
-                                <TextBlock Text=" %/min" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="4,0,0,0"/>
+                                <TextBlock Text=" %/min" Foreground="{DynamicResource MutedBrush}" FontSize="12" Margin="4,0,0,0"/>
                             </StackPanel>
 
                         </StackPanel>
@@ -582,7 +631,7 @@
 
                             <TextBlock Grid.Row="0" Grid.Column="0"
                                        Text="Last:"
-                                       Foreground="{StaticResource MutedBrush}"
+                                       Foreground="{DynamicResource MutedBrush}"
                                        FontSize="12"
                                        Margin="0,0,6,0"/>
                             <TextBlock Grid.Row="0" Grid.Column="1"
@@ -594,7 +643,7 @@
 
                             <TextBlock Grid.Row="0" Grid.Column="2"
                                        Text="Uptime:"
-                                       Foreground="{StaticResource MutedBrush}"
+                                       Foreground="{DynamicResource MutedBrush}"
                                        FontSize="12"
                                        Margin="0,0,6,0"/>
                             <TextBlock Grid.Row="0" Grid.Column="3"
@@ -605,7 +654,7 @@
 
                             <TextBlock Grid.Row="1" Grid.Column="0"
                                        Text="Devices:"
-                                       Foreground="{StaticResource MutedBrush}"
+                                       Foreground="{DynamicResource MutedBrush}"
                                        FontSize="12"
                                        Margin="0,2,6,0"/>
                             <TextBlock Grid.Row="1" Grid.Column="1"
@@ -616,7 +665,7 @@
 
                             <TextBlock Grid.Row="1" Grid.Column="2"
                                        Text="Workers:"
-                                       Foreground="{StaticResource MutedBrush}"
+                                       Foreground="{DynamicResource MutedBrush}"
                                        FontSize="12"
                                        Margin="0,2,6,0"/>
                             <TextBlock Grid.Row="1" Grid.Column="3"
@@ -640,7 +689,7 @@
 
                     <TextBlock Grid.Column="0"
                                Text="Assign:"
-                               Foreground="{StaticResource MutedBrush}"
+                               Foreground="{DynamicResource MutedBrush}"
                                FontSize="12"
                                Margin="0,0,12,0"
                                VerticalAlignment="Center"/>
@@ -649,23 +698,23 @@
                                FontSize="12"
                                TextTrimming="CharacterEllipsis"
                                VerticalAlignment="Center">
-                        <Run Text="P41 " Foreground="{StaticResource MutedBrush}"/>
+                        <Run Text="P41 " Foreground="{DynamicResource MutedBrush}"/>
                         <Run Text="{Binding AssignedP41}" FontWeight="SemiBold"/>
                         <Run Text="   " />
 
-                        <Run Text="P42 " Foreground="{StaticResource MutedBrush}"/>
+                        <Run Text="P42 " Foreground="{DynamicResource MutedBrush}"/>
                         <Run Text="{Binding AssignedP42}" FontWeight="SemiBold"/>
                         <Run Text="   " />
 
-                        <Run Text="P46 " Foreground="{StaticResource MutedBrush}"/>
+                        <Run Text="P46 " Foreground="{DynamicResource MutedBrush}"/>
                         <Run Text="{Binding AssignedP46}" FontWeight="SemiBold"/>
-                        <Run Text="   |   " Foreground="{StaticResource MutedBrush}"/>
+                        <Run Text="   |   " Foreground="{DynamicResource MutedBrush}"/>
 
-                        <Run Text="P47 " Foreground="{StaticResource MutedBrush}"/>
+                        <Run Text="P47 " Foreground="{DynamicResource MutedBrush}"/>
                         <Run Text="{Binding AssignedP47}" FontWeight="SemiBold"/>
                         <Run Text="   " />
 
-                        <Run Text="P48 " Foreground="{StaticResource MutedBrush}"/>
+                        <Run Text="P48 " Foreground="{DynamicResource MutedBrush}"/>
                         <Run Text="{Binding AssignedP48}" FontWeight="SemiBold"/>
                     </TextBlock>
                 </Grid>
@@ -782,7 +831,7 @@
 
                                         <!-- Subtitle (existing) -->
                                         <TextBlock Text="  "/>
-                                        <TextBlock Text="{Binding DevicesSubtitle}" Foreground="{StaticResource MutedBrush}"/>
+                                        <TextBlock Text="{Binding DevicesSubtitle}" Foreground="{DynamicResource MutedBrush}"/>
                                     </StackPanel>
 
                                     <!-- Right top line (unchanged layout, as you said top line is ok) -->
@@ -913,7 +962,7 @@
                                                               CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
                                                     <MenuItem Header="Assign to Cassia" Tag="AssignCassia"/>
                                                     <Separator/>
-                                                    <MenuItem Header="Write-Read…"
+                                                    <MenuItem Header="Write-Readâ€¦"
                                                               Command="{Binding PlacementTarget.Tag.OpenWriteReadCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                                               CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
                                                 </ContextMenu>
@@ -1039,14 +1088,14 @@
                                           Height="5"
                                           HorizontalAlignment="Stretch"
                                           VerticalAlignment="Stretch"
-                                          Background="{StaticResource BorderBrush}"
+                                          Background="{DynamicResource BorderBrush}"
                                           ShowsPreview="True"/>
 
                             <DockPanel Grid.Row="2">
                                 <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
                                     <TextBlock Text="Queued devices" FontWeight="SemiBold"/>
                                     <TextBlock Text="  " />
-                                    <TextBlock Text="(same data as Queue tab)" Foreground="{StaticResource MutedBrush}"/>
+                                    <TextBlock Text="(same data as Queue tab)" Foreground="{DynamicResource MutedBrush}"/>
                                 </StackPanel>
 
                                 <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
@@ -1156,25 +1205,25 @@
                     <!-- Row 0: filters -->
                     <WrapPanel Grid.Row="0" VerticalAlignment="Center">
                         <TextBlock Text="Host BLE Scan" FontSize="18" FontWeight="SemiBold" Margin="0,0,12,0"/>
-                        <TextBlock Text="MAC prefix: 10:B9:F7" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                        <TextBlock Text="MAC prefix: 10:B9:F7" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" Margin="0,0,12,0"/>
 
-                        <TextBlock Text="Model:" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"/>
+                        <TextBlock Text="Model:" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center"/>
                         <ComboBox ItemsSource="{Binding HostBleModelOptions}"
                                   SelectedItem="{Binding HostBleModelFilter, Mode=TwoWay}"
                                   Width="110" Margin="8,0,12,0"/>
 
-                        <TextBlock Text="Host RSSI avg:" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"/>
+                        <TextBlock Text="Host RSSI avg:" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center"/>
                         <ComboBox ItemsSource="{Binding HostRssiAverageOptions}"
                                   SelectedItem="{Binding HostRssiAverageSeconds, Mode=TwoWay}"
                                   Width="80" Margin="8,0,2,0"/>
-                        <TextBlock Text="s" Foreground="{StaticResource MutedBrush}" Margin="6,0,12,0" VerticalAlignment="Center"/>
+                        <TextBlock Text="s" Foreground="{DynamicResource MutedBrush}" Margin="6,0,12,0" VerticalAlignment="Center"/>
 
-                        <TextBlock Text="UI update:" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"/>
+                        <TextBlock Text="UI update:" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center"/>
                         <ComboBox ItemsSource="{Binding HostBleUiUpdateOptions}"
                                   SelectedItem="{Binding HostBleUiUpdateSeconds, Mode=TwoWay}"
                                   Width="80" Margin="8,0,12,0"/>
 
-                        <TextBlock Text="Search:" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"/>
+                        <TextBlock Text="Search:" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center"/>
                         <TextBox Text="{Binding HostBleSearchText, UpdateSourceTrigger=PropertyChanged}"
                                  Width="160" Margin="8,0,12,0" Padding="6,2"/>
 
@@ -1255,7 +1304,7 @@
                               Height="5"
                               HorizontalAlignment="Stretch"
                               VerticalAlignment="Stretch"
-                              Background="{StaticResource BorderBrush}"
+                              Background="{DynamicResource BorderBrush}"
                               ShowsPreview="True"/>
 
                 <!-- Queue list (same as Devices tab) -->
@@ -1263,7 +1312,7 @@
                     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
                         <TextBlock Text="Queued devices" FontWeight="SemiBold"/>
                         <TextBlock Text="  "/>
-                        <TextBlock Text="(same data as Queue tab)" Foreground="{StaticResource MutedBrush}"/>
+                        <TextBlock Text="(same data as Queue tab)" Foreground="{DynamicResource MutedBrush}"/>
                     </StackPanel>
 
                     <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
@@ -1425,31 +1474,31 @@
                         <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10">
                             <Button Style="{StaticResource GhostButton}" Padding="10,6" Margin="0,0,8,0" Command="{Binding CopyNotesCommand}">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="📋" FontSize="14" Margin="0,0,6,0"/>
+                                    <TextBlock Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets" FontSize="14" Margin="0,0,6,0"/>
                                     <TextBlock Text="Copy"/>
                                 </StackPanel>
                             </Button>
                             <Button Style="{StaticResource GhostButton}" Padding="10,6" Margin="0,0,8,0" Command="{Binding ClearNotesCommand}">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="🧹" FontSize="14" Margin="0,0,6,0"/>
+                                    <TextBlock Text="&#xE894;" FontFamily="Segoe MDL2 Assets" FontSize="14" Margin="0,0,6,0"/>
                                     <TextBlock Text="Clear"/>
                                 </StackPanel>
                             </Button>
                             <Button Style="{StaticResource GhostButton}" Padding="10,6" Margin="0,0,8,0" Command="{Binding LoadNotesCommand}">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="📂" FontSize="14" Margin="0,0,6,0"/>
+                                    <TextBlock Text="&#xE8E5;" FontFamily="Segoe MDL2 Assets" FontSize="14" Margin="0,0,6,0"/>
                                     <TextBlock Text="Load"/>
                                 </StackPanel>
                             </Button>
                             <Button Style="{StaticResource GhostButton}" Padding="10,6" Margin="0,0,0,0" Command="{Binding SaveNotesCommand}">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="💾" FontSize="14" Margin="0,0,6,0"/>
+                                    <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="14" Margin="0,0,6,0"/>
                                     <TextBlock Text="Save"/>
                                 </StackPanel>
                             </Button>
 
-                            <TextBlock Text="  Autosaved every minute • Mac addresses added to queue are appended automatically"
-                                       Foreground="{StaticResource MutedBrush}"
+                            <TextBlock Text="  Autosaved every minute &#x2022; Mac addresses added to queue are appended automatically"
+                                       Foreground="{DynamicResource MutedBrush}"
                                        VerticalAlignment="Center"
                                        Margin="12,0,0,0"/>
                         </StackPanel>
@@ -1463,8 +1512,8 @@
                                  FontFamily="Consolas"
                                  FontSize="13"
                                  Padding="10"
-                                 BorderBrush="{StaticResource BorderBrush}"
-                                 Background="White"/>
+                                 BorderBrush="{DynamicResource BorderBrush}"
+                                 Background="{DynamicResource Card2Brush}"/>
                     </DockPanel>
                 </Border>
             </TabItem>
@@ -1473,8 +1522,6 @@
         </Grid>
     </DockPanel>
 </Window>
-
-
 
 
 

@@ -50,6 +50,7 @@ public sealed class AccessAppSettings
     public string networkId { get; set; } = "dk-lab";
     public string commandTopicTemplate { get; set; } = "accessapp/{networkId}/cmd/{cassia}/{command}";
     public string defaultCommand { get; set; } = "start-update";
+    public string theme { get; set; } = "Dark";
 
     // UI option: reflash sensor firmware even if current FW already matches target
     public bool forceUpdate { get; set; } = false;

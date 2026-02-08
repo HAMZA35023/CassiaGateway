@@ -33,6 +33,25 @@ public partial class MainWindow : Window
         ApplyQueueDefaultSort();
     }
 
+    private void ThemeLight_Click(object sender, RoutedEventArgs e)
+    {
+        App.ApplyTheme("Light");
+        UpdateThemeMenuChecks();
+    }
+
+    private void ThemeDark_Click(object sender, RoutedEventArgs e)
+    {
+        App.ApplyTheme("Dark");
+        UpdateThemeMenuChecks();
+    }
+
+    private void UpdateThemeMenuChecks()
+    {
+        var isDark = string.Equals(App.CurrentTheme, "Dark", StringComparison.OrdinalIgnoreCase);
+        if (ThemeLightMenuItem != null) ThemeLightMenuItem.IsChecked = !isDark;
+        if (ThemeDarkMenuItem != null) ThemeDarkMenuItem.IsChecked = isDark;
+    }
+
     private void DevicesGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
         // Only queue on double click when explicitly enabled
@@ -279,6 +298,8 @@ public partial class MainWindow : Window
 
     private void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        UpdateThemeMenuChecks();
+
         // Auto-connect shortly after startup (lets UI render first)
         var t = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         t.Tick += (_, __) =>
