@@ -1,0 +1,440 @@
+using AccessAppMqttWpf.Models;
+using AccessAppMqttWpf.Services;
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using System;
+using System.Collections.ObjectModel;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.IO;
+using System.IO.Compression;
+using System.Linq;
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Data;
+using System.Windows.Threading;
+using Microsoft.VisualBasic;
+using AccessAppMqttWpf;
+
+namespace AccessAppMqttWpf.ViewModels;
+
+public partial class MainViewModel : ObservableObject
+{
+// ---- MQTT parsing ----
+    // accessapp/dk-lab/tele/cassia-01/status
+    // accessapp/dk-lab/tele/cassia-01/discovered
+    // accessapp/dk-lab/tele/cassia-01/progress
+    private static readonly Regex TopicRx =
+        new(@"^accessapp/(?<net>[^/]+)/(?<kind>tele|cmd)/(?<cassia>[^/]+)/(?<leaf>[^/]+)$",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    // Upgrade-log / text-line parsing
+    private static readonly Regex LogLineMacRx =
+        new(@"\bmac=(?<mac>([0-9A-F]{2}:){5}[0-9A-F]{2})\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex LogLineStageRx =
+        new(@"\bstage=(?<stage>.*?)\s+time=", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex LogLineStatusRx =
+        new(@"\bstatus=(?<status>.*)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex LogLineFwRx =
+        new(@"\bfw=(?<fw>[^\s]+)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex LogLineNameRx =
+        new(@"\bname=(?<name>[^\s]+)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex LogLineDetectorRx =
+        new(@"\bdetector=(?<det>[^\s]+)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex SensorAppFromStatusRx =
+        new(@"Sensor:\s*App:\s*(?<app>[^\s|]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex LogLineIdRx =
+        new(@"\[logId=(?<id>[^\]]+)\]", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex LogLineTimeRx =
+        new(@"\btime=(?<time>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static string ExtractDeviceName(string? stage, string? status, string? nameFromLine)
+    {
+        if (!string.IsNullOrWhiteSpace(nameFromLine))
+            return nameFromLine.Trim();
+
+        var st = (stage ?? "").Trim();
+        if (st.Equals("Device Name", StringComparison.OrdinalIgnoreCase)
+            || st.Equals("Detector Name", StringComparison.OrdinalIgnoreCase))
+            return (status ?? "").Trim();
+
+        return "";
+    }
+
+    private void OnMqttMessage(string topic, string payload)
+    {
+        // 1) Handle plain-text replies regardless of topic.
+        // We accept:
+        //   "AA:BB:..: connect OK"
+        //   "[info] AA:BB:..: disconnect OK"
+        //   "\"AA:BB:..: notif=01-10-...\"" (quoted)
+        // and we handle multiple lines in one payload.
+        try
+        {
+            var text = payload ?? "";
+            foreach (var raw in text.Split(new[] { "\r", "\n" }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var line = raw.Trim();
+                if (line.Length == 0) continue;
+                line = line.Trim().Trim('"');
+
+                var mm = PlainReplyMacRx.Match(line);
+                if (!mm.Success) continue;
+
+                var mac = mm.Groups["mac"].Value.ToUpperInvariant();
+
+                // Message is whatever comes after the MAC (optionally preceded by ':')
+                var after = line.Substring(mm.Index + mm.Length).TrimStart();
+                if (after.StartsWith(":")) after = after.Substring(1).TrimStart();
+                var msg = after.Length > 0 ? after : line; // fallback
+
+                // Always update on UI thread so subscribers can safely update ObservableCollections.
+                Application.Current.Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    SetDeviceBleLinkFromPlainReply(mac, msg);
+                    PlainReplyReceived?.Invoke(mac, msg);
+                }));
+            }
+        }
+        catch { /* ignore */ }
+
+
+        var m = TopicRx.Match(topic);
+        if (!m.Success) return;
+
+        var net = m.Groups["net"].Value;
+        if (!net.Equals(NetworkId, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var kind = m.Groups["kind"].Value.ToLowerInvariant();
+        var cassia = m.Groups["cassia"].Value;
+        var leaf = m.Groups["leaf"].Value.ToLowerInvariant();
+
+        if (kind == "tele" && leaf == "status")
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(payload);
+                var root = doc.RootElement;
+
+                var name = root.TryGetProperty("name", out var n) ? n.GetString() ?? cassia : cassia;
+                var version = root.TryGetProperty("version", out var verEl) ? (verEl.GetString() ?? "") : "";
+                var state = root.TryGetProperty("state", out var s) ? s.GetString() ?? "unknown" : "unknown";
+                var ts = root.TryGetProperty("time", out var t) && t.TryGetDateTimeOffset(out var dto) ? dto : DateTimeOffset.UtcNow;
+                int queue = root.TryGetProperty("queue", out var q) ? q.GetInt32() : 0;
+                int programming = root.TryGetProperty("programming", out var pr) ? pr.GetInt32() : 0;
+                double totalSpeedpct = root.TryGetProperty("totalSpeedpct", out var sp) ? sp.GetDouble() : 0;
+                long uptimeSeconds = 0;
+                if (root.TryGetProperty("uptimeSeconds", out var upEl))
+                {
+                    if (upEl.ValueKind == JsonValueKind.Number) uptimeSeconds = upEl.GetInt64();
+                    else if (upEl.ValueKind == JsonValueKind.String && long.TryParse(upEl.GetString(), out var uv)) uptimeSeconds = uv;
+                }
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    var gw = CassiaGateways.FirstOrDefault(x => x.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+                    if (gw == null)
+                    {
+                        gw = new CassiaGateway { Name = name, NetworkId = net };
+                        CassiaGateways.Add(gw);
+                        SortCassiaGatewaysByName();
+                        SortCassiaGatewaysByName();
+                    }
+
+                    EnsureCassiaOption(name);
+
+                    // default for upgrade log tab
+                    if (SelectedLogGateway == null)
+                        SelectedLogGateway = gw;
+
+                    if (!LogGatewayOptions.Any(x => x.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                        LogGatewayOptions.Add(name);
+
+                    gw.State = state;
+                    gw.Version = version;
+                    gw.LastSeenUtc = ts;
+                    gw.Queue = queue;
+                    gw.Programming = programming;
+                    gw.TotalSpeedpct = totalSpeedpct;
+                    gw.AddSpeedSample(ts, totalSpeedpct);
+                    if (uptimeSeconds > 0)
+                    {
+                        gw.UptimeSeconds = uptimeSeconds;
+                        gw.UptimeReportedUtc = ts;
+                    }
+
+
+                    // When a gateway announces itself, ask it for FW manifest once per connect.
+                    MaybeAutoRequestFirmwareManifestAfterStatus(gw);
+
+                    // Also request runtime snapshot (queue / programming / parallel programmers) so the UI can reconnect mid-run.
+                    MaybeAutoRequestRuntimeStateAfterStatus(gw);
+
+                    MaybeAutoRequestDeviceListAfterStatus(gw);
+
+                    MaybeAutoRequestUpgradeLogAfterStatus(gw);
+
+                });
+            }
+            catch { }
+            return;
+        }
+
+        if (kind == "tele" && leaf == "upgrade-log")
+        {
+            HandleUpgradeLogTele(cassia, payload);
+            return;
+        }
+
+        if (kind == "tele" && leaf == "fw-manifest")
+        {
+            HandleFwManifestTele(cassia, payload);
+            return;
+        }
+
+        if (kind == "tele" && leaf == "device-list")
+        {
+            HandleDeviceListTele(cassia, payload);
+            return;
+        }
+
+        if (kind == "tele" && leaf == "queue-remove")
+        {
+            HandleQueueRemoveTele(cassia, payload);
+            return;
+        }
+
+        if (kind == "tele" && leaf == "queue-list")
+        {
+            HandleQueueListTele(cassia, payload);
+            return;
+        }
+
+        if (kind == "tele" && leaf == "programming-list")
+        {
+            HandleProgrammingListTele(cassia, payload);
+            return;
+        }
+
+        if (kind == "tele" && leaf == "parallel-programmers")
+        {
+            HandleParallelProgrammersTele(cassia, payload);
+            return;
+        }
+
+        if (kind == "tele" && leaf == "runtime")
+        {
+            HandleRuntimeVariablesTele(cassia, payload);
+            return;
+        }
+
+        if (kind == "tele" && leaf == "fw-version")
+        {
+            HandleFwVersionTele(cassia, payload);
+            return;
+        }
+
+        if (kind == "tele" && leaf == "disconnect")
+        {
+            HandleDisconnectTele(cassia, payload);
+            return;
+        }
+
+        if (kind == "tele" && leaf == "identify")
+        {
+            HandleIdentifyTele(cassia, payload);
+            return;
+        }
+
+        if (kind == "tele" && leaf == "led-range")
+        {
+            HandleLedRangeTele(cassia, payload);
+            return;
+        }
+
+
+        
+if (kind == "tele" && leaf == "progress")
+        {
+            // { mac, progressPercent, stage, time, firmwareTarget, ... }
+            try
+            {
+                using var doc = JsonDocument.Parse(payload);
+                var root = doc.RootElement;
+
+                var ts = DateTimeOffset.UtcNow;
+                if (root.TryGetProperty("time", out var tEl))
+                {
+                    if (tEl.ValueKind == JsonValueKind.String && DateTimeOffset.TryParse(tEl.GetString(), out var dto))
+                        ts = dto;
+                    else if (tEl.TryGetDateTimeOffset(out var dto2))
+                        ts = dto2;
+                }
+
+                var mac = root.TryGetProperty("mac", out var macEl) ? (macEl.GetString() ?? "") : "";
+                if (string.IsNullOrWhiteSpace(mac))
+                    return;
+
+                var stage = root.TryGetProperty("stage", out var stEl) ? (stEl.GetString() ?? "") : "";
+                var fwTarget = root.TryGetProperty("firmwareTarget", out var ftEl) ? (ftEl.GetString() ?? "") : "";
+
+                double pct = 0;
+                if (root.TryGetProperty("progressPercent", out var pEl))
+                {
+                    if (pEl.ValueKind == JsonValueKind.Number) pct = pEl.GetDouble();
+                    else if (pEl.ValueKind == JsonValueKind.String && double.TryParse(pEl.GetString(), out var pd)) pct = pd;
+                }
+
+                lock (_progressBufLock)
+                {
+                    if (!_progressByMac.TryGetValue(mac, out var bp))
+                    {
+                        bp = new BufferedProgress { Mac = mac };
+                        _progressByMac[mac] = bp;
+                    }
+                    bp.Cassia = cassia;
+                    bp.Stage = stage;
+                    bp.FirmwareTarget = fwTarget;
+                    bp.ProgressPercent = pct;
+                    bp.TimeUtc = ts;
+                }
+            }
+            catch { }
+            return;
+        }
+
+        if (kind == "tele" && leaf == "discovered")
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(payload);
+                var root = doc.RootElement;
+
+                var ts = root.TryGetProperty("time", out var t) && t.TryGetDateTimeOffset(out var dto) ? dto : DateTimeOffset.UtcNow;
+
+                if (root.TryGetProperty("devices", out var arr) && arr.ValueKind == JsonValueKind.Array)
+                {
+                    Application.Current.Dispatcher.Invoke(() =>
+                    {
+                        var gw = CassiaGateways.FirstOrDefault(x => x.Name.Equals(cassia, StringComparison.OrdinalIgnoreCase));
+                        if (gw == null)
+                        {
+                            gw = new CassiaGateway { Name = cassia, NetworkId = net };
+                            CassiaGateways.Add(gw);
+                            SortCassiaGatewaysByName();
+                        }
+
+                        EnsureCassiaOption(gw.Name);
+
+                    EnsureCassiaOption(cassia);
+
+                        if (!LogGatewayOptions.Any(x => x.Equals(cassia, StringComparison.OrdinalIgnoreCase)))
+                            LogGatewayOptions.Add(cassia);
+
+                        gw.LastSeenUtc = ts;
+                        gw.State = "online";
+
+                        if (!_gwSeenMacs.TryGetValue(cassia, out var seen))
+                        {
+                            seen = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            _gwSeenMacs[cassia] = seen;
+                        }
+
+                        foreach (var dev in arr.EnumerateArray())
+                        {
+                            var mac = dev.TryGetProperty("mac", out var macEl) ? macEl.GetString() ?? "" : "";
+                            if (string.IsNullOrWhiteSpace(mac)) continue;
+
+                            // Track unique MACs per gateway
+                            seen.Add(mac);
+
+                            var rssi = dev.TryGetProperty("rssi", out var rssiEl) && rssiEl.TryGetInt32(out var r) ? r : int.MinValue;
+                            var dn = dev.TryGetProperty("name", out var nameEl) ? nameEl.GetString() ?? "" : "";
+                            var pn = dev.TryGetProperty("productNumber", out var pnEl) ? pnEl.GetString() ?? "" : "";
+                            var fam = dev.TryGetProperty("detectorFamily", out var famEl) ? famEl.GetString() ?? "" : "";
+                            var typ = dev.TryGetProperty("detectorType", out var typEl) ? typEl.GetString() ?? "" : "";
+
+                            
+if (!_deviceByMac.TryGetValue(mac, out var existing))
+{
+    existing = new DiscoveredDevice { Mac = mac };
+    _deviceByMac[mac] = existing;
+    _devices.Add(existing);
+}
+
+                            EnsureDeviceAssignmentWiring(existing);
+                            ApplyCachedStatusToDevice(existing);
+
+                            ApplyDeviceNameWithGuards(existing, dn);
+                            if (!string.IsNullOrWhiteSpace(fam)) existing.DetectorFamily = fam;
+                            if (!string.IsNullOrWhiteSpace(typ)) existing.DetectorType = typ;
+
+                            if (!string.IsNullOrWhiteSpace(pn))
+                            {
+                                existing.ProductNumber = pn;
+                                if (_productToModel.TryGetValue(pn, out var model))
+                                    existing.SensorModel = model;
+                            }
+                            else if (!string.IsNullOrWhiteSpace(existing.ProductNumber) && _productToModel.TryGetValue(existing.ProductNumber, out var model2))
+                            {
+                                existing.SensorModel = model2;
+                            }
+
+                            existing.UpdateFromCassia(cassia, rssi, ts);
+                            UpdateQueueRssiForMac(mac);
+                            EnsureStickyAssignment(existing);
+                        }
+
+
+                        // show unique count since last clear
+                        gw.DevicesSeen = seen.Count;
+
+                        // Update per-gateway assignment counts
+                        RecalculateAssignmentCounts();
+
+                        RequestDevicesRefresh();
+                        OnPropertyChanged(nameof(DevicesSubtitle));
+                    });
+                }
+            }
+            catch { }
+            return;
+        }
+    }
+
+    private void SetDeviceBleLinkFromPlainReply(string mac, string msg)
+    {
+        if (string.IsNullOrWhiteSpace(mac)) return;
+        var d = _devices.FirstOrDefault(x => string.Equals(x.Mac, mac, StringComparison.OrdinalIgnoreCase));
+        if (d == null) return;
+
+        // Normalize a compact status for the grid
+        var lower = (msg ?? "").ToLowerInvariant();
+        if (lower.StartsWith("connect"))
+            d.BleLink = msg;
+        else if (lower.StartsWith("disconnect"))
+            d.BleLink = msg;
+        else if (lower.StartsWith("write"))
+            d.BleLink = msg;
+        else if (lower.StartsWith("notif"))
+            d.BleLink = "notif";
+        else if (lower.Contains("timeout"))
+            d.BleLink = "timeout";
+        else
+            d.BleLink = msg;
+    }
+
+}
