@@ -743,26 +743,26 @@ _hostBleScanner.Start();
     partial void OnSelectedLogGatewayNameChanged(string value)
     {
         MarkLatestUpgradeLogMapDirty();
-        UpgradeLogGroupsView.Refresh();
+        RequestUpgradeLogViewRefresh();
     }
 
     
     partial void OnSelectedUpgradeLogShowOptionChanged(string value)
     {
         MarkLatestUpgradeLogMapDirty();
-        UpgradeLogGroupsView.Refresh();
+        RequestUpgradeLogViewRefresh();
     }
 
     partial void OnUpgradeLogLatestOnlyPerMacChanged(bool value)
     {
         MarkLatestUpgradeLogMapDirty();
-        UpgradeLogGroupsView.Refresh();
+        RequestUpgradeLogViewRefresh();
     }
 
 partial void OnUpgradeLogSearchTextChanged(string value)
     {
         MarkLatestUpgradeLogMapDirty();
-        UpgradeLogGroupsView.Refresh();
+        RequestUpgradeLogViewRefresh();
     }
 
     partial void OnHostRssiAverageSecondsChanged(int value)
@@ -789,6 +789,18 @@ partial void OnUpgradeLogSearchTextChanged(string value)
     partial void OnConnectionStatusChanged(string value) => AppendStatusBar("MQTT", value);
     partial void OnHostBleUiStatusTextChanged(string value) => AppendStatusBar("Host BLE", value);
     partial void OnLedRangeStatusTextChanged(string value) => AppendStatusBar("LED range", value);
+
+    private void RunOnUi(Action action)
+    {
+        var disp = Application.Current?.Dispatcher;
+        if (disp == null || disp.CheckAccess())
+        {
+            action();
+            return;
+        }
+
+        disp.Invoke(action);
+    }
 
     private void AppendStatusBar(string source, string message)
     {
@@ -4394,6 +4406,13 @@ private static bool TryGetSavedLogLinesFromCompressedPayload(JsonElement root, o
     {
         if (entry == null) return;
 
+        var disp = Application.Current?.Dispatcher;
+        if (disp != null && !disp.CheckAccess())
+        {
+            disp.Invoke(() => AddUpgradeLogEntry(entry));
+            return;
+        }
+
         var entryCassia = (entry.Cassia ?? "").Trim();
         var entryLogId = (entry.LogId ?? "").Trim();
         if (string.IsNullOrWhiteSpace(entryLogId))
@@ -4437,9 +4456,9 @@ private static bool TryGetSavedLogLinesFromCompressedPayload(JsonElement root, o
     {
         // Determine latest group per MAC across ALL groups (do not depend on UI filters).
         var latestByMac = new Dictionary<string, UpgradeLogGroup>(StringComparer.OrdinalIgnoreCase);
-        foreach (var g in UpgradeLogGroups)
+        var groupsSnapshot = UpgradeLogGroups.Where(g => g != null).ToList();
+        foreach (var g in groupsSnapshot)
         {
-            if (g == null) continue;
             var mac = (g.Mac ?? "").Trim();
             if (string.IsNullOrWhiteSpace(mac)) continue;
 
@@ -4451,12 +4470,12 @@ private static bool TryGetSavedLogLinesFromCompressedPayload(JsonElement root, o
         {
             var mac = kvp.Key;
             var g = kvp.Value;
+            var entrySnapshot = g.Entries.Where(e => e != null).ToList();
             // IMPORTANT:
             // The per-device result MUST be taken from the "Device Upgrade Completed." line (Warn/Success/Failed).
             // Do NOT rely on the last informational line.
-            var completion = g.Entries
-                .Where(e => e != null
-                            && !string.IsNullOrWhiteSpace(e.Stage)
+            var completion = entrySnapshot
+                .Where(e => !string.IsNullOrWhiteSpace(e.Stage)
                             && e.Stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase))
                 .OrderByDescending(e => e.TimeLocal)
                 .FirstOrDefault();
@@ -4474,14 +4493,13 @@ private static bool TryGetSavedLogLinesFromCompressedPayload(JsonElement root, o
             // Use the group's completion timestamp if present.
             if (isSuccess)
             {
-                var t = g.Entries
-    .Where(e => e != null
-        && !string.IsNullOrWhiteSpace(e.Stage)
-        && e.Stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase)
-        && !string.IsNullOrWhiteSpace(e.Status)
-        && e.Status.Trim().Equals("Success", StringComparison.OrdinalIgnoreCase))
-    .OrderByDescending(e => e.TimeLocal)
-    .FirstOrDefault()?.TimeLocal ?? DateTimeOffset.MinValue;
+                var t = entrySnapshot
+                    .Where(e => !string.IsNullOrWhiteSpace(e.Stage)
+                        && e.Stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase)
+                        && !string.IsNullOrWhiteSpace(e.Status)
+                        && e.Status.Trim().Equals("Success", StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(e => e.TimeLocal)
+                    .FirstOrDefault()?.TimeLocal ?? DateTimeOffset.MinValue;
 
                 if (t != DateTimeOffset.MinValue)
                     cs.LastUpgradeSuccessUtc = t.ToUniversalTime();
@@ -4849,7 +4867,14 @@ private static bool TryGetSavedLogLinesFromCompressedPayload(JsonElement root, o
         if (_pendingUpgradeLogViewRefresh) return;
         _pendingUpgradeLogViewRefresh = true;
 
-        Application.Current.Dispatcher.InvokeAsync(async () =>
+        var disp = Application.Current?.Dispatcher;
+        if (disp == null)
+        {
+            _pendingUpgradeLogViewRefresh = false;
+            return;
+        }
+
+        disp.InvokeAsync(async () =>
         {
             await Task.Delay(250);
             _pendingUpgradeLogViewRefresh = false;
@@ -6519,7 +6544,7 @@ private void HandleIdentifyTele(string cassia, string payload)
             FilteredDevices.Refresh();
             QueueView.Refresh();
             MarkLatestUpgradeLogMapDirty();
-            UpgradeLogGroupsView.Refresh();
+        RequestUpgradeLogViewRefresh();
         }
         catch { }
     }
@@ -6669,6 +6694,8 @@ private void HandleIdentifyTele(string cassia, string payload)
     }
 
 }
+
+
 
 
 
