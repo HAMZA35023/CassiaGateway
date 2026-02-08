@@ -17,6 +17,40 @@ export interface MqttConfig {
   subscribeToAllTarget: boolean;
 }
 
+export interface LedRangeDeviceRow {
+  mac: string;
+  model: string;
+  rssi: number;
+  chip: number;
+  color: string;
+  status: string;
+  error: string;
+}
+
+export interface LedRangeStateSnapshot {
+  statusText: string;
+  progressText: string;
+  requestedTotal: number;
+  triedCount: number;
+  connectedCount: number;
+  failedCount: number;
+  progressPercent: number;
+  requestId: string;
+  stage: string;
+  minRssi: number;
+  lastUpdatedUtc: string;
+  connectedDevices: LedRangeDeviceRow[];
+  failedDevices: LedRangeDeviceRow[];
+}
+
+export interface LedRangeStartRequest {
+  minRssi: number;
+  model: string;
+  maxConnectAttempts: number;
+  pincode: string;
+  useBothChips: boolean;
+}
+
 @Injectable({
   providedIn: 'root'
 })
@@ -79,6 +113,23 @@ export class ApiService {
 
   saveMqttConfig(config: MqttConfig): Observable<any> {
     return this.http.put(`${this.baseUrl}/Cassia/mqtt/config`, config);
+  }
+
+  // LED range visualizer (local)
+  getLedRangeState(): Observable<LedRangeStateSnapshot> {
+    return this.http.get<LedRangeStateSnapshot>(`${this.baseUrl}/Cassia/led-range/state`);
+  }
+
+  startLedRange(request: LedRangeStartRequest): Observable<any> {
+    return this.http.post(`${this.baseUrl}/Cassia/led-range/start`, request);
+  }
+
+  retryFailedLedRange(request: LedRangeStartRequest): Observable<any> {
+    return this.http.post(`${this.baseUrl}/Cassia/led-range/retry-failed`, request);
+  }
+
+  disconnectLedRange(forceAll: boolean): Observable<any> {
+    return this.http.post(`${this.baseUrl}/Cassia/led-range/disconnect`, { forceAll });
   }
 
   // Legacy endpoint for firmware mapping

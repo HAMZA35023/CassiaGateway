@@ -28,6 +28,7 @@ builder.Services.AddSingleton<CassiaNotificationService>();
 builder.Services.AddSingleton<CassiaFirmwareUpgradeService>();
 builder.Services.AddScoped<FirmwareUploadService>();
 builder.Services.AddSingleton<FirmwareManifestService>();
+builder.Services.AddSingleton<LedRangeLocalStateStore>();
 
 // ? Add CORS policy
 builder.Services.AddCors(options =>

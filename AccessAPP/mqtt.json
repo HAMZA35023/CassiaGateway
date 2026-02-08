@@ -1,0 +1,17 @@
+{
+  "name": "cassia-unknown3394",
+  "networkId": "dk-lab",
+  "host": "prod.statistics.niko-test.nu",
+  "port": 18883,
+  "useTls": false,
+  "username": "accessapp",
+  "password": "Niko1234",
+  "baseTopic": "accessapp",
+  "keepAliveSeconds": 30,
+  "reconnectDelaySeconds": 10,
+  "subscribeToAllTarget": true,
+  "publishTimeoutSeconds": 3,
+  "publishFailureReconnectThreshold": 3,
+  "publishFailureWindowSeconds": 20,
+  "reconnectDebounceSeconds": 10
+}

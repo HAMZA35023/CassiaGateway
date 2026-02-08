@@ -19,5 +19,10 @@ export const routes: Routes = [
     path: 'settings',
     loadComponent: () =>
       import('./pages/settings/settings').then(m => m.SettingsComponent)
+  },
+  {
+    path: 'led-range',
+    loadComponent: () =>
+      import('./pages/led-range/led-range').then(m => m.LedRangeComponent)
   }
 ];

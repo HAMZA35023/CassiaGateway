@@ -10,6 +10,7 @@ import { RouterModule } from '@angular/router';
       <a routerLink="/dashboard" routerLinkActive="active-tab">Detector Dashboard</a>
       <a routerLink="/logs-dashboard" routerLinkActive="active-tab">Upgrade Logs</a>
       <a routerLink="/firmware-upload" routerLinkActive="active-tab">Firmware Upload</a>
+      <a routerLink="/led-range" routerLinkActive="active-tab">LED Visualizer</a>
       <a routerLink="/settings" routerLinkActive="active-tab">Settings</a>
     </div>
   `,
