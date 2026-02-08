@@ -20,18 +20,30 @@ public partial class UpgradeLogGroup : ObservableObject
     public ObservableCollection<UpgradeLogEntry> Entries { get; } = new();
 
     // Deduplicate across payload shapes (raw line, JSON object, saved-log replay)
-    private readonly HashSet<string> _seen = new(StringComparer.Ordinal);
+    private HashSet<string> _seen = new(StringComparer.Ordinal);
+
+    private void PruneNullEntries()
+    {
+        for (var i = Entries.Count - 1; i >= 0; i--)
+        {
+            if (Entries[i] == null)
+                Entries.RemoveAt(i);
+        }
+    }
+
+    private List<UpgradeLogEntry> SnapshotEntries() =>
+        Entries.Where(e => e != null).ToList();
 
     public DateTimeOffset LastTimeLocal =>
         Entries.Count == 0
             ? DateTimeOffset.MinValue
-            : Entries.Where(e => e != null).Select(e => e.TimeLocal).DefaultIfEmpty(DateTimeOffset.MinValue).Max();
+            : SnapshotEntries().Select(e => e.TimeLocal).DefaultIfEmpty(DateTimeOffset.MinValue).Max();
 
     public string LastTimeLocalText =>
         LastTimeLocal == DateTimeOffset.MinValue ? "" : LastTimeLocal.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
 
     public string LatestStage =>
-        Entries.Where(e => e != null).OrderByDescending(e => e.TimeLocal).FirstOrDefault()?.Stage ?? "";
+        SnapshotEntries().OrderByDescending(e => e.TimeLocal).FirstOrDefault()?.Stage ?? "";
 
     public string LatestStatus
     {
@@ -40,8 +52,8 @@ public partial class UpgradeLogGroup : ObservableObject
             // IMPORTANT:
             // If we have a "Device Upgrade Completed." line, the group status MUST be taken from that line's Status.
             // (Warn/Success/Failed) and not from whatever the last informational line happens to be.
-            var completion = Entries
-                .Where(e => e != null)
+            var snapshot = SnapshotEntries();
+            var completion = snapshot
                 .Where(e => !string.IsNullOrWhiteSpace(e.Stage)
                             && e.Stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase))
                 .OrderByDescending(e => e.TimeLocal)
@@ -58,7 +70,7 @@ public partial class UpgradeLogGroup : ObservableObject
             }
 
             // Fallback: no completion line yet. Use the last entry, but never claim "Success" unless completion exists.
-            var last = Entries.Where(e => e != null).OrderByDescending(e => e.TimeLocal).FirstOrDefault();
+            var last = snapshot.OrderByDescending(e => e.TimeLocal).FirstOrDefault();
             if (last == null) return "";
 
             if (!string.IsNullOrWhiteSpace(last.Status)
@@ -74,14 +86,14 @@ public partial class UpgradeLogGroup : ObservableObject
     /// The last entry may be informational, so we scan the group.
     /// </summary>
     public bool ContainsCompletionSuccess =>
-        Entries.Where(e => e != null).Any(e =>
+        SnapshotEntries().Any(e =>
             !string.IsNullOrWhiteSpace(e.Stage)
             && e.Stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase)
             && !string.IsNullOrWhiteSpace(e.Status)
             && e.Status.Trim().Equals("Success", StringComparison.OrdinalIgnoreCase));
 
     public bool ContainsCompletionFailed =>
-        Entries.Where(e => e != null).Any(e =>
+        SnapshotEntries().Any(e =>
             !string.IsNullOrWhiteSpace(e.Stage)
             && e.Stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase)
             && !string.IsNullOrWhiteSpace(e.Status)
@@ -89,7 +101,7 @@ public partial class UpgradeLogGroup : ObservableObject
                 || e.Status.Trim().StartsWith("Fail", StringComparison.OrdinalIgnoreCase)));
 
     public bool ContainsCompletionWarn =>
-        Entries.Where(e => e != null).Any(e =>
+        SnapshotEntries().Any(e =>
             !string.IsNullOrWhiteSpace(e.Stage)
             && e.Stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase)
             && !string.IsNullOrWhiteSpace(e.Status)
@@ -101,13 +113,13 @@ public partial class UpgradeLogGroup : ObservableObject
             : LatestStatus;
 
     public string LatestFirmware =>
-        Entries.Where(e => e != null).OrderByDescending(e => e.TimeLocal).FirstOrDefault()?.Firmware ?? "";
+        SnapshotEntries().OrderByDescending(e => e.TimeLocal).FirstOrDefault()?.Firmware ?? "";
 
     public string LatestMac =>
-        Entries.Where(e => e != null).OrderByDescending(e => e.TimeLocal).FirstOrDefault()?.Mac ?? Mac ?? "";
+        SnapshotEntries().OrderByDescending(e => e.TimeLocal).FirstOrDefault()?.Mac ?? Mac ?? "";
 
     public string LatestDeviceName =>
-        Entries.Where(e => e != null)
+        SnapshotEntries()
             .OrderByDescending(e => e.TimeLocal)
             .Select(e => e.DeviceName)
             .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? "";
@@ -129,7 +141,7 @@ public partial class UpgradeLogGroup : ObservableObject
     {
         get
         {
-            var e = Entries.Where(x => x != null).OrderByDescending(x => x.TimeLocal).FirstOrDefault();
+            var e = SnapshotEntries().OrderByDescending(x => x.TimeLocal).FirstOrDefault();
             if (e is null) return "";
             var t = e.TimeLocal == DateTimeOffset.MinValue ? "" : e.TimeLocal.ToLocalTime().ToString("HH:mm:ss");
             var fw = string.IsNullOrWhiteSpace(e.Firmware) ? "" : e.Firmware.Trim();
@@ -170,7 +182,7 @@ public partial class UpgradeLogGroup : ObservableObject
         get
         {
             // best effort: find earliest "Current FW Version" stage and parse Sensor App
-            var e = Entries.Where(x => x != null)
+            var e = SnapshotEntries()
                 .OrderBy(x => x.TimeLocal)
                 .FirstOrDefault(x => (x.Stage ?? "").Contains("Current FW Version", StringComparison.OrdinalIgnoreCase));
             if (e == null) return "";
@@ -180,7 +192,7 @@ public partial class UpgradeLogGroup : ObservableObject
         }
     }
 
-    public string TargetFirmware => Entries.Where(e => e != null).OrderByDescending(e => e.TimeLocal).FirstOrDefault()?.Firmware ?? "";
+    public string TargetFirmware => SnapshotEntries().OrderByDescending(e => e.TimeLocal).FirstOrDefault()?.Firmware ?? "";
 
     public string StartedAtLocalText =>
         StartedAtLocal == DateTimeOffset.MinValue ? "" : StartedAtLocal.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
@@ -210,10 +222,13 @@ public partial class UpgradeLogGroup : ObservableObject
     {
         if (e is null) return;
 
+        PruneNullEntries();
+
         // Use normalized fingerprint to dedup
         var fp =
             $"{e.TimeLocal:yyyyMMddHHmmss}|{(e.Stage ?? "").Trim()}|{(e.Status ?? "").Trim()}|{(e.Firmware ?? "").Trim()}|{(e.Mac ?? "").Trim()}";
 
+        _seen ??= new HashSet<string>(StringComparer.Ordinal);
         if (!_seen.Add(fp))
             return;
 
@@ -251,3 +266,7 @@ public partial class UpgradeLogGroup : ObservableObject
 
     }
 }
+
+
+
+
