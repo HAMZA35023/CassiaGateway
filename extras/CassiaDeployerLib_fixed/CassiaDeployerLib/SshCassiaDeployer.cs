@@ -5,6 +5,7 @@
 using Renci.SshNet;
 using Renci.SshNet.Sftp;
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 using System.Text;
 using System.Text.Json;
 
@@ -631,6 +632,8 @@ public sealed class SshCassiaDeployer
         if (!Directory.Exists(_opt.LocalPublishDir))
             throw new InvalidOperationException($"Publish output folder not created: {_opt.LocalPublishDir}");
 
+        WriteVersionFileIfAvailable(_opt.LocalPublishDir);
+
         _log.Info("Publish completed.");
 
         if (_opt.InstallStartupUpdater)
@@ -731,6 +734,42 @@ public sealed class SshCassiaDeployer
                 string.Join("\n", csprojs));
 
         return csprojs[0];
+    }
+
+    private void WriteVersionFileIfAvailable(string publishDir)
+    {
+        try
+        {
+            var versionCs = Path.Combine(_opt.ProjectDir, "Version.cs");
+            if (!File.Exists(versionCs))
+            {
+                _log.Warn($"Version source file not found, skipping version.txt write: {versionCs}");
+                return;
+            }
+
+            var text = File.ReadAllText(versionCs);
+            var match = Regex.Match(text, "AppVersion\\s*=\\s*\"([^\"]+)\"");
+            if (!match.Success)
+            {
+                _log.Warn("Could not parse AppVersion from Version.cs, skipping version.txt write.");
+                return;
+            }
+
+            var version = match.Groups[1].Value.Trim();
+            if (string.IsNullOrWhiteSpace(version))
+            {
+                _log.Warn("Parsed AppVersion was empty, skipping version.txt write.");
+                return;
+            }
+
+            var versionFilePath = Path.Combine(publishDir, "version.txt");
+            File.WriteAllText(versionFilePath, version + Environment.NewLine);
+            _log.Info($"Wrote publish version file: {versionFilePath} ({version})");
+        }
+        catch (Exception ex)
+        {
+            _log.Warn($"Failed to write publish version.txt (deployment continues): {ex.Message}");
+        }
     }
 
     // ------------------------------------------------------------
