@@ -535,7 +535,8 @@
                     <!-- Icon buttons: two per row -->
                     <Button Grid.Row="0" Grid.Column="0"
                             Style="{StaticResource CassiaBadgeButtonStyleWarning}"
-                            Content="ðŸ§¹"
+                            Content="&#x1F9F9;"
+                            FontFamily="Segoe UI Emoji"
                             Margin="0,0,6,6"
                             ToolTip="Clear device settings backups"
                             Command="{Binding DataContext.ClearDeviceSettingsBackupsForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
@@ -543,7 +544,7 @@
 
                     <Button Grid.Row="0" Grid.Column="1"
                             Style="{StaticResource CassiaBadgeButtonStyleWarning}"
-                            Content="â†»"
+                            Content="&#x21BB;"
                             Margin="0,0,0,6"
                             ToolTip="Refresh firmware manifest"
                             Command="{Binding DataContext.RefreshFwManifestForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
@@ -551,7 +552,8 @@
 
                     <Button Grid.Row="1" Grid.Column="0"
                             Style="{StaticResource CassiaBadgeButtonStyle}"
-                            Content="ðŸ“ˆ"
+                            Content="&#x1F4C8;"
+                            FontFamily="Segoe UI Emoji"
                             Margin="0,0,6,6"
                             ToolTip="Open speed graph (up to 12 hours)"
                             Command="{Binding DataContext.OpenSpeedGraphCommand, RelativeSource={RelativeSource AncestorType=Window}}"
@@ -591,7 +593,7 @@
 
                             <!-- Queue -->
                             <StackPanel Orientation="Horizontal" Margin="0,0,14,0" VerticalAlignment="Center">
-                                <TextBlock Text="â³" FontSize="13" VerticalAlignment="Center"
+                                <TextBlock Text="&#x23F3;" FontSize="13" VerticalAlignment="Center"
                                            Foreground="{DynamicResource MutedBrush}"/>
                                 <TextBlock Text=" " FontSize="12"/>
                                 <TextBlock Text="{Binding Queue}" FontWeight="SemiBold" FontSize="12"/>
@@ -599,7 +601,7 @@
 
                             <!-- Programming -->
                             <StackPanel Orientation="Horizontal" Margin="0,0,14,0" VerticalAlignment="Center">
-                                <TextBlock Text="âš™" FontSize="13" VerticalAlignment="Center"
+                                <TextBlock Text="&#x2699;" FontSize="13" VerticalAlignment="Center"
                                            Foreground="{DynamicResource MutedBrush}"/>
                                 <TextBlock Text=" " FontSize="12"/>
                                 <TextBlock Text="{Binding Programming}" FontWeight="SemiBold" FontSize="12"/>
@@ -607,7 +609,8 @@
 
                             <!-- Speed -->
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="ðŸ“¶" FontSize="13" VerticalAlignment="Center"
+                                <TextBlock Text="&#x1F4F6;" FontSize="13" VerticalAlignment="Center"
+                                           FontFamily="Segoe UI Emoji"
                                            Foreground="{DynamicResource MutedBrush}"/>
                                 <TextBlock Text=" " FontSize="12"/>
                                 <TextBlock Text="{Binding TotalSpeedpct}" Foreground="Red" FontWeight="SemiBold" FontSize="12"/>
