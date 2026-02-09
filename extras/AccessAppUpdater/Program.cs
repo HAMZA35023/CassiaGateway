@@ -270,9 +270,7 @@ internal static class Program
 
     private static void InstallAtomically(string installDir, string stageDir)
     {
-        var backupDir = installDir + ".prev";
-
-        SafeDeleteDirectory(backupDir);
+        var backupDir = PrepareBackupDirPath(installDir);
 
         if (Directory.Exists(installDir))
             Directory.Move(installDir, backupDir);
@@ -289,6 +287,15 @@ internal static class Program
                 Directory.Move(backupDir, installDir);
             throw;
         }
+    }
+
+    private static string PrepareBackupDirPath(string installDir)
+    {
+        var preferred = installDir + ".prev";
+        SafeDeleteDirectory(preferred);
+        if (Directory.Exists(preferred))
+            throw new IOException($"Cannot clear backup dir '{preferred}'.");
+        return preferred;
     }
 
     private static void TryChmodX(string path)

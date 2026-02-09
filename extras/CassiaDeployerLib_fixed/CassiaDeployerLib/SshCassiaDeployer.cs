@@ -1015,7 +1015,7 @@ WantedBy=multi-user.target
         var updaterStartBlock = _opt.InstallStartupUpdater
             ? @"  if [ -x ""$UPDATER_EXE"" ]; then
     echo ""Running startup updater...""
-    ""$UPDATER_EXE"" --config ""$UPDATER_CFG"" || echo ""[WARN] startup updater failed; continuing with current app""
+    run_as_app_user ""'$UPDATER_EXE' --config '$UPDATER_CFG'"" || echo ""[WARN] startup updater failed; continuing with current app""
   fi
 "
             : string.Empty;
@@ -1042,9 +1042,27 @@ APP_DIR='{_opt.RemoteDir.Replace("'", "")}'
 APP_EXE='{remoteExe.Replace("'", "")}'
 UPDATER_EXE='{updaterExe}'
 UPDATER_CFG='{updaterCfg}'
-PIDFILE='/var/run/{_opt.ServiceName}.pid'
+APP_USER='{_opt.User.Replace("'", "")}'
+PIDFILE='{_opt.RemoteDir.Replace("'", "")}/.{_opt.ServiceName}.pid'
 LOGFILE='{_opt.RemoteDir.Replace("'", "")}/accessapp.log'
 MAX_LOG_SIZE=$((10 * 1024 * 1024))  # 10 MB
+
+run_as_app_user() {{
+  CMD=""$1""
+  if [ ""$(id -un 2>/dev/null || true)"" = ""$APP_USER"" ]; then
+    sh -lc ""$CMD""
+    return $?
+  fi
+  if command -v su >/dev/null 2>&1; then
+    su -s /bin/sh -c ""$CMD"" ""$APP_USER""
+    return $?
+  fi
+  if command -v runuser >/dev/null 2>&1; then
+    runuser -u ""$APP_USER"" -- sh -lc ""$CMD""
+    return $?
+  fi
+  sh -lc ""$CMD""
+}}
 
 truncate_log_if_needed() {{
   if [ -f ""$LOGFILE"" ]; then
@@ -1059,17 +1077,18 @@ start() {{
   echo ""Starting accessapp...""
   mkdir -p ""$APP_DIR"" 2>/dev/null || true
   cd ""$APP_DIR"" || exit 1
+  touch ""$LOGFILE"" 2>/dev/null || true
+  chown ""$APP_USER"":""$APP_USER"" ""$APP_DIR"" ""$LOGFILE"" 2>/dev/null || true
 
 {updaterStartBlock}
 
   truncate_log_if_needed
 
-  nohup ""$APP_EXE"" >> ""$LOGFILE"" 2>&1 &
-  PID=$!
-  echo $PID > ""$PIDFILE""
+  run_as_app_user ""nohup '$APP_EXE' >> '$LOGFILE' 2>&1 & echo \\$! > '$PIDFILE'""
+  PID=$(cat ""$PIDFILE"" 2>/dev/null || true)
 
   sleep 1
-  if kill -0 $PID 2>/dev/null; then
+  if [ -n ""$PID"" ] && kill -0 $PID 2>/dev/null; then
     echo ""Started (pid=$PID)""
     exit 0
   fi
@@ -1146,12 +1165,15 @@ exit 0
         _log.Info($"Ensuring remote dir exists & is writable: {_opt.RemoteDir}");
 
         RunCommand(ssh, $"mkdir -p {ShEscape(_opt.RemoteDir)}");
+        RunCommand(ssh, $"mkdir -p {ShEscape(_opt.RemoteDir + ".prev")} || true");
 
         // chown via sudo (one-liner)
         RunSudo(ssh, $"chown -R {_opt.User}:{_opt.User} {ShEscape(_opt.RemoteDir)} || true");
+        RunSudo(ssh, $"if [ -d {ShEscape(_opt.RemoteDir + ".prev")} ]; then chown -R {_opt.User}:{_opt.User} {ShEscape(_opt.RemoteDir + ".prev")}; fi || true");
 
         // chmod without sudo (should be fine after chown)
         RunCommand(ssh, $"chmod -R u+rwX {ShEscape(_opt.RemoteDir)} || true");
+        RunCommand(ssh, $"if [ -d {ShEscape(_opt.RemoteDir + ".prev")} ]; then chmod -R u+rwX {ShEscape(_opt.RemoteDir + ".prev")}; fi || true");
     }
 
     // ------------------------------------------------------------
