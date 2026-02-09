@@ -6,6 +6,7 @@ using Renci.SshNet;
 using Renci.SshNet.Sftp;
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 
 namespace CassiaDeployerLib;
 
@@ -80,6 +81,8 @@ public sealed class SshCassiaDeployer
     private enum InitKind { Systemd, OpenRc, SysV, Unknown }
 
     private string ServiceUnitName => $"{_opt.ServiceName}.service";
+    private string StartupUpdaterExecStartPre =>
+        $"{_opt.UpdaterRemoteExePath} --config {_opt.UpdaterRemoteConfigPath}";
 
     public void Run()
     {
@@ -143,13 +146,11 @@ public sealed class SshCassiaDeployer
             var init = DetectInit(ssh);
             _log.Info($"Init system detected: {init}");
 
-            if (_opt.ManageService)
-            {
-                if (_opt.InstallServiceIfMissing)
-                    EnsureServiceInstalled(ssh, init);
+            if (_opt.ManageService && _opt.InstallServiceIfMissing)
+                EnsureServiceInstalled(ssh, init);
 
+            if (_opt.ManageService)
                 StopService(ssh, init);
-            }
 
             UploadDirectorySftpWithManifest(ssh, sftp, _opt.LocalPublishDir, _opt.RemoteDir, _opt.RemoteManifestPath);
 
@@ -162,6 +163,9 @@ public sealed class SshCassiaDeployer
             {
                 RunCommand(ssh, $"if [ -f {ShEscape(_opt.ExtraChmod755Path)} ]; then chmod 755 {ShEscape(_opt.ExtraChmod755Path)}; fi");
             }
+
+            if (_opt.InstallStartupUpdater)
+                InstallStartupUpdater(ssh, sftp);
 
             if (_opt.ManageService)
             {
@@ -626,6 +630,59 @@ public sealed class SshCassiaDeployer
             throw new InvalidOperationException($"Publish output folder not created: {_opt.LocalPublishDir}");
 
         _log.Info("Publish completed.");
+
+        if (_opt.InstallStartupUpdater)
+            BuildAndPublishUpdater();
+    }
+
+    private void BuildAndPublishUpdater()
+    {
+        _log.Info("Building and publishing startup updater...");
+
+        if (Directory.Exists(_opt.LocalUpdaterPublishDir))
+            Directory.Delete(_opt.LocalUpdaterPublishDir, recursive: true);
+
+        var updaterProjectFile = ResolveUpdaterProjectFile();
+        var selfContainedArg = _opt.UpdaterSelfContained ? "--self-contained" : "--no-self-contained";
+        var singleFileArg = _opt.UpdaterSingleFile ? "-p:PublishSingleFile=true" : "";
+
+        var args =
+            $"publish \"{updaterProjectFile}\" " +
+            $"-c {_opt.PublishConfiguration} " +
+            $"-r {_opt.UpdaterPublishRuntime} " +
+            $"{selfContainedArg} " +
+            $"{singleFileArg} " +
+            $"--output \"{_opt.LocalUpdaterPublishDir}\"";
+
+        _log.Info($"dotnet {args}");
+        _log.Info($"WorkingDirectory: {_opt.UpdaterProjectDir}");
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = "dotnet",
+            Arguments = args,
+            WorkingDirectory = _opt.UpdaterProjectDir,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+
+        using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start updater dotnet publish");
+
+        proc.OutputDataReceived += (_, e) => { if (e.Data != null) _log.Info(e.Data); };
+        proc.ErrorDataReceived += (_, e) => { if (e.Data != null) _log.Error(e.Data); };
+        proc.BeginOutputReadLine();
+        proc.BeginErrorReadLine();
+
+        proc.WaitForExit();
+
+        if (proc.ExitCode != 0)
+            throw new InvalidOperationException($"updater dotnet publish failed (exit {proc.ExitCode})");
+
+        if (!Directory.Exists(_opt.LocalUpdaterPublishDir))
+            throw new InvalidOperationException($"Updater publish output folder not created: {_opt.LocalUpdaterPublishDir}");
+
+        _log.Info("Startup updater publish completed.");
     }
 
     private string ResolveProjectFile()
@@ -646,6 +703,29 @@ public sealed class SshCassiaDeployer
         if (csprojs.Length > 1)
             throw new InvalidOperationException(
                 $"Multiple .csproj found in ProjectDir. Set DeployOptions.ProjectFile explicitly.\n" +
+                string.Join("\n", csprojs));
+
+        return csprojs[0];
+    }
+
+    private string ResolveUpdaterProjectFile()
+    {
+        if (!string.IsNullOrWhiteSpace(_opt.UpdaterProjectFile))
+        {
+            if (!File.Exists(_opt.UpdaterProjectFile))
+                throw new FileNotFoundException($"UpdaterProjectFile not found: {_opt.UpdaterProjectFile}");
+            return _opt.UpdaterProjectFile;
+        }
+
+        if (string.IsNullOrWhiteSpace(_opt.UpdaterProjectDir) || !Directory.Exists(_opt.UpdaterProjectDir))
+            throw new DirectoryNotFoundException($"UpdaterProjectDir not found: {_opt.UpdaterProjectDir}");
+
+        var csprojs = Directory.GetFiles(_opt.UpdaterProjectDir, "*.csproj", SearchOption.TopDirectoryOnly);
+        if (csprojs.Length == 0)
+            throw new InvalidOperationException($"No updater .csproj found in UpdaterProjectDir: {_opt.UpdaterProjectDir}");
+        if (csprojs.Length > 1)
+            throw new InvalidOperationException(
+                $"Multiple updater .csproj found in UpdaterProjectDir. Set DeployOptions.UpdaterProjectFile explicitly.\n" +
                 string.Join("\n", csprojs));
 
         return csprojs[0];
@@ -674,6 +754,61 @@ public sealed class SshCassiaDeployer
         if (hasInitD) return InitKind.SysV;
 
         return InitKind.Unknown;
+    }
+
+    private void InstallStartupUpdater(SshClient ssh, SftpClient sftp)
+    {
+        var localUpdaterExe = Path.Combine(_opt.LocalUpdaterPublishDir, "AccessAppUpdater");
+        if (!File.Exists(localUpdaterExe))
+            throw new FileNotFoundException($"Updater binary not found: {localUpdaterExe}");
+
+        _log.Info("Installing startup updater on target...");
+
+        var remoteTmpPath = CombineRemote(_opt.RemoteDir, ".accessapp_updater_tmp");
+        using (var fs = File.OpenRead(localUpdaterExe))
+            sftp.UploadFile(fs, remoteTmpPath, true);
+
+        RunSudo(ssh, $"mkdir -p {ShEscape(GetRemoteParentDir(_opt.UpdaterRemoteExePath))}");
+        RunSudo(ssh, $"install -m 755 {ShEscape(remoteTmpPath)} {ShEscape(_opt.UpdaterRemoteExePath)}");
+        RunCommand(ssh, $"rm -f {ShEscape(remoteTmpPath)} || true");
+
+        var updaterConfig = BuildUpdaterConfigJson();
+        var configB64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(updaterConfig));
+
+        RunSudo(ssh, $"mkdir -p {ShEscape(GetRemoteParentDir(_opt.UpdaterRemoteConfigPath))}");
+        RunSudo(ssh, $"echo '{configB64}' | base64 -d > {ShEscape(_opt.UpdaterRemoteConfigPath)}");
+        RunSudo(ssh, $"chmod 644 {ShEscape(_opt.UpdaterRemoteConfigPath)}");
+
+        _log.Info($"Startup updater installed: {_opt.UpdaterRemoteExePath}");
+        _log.Info($"Startup updater config updated: {_opt.UpdaterRemoteConfigPath}");
+    }
+
+    private string BuildUpdaterConfigJson()
+    {
+        var chmodPaths = new List<string> { _opt.RemoteExeName };
+
+        if (!string.IsNullOrWhiteSpace(_opt.ExtraChmod755Path))
+        {
+            var rel = TryMakeRelativeRemotePath(_opt.RemoteDir, _opt.ExtraChmod755Path);
+            if (!string.IsNullOrWhiteSpace(rel))
+                chmodPaths.Add(rel);
+        }
+
+        var payload = new
+        {
+            ManifestUrl = _opt.UpdaterManifestUrl,
+            Channel = _opt.UpdaterChannel,
+            AllowDowngrade = false,
+            InstallDir = _opt.RemoteDir,
+            WorkDir = _opt.UpdaterWorkDir,
+            VersionFileName = _opt.UpdaterVersionFileName,
+            ExecutableName = _opt.RemoteExeName,
+            HttpTimeoutSeconds = 30,
+            PreserveFiles = _opt.UpdaterPreserveFiles,
+            ExecutableRelativePathsToChmodX = chmodPaths.Distinct(StringComparer.Ordinal).ToArray()
+        };
+
+        return JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
     }
 
     // ------------------------------------------------------------
@@ -769,15 +904,15 @@ public sealed class SshCassiaDeployer
             $"systemctl show -p FragmentPath '{ServiceUnitName}' 2>/dev/null | sed 's/^FragmentPath=//'").Trim();
 
         if (!string.IsNullOrWhiteSpace(frag) && !frag.Equals("n/a", StringComparison.OrdinalIgnoreCase))
-        {
-            _log.Info($"Systemd unit exists: {frag}");
-            return;
-        }
-
-        _log.Info($"Systemd unit missing -> installing: {ServiceUnitName}");
+            _log.Info($"Systemd unit exists -> updating: {frag}");
+        else
+            _log.Info($"Systemd unit missing -> installing: {ServiceUnitName}");
 
         var unitPath = $"/etc/systemd/system/{ServiceUnitName}";
         var remoteExe = CombineRemote(_opt.RemoteDir, _opt.RemoteExeName);
+        var preStartLine = _opt.InstallStartupUpdater
+            ? $"ExecStartPre={StartupUpdaterExecStartPre}"
+            : string.Empty;
 
         var unit = $"""
 [Unit]
@@ -789,6 +924,7 @@ Wants=network-online.target
 Type=simple
 User={_opt.User}
 WorkingDirectory={_opt.RemoteDir}
+{preStartLine}
 ExecStart={remoteExe}
 Restart=always
 RestartSec=2
@@ -809,18 +945,21 @@ WantedBy=multi-user.target
     {
         var scriptPath = $"/etc/init.d/{_opt.ServiceName}";
         var remoteExe = CombineRemote(_opt.RemoteDir, _opt.RemoteExeName);
+        var updaterExe = _opt.UpdaterRemoteExePath.Replace("'", "");
+        var updaterCfg = _opt.UpdaterRemoteConfigPath.Replace("'", "");
+        var updaterStartBlock = _opt.InstallStartupUpdater
+            ? @"  if [ -x ""$UPDATER_EXE"" ]; then
+    echo ""Running startup updater...""
+    ""$UPDATER_EXE"" --config ""$UPDATER_CFG"" || exit 1
+  fi
+"
+            : string.Empty;
 
         var exists = RunCommandCapture(ssh, $"test -f '{scriptPath}'; echo $?").Trim() == "0";
         if (exists)
-        {
-            _log.Info($"Init script exists: {scriptPath}");
-
-            // Still fix CRLF / bad shebang issues if any (best effort)
-            RunSudo(ssh, $"sed -i 's/\\r$//' '{scriptPath}' || true");
-            return;
-        }
-
-        _log.Info($"Installing init script: {scriptPath}");
+            _log.Info($"Init script exists -> updating: {scriptPath}");
+        else
+            _log.Info($"Installing init script: {scriptPath}");
 
         // IMPORTANT: Use real newlines in the script content (no \\n sequences).
         // Also remove any accidental CRLF by running sed after write.
@@ -836,6 +975,8 @@ WantedBy=multi-user.target
 
 APP_DIR='{_opt.RemoteDir.Replace("'", "")}'
 APP_EXE='{remoteExe.Replace("'", "")}'
+UPDATER_EXE='{updaterExe}'
+UPDATER_CFG='{updaterCfg}'
 PIDFILE='/var/run/{_opt.ServiceName}.pid'
 LOGFILE='{_opt.RemoteDir.Replace("'", "")}/accessapp.log'
 MAX_LOG_SIZE=$((10 * 1024 * 1024))  # 10 MB
@@ -853,6 +994,8 @@ start() {{
   echo ""Starting accessapp...""
   mkdir -p ""$APP_DIR"" 2>/dev/null || true
   cd ""$APP_DIR"" || exit 1
+
+{updaterStartBlock}
 
   truncate_log_if_needed
 
@@ -1268,6 +1411,17 @@ exit 0
         baseDir = NormalizeRemote(baseDir);
         relative = relative.Replace('\\', '/').TrimStart('/');
         return baseDir + "/" + relative;
+    }
+
+    private static string? TryMakeRelativeRemotePath(string baseDir, string fullPath)
+    {
+        baseDir = NormalizeRemote(baseDir).TrimEnd('/') + "/";
+        fullPath = NormalizeRemote(fullPath);
+
+        if (!fullPath.StartsWith(baseDir, StringComparison.Ordinal))
+            return null;
+
+        return fullPath.Substring(baseDir.Length);
     }
 
     private static string ShEscape(string s)

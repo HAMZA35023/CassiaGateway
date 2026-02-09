@@ -24,6 +24,22 @@
   "PublishConfiguration": "Release",
   "PublishRuntime": "linux-arm",
   "SelfContained": true,
+  "InstallStartupUpdater": true,
+  "UpdaterProjectDir": "C:\\Users\\PLO\\source\\repos\\CassiaGateway\\extras\\AccessAppUpdater",
+  "UpdaterProjectFile": "C:\\Users\\PLO\\source\\repos\\CassiaGateway\\extras\\AccessAppUpdater\\AccessAppUpdater.csproj",
+  "LocalUpdaterPublishDir": "C:\\Users\\PLO\\source\\repos\\CassiaGateway\\extras\\AccessAppUpdater\\publish",
+  "UpdaterPublishRuntime": "linux-arm",
+  "UpdaterSelfContained": true,
+  "UpdaterSingleFile": true,
+  "UpdaterRemoteExePath": "/usr/local/bin/AccessAppUpdater",
+  "UpdaterRemoteConfigPath": "/etc/accessapp-updater.json",
+  "UpdaterManifestUrl": "http://prod.statistics.niko-test.nu/accessapp/manifest.json",
+  "UpdaterChannel": "stable",
+  "UpdaterWorkDir": "/tmp/accessapp-updater",
+  "UpdaterVersionFileName": "version.txt",
+  "UpdaterPreserveFiles": [
+    "mqtt.json"
+  ],
 
   "EnsureSshKeyLogin": true,
   "LocalSshPublicKeyPath": "C:\\Users\\PLO\\.ssh\\id_ed25519.pub",

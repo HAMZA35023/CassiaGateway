@@ -23,6 +23,11 @@ internal static class Program
             log.Info($"Local publish : {options.LocalPublishDir}");
             log.Info($"Remote dir    : {options.RemoteDir}");
             log.Info($"Service       : {options.ServiceName}");
+            if (options.InstallStartupUpdater)
+            {
+                log.Info($"Updater exe   : {options.UpdaterRemoteExePath}");
+                log.Info($"Updater feed  : {options.UpdaterManifestUrl}");
+            }
             log.Info("");
 
             var deployer = new SshCassiaDeployer(options, log);

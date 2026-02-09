@@ -33,6 +33,31 @@ public sealed class DeployOptions
     public string PublishRuntime { get; set; } = "linux-arm";
     public bool SelfContained { get; set; } = true;
 
+    // ---------- Startup updater deploy ----------
+    public bool InstallStartupUpdater { get; set; } = true;
+
+    public string UpdaterProjectDir { get; set; } =
+        @"C:\Users\PLO\source\repos\CassiaGateway\extras\AccessAppUpdater";
+
+    public string UpdaterProjectFile { get; set; } =
+        @"C:\Users\PLO\source\repos\CassiaGateway\extras\AccessAppUpdater\AccessAppUpdater.csproj";
+
+    public string LocalUpdaterPublishDir { get; set; } =
+        @"C:\Users\PLO\source\repos\CassiaGateway\extras\AccessAppUpdater\publish";
+
+    public string UpdaterPublishRuntime { get; set; } = "linux-arm";
+    public bool UpdaterSelfContained { get; set; } = true;
+    public bool UpdaterSingleFile { get; set; } = true;
+
+    public string UpdaterRemoteExePath { get; set; } = "/usr/local/bin/AccessAppUpdater";
+    public string UpdaterRemoteConfigPath { get; set; } = "/etc/accessapp-updater.json";
+    public string UpdaterManifestUrl { get; set; } = "http://prod.statistics.niko-test.nu/accessapp/manifest.json";
+    public string UpdaterChannel { get; set; } = "stable";
+    public string UpdaterWorkDir { get; set; } = "/tmp/accessapp-updater";
+    public string UpdaterVersionFileName { get; set; } = "version.txt";
+
+    public List<string> UpdaterPreserveFiles { get; set; } = new() { "mqtt.json" };
+
     // ---------- SSH key login provisioning ----------
     // If enabled, the deployer will:
     //  1) Ensure your local public key is present in ~/.ssh/authorized_keys on the target.
