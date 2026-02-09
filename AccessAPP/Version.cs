@@ -2,6 +2,6 @@
 {
     public class Version
     {
-        public const string AppVersion = "0.8.4";
+        public const string AppVersion = "0.8.5";
     }
 }
