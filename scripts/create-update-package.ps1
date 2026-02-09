@@ -15,7 +15,8 @@ param(
     [string]$ManifestFileName = "manifest.json",
     [ValidateSet("Optimal", "Fastest", "NoCompression", "SmallestSize")]
     [string]$CompressionLevel = "Optimal",
-    [bool]$StripSymbols = $true
+    [bool]$StripSymbols = $true,
+    [string]$SevenZipPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -50,29 +51,68 @@ try {
     Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
 
+    $enumNames = [System.Enum]::GetNames([System.IO.Compression.CompressionLevel])
     $resolvedCompression = [System.IO.Compression.CompressionLevel]::Optimal
-    if ([System.Enum]::GetNames([System.IO.Compression.CompressionLevel]) -contains $CompressionLevel) {
+    $use7Zip = $false
+
+    if ($enumNames -contains $CompressionLevel) {
         $resolvedCompression = [System.IO.Compression.CompressionLevel]::$CompressionLevel
+    }
+    elseif ($CompressionLevel -eq "SmallestSize") {
+        $candidate = $SevenZipPath
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            foreach ($name in @("7z", "7za", "7zz")) {
+                $cmd = Get-Command $name -ErrorAction SilentlyContinue
+                if ($cmd) {
+                    $candidate = $cmd.Source
+                    break
+                }
+            }
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path $candidate)) {
+            $use7Zip = $true
+            $SevenZipPath = $candidate
+            Write-Host "Using 7-Zip for SmallestSize compression: $SevenZipPath"
+        }
+        else {
+            Write-Warning "CompressionLevel 'SmallestSize' not supported on this runtime and 7-Zip not found. Falling back to 'Optimal'."
+        }
     }
     else {
         Write-Warning "CompressionLevel '$CompressionLevel' not supported on this runtime. Falling back to 'Optimal'."
     }
 
-    $zipStream = [System.IO.File]::Open($zipPath, [System.IO.FileMode]::CreateNew)
-    try {
-        $archive = [System.IO.Compression.ZipArchive]::new($zipStream, [System.IO.Compression.ZipArchiveMode]::Create, $false)
+    if ($use7Zip) {
+        Push-Location $tempRoot
         try {
-            Get-ChildItem -Path $tempRoot -Recurse -File | ForEach-Object {
-                $entryName = $_.FullName.Substring($tempRoot.Length).TrimStart('\', '/') -replace '\\', '/'
-                [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $_.FullName, $entryName, $resolvedCompression) | Out-Null
+            $zipTarget = [System.IO.Path]::GetFullPath($zipPath)
+            & $SevenZipPath a -tzip -mx=9 -mfb=258 -mpass=15 $zipTarget ".\*" | Out-Host
+            if ($LASTEXITCODE -ne 0) {
+                throw "7-Zip failed with exit code $LASTEXITCODE"
             }
         }
         finally {
-            $archive.Dispose()
+            Pop-Location
         }
     }
-    finally {
-        $zipStream.Dispose()
+    else {
+        $zipStream = [System.IO.File]::Open($zipPath, [System.IO.FileMode]::CreateNew)
+        try {
+            $archive = [System.IO.Compression.ZipArchive]::new($zipStream, [System.IO.Compression.ZipArchiveMode]::Create, $false)
+            try {
+                Get-ChildItem -Path $tempRoot -Recurse -File | ForEach-Object {
+                    $entryName = $_.FullName.Substring($tempRoot.Length).TrimStart('\', '/') -replace '\\', '/'
+                    [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $_.FullName, $entryName, $resolvedCompression) | Out-Null
+                }
+            }
+            finally {
+                $archive.Dispose()
+            }
+        }
+        finally {
+            $zipStream.Dispose()
+        }
     }
 
     $hash = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()

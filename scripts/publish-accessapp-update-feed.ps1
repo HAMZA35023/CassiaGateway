@@ -12,7 +12,8 @@ param(
     [string]$Channel = "stable",
     [ValidateSet("Optimal", "Fastest", "NoCompression", "SmallestSize")]
     [string]$CompressionLevel = "Optimal",
-    [bool]$StripSymbols = $true
+    [bool]$StripSymbols = $true,
+    [string]$SevenZipPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -100,7 +101,8 @@ Write-Host "Creating zip + manifest in web root: $WebRoot"
     -Channel $Channel `
     -ManifestFileName "manifest.json" `
     -CompressionLevel $CompressionLevel `
-    -StripSymbols:$StripSymbols
+    -StripSymbols:$StripSymbols `
+    -SevenZipPath $SevenZipPath
 
 if ($LASTEXITCODE -ne 0) {
     throw "create-update-package.ps1 failed with exit code $LASTEXITCODE"
