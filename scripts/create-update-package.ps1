@@ -12,7 +12,10 @@ param(
     [string]$AppName = "AccessAPP",
     [string]$RuntimeTag = "linux-arm",
     [string]$Channel = "stable",
-    [string]$ManifestFileName = "manifest.json"
+    [string]$ManifestFileName = "manifest.json",
+    [ValidateSet("Optimal", "Fastest", "NoCompression", "SmallestSize")]
+    [string]$CompressionLevel = "Optimal",
+    [bool]$StripSymbols = $true
 )
 
 $ErrorActionPreference = "Stop"
@@ -35,11 +38,42 @@ try {
     Copy-Item -Path (Join-Path $publishFull "*") -Destination $tempRoot -Recurse -Force
     Set-Content -Path (Join-Path $tempRoot "version.txt") -Value $Version -NoNewline
 
+    if ($StripSymbols) {
+        Get-ChildItem -Path $tempRoot -Recurse -File -Include *.pdb, *.dbg -ErrorAction SilentlyContinue |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+
     if (Test-Path $zipPath) {
         Remove-Item -Path $zipPath -Force
     }
 
-    Compress-Archive -Path (Join-Path $tempRoot "*") -DestinationPath $zipPath -Force
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+    $resolvedCompression = [System.IO.Compression.CompressionLevel]::Optimal
+    if ([System.Enum]::GetNames([System.IO.Compression.CompressionLevel]) -contains $CompressionLevel) {
+        $resolvedCompression = [System.IO.Compression.CompressionLevel]::$CompressionLevel
+    }
+    else {
+        Write-Warning "CompressionLevel '$CompressionLevel' not supported on this runtime. Falling back to 'Optimal'."
+    }
+
+    $zipStream = [System.IO.File]::Open($zipPath, [System.IO.FileMode]::CreateNew)
+    try {
+        $archive = [System.IO.Compression.ZipArchive]::new($zipStream, [System.IO.Compression.ZipArchiveMode]::Create, $false)
+        try {
+            Get-ChildItem -Path $tempRoot -Recurse -File | ForEach-Object {
+                $entryName = $_.FullName.Substring($tempRoot.Length).TrimStart('\', '/') -replace '\\', '/'
+                [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $_.FullName, $entryName, $resolvedCompression) | Out-Null
+            }
+        }
+        finally {
+            $archive.Dispose()
+        }
+    }
+    finally {
+        $zipStream.Dispose()
+    }
 
     $hash = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
     $size = (Get-Item -Path $zipPath).Length
@@ -79,6 +113,8 @@ try {
     Write-Host "  Zip      : $zipPath"
     Write-Host "  Manifest : $manifestPath"
     Write-Host "  Version  : $Version"
+    Write-Host "  Compress : $CompressionLevel"
+    Write-Host "  Symbols  : $(if ($StripSymbols) { 'stripped' } else { 'kept' })"
     Write-Host "  SHA256   : $hash"
     Write-Host "  URL      : $zipUrl"
 }

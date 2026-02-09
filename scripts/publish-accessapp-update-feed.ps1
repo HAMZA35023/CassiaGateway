@@ -9,7 +9,10 @@ param(
     [string]$Version = "",
     [string]$WebRoot = "C:\Ampps\www\public\accessapp",
     [string]$BaseUrl = "http://prod.statistics.niko-test.nu/accessapp",
-    [string]$Channel = "stable"
+    [string]$Channel = "stable",
+    [ValidateSet("Optimal", "Fastest", "NoCompression", "SmallestSize")]
+    [string]$CompressionLevel = "Optimal",
+    [bool]$StripSymbols = $true
 )
 
 $ErrorActionPreference = "Stop"
@@ -95,7 +98,9 @@ Write-Host "Creating zip + manifest in web root: $WebRoot"
     -AppName "AccessAPP" `
     -RuntimeTag $Runtime `
     -Channel $Channel `
-    -ManifestFileName "manifest.json"
+    -ManifestFileName "manifest.json" `
+    -CompressionLevel $CompressionLevel `
+    -StripSymbols:$StripSymbols
 
 if ($LASTEXITCODE -ne 0) {
     throw "create-update-package.ps1 failed with exit code $LASTEXITCODE"
