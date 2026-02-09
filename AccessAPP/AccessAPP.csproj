@@ -23,7 +23,7 @@
 		<PackageReference Include="Serilog.Enrichers.Thread" Version="4.0.0" />
 </ItemGroup>
 
-	<Target Name="BuildClientApp" BeforeTargets="Build" Condition="Exists('ClientApp\\build.bat')">
+	<Target Name="BuildClientApp" BeforeTargets="Build" Condition="'$(SkipClientAppBuild)' != 'true' and Exists('ClientApp\\build.bat')">
 		<Exec Command="build.bat" WorkingDirectory="$(MSBuildProjectDirectory)\\ClientApp" />
 	</Target>
 

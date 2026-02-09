@@ -23,6 +23,7 @@ internal static class Program
             log.Info($"Local publish : {options.LocalPublishDir}");
             log.Info($"Remote dir    : {options.RemoteDir}");
             log.Info($"Service       : {options.ServiceName}");
+            log.Info($"Skip client build: {options.SkipClientAppBuild}");
             if (options.InstallStartupUpdater)
             {
                 log.Info($"Updater exe   : {options.UpdaterRemoteExePath}");

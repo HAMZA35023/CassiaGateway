@@ -4,10 +4,10 @@
   "User": "cassia",
   "Password": "",
 
-  "ProjectDir": "C:\\Users\\PLO\\source\\repos\\CassiaGateway\\AccessAPP",
-  "ProjectFile": "C:\\Users\\PLO\\source\\repos\\CassiaGateway\\AccessAPP\\AccessAPP.csproj",
+  "ProjectDir": "..\\..\\..\\AccessAPP",
+  "ProjectFile": "..\\..\\..\\AccessAPP\\AccessAPP.csproj",
 
-  "LocalPublishDir": "C:\\Users\\PLO\\source\\repos\\CassiaGateway\\AccessAPP\\publish",
+  "LocalPublishDir": "..\\..\\..\\temp_build\\publish_accessapp",
 
   "RemoteDir": "/home/cassia/FWUpgrade",
   "RemoteExeName": "AccessAPP",
@@ -24,10 +24,11 @@
   "PublishConfiguration": "Release",
   "PublishRuntime": "linux-arm",
   "SelfContained": true,
+  "SkipClientAppBuild": true,
   "InstallStartupUpdater": true,
-  "UpdaterProjectDir": "C:\\Users\\PLO\\source\\repos\\CassiaGateway\\extras\\AccessAppUpdater",
-  "UpdaterProjectFile": "C:\\Users\\PLO\\source\\repos\\CassiaGateway\\extras\\AccessAppUpdater\\AccessAppUpdater.csproj",
-  "LocalUpdaterPublishDir": "C:\\Users\\PLO\\source\\repos\\CassiaGateway\\extras\\AccessAppUpdater\\publish",
+  "UpdaterProjectDir": "..\\..\\..\\extras\\AccessAppUpdater",
+  "UpdaterProjectFile": "..\\..\\..\\extras\\AccessAppUpdater\\AccessAppUpdater.csproj",
+  "LocalUpdaterPublishDir": "..\\..\\..\\temp_build\\publish_accessapp_updater",
   "UpdaterPublishRuntime": "linux-arm",
   "UpdaterSelfContained": true,
   "UpdaterSingleFile": true,
@@ -42,7 +43,7 @@
   ],
 
   "EnsureSshKeyLogin": true,
-  "LocalSshPublicKeyPath": "C:\\Users\\PLO\\.ssh\\id_ed25519.pub",
+  "LocalSshPublicKeyPath": ".\\id_ed25519.pub",
   "DisablePasswordAuthentication": false,
   "RestartSshServiceAfterConfig": true,
 

@@ -5,6 +5,7 @@ param(
     [bool]$SelfContained = $true,
     [string]$PublishDir = "",
     [switch]$SkipPublish,
+    [switch]$SkipClientBuild,
     [string]$Version = "",
     [string]$WebRoot = "C:\Ampps\www\public\accessapp",
     [string]$BaseUrl = "http://prod.statistics.niko-test.nu/accessapp",
@@ -58,6 +59,9 @@ if (-not $SkipPublish) {
         "--output"
         "`"$PublishDir`""
     )
+    if ($SkipClientBuild) {
+        $publishArgs += "-p:SkipClientAppBuild=true"
+    }
 
     Write-Host "Publishing AccessAPP..."
     dotnet @publishArgs

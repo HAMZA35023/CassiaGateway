@@ -593,12 +593,14 @@ public sealed class SshCassiaDeployer
             Directory.Delete(_opt.LocalPublishDir, recursive: true);
 
         var selfContainedArg = _opt.SelfContained ? "--self-contained" : "--no-self-contained";
+        var skipClientBuildArg = _opt.SkipClientAppBuild ? "-p:SkipClientAppBuild=true" : "";
 
         var args =
             $"publish \"{projectFile}\" " +
             $"-c {_opt.PublishConfiguration} " +
             $"-r {_opt.PublishRuntime} " +
             $"{selfContainedArg} " +
+            $"{skipClientBuildArg} " +
             $"--output \"{_opt.LocalPublishDir}\"";
 
         _log.Info($"dotnet {args}");

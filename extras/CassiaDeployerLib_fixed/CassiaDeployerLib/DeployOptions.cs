@@ -32,6 +32,7 @@ public sealed class DeployOptions
     public string PublishConfiguration { get; set; } = "Release";
     public string PublishRuntime { get; set; } = "linux-arm";
     public bool SelfContained { get; set; } = true;
+    public bool SkipClientAppBuild { get; set; } = false;
 
     // ---------- Startup updater deploy ----------
     public bool InstallStartupUpdater { get; set; } = true;
@@ -123,8 +124,7 @@ public sealed class DeployOptions
     public static DeployOptions Load(string path)
     {
         var json = File.ReadAllText(path);
-
-        return JsonSerializer.Deserialize<DeployOptions>(
+        var options = JsonSerializer.Deserialize<DeployOptions>(
                    json,
                    new JsonSerializerOptions
                    {
@@ -133,6 +133,9 @@ public sealed class DeployOptions
                )
                ?? throw new InvalidOperationException(
                    "Failed to deserialize DeployOptions");
+
+        options.NormalizeLocalPaths(Path.GetDirectoryName(Path.GetFullPath(path)) ?? Directory.GetCurrentDirectory());
+        return options;
     }
 
     public static DeployOptions LoadOrCreate(string path)
@@ -157,5 +160,26 @@ public sealed class DeployOptions
             });
 
         File.WriteAllText(path, json);
+    }
+
+    private void NormalizeLocalPaths(string baseDir)
+    {
+        ProjectDir = ResolveMaybeRelative(ProjectDir, baseDir);
+        ProjectFile = ResolveMaybeRelative(ProjectFile, baseDir);
+        LocalPublishDir = ResolveMaybeRelative(LocalPublishDir, baseDir);
+        UpdaterProjectDir = ResolveMaybeRelative(UpdaterProjectDir, baseDir);
+        UpdaterProjectFile = ResolveMaybeRelative(UpdaterProjectFile, baseDir);
+        LocalUpdaterPublishDir = ResolveMaybeRelative(LocalUpdaterPublishDir, baseDir);
+        LocalSshPublicKeyPath = ResolveMaybeRelative(LocalSshPublicKeyPath, baseDir);
+    }
+
+    private static string ResolveMaybeRelative(string path, string baseDir)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return path;
+
+        return Path.IsPathRooted(path)
+            ? Path.GetFullPath(path)
+            : Path.GetFullPath(Path.Combine(baseDir, path));
     }
 }
