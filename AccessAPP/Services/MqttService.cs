@@ -52,6 +52,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
     // NEW
     public event Func<GetFirmwareManifestCommand, Task>? GetFirmwareManifestRequested;
+    public event Func<SelfUpdateCommand, Task>? SelfUpdateRequested;
 
     public MqttService(MqttConfigStore store, RuntimeVariablesStore runtimeStore)
     {
@@ -965,6 +966,26 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 }
 
                 return GetFirmwareManifestRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "self-update", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "app-self-update", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch self-update");
+                SelfUpdateCommand dto;
+
+                try
+                {
+                    dto = string.IsNullOrWhiteSpace(payload)
+                        ? new SelfUpdateCommand()
+                        : JsonSerializer.Deserialize<SelfUpdateCommand>(payload, JsonOptions) ?? new SelfUpdateCommand();
+                }
+                catch
+                {
+                    dto = new SelfUpdateCommand();
+                }
+
+                return SelfUpdateRequested?.Invoke(dto) ?? Task.CompletedTask;
             }
 
 

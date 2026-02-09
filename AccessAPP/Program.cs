@@ -29,6 +29,7 @@ builder.Services.AddSingleton<CassiaFirmwareUpgradeService>();
 builder.Services.AddScoped<FirmwareUploadService>();
 builder.Services.AddSingleton<FirmwareManifestService>();
 builder.Services.AddSingleton<LedRangeLocalStateStore>();
+builder.Services.AddSingleton<AccessAppSelfUpdater>();
 
 // ? Add CORS policy
 builder.Services.AddCors(options =>
@@ -83,6 +84,7 @@ using (var scope = app.Services.CreateScope())
     var firmwareUpgradeService = serviceProvider.GetRequiredService<CassiaFirmwareUpgradeService>();
     var deviceStorageService = serviceProvider.GetRequiredService<DeviceStorageService>();
     var manifestSvc = app.Services.GetRequiredService<FirmwareManifestService>();
+    var selfUpdater = app.Services.GetRequiredService<AccessAppSelfUpdater>();
 
     mqttService.StartUpdateRequested += cmd =>
     {
@@ -328,6 +330,66 @@ using (var scope = app.Services.CreateScope())
 
         // Optional: if you later add DetectorType filtering, do it here using cmd.DetectorType
         await mqttService.PublishFirmwareManifestAsync(resp);
+    };
+
+    mqttService.SelfUpdateRequested += async cmd =>
+    {
+        var requestId = string.IsNullOrWhiteSpace(cmd.RequestId) ? Guid.NewGuid().ToString("N") : cmd.RequestId!;
+        var timeout = cmd.TimeoutSeconds <= 0 ? 120 : cmd.TimeoutSeconds;
+
+        await mqttService.PublishTeleJsonAsync("self-update", new
+        {
+            success = true,
+            stage = "started",
+            requestId,
+            name = mqttService.CurrentOptions.Name,
+            networkId = mqttService.CurrentOptions.NetworkId,
+            time = DateTimeOffset.UtcNow,
+            dryRun = cmd.DryRun,
+            timeoutSeconds = timeout,
+            restartService = cmd.RestartService
+        });
+
+        if (cmd.RestartService)
+        {
+            var queued = selfUpdater.TriggerServiceRestart(cmd);
+            var ok = queued.Status == "restart-queued";
+
+            await mqttService.PublishTeleJsonAsync("self-update", new
+            {
+                success = ok,
+                stage = "restart-queued",
+                requestId,
+                name = mqttService.CurrentOptions.Name,
+                networkId = mqttService.CurrentOptions.NetworkId,
+                time = DateTimeOffset.UtcNow,
+                status = queued.Status,
+                message = queued.Message,
+                exitCode = queued.ExitCode,
+                stdout = queued.StdOut,
+                stderr = queued.StdErr
+            });
+            return;
+        }
+
+        cmd.TimeoutSeconds = timeout;
+        var result = await selfUpdater.RunAsync(cmd, CancellationToken.None);
+        var success = result.Status is "updated" or "no-update" or "dry-run" or "ok";
+
+        await mqttService.PublishTeleJsonAsync("self-update", new
+        {
+            success,
+            stage = "completed",
+            requestId,
+            name = mqttService.CurrentOptions.Name,
+            networkId = mqttService.CurrentOptions.NetworkId,
+            time = DateTimeOffset.UtcNow,
+            status = result.Status,
+            message = result.Message,
+            exitCode = result.ExitCode,
+            stdout = result.StdOut,
+            stderr = result.StdErr
+        });
     };
 
 }

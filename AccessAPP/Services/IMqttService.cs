@@ -50,6 +50,9 @@ public interface IMqttService : IAsyncDisposable
 
     // New: FW manifest request command
     event Func<GetFirmwareManifestCommand, Task>? GetFirmwareManifestRequested;
+
+    // Trigger local AccessAPP updater process.
+    event Func<SelfUpdateCommand, Task>? SelfUpdateRequested;
 }
 
 // New: command DTO for request payload
@@ -102,4 +105,15 @@ public sealed class LedRangeDisconnectCommand
     public string? RequestId { get; set; }
     public List<string> Sensors { get; set; } = new();
     public bool ForceAll { get; set; }
+}
+
+public sealed class SelfUpdateCommand
+{
+    public string? RequestId { get; set; }
+    public bool DryRun { get; set; }
+    public int TimeoutSeconds { get; set; } = 120;
+    public string? ConfigPath { get; set; }
+    public string? UpdaterPath { get; set; }
+    public bool RestartService { get; set; } = true;
+    public string ServiceName { get; set; } = "accessapp";
 }

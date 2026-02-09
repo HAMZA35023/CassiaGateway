@@ -28,9 +28,24 @@ public partial class MainWindow : Window
         InitializeComponent();
         Loaded += MainWindow_Loaded;
         DataContext = new MainViewModel();
+        PreviewKeyDown += MainWindow_PreviewKeyDown;
 
         Loaded += (_, _) => _queueDefaultSortActive = true;
         ApplyQueueDefaultSort();
+    }
+
+    private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.D) return;
+        if (!Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) return;
+        if (!Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)) return;
+
+        if (DataContext is not MainViewModel vm) return;
+        if (vm.DeveloperModeUnlocked) return;
+
+        vm.DeveloperModeUnlocked = true;
+        vm.ConnectionStatus = "Developer actions unlocked.";
+        e.Handled = true;
     }
 
     private void ThemeLight_Click(object sender, RoutedEventArgs e)

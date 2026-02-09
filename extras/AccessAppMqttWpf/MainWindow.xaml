@@ -10,6 +10,7 @@
         WindowStartupLocation="CenterScreen">
 
     <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
 
         <conv:StatusToBrushConverter x:Key="StatusToBrush"/>
         <SolidColorBrush x:Key="DoneRowBrush" Color="#2A22C55E"/>
@@ -470,6 +471,11 @@
                       CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
             <MenuItem Header="Set runtime variables..."
                       Command="{Binding PlacementTarget.Tag.OpenRuntimeSettingsCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+            <Separator Visibility="{Binding PlacementTarget.Tag.DeveloperModeUnlocked, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}"/>
+            <MenuItem Header="Remote self-update (restart service)"
+                      Visibility="{Binding PlacementTarget.Tag.DeveloperModeUnlocked, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}"
+                      Command="{Binding PlacementTarget.Tag.SelfUpdateCassiaCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                       CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
         </ContextMenu>
     </Border.ContextMenu>

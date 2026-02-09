@@ -231,6 +231,7 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private bool isConnected;
     [ObservableProperty] private string statusBarText = "Ready";
     [ObservableProperty] private string totalSpeedStatusText = "Speed: -- %/min";
+    [ObservableProperty] private bool developerModeUnlocked = false;
 
     // ---- LED range visualization (connect/login/LED by RSSI) ----
     public ObservableCollection<LedRangeDeviceRow> LedRangeConnectedDevices { get; } = new();
@@ -709,6 +710,47 @@ public partial class MainViewModel : ObservableObject
         catch (Exception ex)
         {
             ConnectionStatus = "Open runtime settings failed: " + ex.Message;
+        }
+    }
+
+    [RelayCommand]
+    private async Task SelfUpdateCassia(string cassiaName)
+    {
+        cassiaName = (cassiaName ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(cassiaName)) return;
+        if (!IsConnected) { ConnectionStatus = "Not connected"; return; }
+
+        var proceed = false;
+        try
+        {
+            var result = MessageBox.Show(
+                $"Trigger remote self-update on '{cassiaName}'?\n\n" +
+                "This will queue a service restart so the updater can run before AccessAPP starts.",
+                "Remote self-update",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            proceed = result == MessageBoxResult.Yes;
+        }
+        catch { }
+
+        if (!proceed) return;
+
+        try
+        {
+            var topic = BuildCmdTopic(cassiaName, "self-update");
+            var payload = new
+            {
+                requestId = Guid.NewGuid().ToString("N"),
+                restartService = true,
+                serviceName = "accessapp"
+            };
+
+            await _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+            ConnectionStatus = $"Sent self-update to {cassiaName}";
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = "Error: " + ex.Message;
         }
     }
 
