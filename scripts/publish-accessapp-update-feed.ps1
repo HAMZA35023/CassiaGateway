@@ -22,19 +22,23 @@ if (-not [System.IO.Path]::IsPathRooted($ProjectFile)) {
 }
 $ProjectFile = (Resolve-Path $ProjectFile).Path
 
+$versionFile = Join-Path $repoRoot "AccessAPP\Version.cs"
+if (-not (Test-Path $versionFile)) {
+    throw "Version source file missing: $versionFile"
+}
+
+$versionText = Get-Content -Path $versionFile -Raw
+$m = [regex]::Match($versionText, 'AppVersion\s*=\s*"([^"]+)"')
+if (-not $m.Success) {
+    throw "Could not parse AppVersion from $versionFile"
+}
+
+$versionFromSource = $m.Groups[1].Value
 if ([string]::IsNullOrWhiteSpace($Version)) {
-    $versionFile = Join-Path $repoRoot "AccessAPP\Version.cs"
-    if (-not (Test-Path $versionFile)) {
-        throw "Version not provided and version file missing: $versionFile"
-    }
-
-    $versionText = Get-Content -Path $versionFile -Raw
-    $m = [regex]::Match($versionText, 'AppVersion\s*=\s*"([^"]+)"')
-    if (-not $m.Success) {
-        throw "Could not parse AppVersion from $versionFile"
-    }
-
-    $Version = $m.Groups[1].Value
+    $Version = $versionFromSource
+}
+elseif ($Version -ne $versionFromSource) {
+    throw "Provided -Version '$Version' does not match AccessAPP/Version.cs ('$versionFromSource')."
 }
 
 if ([string]::IsNullOrWhiteSpace($PublishDir)) {
