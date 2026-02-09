@@ -45,7 +45,7 @@
                     <TextBlock Text="Cassia" Style="{StaticResource MetaLabel}"/>
                     <ComboBox ItemsSource="{Binding CassiaNameOptions}"
                               SelectedItem="{Binding LedRangeCassia, Mode=TwoWay}"
-                              IsEditable="True"/>
+                              IsEditable="False"/>
                 </StackPanel>
 
                 <StackPanel Grid.Column="1" Margin="0,0,10,0">
