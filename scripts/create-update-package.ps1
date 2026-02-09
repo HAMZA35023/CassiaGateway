@@ -69,6 +69,18 @@ try {
                 }
             }
         }
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            $common7z = @(
+                "C:\Program Files\7-Zip\7z.exe",
+                "C:\Program Files (x86)\7-Zip\7z.exe"
+            )
+            foreach ($p in $common7z) {
+                if (Test-Path $p) {
+                    $candidate = $p
+                    break
+                }
+            }
+        }
 
         if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path $candidate)) {
             $use7Zip = $true
@@ -87,7 +99,8 @@ try {
         Push-Location $tempRoot
         try {
             $zipTarget = [System.IO.Path]::GetFullPath($zipPath)
-            & $SevenZipPath a -tzip -mx=9 -mfb=258 -mpass=15 $zipTarget ".\*" | Out-Host
+            # Use standard ZIP + Deflate for maximum compatibility with Linux/.NET unzip.
+            & $SevenZipPath a -tzip -mm=Deflate -mx=9 -mfb=258 -mpass=15 $zipTarget ".\*" | Out-Host
             if ($LASTEXITCODE -ne 0) {
                 throw "7-Zip failed with exit code $LASTEXITCODE"
             }
