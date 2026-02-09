@@ -56,6 +56,7 @@ public sealed class DeployOptions
     public string UpdaterChannel { get; set; } = "stable";
     public string UpdaterWorkDir { get; set; } = "/tmp/accessapp-updater";
     public string UpdaterVersionFileName { get; set; } = "version.txt";
+    public int UpdaterHttpTimeoutSeconds { get; set; } = 600;
 
     public List<string> UpdaterPreserveFiles { get; set; } = new() { "mqtt.json" };
 

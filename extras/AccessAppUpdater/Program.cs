@@ -14,15 +14,17 @@ internal static class Program
 
             var dryRun = HasArg(args, "--dry-run");
             var cfg = LoadConfig(configPath);
+            var effectiveTimeoutSeconds = Math.Max(600, cfg.HttpTimeoutSeconds);
 
-            Directory.CreateDirectory(cfg.WorkDir);
+            var workDir = ResolveWritableWorkDir(cfg.WorkDir);
 
             using var http = new HttpClient
             {
-                Timeout = TimeSpan.FromSeconds(cfg.HttpTimeoutSeconds)
+                Timeout = TimeSpan.FromSeconds(effectiveTimeoutSeconds)
             };
 
             Log($"Fetching manifest: {cfg.ManifestUrl}");
+            Log($"HTTP timeout: {effectiveTimeoutSeconds}s");
             var manifest = await http.GetFromJsonAsync<UpdateManifest>(cfg.ManifestUrl)
                 ?? throw new InvalidOperationException("Manifest response was empty.");
 
@@ -38,14 +40,14 @@ internal static class Program
 
             Log($"Update found. current={currentVersion}, target={target.Version}");
 
-            var zipFile = Path.Combine(cfg.WorkDir, Path.GetFileName(new Uri(target.Url).AbsolutePath));
-            var stageDir = Path.Combine(cfg.WorkDir, $"stage-{Guid.NewGuid():N}");
+            var zipFile = Path.Combine(workDir, Path.GetFileName(new Uri(target.Url).AbsolutePath));
+            var stageDir = Path.Combine(workDir, $"stage-{Guid.NewGuid():N}");
 
             try
             {
                 if (!dryRun)
                 {
-                    await DownloadFileAsync(http, target.Url, zipFile);
+                    await DownloadFileWithRetryAsync(http, target.Url, zipFile, maxAttempts: 3);
                     ValidateDownloadedArtifact(zipFile, target);
 
                     Directory.CreateDirectory(stageDir);
@@ -143,6 +145,41 @@ internal static class Program
         await using var fs = File.Create(destPath);
         await res.Content.CopyToAsync(fs);
     }
+
+    private static async Task DownloadFileWithRetryAsync(HttpClient http, string url, string destPath, int maxAttempts)
+    {
+        Exception? last = null;
+        for (var attempt = 1; attempt <= Math.Max(1, maxAttempts); attempt++)
+        {
+            try
+            {
+                if (File.Exists(destPath))
+                    File.Delete(destPath);
+
+                if (attempt > 1)
+                    Log($"Retrying download ({attempt}/{maxAttempts})...");
+
+                await DownloadFileAsync(http, url, destPath);
+                return;
+            }
+            catch (Exception ex) when (IsTransientDownloadError(ex))
+            {
+                last = ex;
+                if (attempt < maxAttempts)
+                    await Task.Delay(TimeSpan.FromSeconds(2 * attempt));
+            }
+        }
+
+        throw new InvalidOperationException($"Failed to download update package after {maxAttempts} attempts.", last);
+    }
+
+    private static bool IsTransientDownloadError(Exception ex) =>
+        ex is TaskCanceledException ||
+        ex is TimeoutException ||
+        ex is HttpRequestException ||
+        ex.InnerException is TaskCanceledException ||
+        ex.InnerException is TimeoutException ||
+        ex.InnerException is HttpRequestException;
 
     private static void ValidateDownloadedArtifact(string zipPath, Release rel)
     {
@@ -322,6 +359,48 @@ internal static class Program
 
     private static void Log(string message) =>
         Console.WriteLine($"[updater] {message}");
+
+    private static string ResolveWritableWorkDir(string preferred)
+    {
+        if (TryEnsureWritableDirectory(preferred, out var resolvedPreferred))
+        {
+            Log($"Work dir: {resolvedPreferred}");
+            return resolvedPreferred;
+        }
+
+        var fallback = Path.Combine(Path.GetTempPath(), $"accessapp-updater-{SanitizeFileName(Environment.UserName ?? "user")}");
+        if (TryEnsureWritableDirectory(fallback, out var resolvedFallback))
+        {
+            Log($"Work dir fallback: {resolvedFallback}");
+            return resolvedFallback;
+        }
+
+        throw new UnauthorizedAccessException($"No writable work directory available. preferred='{preferred}', fallback='{fallback}'");
+    }
+
+    private static bool TryEnsureWritableDirectory(string path, out string resolvedPath)
+    {
+        resolvedPath = Path.GetFullPath(path);
+        try
+        {
+            Directory.CreateDirectory(resolvedPath);
+            var probe = Path.Combine(resolvedPath, $".probe-{Guid.NewGuid():N}.tmp");
+            File.WriteAllText(probe, "ok");
+            File.Delete(probe);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string SanitizeFileName(string value)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var chars = value.Select(c => invalid.Contains(c) ? '_' : c).ToArray();
+        return new string(chars);
+    }
 }
 
 internal sealed class UpdaterConfig
@@ -333,7 +412,7 @@ internal sealed class UpdaterConfig
     public string WorkDir { get; set; } = "/tmp/accessapp-updater";
     public string VersionFileName { get; set; } = "version.txt";
     public string ExecutableName { get; set; } = "AccessAPP";
-    public int HttpTimeoutSeconds { get; set; } = 30;
+    public int HttpTimeoutSeconds { get; set; } = 600;
     public List<string> PreserveFiles { get; set; } = new() { "mqtt.json" };
     public List<string> ExecutableRelativePathsToChmodX { get; set; } = new() { "AccessAPP", "libBootloaderUtilMultiThread.so" };
 }

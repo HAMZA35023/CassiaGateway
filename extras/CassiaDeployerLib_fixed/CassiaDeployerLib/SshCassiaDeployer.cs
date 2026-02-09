@@ -828,9 +828,24 @@ public sealed class SshCassiaDeployer
         RunSudo(ssh, $"mkdir -p {ShEscape(GetRemoteParentDir(_opt.UpdaterRemoteConfigPath))}");
         RunSudo(ssh, $"echo '{configB64}' | base64 -d > {ShEscape(_opt.UpdaterRemoteConfigPath)}");
         RunSudo(ssh, $"chmod 644 {ShEscape(_opt.UpdaterRemoteConfigPath)}");
+        EnsureUpdaterWorkDirWritable(ssh);
 
         _log.Info($"Startup updater installed: {_opt.UpdaterRemoteExePath}");
         _log.Info($"Startup updater config updated: {_opt.UpdaterRemoteConfigPath}");
+    }
+
+    private void EnsureUpdaterWorkDirWritable(SshClient ssh)
+    {
+        if (string.IsNullOrWhiteSpace(_opt.UpdaterWorkDir))
+            return;
+
+        var dir = _opt.UpdaterWorkDir.Trim();
+        _log.Info($"Ensuring updater work dir is writable: {dir}");
+
+        // Make sure the directory exists and cassia user can write there.
+        RunSudo(ssh, $"mkdir -p {ShEscape(dir)}");
+        RunSudo(ssh, $"chown -R {_opt.User}:{_opt.User} {ShEscape(dir)} || true");
+        RunSudo(ssh, $"chmod -R u+rwX {ShEscape(dir)} || true");
     }
 
     private string BuildUpdaterConfigJson()
@@ -853,7 +868,7 @@ public sealed class SshCassiaDeployer
             WorkDir = _opt.UpdaterWorkDir,
             VersionFileName = _opt.UpdaterVersionFileName,
             ExecutableName = _opt.RemoteExeName,
-            HttpTimeoutSeconds = 30,
+            HttpTimeoutSeconds = Math.Max(30, _opt.UpdaterHttpTimeoutSeconds),
             PreserveFiles = _opt.UpdaterPreserveFiles,
             ExecutableRelativePathsToChmodX = chmodPaths.Distinct(StringComparer.Ordinal).ToArray()
         };
@@ -961,7 +976,7 @@ public sealed class SshCassiaDeployer
         var unitPath = $"/etc/systemd/system/{ServiceUnitName}";
         var remoteExe = CombineRemote(_opt.RemoteDir, _opt.RemoteExeName);
         var preStartLine = _opt.InstallStartupUpdater
-            ? $"ExecStartPre={StartupUpdaterExecStartPre}"
+            ? $"ExecStartPre=-{StartupUpdaterExecStartPre}"
             : string.Empty;
 
         var unit = $"""
@@ -1000,7 +1015,7 @@ WantedBy=multi-user.target
         var updaterStartBlock = _opt.InstallStartupUpdater
             ? @"  if [ -x ""$UPDATER_EXE"" ]; then
     echo ""Running startup updater...""
-    ""$UPDATER_EXE"" --config ""$UPDATER_CFG"" || exit 1
+    ""$UPDATER_EXE"" --config ""$UPDATER_CFG"" || echo ""[WARN] startup updater failed; continuing with current app""
   fi
 "
             : string.Empty;

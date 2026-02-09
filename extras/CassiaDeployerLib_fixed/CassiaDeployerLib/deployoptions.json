@@ -38,6 +38,7 @@
   "UpdaterChannel": "stable",
   "UpdaterWorkDir": "/tmp/accessapp-updater",
   "UpdaterVersionFileName": "version.txt",
+  "UpdaterHttpTimeoutSeconds": 600,
   "UpdaterPreserveFiles": [
     "mqtt.json"
   ],

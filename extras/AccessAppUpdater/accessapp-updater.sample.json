@@ -6,7 +6,7 @@
   "WorkDir": "/tmp/accessapp-updater",
   "VersionFileName": "version.txt",
   "ExecutableName": "AccessAPP",
-  "HttpTimeoutSeconds": 30,
+  "HttpTimeoutSeconds": 600,
   "PreserveFiles": [
     "mqtt.json"
   ],
