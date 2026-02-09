@@ -87,8 +87,8 @@ public sealed class SshCassiaDeployer
 
     public void Run()
     {
-        // Build/publish once, then deploy to one or many targets.
-        BuildAndPublish();
+        // Build/publish all artifacts once, then deploy to one or many targets.
+        BuildAllArtifacts();
 
         if (_opt.BulkWifiDeploy)
         {
@@ -584,7 +584,19 @@ public sealed class SshCassiaDeployer
     // ------------------------------------------------------------
     // BUILD
     // ------------------------------------------------------------
-    private void BuildAndPublish()
+    private void BuildAllArtifacts()
+    {
+        _log.Info("Preparing deploy artifacts...");
+
+        BuildAndPublishAccessApp();
+
+        if (_opt.InstallStartupUpdater)
+            BuildAndPublishUpdater();
+
+        _log.Info("All deploy artifacts are ready.");
+    }
+
+    private void BuildAndPublishAccessApp()
     {
         _log.Info("Building and publishing AccessAPP...");
 
@@ -635,9 +647,6 @@ public sealed class SshCassiaDeployer
         WriteVersionFileIfAvailable(_opt.LocalPublishDir);
 
         _log.Info("Publish completed.");
-
-        if (_opt.InstallStartupUpdater)
-            BuildAndPublishUpdater();
     }
 
     private void BuildAndPublishUpdater()

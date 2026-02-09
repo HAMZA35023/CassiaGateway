@@ -164,22 +164,62 @@ public sealed class DeployOptions
 
     private void NormalizeLocalPaths(string baseDir)
     {
-        ProjectDir = ResolveMaybeRelative(ProjectDir, baseDir);
-        ProjectFile = ResolveMaybeRelative(ProjectFile, baseDir);
-        LocalPublishDir = ResolveMaybeRelative(LocalPublishDir, baseDir);
-        UpdaterProjectDir = ResolveMaybeRelative(UpdaterProjectDir, baseDir);
-        UpdaterProjectFile = ResolveMaybeRelative(UpdaterProjectFile, baseDir);
-        LocalUpdaterPublishDir = ResolveMaybeRelative(LocalUpdaterPublishDir, baseDir);
-        LocalSshPublicKeyPath = ResolveMaybeRelative(LocalSshPublicKeyPath, baseDir);
+        ProjectDir = ResolveMaybeRelative(ProjectDir, baseDir, mustExist: true, expectDirectory: true);
+        ProjectFile = ResolveMaybeRelative(ProjectFile, baseDir, mustExist: true, expectDirectory: false);
+        LocalPublishDir = ResolveMaybeRelative(LocalPublishDir, baseDir, mustExist: false, expectDirectory: true);
+        UpdaterProjectDir = ResolveMaybeRelative(UpdaterProjectDir, baseDir, mustExist: true, expectDirectory: true);
+        UpdaterProjectFile = ResolveMaybeRelative(UpdaterProjectFile, baseDir, mustExist: true, expectDirectory: false);
+        LocalUpdaterPublishDir = ResolveMaybeRelative(LocalUpdaterPublishDir, baseDir, mustExist: false, expectDirectory: true);
+        LocalSshPublicKeyPath = ResolveMaybeRelative(LocalSshPublicKeyPath, baseDir, mustExist: false, expectDirectory: false);
     }
 
-    private static string ResolveMaybeRelative(string path, string baseDir)
+    private static string ResolveMaybeRelative(string path, string baseDir, bool mustExist, bool expectDirectory)
     {
         if (string.IsNullOrWhiteSpace(path))
             return path;
 
-        return Path.IsPathRooted(path)
-            ? Path.GetFullPath(path)
-            : Path.GetFullPath(Path.Combine(baseDir, path));
+        if (Path.IsPathRooted(path))
+            return Path.GetFullPath(path);
+
+        var candidates = new List<string>();
+
+        void AddCandidate(string p)
+        {
+            var full = Path.GetFullPath(p);
+            if (!candidates.Contains(full, StringComparer.OrdinalIgnoreCase))
+                candidates.Add(full);
+        }
+
+        // 1) Relative to config file location
+        AddCandidate(Path.Combine(baseDir, path));
+
+        // 2) Relative to process working directory
+        AddCandidate(Path.Combine(Directory.GetCurrentDirectory(), path));
+
+        // 3) Relative to any ancestor of config location (helps when config is copied to bin/)
+        var cursor = new DirectoryInfo(baseDir);
+        while (cursor != null)
+        {
+            AddCandidate(Path.Combine(cursor.FullName, path));
+            cursor = cursor.Parent;
+        }
+
+        if (!mustExist)
+            return candidates[0];
+
+        foreach (var c in candidates)
+        {
+            if (expectDirectory)
+            {
+                if (Directory.Exists(c)) return c;
+            }
+            else
+            {
+                if (File.Exists(c)) return c;
+            }
+        }
+
+        // Fall back to first candidate to preserve a deterministic error path later.
+        return candidates[0];
     }
 }
