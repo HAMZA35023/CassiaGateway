@@ -212,11 +212,19 @@ internal static class Program
 
         foreach (var entry in archive.Entries)
         {
-            var targetPath = Path.GetFullPath(Path.Combine(destinationDir, entry.FullName));
+            var normalizedEntryPath = entry.FullName
+                .Replace('\\', '/')
+                .TrimStart('/');
+
+            var isDirectoryEntry = normalizedEntryPath.EndsWith("/", StringComparison.Ordinal);
+            if (isDirectoryEntry)
+                normalizedEntryPath = normalizedEntryPath.TrimEnd('/');
+
+            var targetPath = Path.GetFullPath(Path.Combine(destinationDir, normalizedEntryPath));
             if (!targetPath.StartsWith(root, StringComparison.Ordinal))
                 throw new InvalidOperationException($"Unsafe zip entry path detected: {entry.FullName}");
 
-            if (entry.FullName.EndsWith("/", StringComparison.Ordinal))
+            if (isDirectoryEntry)
             {
                 Directory.CreateDirectory(targetPath);
                 continue;
