@@ -166,7 +166,10 @@ public sealed class SshCassiaDeployer
             }
 
             if (_opt.InstallStartupUpdater)
+            {
                 InstallStartupUpdater(ssh, sftp);
+                EnsureSelfUpdateSudoers(ssh);
+            }
 
             if (_opt.ManageService)
             {
@@ -846,6 +849,24 @@ public sealed class SshCassiaDeployer
         RunSudo(ssh, $"mkdir -p {ShEscape(dir)}");
         RunSudo(ssh, $"chown -R {_opt.User}:{_opt.User} {ShEscape(dir)} || true");
         RunSudo(ssh, $"chmod -R u+rwX {ShEscape(dir)} || true");
+    }
+
+    private void EnsureSelfUpdateSudoers(SshClient ssh)
+    {
+        var service = _opt.ServiceName.Replace("'", "");
+        var user = _opt.User.Replace("'", "");
+        var sudoersPath = $"/etc/sudoers.d/{service}-self-update";
+
+        var sudoers = $@"Defaults:{user} !requiretty
+{user} ALL=(root) NOPASSWD: /bin/systemctl start {service}, /bin/systemctl stop {service}, /bin/systemctl restart {service}, /usr/bin/systemctl start {service}, /usr/bin/systemctl stop {service}, /usr/bin/systemctl restart {service}, /usr/sbin/service {service} start, /usr/sbin/service {service} stop, /usr/sbin/service {service} restart, /sbin/service {service} start, /sbin/service {service} stop, /sbin/service {service} restart, /etc/init.d/{service} start, /etc/init.d/{service} stop, /etc/init.d/{service} restart
+";
+
+        var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(sudoers));
+
+        RunSudo(ssh, $"echo '{b64}' | base64 -d > {ShEscape(sudoersPath)}");
+        RunSudo(ssh, $"chmod 440 {ShEscape(sudoersPath)}");
+        RunSudo(ssh, $"visudo -cf {ShEscape(sudoersPath)} >/dev/null");
+        _log.Info($"Installed sudoers self-update rule: {sudoersPath}");
     }
 
     private string BuildUpdaterConfigJson()

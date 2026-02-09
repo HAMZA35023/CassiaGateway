@@ -369,6 +369,17 @@ using (var scope = app.Services.CreateScope())
                 stdout = queued.StdOut,
                 stderr = queued.StdErr
             });
+
+            if (ok && !cmd.DryRun)
+            {
+                // Give MQTT publish a brief moment, then exit so updater/restart can replace this process.
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(2));
+                    Environment.Exit(0);
+                });
+            }
+
             return;
         }
 

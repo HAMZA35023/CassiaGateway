@@ -138,6 +138,13 @@ public sealed class AccessAppSelfUpdater
         try
         {
             var serviceName = string.IsNullOrWhiteSpace(cmd.ServiceName) ? "accessapp" : cmd.ServiceName.Trim();
+            var updaterPath = string.IsNullOrWhiteSpace(cmd.UpdaterPath)
+                ? "/usr/local/bin/AccessAppUpdater"
+                : cmd.UpdaterPath!.Trim();
+            var configPath = string.IsNullOrWhiteSpace(cmd.ConfigPath)
+                ? "/etc/accessapp-updater.json"
+                : cmd.ConfigPath!.Trim();
+
             if (!Regex.IsMatch(serviceName, "^[a-zA-Z0-9_-]+$"))
             {
                 return new SelfUpdateRunResult
@@ -148,8 +155,19 @@ public sealed class AccessAppSelfUpdater
             }
 
             var shell = "/bin/sh";
+            var updaterCmd = $"'{updaterPath}' --config '{configPath}'";
+            if (cmd.DryRun)
+                updaterCmd += " --dry-run";
+
             var restartCmd =
-                $"(sleep 1; systemctl restart '{serviceName}' || service '{serviceName}' restart || /etc/init.d/{serviceName} restart) " +
+                "(sleep 1; " +
+                $"{updaterCmd}; " +
+                $"sudo -n systemctl restart '{serviceName}' || " +
+                $"sudo -n service '{serviceName}' restart || " +
+                $"sudo -n /etc/init.d/{serviceName} restart || " +
+                $"systemctl restart '{serviceName}' || " +
+                $"service '{serviceName}' restart || " +
+                $"/etc/init.d/{serviceName} restart) " +
                 ">/tmp/accessapp-self-update-restart.log 2>&1 &";
 
             var psi = new ProcessStartInfo
