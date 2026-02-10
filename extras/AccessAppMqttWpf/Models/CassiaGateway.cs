@@ -78,16 +78,23 @@ public partial class CassiaGateway : ObservableObject
     {
         get
         {
+            var state = (CellularState ?? "").Trim();
+            if (!string.IsNullOrWhiteSpace(state) && !state.Equals("connected", StringComparison.OrdinalIgnoreCase))
+                return state;
+
             var bits = new List<string>();
             if (!string.IsNullOrWhiteSpace(CellularNetworkType)) bits.Add(CellularNetworkType.Trim());
-            if (CellularSignalBar.HasValue) bits.Add($"bar {CellularSignalBar.Value}");
-            if (CellularLteRsrpDbm.HasValue) bits.Add($"RSRP {CellularLteRsrpDbm.Value} dBm");
-            else if (CellularRssiDbm.HasValue) bits.Add($"RSSI {CellularRssiDbm.Value} dBm");
-            if (CellularLteRsrqDb.HasValue) bits.Add($"RSRQ {CellularLteRsrqDb.Value} dB");
-            if (CellularLteSnrDb.HasValue) bits.Add($"SNR {CellularLteSnrDb.Value} dB");
-            if (!string.IsNullOrWhiteSpace(CellularProvider)) bits.Add(CellularProvider.Trim());
-            if (bits.Count == 0) return "";
-            return string.Join(" | ", bits);
+            if (CellularSignalBar.HasValue) bits.Add($"{CellularSignalBar.Value}/5");
+            if (CellularLteRsrpDbm.HasValue) bits.Add($"{CellularLteRsrpDbm.Value} dBm");
+            else if (CellularRssiDbm.HasValue) bits.Add($"{CellularRssiDbm.Value} dBm");
+
+            if (bits.Count > 0)
+                return string.Join(" | ", bits);
+
+            if (!string.IsNullOrWhiteSpace(CellularProvider))
+                return CellularProvider.Trim();
+
+            return "";
         }
     }
 

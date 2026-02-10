@@ -1115,6 +1115,39 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 return PublishJsonAsync(TeleTopic("device-list"), resp, retain: false, CancellationToken.None);
             }
 
+            if (string.Equals(command, "clear-device-list", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch clear-device-list");
+                string? requestId = null;
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(payload))
+                    {
+                        using var doc = JsonDocument.Parse(payload);
+                        if (doc.RootElement.ValueKind == JsonValueKind.Object &&
+                            doc.RootElement.TryGetProperty("requestId", out var rid) &&
+                            rid.ValueKind == JsonValueKind.String)
+                            requestId = rid.GetString();
+                    }
+                }
+                catch { /* ignore */ }
+
+                var removed = DeviceStorageService.ClearAllDevices();
+
+                var resp = new
+                {
+                    success = true,
+                    message = "Device list cleared successfully.",
+                    requestId,
+                    name = CurrentOptions.Name,
+                    networkId = CurrentOptions.NetworkId,
+                    time = DateTimeOffset.UtcNow,
+                    removed
+                };
+
+                return PublishJsonAsync(TeleTopic("clear-device-list"), resp, retain: false, CancellationToken.None);
+            }
+
             if (string.Equals(command, "remove-from-queue", StringComparison.OrdinalIgnoreCase))
             {
                 AppLog.Debug("HandleCommandAsync: dispatch remove-from-queue");

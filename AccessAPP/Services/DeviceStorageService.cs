@@ -131,6 +131,21 @@ namespace AccessAPP.Services
                 .ToList();
         }
 
+        public static int ClearAllDevices()
+        {
+            var inst = _ownInstance;
+            if (inst is null)
+                return 0;
+
+            var removed = inst._deviceList.Count;
+            inst._deviceList.Clear();
+            inst._rssiState.Clear();
+            inst._lastDevicePublishUtc.Clear();
+            inst._lastProgressPublishUtc.Clear();
+            inst._isStale.Clear();
+            return removed;
+        }
+
         public static bool TryGetDeviceName(string mac, out string name)
         {
             name = "";

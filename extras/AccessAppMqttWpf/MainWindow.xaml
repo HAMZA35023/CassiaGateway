@@ -425,7 +425,7 @@
 
         <Grid Background="{DynamicResource BgBrush}">
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="440"/>
+            <ColumnDefinition Width="480"/>
             <ColumnDefinition Width="18"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
@@ -584,6 +584,14 @@
                             ToolTip="Set parallel programmers"
                             Command="{Binding DataContext.SetParallelProgrammersForCassiaPromptCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                             CommandParameter="{Binding}"/>
+
+                    <Button Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2"
+                            Style="{StaticResource CassiaBadgeButtonStyleWarning}"
+                            Content="Rescan"
+                            Margin="0,0,0,0"
+                            ToolTip="Clear device-list on this Cassia and request a fresh scan/list"
+                            Command="{Binding DataContext.ClearDeviceListForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                            CommandParameter="{Binding Name}"/>
                 </Grid>
 
                                 <!-- =========================

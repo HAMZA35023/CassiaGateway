@@ -896,6 +896,10 @@ public partial class MainViewModel : ObservableObject
 
         RequestDevicesRefresh();
 
+        // Ask all gateways to clear their internal cache first (scan listener will repopulate).
+        await ClearDeviceListAsync("all").ConfigureAwait(false);
+        await Task.Delay(800, _appCts.Token).ConfigureAwait(false);
+
         // Request full device list from all gateways.
         await RequestDeviceListAsync("all").ConfigureAwait(false);
     }

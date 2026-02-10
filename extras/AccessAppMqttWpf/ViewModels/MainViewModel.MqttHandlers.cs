@@ -125,6 +125,9 @@ public partial class MainViewModel : ObservableObject
         private Task RequestDeviceListAsync(string target)
         => _mqtt.PublishJsonAsync(BuildCmdTopic(target, "get-device-list"), new { requestId = Guid.NewGuid().ToString("N") }, retain: false, qos: 1, ct: _appCts.Token);
 
+        private Task ClearDeviceListAsync(string target)
+        => _mqtt.PublishJsonAsync(BuildCmdTopic(target, "clear-device-list"), new { requestId = Guid.NewGuid().ToString("N") }, retain: false, qos: 1, ct: _appCts.Token);
+
         public Task RemoveFromQueueAsync(string target, IEnumerable<string> macAddresses)
         {
             if (string.IsNullOrWhiteSpace(target)) target = "all";
@@ -316,6 +319,26 @@ public partial class MainViewModel : ObservableObject
             catch (Exception ex)
             {
                 ConnectionStatus = $"Clear backups failed ({cassiaName}): {ex.Message}";
+            }
+        }
+
+        [RelayCommand]
+        private async Task ClearDeviceListForCassia(string cassiaName)
+        {
+            if (!IsConnected) { ConnectionStatus = "Not connected"; return; }
+            cassiaName = (cassiaName ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(cassiaName)) return;
+
+            try
+            {
+                await ClearDeviceListAsync(cassiaName).ConfigureAwait(false);
+                await Task.Delay(800, _appCts.Token).ConfigureAwait(false);
+                await RequestDeviceListAsync(cassiaName).ConfigureAwait(false);
+                ConnectionStatus = $"Requested clear-device-list + rescan on {cassiaName}";
+            }
+            catch (Exception ex)
+            {
+                ConnectionStatus = $"Clear device-list failed ({cassiaName}): {ex.Message}";
             }
         }
 
@@ -593,6 +616,28 @@ public partial class MainViewModel : ObservableObject
 
                     RecalculateAssignmentCounts();
                     RequestDevicesRefresh();
+                });
+            }
+            catch { }
+        }
+
+        private void HandleClearDeviceListTele(string cassia, string payload)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(payload);
+                var root = doc.RootElement;
+                if (root.ValueKind != JsonValueKind.Object) return;
+
+                var success = root.TryGetProperty("success", out var sEl) && sEl.ValueKind == JsonValueKind.True;
+                var removed = root.TryGetProperty("removed", out var rEl) && rEl.ValueKind == JsonValueKind.Number ? rEl.GetInt32() : 0;
+                var message = root.TryGetProperty("message", out var mEl) ? (mEl.GetString() ?? "") : "";
+
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    ConnectionStatus = success
+                        ? $"[{cassia}] cleared device-list ({removed})"
+                        : $"[{cassia}] clear-device-list failed: {message}";
                 });
             }
             catch { }

@@ -3,6 +3,7 @@
 // Supports: systemd, OpenRC, SysV init. Uses password-based sudo (no SSH keys needed).
 
 using Renci.SshNet;
+using Renci.SshNet.Common;
 using Renci.SshNet.Sftp;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
@@ -818,8 +819,7 @@ public sealed class SshCassiaDeployer
         _log.Info("Installing startup updater on target...");
 
         var remoteTmpPath = CombineRemote(_opt.RemoteDir, ".accessapp_updater_tmp");
-        using (var fs = File.OpenRead(localUpdaterExe))
-            sftp.UploadFile(fs, remoteTmpPath, true);
+        UploadStreamSftpWithRetry(sftp, () => File.OpenRead(localUpdaterExe), remoteTmpPath);
 
         RunSudo(ssh, $"mkdir -p {ShEscape(GetRemoteParentDir(_opt.UpdaterRemoteExePath))}");
         RunSudo(ssh, $"install -m 755 {ShEscape(remoteTmpPath)} {ShEscape(_opt.UpdaterRemoteExePath)}");
@@ -857,10 +857,28 @@ public sealed class SshCassiaDeployer
         var user = _opt.User.Replace("'", "");
         var sudoersPath = $"/etc/sudoers.d/{service}-self-update";
 
-        var sudoers = $@"Defaults:{user} !requiretty
-{user} ALL=(root) NOPASSWD: /bin/systemctl start {service}, /bin/systemctl stop {service}, /bin/systemctl restart {service}, /usr/bin/systemctl start {service}, /usr/bin/systemctl stop {service}, /usr/bin/systemctl restart {service}, /usr/sbin/service {service} start, /usr/sbin/service {service} stop, /usr/sbin/service {service} restart, /sbin/service {service} start, /sbin/service {service} stop, /sbin/service {service} restart, /etc/init.d/{service} start, /etc/init.d/{service} stop, /etc/init.d/{service} restart
-";
+        // Keep entries short and LF-only; some target visudo builds are sensitive to very long lines/CRLF.
+        var sudoersLines = new[]
+        {
+            $"Defaults:{user} !requiretty",
+            $"{user} ALL=(root) NOPASSWD: /bin/systemctl start {service}",
+            $"{user} ALL=(root) NOPASSWD: /bin/systemctl stop {service}",
+            $"{user} ALL=(root) NOPASSWD: /bin/systemctl restart {service}",
+            $"{user} ALL=(root) NOPASSWD: /usr/bin/systemctl start {service}",
+            $"{user} ALL=(root) NOPASSWD: /usr/bin/systemctl stop {service}",
+            $"{user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart {service}",
+            $"{user} ALL=(root) NOPASSWD: /usr/sbin/service {service} start",
+            $"{user} ALL=(root) NOPASSWD: /usr/sbin/service {service} stop",
+            $"{user} ALL=(root) NOPASSWD: /usr/sbin/service {service} restart",
+            $"{user} ALL=(root) NOPASSWD: /sbin/service {service} start",
+            $"{user} ALL=(root) NOPASSWD: /sbin/service {service} stop",
+            $"{user} ALL=(root) NOPASSWD: /sbin/service {service} restart",
+            $"{user} ALL=(root) NOPASSWD: /etc/init.d/{service} start",
+            $"{user} ALL=(root) NOPASSWD: /etc/init.d/{service} stop",
+            $"{user} ALL=(root) NOPASSWD: /etc/init.d/{service} restart"
+        };
 
+        var sudoers = string.Join("\n", sudoersLines) + "\n";
         var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(sudoers));
 
         RunSudo(ssh, $"echo '{b64}' | base64 -d > {ShEscape(sudoersPath)}");
@@ -1349,8 +1367,7 @@ exit 0
             var remoteParent = GetRemoteParentDir(remotePath);
             EnsureRemoteDirectorySftp(sftp, remoteParent);
 
-            using var fs = File.OpenRead(e.fullPath);
-            sftp.UploadFile(fs, remotePath, true);
+            UploadStreamSftpWithRetry(sftp, () => File.OpenRead(e.fullPath), remotePath);
 
             // Set remote mtime to local mtime (critical for stable comparisons)
             var attrs = sftp.GetAttributes(remotePath);
@@ -1416,8 +1433,8 @@ exit 0
                 sw.WriteLine($"{e.size}\t{e.mtimeUtcSeconds}\t{e.rel}");
         }
 
-        ms.Position = 0;
-        sftp.UploadFile(ms, remoteManifestPath, true);
+        var manifestBytes = ms.ToArray();
+        UploadStreamSftpWithRetry(sftp, () => new MemoryStream(manifestBytes, writable: false), remoteManifestPath);
 
         // best effort perms
         try
@@ -1456,6 +1473,78 @@ exit 0
             if (!sftp.Exists(current))
                 sftp.CreateDirectory(current);
         }
+    }
+
+    private void UploadStreamSftpWithRetry(
+        SftpClient sftp,
+        Func<Stream> openInput,
+        string remotePath,
+        int attempts = 3,
+        int retryDelayMs = 300)
+    {
+        remotePath = NormalizeRemote(remotePath);
+        EnsureRemoteDirectorySftp(sftp, GetRemoteParentDir(remotePath));
+
+        Exception? lastEx = null;
+        var pid = Process.GetCurrentProcess().Id;
+
+        for (int attempt = 1; attempt <= Math.Max(1, attempts); attempt++)
+        {
+            var tempPath = $"{remotePath}.upload-{pid}-{Guid.NewGuid():N}.tmp";
+
+            try
+            {
+                using (var input = openInput())
+                {
+                    if (input.CanSeek)
+                        input.Position = 0;
+
+                    sftp.UploadFile(input, tempPath, true);
+                }
+
+                if (sftp.Exists(remotePath))
+                {
+                    var existing = sftp.GetAttributes(remotePath);
+                    if (existing.IsDirectory)
+                        throw new IOException($"Remote upload target is a directory, expected file: {remotePath}");
+
+                    sftp.DeleteFile(remotePath);
+                }
+
+                sftp.RenameFile(tempPath, remotePath);
+                return;
+            }
+            catch (Exception ex) when (
+                ex is SshException ||
+                ex is SftpPermissionDeniedException ||
+                ex is SftpPathNotFoundException ||
+                ex is IOException)
+            {
+                lastEx = ex;
+
+                try
+                {
+                    if (sftp.Exists(tempPath))
+                        sftp.DeleteFile(tempPath);
+                }
+                catch
+                {
+                    // ignore cleanup errors
+                }
+
+                if (attempt < attempts)
+                {
+                    _log.Warn($"SFTP upload retry {attempt}/{attempts} failed for {remotePath}: {ex.Message}");
+                    if (retryDelayMs > 0)
+                        Thread.Sleep(retryDelayMs);
+                    continue;
+                }
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"SFTP upload failed for {remotePath} after {attempts} attempts.",
+            lastEx);
     }
 
     private static string GetRemoteParentDir(string remotePath)

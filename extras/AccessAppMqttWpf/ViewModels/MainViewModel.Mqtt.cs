@@ -241,6 +241,12 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        if (kind == "tele" && leaf == "clear-device-list")
+        {
+            HandleClearDeviceListTele(cassia, payload);
+            return;
+        }
+
         if (kind == "tele" && leaf == "queue-remove")
         {
             HandleQueueRemoveTele(cassia, payload);
