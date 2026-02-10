@@ -243,7 +243,7 @@ public partial class MainViewModel : ObservableObject
         var option = (SelectedUpgradeLogShowOption ?? "All").Trim();
         var status = (g.LatestStatus ?? "").Trim();
         var stage = (g.LatestStage ?? "").Trim();
-        var suppressibleWarn = IsSuppressibleSameFirmwareWarn(stage, status, g.LatestSummary);
+        var suppressibleWarn = IsSuppressibleSameFirmwareWarn(g);
 
         var isSuccess = suppressibleWarn
                         || string.Equals(status, "Success", StringComparison.OrdinalIgnoreCase)
@@ -295,7 +295,7 @@ public partial class MainViewModel : ObservableObject
         {
             var status = (g.LatestStatus ?? "").Trim();
             var stage = (g.LatestStage ?? "").Trim();
-            var suppressibleWarn = IsSuppressibleSameFirmwareWarn(stage, status, g.LatestSummary);
+            var suppressibleWarn = IsSuppressibleSameFirmwareWarn(g);
 
             var isSuccess = suppressibleWarn
                             || status.Equals("Success", StringComparison.OrdinalIgnoreCase)

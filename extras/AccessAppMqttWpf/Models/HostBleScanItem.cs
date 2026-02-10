@@ -30,6 +30,7 @@ public partial class HostBleScanItem : ObservableObject
     [ObservableProperty] private bool isInQueue;
     [ObservableProperty] private bool isUpgradeSuccess;
     [ObservableProperty] private bool isUpgradeWarn;
+    [ObservableProperty] private bool isUpgradeNoFwRead;
     [ObservableProperty] private bool isUpgradeFailed;
 
     // True while an identify request is active (tele/identify stages until disconnected/failed).

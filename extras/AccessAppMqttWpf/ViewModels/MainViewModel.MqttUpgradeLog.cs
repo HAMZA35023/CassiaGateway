@@ -476,7 +476,8 @@ public partial class MainViewModel : ObservableObject
                 var isSuccess = completionStatus.Equals("Success", StringComparison.OrdinalIgnoreCase);
                 var isWarn = IsWarnStatus(completionStatus);
                 var isNoFwRead = IsNoFwReadStatus(completionStatus);
-                if (IsSuppressibleSameFirmwareWarn(completion?.Stage, completionStatus, completion?.Line))
+                if (IsSuppressibleSameFirmwareWarn(completion?.Stage, completionStatus, completion?.Line)
+                    || IsSuppressibleSameFirmwareWarn(g))
                 {
                     isWarn = false;
                     isSuccess = true;
@@ -564,12 +565,74 @@ public partial class MainViewModel : ObservableObject
             if (!string.Equals((stage ?? "").Trim(), "Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase)) return false;
             if (!IsWarnStatus(status)) return false;
 
+            return ContainsSameFirmwareHint(details);
+        }
+
+        private static bool ContainsSameFirmwareHint(string? details)
+        {
             var text = (details ?? "").ToLowerInvariant();
-            return text.Contains("same firmware")
+            var hasSameAndFw = text.Contains("same") && (text.Contains("firmware") || text.Contains("fw"));
+            return hasSameAndFw
+                || text.Contains("same firmware")
+                || text.Contains("same-fw")
+                || text.Contains("same fw")
                 || text.Contains("firmware was same")
                 || text.Contains("already latest")
                 || text.Contains("already up to date")
-                || text.Contains("already up-to-date");
+                || text.Contains("already up-to-date")
+                || text.Contains("already on latest")
+                || text.Contains("already current");
+        }
+
+        private static bool ContainsNoFwStepHint(string? details)
+        {
+            var text = (details ?? "").ToLowerInvariant();
+            return text.Contains("no fw steps")
+                || text.Contains("already matches target")
+                || text.Contains("fw already matches target")
+                || text.Contains("upgrade skipped");
+        }
+
+        private bool IsSuppressibleSameFirmwareWarn(UpgradeLogGroup? group)
+        {
+            if (group == null) return false;
+            if (!SuppressSameFirmwareWarnings) return false;
+            if (!IsWarnStatus(group.LatestStatus)) return false;
+
+            var completionWarn = group.Entries
+                .Where(e => e != null
+                            && !string.IsNullOrWhiteSpace(e.Stage)
+                            && e.Stage.Trim().Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase)
+                            && IsWarnStatus(e.Status))
+                .OrderByDescending(e => e.TimeLocal)
+                .FirstOrDefault();
+
+            if (completionWarn == null)
+                return false;
+
+            if (ContainsSameFirmwareHint(completionWarn.Line))
+                return true;
+
+            var entries = group.Entries.Where(e => e != null).ToList();
+
+            var noFwRunByStage = entries.Any(e =>
+                ContainsNoFwStepHint(e!.Stage) || ContainsNoFwStepHint(e.Line));
+
+            var actorSkipped = entries.Any(e =>
+                (e!.Stage ?? "").Contains("actor upgrade skipped", StringComparison.OrdinalIgnoreCase)
+                && ContainsNoFwStepHint(e.Stage));
+
+            var sensorSkipped = entries.Any(e =>
+                (e!.Stage ?? "").Contains("sensor upgrade skipped", StringComparison.OrdinalIgnoreCase)
+                && ContainsNoFwStepHint(e.Stage));
+
+            if (noFwRunByStage || (actorSkipped && sensorSkipped))
+                return true;
+
+            if (ContainsSameFirmwareHint(group.LatestSummary))
+                return true;
+
+            return entries.Any(e => ContainsSameFirmwareHint(e!.Line));
         }
 
         private static bool LooksLikeFirmwareVersion(string s)

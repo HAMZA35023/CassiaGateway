@@ -335,6 +335,7 @@ partial void OnHostBleUiUpdateSecondsChanged(int value)
                 row.IsInQueue = d.IsInQueue;
                 row.IsUpgradeSuccess = d.IsUpgradeSuccess;
                 row.IsUpgradeWarn = d.IsUpgradeWarn;
+                row.IsUpgradeNoFwRead = d.IsUpgradeNoFwRead;
                 row.IsUpgradeFailed = d.IsUpgradeFailed;
             }
             else
@@ -348,6 +349,7 @@ partial void OnHostBleUiUpdateSecondsChanged(int value)
                 row.IsInQueue = false;
                 row.IsUpgradeSuccess = false;
                 row.IsUpgradeWarn = false;
+                row.IsUpgradeNoFwRead = false;
                 row.IsUpgradeFailed = false;
             }
         }

@@ -151,6 +151,12 @@ private void UpdateRowFlagsFromProcess()
             return;
         }
 
+        // If a final result flag is already set from upgrade-log parsing, keep it.
+        // This prevents ProcessStatus text (e.g. "Warn") from overriding the explicit
+        // completion classification when UI filters are toggled.
+        if (IsUpgradeSuccess || IsUpgradeWarn || IsUpgradeFailed || IsUpgradeNoFwRead)
+            return;
+
         var sLower = ((ProcessStatus ?? "").Trim()).ToLowerInvariant();
 
         var success =

@@ -543,10 +543,14 @@ public partial class MainViewModel : ObservableObject
                 if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(shortDesc))
                     continue;
 
-                var m = Regex.Match(shortDesc, @"^(P\d{2})", RegexOptions.IgnoreCase);
+                // Accept both legacy "P4x" and motion "M4x" short descriptions,
+                // then normalize Mxx -> Pxx for UI/model routing.
+                var m = Regex.Match(shortDesc, @"^([PM]\d{2})", RegexOptions.IgnoreCase);
                 if (!m.Success) continue;
 
                 var model = m.Groups[1].Value.ToUpperInvariant();
+                if (model.StartsWith("M", StringComparison.Ordinal))
+                    model = "P" + model.Substring(1);
                 if (model == "P49") model = "P46";
 
                 _productToModel[name] = model;
@@ -777,6 +781,7 @@ public partial class MainViewModel : ObservableObject
     private AppSettings BuildSettingsSnapshot(AppSettings? baseSettings)
     {
         var s = baseSettings ?? new AppSettings();
+        var existingTheme = s.accessapp?.theme;
 
         s.mqtt = new MqttSettings
         {
@@ -816,6 +821,7 @@ public partial class MainViewModel : ObservableObject
             networkId = NetworkId,
             commandTopicTemplate = CommandTopicTemplate,
             defaultCommand = DefaultCommand,
+            theme = string.IsNullOrWhiteSpace(existingTheme) ? App.CurrentTheme : existingTheme,
             forceUpdate = ForceUpdateEnabled,
             autoSetWorkersByModel = AutoSetWorkersByModelEnabled,
             selectedFirmwareByModel = fwMap

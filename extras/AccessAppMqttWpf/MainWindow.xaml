@@ -943,12 +943,35 @@
                       Margin="14,0,0,0"
                       VerticalAlignment="Center"/>
 
-                                        <TextBlock Text="Models:" Margin="14,0,6,0" VerticalAlignment="Center" Foreground="{DynamicResource MutedBrush}"/>
-                                        <CheckBox Content="P41" IsChecked="{Binding ShowModelP41, Mode=TwoWay}" Margin="0,0,6,0" VerticalAlignment="Center"/>
-                                        <CheckBox Content="P42" IsChecked="{Binding ShowModelP42, Mode=TwoWay}" Margin="0,0,6,0" VerticalAlignment="Center"/>
-                                        <CheckBox Content="P46" IsChecked="{Binding ShowModelP46, Mode=TwoWay}" Margin="0,0,6,0" VerticalAlignment="Center"/>
-                                        <CheckBox Content="P47" IsChecked="{Binding ShowModelP47, Mode=TwoWay}" Margin="0,0,6,0" VerticalAlignment="Center"/>
-                                        <CheckBox Content="P48" IsChecked="{Binding ShowModelP48, Mode=TwoWay}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                        <Menu Margin="14,0,8,0" VerticalAlignment="Center" Background="Transparent">
+                                            <MenuItem Header="{Binding SelectedModelFilterSummary}" Width="150">
+                                                <MenuItem StaysOpenOnClick="True">
+                                                    <MenuItem.Header>
+                                                        <CheckBox Content="P41" IsChecked="{Binding ShowModelP41, Mode=TwoWay}"/>
+                                                    </MenuItem.Header>
+                                                </MenuItem>
+                                                <MenuItem StaysOpenOnClick="True">
+                                                    <MenuItem.Header>
+                                                        <CheckBox Content="P42" IsChecked="{Binding ShowModelP42, Mode=TwoWay}"/>
+                                                    </MenuItem.Header>
+                                                </MenuItem>
+                                                <MenuItem StaysOpenOnClick="True">
+                                                    <MenuItem.Header>
+                                                        <CheckBox Content="P46" IsChecked="{Binding ShowModelP46, Mode=TwoWay}"/>
+                                                    </MenuItem.Header>
+                                                </MenuItem>
+                                                <MenuItem StaysOpenOnClick="True">
+                                                    <MenuItem.Header>
+                                                        <CheckBox Content="P47" IsChecked="{Binding ShowModelP47, Mode=TwoWay}"/>
+                                                    </MenuItem.Header>
+                                                </MenuItem>
+                                                <MenuItem StaysOpenOnClick="True">
+                                                    <MenuItem.Header>
+                                                        <CheckBox Content="P48" IsChecked="{Binding ShowModelP48, Mode=TwoWay}"/>
+                                                    </MenuItem.Header>
+                                                </MenuItem>
+                                            </MenuItem>
+                                        </Menu>
 
                                         <CheckBox Content="Hide weak RSSI"
                       IsChecked="{Binding HideWeakRssiEnabled, Mode=TwoWay}"
@@ -993,6 +1016,7 @@
                                       ItemsSource="{Binding FilteredDevices}"
                                       SelectedItem="{Binding SelectedDevice, Mode=TwoWay}"
                                       AutoGenerateColumns="False"
+                                      SelectionChanged="DevicesGrid_SelectionChanged"
                                       MouseDoubleClick="DevicesGrid_MouseDoubleClick"
                                       IsReadOnly="False"
                                       CanUserSortColumns="True" EnableRowVirtualization="True" EnableColumnVirtualization="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.IsDeferredScrollingEnabled="True" ScrollViewer.CanContentScroll="True">
@@ -1180,6 +1204,7 @@
                                           SelectedItem="{Binding SelectedQueueItem, Mode=TwoWay}"
                                           AutoGenerateColumns="False"
                                           IsReadOnly="True"
+                                          SelectionChanged="QueueGrid_SelectionChanged"
                                           CanUserSortColumns="True" EnableRowVirtualization="True" EnableColumnVirtualization="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.IsDeferredScrollingEnabled="True" ScrollViewer.CanContentScroll="True"
                                           Sorting="QueueGrid_Sorting">
                                     <DataGrid.RowStyle>
@@ -1200,7 +1225,7 @@
                                         <DataGridTextColumn Header="MAC" Binding="{Binding Mac}" Width="120"/>
                                         <DataGridTextColumn Header="Cassia" Binding="{Binding Cassia}" Width="110"/>
                                         <DataGridTextColumn Header="Chip" Binding="{Binding ChipUsed}" Width="50"/>
-                                        <DataGridTemplateColumn Header="RSSI" Width="700" CanUserSort="False">
+                                        <DataGridTemplateColumn Header="RSSI" Width="*" CanUserSort="False">
                                             <DataGridTemplateColumn.CellTemplate>
                                                 <DataTemplate>
                                                     <ItemsControl ItemsSource="{Binding RssiEntries}">
@@ -1230,7 +1255,7 @@
                                                 </DataTemplate>
                                             </DataGridTemplateColumn.CellTemplate>
                                         </DataGridTemplateColumn>
-                                        <DataGridTextColumn Header="Model" Binding="{Binding DetectorType}" Width="70"/>
+                                        <DataGridTextColumn Header="Model" Binding="{Binding DetectorType}" Width="80"/>
                                         <DataGridTextColumn Header="FW" Binding="{Binding FirmwareVersion}" Width="90"/>
                                         <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="260"/>
                                         <DataGridTemplateColumn Header="%" Width="130" CellTemplate="{StaticResource ProgressBarCellTemplate}"/>
@@ -1400,6 +1425,7 @@
                               SelectedItem="{Binding SelectedQueueItem, Mode=TwoWay}"
                               AutoGenerateColumns="False"
                               IsReadOnly="True"
+                              SelectionChanged="QueueGrid_SelectionChanged"
                               CanUserSortColumns="True"
                               EnableRowVirtualization="True" EnableColumnVirtualization="True"
                               VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
@@ -1480,6 +1506,7 @@
                                   SelectedItem="{Binding SelectedQueueItem, Mode=TwoWay}"
                                   AutoGenerateColumns="False"
                                   IsReadOnly="True"
+                                  SelectionChanged="QueueGrid_SelectionChanged"
                                   CanUserSortColumns="True"
                                   Sorting="QueueGrid_Sorting" EnableRowVirtualization="True" EnableColumnVirtualization="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.IsDeferredScrollingEnabled="True" ScrollViewer.CanContentScroll="True">
                             <DataGrid.RowStyle>

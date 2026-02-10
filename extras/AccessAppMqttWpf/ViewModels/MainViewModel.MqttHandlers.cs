@@ -200,6 +200,7 @@ public partial class MainViewModel : ObservableObject
         private Task PublishStartUpdateAsync(string cassia, string mac, string model, string fw)
         {
             cassia = (cassia ?? "").Trim();
+            model = NormalizeDetectorModel(model);
             var topic = BuildCmdTopic(cassia, DefaultCommand);
 
             // Keep legacy start-update shape (raw request array) for maximum backend compatibility.

@@ -1183,18 +1183,36 @@ public partial class MainViewModel : ObservableObject
         return true;
     }
 
+    private static string NormalizeDetectorModel(string? value)
+    {
+        var s = (value ?? "").Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(s)) return "";
+
+        // Accept full short descriptions like M42MR / P42-LR and collapse to core model P42.
+        var m = Regex.Match(s, @"^([PM]\d{2})", RegexOptions.IgnoreCase);
+        if (m.Success)
+            s = m.Groups[1].Value.ToUpperInvariant();
+
+        if (s.StartsWith("M", StringComparison.Ordinal))
+            s = "P" + s.Substring(1);
+        if (s == "P49")
+            s = "P46";
+
+        return s;
+    }
+
     private string ResolveDetectorTypeForMac(string mac, string fallback)
     {
         mac = (mac ?? "").Trim();
-        var model = (fallback ?? "").Trim().ToUpperInvariant();
+        var model = NormalizeDetectorModel(fallback);
         if (!string.IsNullOrWhiteSpace(model)) return model;
 
         var dev = _devices.FirstOrDefault(d => d != null && string.Equals((d.Mac ?? "").Trim(), mac, StringComparison.OrdinalIgnoreCase));
-        model = (dev?.SensorModel ?? "").Trim().ToUpperInvariant();
+        model = NormalizeDetectorModel(dev?.SensorModel);
         if (!string.IsNullOrWhiteSpace(model)) return model;
 
         if (!string.IsNullOrWhiteSpace(dev?.ProductNumber) && _productToModel.TryGetValue(dev.ProductNumber, out var m2))
-            model = (m2 ?? "").Trim().ToUpperInvariant();
+            model = NormalizeDetectorModel(m2);
 
         return string.IsNullOrWhiteSpace(model) ? "" : model;
     }
@@ -1205,7 +1223,7 @@ public partial class MainViewModel : ObservableObject
     /// </summary>
     private static bool IsDaliMasterModel(string? model)
     {
-        model = (model ?? "").Trim().ToUpperInvariant();
+        model = NormalizeDetectorModel(model);
         return model == "P47" || model == "P48";
     }
 
@@ -1258,12 +1276,12 @@ public partial class MainViewModel : ObservableObject
         }
 
         // Determine model
-        var model = (d.SensorModel ?? "").Trim().ToUpperInvariant();
+        var model = NormalizeDetectorModel(d.SensorModel);
         if (string.IsNullOrWhiteSpace(model))
         {
             // try derive from product number if present
             if (!string.IsNullOrWhiteSpace(d.ProductNumber) && _productToModel.TryGetValue(d.ProductNumber, out var m2))
-                model = m2;
+                model = NormalizeDetectorModel(m2);
         }
         if (string.IsNullOrWhiteSpace(model))
         {

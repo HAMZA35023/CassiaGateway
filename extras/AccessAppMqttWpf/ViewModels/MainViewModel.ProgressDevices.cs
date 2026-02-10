@@ -152,8 +152,11 @@ public partial class MainViewModel : ObservableObject
     partial void OnSuppressSameFirmwareWarningsChanged(bool value)
     {
         RefreshUpgradeSuccessFromLatestGroups();
+        RequestUpgradeLogViewRefresh();
         RequestDevicesRefresh();
         RequestQueueRefresh();
+        try { FlushHostBleToUi(); } catch { }
+        try { HostBleDevicesView?.Refresh(); } catch { }
     }
 
     partial void OnSensorFilterChanged(string value)
