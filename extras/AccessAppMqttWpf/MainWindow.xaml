@@ -218,56 +218,65 @@
             <Border Style="{StaticResource Card}">
                 <DockPanel>
 
-                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10" VerticalAlignment="Center">
-                        <TextBlock Text="Upgrade log" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                        <TextBlock Text="  " />
-                        <TextBlock Text="{Binding UpgradeLogSummary}" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" Visibility="Collapsed"/>
-                        <TextBlock Text="  " />
-                        <TextBlock Text="{Binding UpgradeLogUniqueSummary}" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center"/>
+                    <Grid DockPanel.Dock="Top" Margin="0,0,0,10">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
 
-                        <TextBlock Text="   Search:" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" Margin="18,0,0,0"/>
-                        <TextBox Width="220"
-                                 Text="{Binding UpgradeLogSearchText, UpdateSourceTrigger=PropertyChanged}"
-                                 Margin="8,0,0,0"
-                                 VerticalAlignment="Center"/>
+                        <StackPanel Grid.Row="0" Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Text="Upgrade log" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
 
-                        <!-- UPDATED: add (LogId dropdown) + keep existing gateway dropdown + request/clear buttons -->
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="18,0,0,0">
-                                <ComboBox Width="160"
-                                      ItemsSource="{Binding LogGatewayOptions}"
-                                      SelectedItem="{Binding SelectedLogGatewayName}"
-                                      Margin="0,0,8,0"/>
+                            <TextBlock Text="   Search:" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" Margin="18,0,0,0"/>
+                            <TextBox Width="220"
+                                     Text="{Binding UpgradeLogSearchText, UpdateSourceTrigger=PropertyChanged}"
+                                     Margin="8,0,0,0"
+                                     VerticalAlignment="Center"/>
 
-                                <ComboBox Width="130"
-                                      ItemsSource="{Binding UpgradeLogShowOptions}"
-                                      SelectedItem="{Binding SelectedUpgradeLogShowOption}"
-                                      Margin="0,0,8,0"/>
+                            <!-- UPDATED: add (LogId dropdown) + keep existing gateway dropdown + request/clear buttons -->
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="18,0,0,0">
+                                    <ComboBox Width="160"
+                                          ItemsSource="{Binding LogGatewayOptions}"
+                                          SelectedItem="{Binding SelectedLogGatewayName}"
+                                          Margin="0,0,8,0"/>
 
-                            <CheckBox Content="Latest per MAC"
-                                      IsChecked="{Binding UpgradeLogLatestOnlyPerMac, Mode=TwoWay}"
-                                      VerticalAlignment="Center"
-                                      Margin="0,0,12,0"/>
+                                    <ComboBox Width="130"
+                                          ItemsSource="{Binding UpgradeLogShowOptions}"
+                                          SelectedItem="{Binding SelectedUpgradeLogShowOption}"
+                                          Margin="0,0,8,0"/>
 
-                            <Button Style="{StaticResource GhostButton}"
-                                    Content="Export"
-                                    Padding="12,6"
-                                    Command="{Binding ExportUpgradeLogToExcelCommand}"
-                                    Margin="0,0,8,0"/>
+                                <CheckBox Content="Latest per MAC"
+                                          IsChecked="{Binding UpgradeLogLatestOnlyPerMac, Mode=TwoWay}"
+                                          VerticalAlignment="Center"
+                                          Margin="0,0,12,0"/>
+
+                                <Button Style="{StaticResource GhostButton}"
+                                        Content="Export"
+                                        Padding="12,6"
+                                        Command="{Binding ExportUpgradeLogToExcelCommand}"
+                                        Margin="0,0,8,0"/>
 
 
-                            <Button Style="{StaticResource PrimaryButton}"
-                                    Content="Request"
-                                    Command="{Binding RequestUpgradeLogCommand}"
-                                    Margin="0,0,8,0"/>
-                            <Button Style="{StaticResource GhostButton}"
-                                    Content="Clear on Cassia"
-                                    Command="{Binding ClearUpgradeLogOnCassiaCommand}"
-                                    Margin="0,0,8,0"/>
-                            <Button Style="{StaticResource GhostButton}"
-                                    Content="Clear"
-                                    Command="{Binding ClearUpgradeLogCommand}"/>
+                                <Button Style="{StaticResource PrimaryButton}"
+                                        Content="Request"
+                                        Command="{Binding RequestUpgradeLogCommand}"
+                                        Margin="0,0,8,0"/>
+                                <Button Style="{StaticResource GhostButton}"
+                                        Content="Clear on Cassia"
+                                        Command="{Binding ClearUpgradeLogOnCassiaCommand}"
+                                        Margin="0,0,8,0"/>
+                                <Button Style="{StaticResource GhostButton}"
+                                        Content="Clear"
+                                        Command="{Binding ClearUpgradeLogCommand}"/>
+                            </StackPanel>
                         </StackPanel>
-                    </StackPanel>
+
+                        <TextBlock Grid.Row="1"
+                                   Margin="0,6,0,0"
+                                   Text="{Binding UpgradeLogUniqueSummary}"
+                                   Foreground="{DynamicResource MutedBrush}"
+                                   VerticalAlignment="Center"/>
+                    </Grid>
 
                     <ListBox ItemsSource="{Binding UpgradeLogGroupsView}"
                              BorderThickness="0"
