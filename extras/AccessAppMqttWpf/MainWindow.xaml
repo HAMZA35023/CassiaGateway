@@ -16,6 +16,7 @@
         <SolidColorBrush x:Key="DoneRowBrush" Color="#2A22C55E"/>
         <SolidColorBrush x:Key="QueueRowBrush" Color="#2A60A5FA"/>
         <SolidColorBrush x:Key="WarnRowBrush" Color="#2AFACC15"/>
+        <SolidColorBrush x:Key="NoFwRowBrush" Color="#2AFFB347"/>
         <SolidColorBrush x:Key="FailedRowBrush" Color="#2AE74C3C"/>
 
 
@@ -221,6 +222,8 @@
                         <TextBlock Text="Upgrade log" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
                         <TextBlock Text="  " />
                         <TextBlock Text="{Binding UpgradeLogSummary}" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" Visibility="Collapsed"/>
+                        <TextBlock Text="  " />
+                        <TextBlock Text="{Binding UpgradeLogUniqueSummary}" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center"/>
 
                         <TextBlock Text="   Search:" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" Margin="18,0,0,0"/>
                         <TextBox Width="220"
@@ -874,10 +877,6 @@
                      Text="{Binding DeviceFilter, UpdateSourceTrigger=PropertyChanged}"
                      Margin="18,0,10,0"/>
 
-                                        <ComboBox Width="120"
-                      ItemsSource="{Binding SensorFilterOptions}"
-                      SelectedItem="{Binding SensorFilter}"/>
-
                                         <Button Style="{StaticResource GhostButton}"
                     Content="Remove out of range"
                     Padding="12,6"
@@ -943,6 +942,29 @@
                       IsChecked="{Binding HideCompletedDevices, Mode=TwoWay}"
                       Margin="14,0,0,0"
                       VerticalAlignment="Center"/>
+
+                                        <TextBlock Text="Models:" Margin="14,0,6,0" VerticalAlignment="Center" Foreground="{DynamicResource MutedBrush}"/>
+                                        <CheckBox Content="P41" IsChecked="{Binding ShowModelP41, Mode=TwoWay}" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                        <CheckBox Content="P42" IsChecked="{Binding ShowModelP42, Mode=TwoWay}" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                        <CheckBox Content="P46" IsChecked="{Binding ShowModelP46, Mode=TwoWay}" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                        <CheckBox Content="P47" IsChecked="{Binding ShowModelP47, Mode=TwoWay}" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                        <CheckBox Content="P48" IsChecked="{Binding ShowModelP48, Mode=TwoWay}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+
+                                        <CheckBox Content="Hide weak RSSI"
+                      IsChecked="{Binding HideWeakRssiEnabled, Mode=TwoWay}"
+                      Margin="14,0,6,0"
+                      VerticalAlignment="Center"/>
+
+                                        <ComboBox Width="70"
+                      ItemsSource="{Binding WeakRssiThresholdOptions}"
+                      SelectedItem="{Binding HideWeakRssiThreshold, Mode=TwoWay}"
+                      IsEnabled="{Binding HideWeakRssiEnabled}"
+                      VerticalAlignment="Center"/>
+
+                                        <CheckBox Content="Hide same-FW warn"
+                      IsChecked="{Binding SuppressSameFirmwareWarnings, Mode=TwoWay}"
+                      Margin="14,0,0,0"
+                      VerticalAlignment="Center"/>
                                     </StackPanel>
 
                                     <!-- Right: Reassign (fully right) -->
@@ -1004,6 +1026,10 @@
     <!-- If the latest upgrade-log entry is Warn, mark the row orange. -->
     <DataTrigger Binding="{Binding IsUpgradeWarn}" Value="True">
         <Setter Property="Background" Value="{StaticResource WarnRowBrush}"/>
+        <Setter Property="Foreground" Value="Black"/>
+    </DataTrigger>
+    <DataTrigger Binding="{Binding IsUpgradeNoFwRead}" Value="True">
+        <Setter Property="Background" Value="{StaticResource NoFwRowBrush}"/>
         <Setter Property="Foreground" Value="Black"/>
     </DataTrigger>
 
@@ -1171,7 +1197,7 @@
                                         </Style>
                                     </DataGrid.RowStyle>
                                     <DataGrid.Columns>
-                                        <DataGridTextColumn Header="MAC" Binding="{Binding Mac}" Width="110"/>
+                                        <DataGridTextColumn Header="MAC" Binding="{Binding Mac}" Width="120"/>
                                         <DataGridTextColumn Header="Cassia" Binding="{Binding Cassia}" Width="110"/>
                                         <DataGridTextColumn Header="Chip" Binding="{Binding ChipUsed}" Width="50"/>
                                         <DataGridTemplateColumn Header="RSSI" Width="700" CanUserSort="False">
@@ -1311,6 +1337,10 @@
                             <Style.Triggers>
                                 <DataTrigger Binding="{Binding IsUpgradeWarn}" Value="True">
                                     <Setter Property="Background" Value="{StaticResource WarnRowBrush}"/>
+                                    <Setter Property="Foreground" Value="Black"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsUpgradeNoFwRead}" Value="True">
+                                    <Setter Property="Background" Value="{StaticResource NoFwRowBrush}"/>
                                     <Setter Property="Foreground" Value="Black"/>
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding IsUpgradeSuccess}" Value="True">

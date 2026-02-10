@@ -474,13 +474,22 @@ public partial class MainViewModel : ObservableObject
 
                 var completionStatus = (completion?.Status ?? "").Trim();
                 var isSuccess = completionStatus.Equals("Success", StringComparison.OrdinalIgnoreCase);
-                var isWarn = completionStatus.Equals("Warn", StringComparison.OrdinalIgnoreCase);
+                var isWarn = IsWarnStatus(completionStatus);
+                var isNoFwRead = IsNoFwReadStatus(completionStatus);
+                if (IsSuppressibleSameFirmwareWarn(completion?.Stage, completionStatus, completion?.Line))
+                {
+                    isWarn = false;
+                    isSuccess = true;
+                }
                 var isFailed = completionStatus.Equals("Failed", StringComparison.OrdinalIgnoreCase)
                 || completionStatus.StartsWith("Fail", StringComparison.OrdinalIgnoreCase);
+                if (isNoFwRead)
+                    isFailed = false;
 
                 var cs = GetOrCreateCache(mac);
                 cs.IsUpgradeSuccess = isSuccess;
                 cs.IsUpgradeWarn = isWarn;
+                cs.IsUpgradeNoFwRead = isNoFwRead;
                 cs.IsUpgradeFailed = isFailed;
                 // Use the group's completion timestamp if present.
                 if (isSuccess)
@@ -505,6 +514,7 @@ public partial class MainViewModel : ObservableObject
                 {
                     dev.IsUpgradeSuccess = isSuccess;
                     dev.IsUpgradeWarn = isWarn;
+                    dev.IsUpgradeNoFwRead = isNoFwRead;
                     dev.IsUpgradeFailed = isFailed;
                     dev.LastUpgradeSuccessUtc = cs.LastUpgradeSuccessUtc;
                     dev.LastTargetFw = cs.LastTargetFw;
@@ -520,6 +530,7 @@ public partial class MainViewModel : ObservableObject
                 dev.IsUpgradeSuccess = false;
                 dev.IsUpgradeWarn = false;
                 dev.IsUpgradeFailed = false;
+                dev.IsUpgradeNoFwRead = false;
             }
         }
 
@@ -536,6 +547,29 @@ public partial class MainViewModel : ObservableObject
                 return new DateTimeOffset(dt);
             }
             return DateTimeOffset.MinValue;
+        }
+
+        private static bool IsWarnStatus(string? status)
+            => !string.IsNullOrWhiteSpace(status) &&
+               (status.Trim().Equals("Warn", StringComparison.OrdinalIgnoreCase) ||
+                status.Trim().Equals("Warning", StringComparison.OrdinalIgnoreCase));
+
+        private static bool IsNoFwReadStatus(string? status)
+            => !string.IsNullOrWhiteSpace(status) &&
+               status.Trim().Equals("NoFwRead", StringComparison.OrdinalIgnoreCase);
+
+        private bool IsSuppressibleSameFirmwareWarn(string? stage, string? status, string? details)
+        {
+            if (!SuppressSameFirmwareWarnings) return false;
+            if (!string.Equals((stage ?? "").Trim(), "Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase)) return false;
+            if (!IsWarnStatus(status)) return false;
+
+            var text = (details ?? "").ToLowerInvariant();
+            return text.Contains("same firmware")
+                || text.Contains("firmware was same")
+                || text.Contains("already latest")
+                || text.Contains("already up to date")
+                || text.Contains("already up-to-date");
         }
 
         private static bool LooksLikeFirmwareVersion(string s)
@@ -641,10 +675,16 @@ public partial class MainViewModel : ObservableObject
                 {
                     var outcome = (status ?? "").Trim();
                     var isSuccess = outcome.Equals("Success", StringComparison.OrdinalIgnoreCase);
-                    var isWarn = outcome.Equals("Warn", StringComparison.OrdinalIgnoreCase) ||
-                    outcome.Equals("Warning", StringComparison.OrdinalIgnoreCase);
+                    var isWarn = IsWarnStatus(outcome);
+                    var isNoFwRead = IsNoFwReadStatus(outcome);
+                    if (IsSuppressibleSameFirmwareWarn(stage, outcome, line))
+                    {
+                        isWarn = false;
+                        isSuccess = true;
+                    }
                     var isFailed = outcome.Equals("Failed", StringComparison.OrdinalIgnoreCase) ||
                     outcome.Equals("Error", StringComparison.OrdinalIgnoreCase);
+                    if (isNoFwRead) isFailed = false;
 
                     // Only accept if newer than the last completion we stored for this MAC.
                     // Note: gateway clocks can be skewed, but within a single gateway this is still useful.
@@ -657,6 +697,7 @@ public partial class MainViewModel : ObservableObject
                         cs.IsUpgradeSuccess = isSuccess;
                         cs.IsUpgradeWarn = isWarn;
                         cs.IsUpgradeFailed = isFailed;
+                        cs.IsUpgradeNoFwRead = isNoFwRead;
 
                         // Completion implies no longer in queue unless queue snapshot says otherwise later.
                         if (isSuccess || isWarn || isFailed)
@@ -692,6 +733,7 @@ public partial class MainViewModel : ObservableObject
                     // for any grouping/debounced UI refresh.
                     dev.IsUpgradeSuccess = cs.IsUpgradeSuccess;
                     dev.IsUpgradeWarn = cs.IsUpgradeWarn;
+                    dev.IsUpgradeNoFwRead = cs.IsUpgradeNoFwRead;
                     dev.IsUpgradeFailed = cs.IsUpgradeFailed;
 
                     if (cs.IsUpgradeSuccess || cs.IsUpgradeWarn || cs.IsUpgradeFailed)
@@ -746,15 +788,21 @@ public partial class MainViewModel : ObservableObject
                 var isCompletion = stage.Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase);
 
                 var isSuccess = isCompletion && status.Equals("Success", StringComparison.OrdinalIgnoreCase);
-                var isWarn = isCompletion && (status.Equals("Warn", StringComparison.OrdinalIgnoreCase) ||
-                status.Equals("Warning", StringComparison.OrdinalIgnoreCase));
+                var isWarn = isCompletion && IsWarnStatus(status);
+                var isNoFwRead = isCompletion && IsNoFwReadStatus(status);
+                if (IsSuppressibleSameFirmwareWarn(stage, status, line))
+                {
+                    isWarn = false;
+                    isSuccess = isCompletion;
+                }
                 var isFailed = isCompletion && (status.Equals("Failed", StringComparison.OrdinalIgnoreCase) ||
                 status.Equals("Error", StringComparison.OrdinalIgnoreCase) ||
                 status.StartsWith("Fail", StringComparison.OrdinalIgnoreCase));
+                if (isNoFwRead) isFailed = false;
 
                 // queue text: show Done/Warn/Failed if completion, else normal stage/status
                 var queueText = isCompletion
-                ? (isSuccess ? "Done" : (isWarn ? "Warn" : (isFailed ? "Failed" : text)))
+                ? (isSuccess ? "Done" : (isNoFwRead ? "No FW" : (isWarn ? "Warn" : (isFailed ? "Failed" : text))))
                 : text;
 
                 Application.Current.Dispatcher.Invoke(() =>
@@ -805,6 +853,7 @@ public partial class MainViewModel : ObservableObject
                         cs.IsUpgradeSuccess = isSuccess;
                         cs.IsUpgradeWarn = isWarn;
                         cs.IsUpgradeFailed = isFailed;
+                        cs.IsUpgradeNoFwRead = isNoFwRead;
 
                         // completion implies not in queue unless queue snapshot later says otherwise
                         if (isSuccess || isWarn || isFailed)
@@ -829,6 +878,7 @@ public partial class MainViewModel : ObservableObject
                         dev.IsUpgradeSuccess = isSuccess;
                         dev.IsUpgradeWarn = isWarn;
                         dev.IsUpgradeFailed = isFailed;
+                        dev.IsUpgradeNoFwRead = isNoFwRead;
 
                         if (isSuccess || isWarn || isFailed)
                         dev.IsInQueue = false; // queue snapshot can set back to true (blue)
@@ -871,6 +921,7 @@ public partial class MainViewModel : ObservableObject
                 await Task.Delay(250);
                 _pendingUpgradeLogViewRefresh = false;
                 RefreshUpgradeSuccessFromLatestGroups();
+                RecomputeUniqueUpgradeOutcomeCounts();
                 UpgradeLogGroupsView.Refresh();
             });
         }
@@ -894,6 +945,8 @@ public partial class MainViewModel : ObservableObject
                 _upgradeLogSb.Clear();
                 UpgradeLogReceivedLines = 0;
                 UpgradeLogTotalLines = 0;
+                UpgradeLogUniqueSuccessCount = 0;
+                UpgradeLogUniqueFailedCount = 0;
                 UpgradeLogStatus = "Requesting saved logs from all gateways…";
             });
 
@@ -1027,6 +1080,8 @@ public partial class MainViewModel : ObservableObject
                 UpgradeLogSearchText = "";
                 UpgradeLogReceivedLines = 0;
                 UpgradeLogTotalLines = 0;
+                UpgradeLogUniqueSuccessCount = 0;
+                UpgradeLogUniqueFailedCount = 0;
                 UpgradeLogStatus = "Idle";
             });
         }
@@ -1049,3 +1104,5 @@ public partial class MainViewModel : ObservableObject
             _ = RequestUpgradeLogForCassiaAsync(gw.Name);
         }
     }
+
+

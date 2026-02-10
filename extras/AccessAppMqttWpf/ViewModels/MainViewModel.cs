@@ -50,7 +50,7 @@ public partial class MainViewModel : ObservableObject
     private static readonly TimeSpan GatewayOfflineAfter = TimeSpan.FromMinutes(1);
 
     public string ConnectButtonText => IsConnected ? "Disconnect" : "Connect";
-    public string DevicesSubtitle => $"{FilteredDevices.Cast<object>().Count()} device(s) - model: {SensorFilter} - filter: {DeviceFilter}";
+    public string DevicesSubtitle => $"{FilteredDevices.Cast<object>().Count()} device(s) - models: {SelectedModelFilterSummary} - filter: {DeviceFilter}";
 
     private readonly System.Collections.Generic.Dictionary<string, System.Collections.Generic.HashSet<string>> _gwSeenMacs
     = new(StringComparer.OrdinalIgnoreCase);
@@ -71,6 +71,7 @@ public partial class MainViewModel : ObservableObject
         public bool IsUpgradeSuccess = false;
         public bool IsUpgradeWarn = false;
         public bool IsUpgradeFailed = false;
+        public bool IsUpgradeNoFwRead = false;
         public string LastTargetFw = "";
         public DateTimeOffset? LastUpgradeSuccessUtc = null;
 
@@ -118,7 +119,8 @@ public partial class MainViewModel : ObservableObject
         // Upgrade result flags come from upgrade-log completion stage.
         // These are independent from queue/progress UI and are overridden visually by IsInQueue.
         dev.IsUpgradeWarn = cs.IsUpgradeWarn;
-        dev.IsUpgradeFailed = cs.IsUpgradeFailed;
+        dev.IsUpgradeNoFwRead = cs.IsUpgradeNoFwRead;
+        dev.IsUpgradeFailed = cs.IsUpgradeFailed && !cs.IsUpgradeNoFwRead;
 
         if (cs.IsUpgradeSuccess)
         {

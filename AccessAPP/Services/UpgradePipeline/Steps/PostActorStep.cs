@@ -50,7 +50,7 @@ internal sealed class PostActorStep : IDeviceUpgradeStep
             }
         }
 
-        if (RuntimeVariables.RebootDetectorAfterUpgrade)
+        if (RuntimeVariables.RebootDetectorAfterUpgrade && !ctx.ActorUpdatedBeforeFirmware)
         {
             AppLog.Info($"Rebooting device {ctx.MacAddress} after actor update");
             await svc.RebootDeviceAsync(ctx.MacAddress).ConfigureAwait(false);
@@ -64,6 +64,11 @@ internal sealed class PostActorStep : IDeviceUpgradeStep
                     maxAttempts: 3,
                     delayBetweenAttemptsMs: 2000).ConfigureAwait(false);
             }
+        }
+        else if (RuntimeVariables.RebootDetectorAfterUpgrade && ctx.ActorUpdatedBeforeFirmware)
+        {
+            UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Reboot skipped (actor updated before bootloader/sensor)", "Info", ctx.FirmwareVersion);
+            AppLog.Info($"Skipping post-actor reboot for {ctx.MacAddress} because actor was already updated pre-firmware.");
         }
 
         if (isDaliMaster && RuntimeVariables.Restore102DBAfterUpgrade)

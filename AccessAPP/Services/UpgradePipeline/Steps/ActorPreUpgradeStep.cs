@@ -40,6 +40,8 @@ internal sealed class ActorPreUpgradeStep : IDeviceUpgradeStep
 
         AppLog.Info($"Actor upgrade (pre-sensor) completed for {ctx.MacAddress}. Time taken: {ctx.Stopwatch.Elapsed.TotalSeconds} seconds - result: {actorUpgradeResult.Success}");
         dev.ActorSuccess = actorUpgradeResult.Success;
+        if (actorUpgradeResult.Success)
+            ctx.ActorUpdatedBeforeFirmware = true;
 
         if (!actorUpgradeResult.Success)
         {

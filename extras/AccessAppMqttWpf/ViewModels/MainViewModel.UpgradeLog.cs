@@ -39,6 +39,8 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string upgradeLogStatus = "Idle";
     [ObservableProperty] private int upgradeLogTotalLines;
     [ObservableProperty] private int upgradeLogReceivedLines;
+    [ObservableProperty] private int upgradeLogUniqueSuccessCount;
+    [ObservableProperty] private int upgradeLogUniqueFailedCount;
     [ObservableProperty] private CassiaGateway? selectedLogGateway;
 
 
@@ -70,14 +72,18 @@ public partial class MainViewModel : ObservableObject
         UpgradeLogTotalLines > 0
             ? $"{UpgradeLogStatus} - {UpgradeLogReceivedLines}/{UpgradeLogTotalLines} lines"
             : UpgradeLogStatus;
+    public string UpgradeLogUniqueSummary => $"Unique sensors (latest per MAC): Success {UpgradeLogUniqueSuccessCount}, Failed {UpgradeLogUniqueFailedCount}";
 
     partial void OnUpgradeLogStatusChanged(string value)
     {
         OnPropertyChanged(nameof(UpgradeLogSummary));
+        OnPropertyChanged(nameof(UpgradeLogUniqueSummary));
         AppendStatusBar("Upgrade log", value);
     }
     partial void OnUpgradeLogTotalLinesChanged(int value) => OnPropertyChanged(nameof(UpgradeLogSummary));
     partial void OnUpgradeLogReceivedLinesChanged(int value) => OnPropertyChanged(nameof(UpgradeLogSummary));
+    partial void OnUpgradeLogUniqueSuccessCountChanged(int value) => OnPropertyChanged(nameof(UpgradeLogUniqueSummary));
+    partial void OnUpgradeLogUniqueFailedCountChanged(int value) => OnPropertyChanged(nameof(UpgradeLogUniqueSummary));
 
     private readonly System.Text.StringBuilder _upgradeLogSb = new();
 
@@ -237,8 +243,10 @@ public partial class MainViewModel : ObservableObject
         var option = (SelectedUpgradeLogShowOption ?? "All").Trim();
         var status = (g.LatestStatus ?? "").Trim();
         var stage = (g.LatestStage ?? "").Trim();
+        var suppressibleWarn = IsSuppressibleSameFirmwareWarn(stage, status, g.LatestSummary);
 
-        var isSuccess = string.Equals(status, "Success", StringComparison.OrdinalIgnoreCase)
+        var isSuccess = suppressibleWarn
+                        || string.Equals(status, "Success", StringComparison.OrdinalIgnoreCase)
                         || (string.Equals(stage, "Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase)
                             && string.Equals(status, "Success", StringComparison.OrdinalIgnoreCase));
 
@@ -246,6 +254,7 @@ public partial class MainViewModel : ObservableObject
         var statusLower = status.ToLowerInvariant();
         var stageLower = stage.ToLowerInvariant();
         var isFailure = statusLower.Contains("fail") || statusLower.Contains("error") || statusLower.Contains("timeout") || statusLower.Contains("aborted")
+                        || statusLower.Contains("nofwread")
                         || stageLower.Contains("fail") || stageLower.Contains("error") || stageLower.Contains("timeout") || stageLower.Contains("aborted");
 
         if (string.Equals(option, "Only success", StringComparison.OrdinalIgnoreCase))
@@ -264,6 +273,46 @@ public partial class MainViewModel : ObservableObject
     {
         if (string.IsNullOrWhiteSpace(haystack)) return false;
         return haystack.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private void RecomputeUniqueUpgradeOutcomeCounts()
+    {
+        var latestByMac = new Dictionary<string, UpgradeLogGroup>(StringComparer.OrdinalIgnoreCase);
+        foreach (var g in UpgradeLogGroups)
+        {
+            if (g == null) continue;
+            var mac = (g.Mac ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(mac)) continue;
+
+            if (!latestByMac.TryGetValue(mac, out var existing) || g.LastTimeLocal > existing.LastTimeLocal)
+                latestByMac[mac] = g;
+        }
+
+        var success = 0;
+        var failed = 0;
+
+        foreach (var g in latestByMac.Values)
+        {
+            var status = (g.LatestStatus ?? "").Trim();
+            var stage = (g.LatestStage ?? "").Trim();
+            var suppressibleWarn = IsSuppressibleSameFirmwareWarn(stage, status, g.LatestSummary);
+
+            var isSuccess = suppressibleWarn
+                            || status.Equals("Success", StringComparison.OrdinalIgnoreCase)
+                            || (stage.Equals("Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase)
+                                && status.Equals("Success", StringComparison.OrdinalIgnoreCase));
+
+            var s = status.ToLowerInvariant();
+            var st = stage.ToLowerInvariant();
+            var isFailed = s.Contains("fail") || s.Contains("error") || s.Contains("timeout") || s.Contains("aborted") || s.Contains("nofwread")
+                           || st.Contains("fail") || st.Contains("error") || st.Contains("timeout") || st.Contains("aborted");
+
+            if (isSuccess) success++;
+            else if (isFailed) failed++;
+        }
+
+        UpgradeLogUniqueSuccessCount = success;
+        UpgradeLogUniqueFailedCount = failed;
     }
 
 

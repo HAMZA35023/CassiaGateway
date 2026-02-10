@@ -27,6 +27,7 @@ internal sealed class DeviceUpgradeContext
     public bool IsInBoot { get; set; }
     public bool DetectorNameLogged { get; set; }
     public byte? OriginalDaliSysFailLevel { get; set; }
+    public bool ActorUpdatedBeforeFirmware { get; set; }
 
     public Stopwatch Stopwatch { get; } = new();
 

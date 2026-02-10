@@ -61,7 +61,8 @@ try
                         System.Text.Json.JsonSerializer.Serialize(dev));
 
 
-                if (!CheckIfDeviceInBootMode(_gatewayIpAddress, mac))
+                var isInBootMode = CheckIfDeviceInBootMode(_gatewayIpAddress, mac);
+                if (!isInBootMode)
                 {
                     // FW read can be flaky; retry a few times before giving up.
                     for (int i = 1; i <= 3; i++)
@@ -77,73 +78,87 @@ try
                 string logId = $"{mac.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
                 UpgradeLogger.Log(logId, mac, "Current FW Version:", dev.CurrentFirmwareVersion, dev.FirmwareVersion);
 
+                var canProceedWithUpgrade = true;
+                if (!isInBootMode && string.IsNullOrWhiteSpace(dev.CurrentFirmwareVersion))
+                {
+                    canProceedWithUpgrade = false;
+                    dev.shouldRetry = false;
+                    dev.LastFailureReason = "Current FW could not be read while device is not in bootloader.";
+                    dev.finalUpgradeResult = "NoFwRead";
+                    UpgradeLogger.Log(logId, mac, "FW precheck", dev.LastFailureReason, dev.FirmwareVersion);
+                    AppLog.Warn($"[{mac}] {dev.LastFailureReason} Failing update.");
+                }
+
                 dev.RetryCount = 0;
                 dev.RetryCountActor = 0;
                 dev.RetryCountBootloader = 0;
                 dev.RetryCountSensor = 0;
 
-                AppLog.Info($"[START] {mac}");
-                var decisions = UpgradeDecisionCalculator.Compute(dev);
-
-                dev.upgradeBootloader = decisions.UpgradeBootloader;
-                dev.upgradeSensor = decisions.UpgradeSensor;
-                if (!dev.upgradeSensor)
+                if (canProceedWithUpgrade)
                 {
-                    UpgradeLogger.Log(logId, mac, "Sensor upgrade skipped (FW already matches target)", "Info", dev.FirmwareVersion);
-                    AppLog.Info($"[SKIP] Sensor upgrade for {mac} - current matches target and ForceUpdate=false");
-}
+                    AppLog.Info($"[START] {mac}");
+                    var decisions = UpgradeDecisionCalculator.Compute(dev);
 
-                dev.isActorUpgradeNeeded = decisions.ActorUpgradeNeeded;
-                if (decisions.IsDaliMaster && !dev.isActorUpgradeNeeded)
-                {
-                    UpgradeLogger.Log(logId, mac, "Actor upgrade skipped (FW already matches target)", "Info", dev.FirmwareVersion);
-                    AppLog.Info($"[SKIP] Actor upgrade for {mac} - current matches target and ForceUpdate=false");
-}
-
-                // Requirements for success reporting
-                dev.requiresConfigRestore = decisions.RequiresConfigRestore;
-                dev.requires102Restore = decisions.Requires102Restore;
-
-                await UpgradeDeviceAsync(
-                    dev, mac, dev.Pincode, dev.DetectotType, dev.FirmwareVersion,
-                    dev.isActorUpgradeNeeded, dev.upgradeBootloader, dev.upgradeSensor, logId
-                ).ConfigureAwait(false);
-
-                const int maxRetriesPerComponent = 5;
-
-                while (!dev.IsFullyUpgraded)
-                {
-                    if (!UpgradeRetryPolicy.CanRetryNow(dev, maxRetriesPerComponent))
+                    dev.upgradeBootloader = decisions.UpgradeBootloader;
+                    dev.upgradeSensor = decisions.UpgradeSensor;
+                    if (!dev.upgradeSensor)
                     {
-                        AppLog.Warn($"[RETRY STOP] {mac} - retries exhausted. " +
-                            $"actor:{dev.RetryCountActor} boot:{dev.RetryCountBootloader} sensor:{dev.RetryCountSensor}");
-UpgradeLogger.Log(logId, mac, "Retries exhausted.", "Info");
-                        break;
+                        UpgradeLogger.Log(logId, mac, "Sensor upgrade skipped (FW already matches target)", "Info", dev.FirmwareVersion);
+                        AppLog.Info($"[SKIP] Sensor upgrade for {mac} - current matches target and ForceUpdate=false");
                     }
 
-                    await Task.Delay(10_000).ConfigureAwait(false);
+                    dev.isActorUpgradeNeeded = decisions.ActorUpgradeNeeded;
+                    if (decisions.IsDaliMaster && !dev.isActorUpgradeNeeded)
+                    {
+                        UpgradeLogger.Log(logId, mac, "Actor upgrade skipped (FW already matches target)", "Info", dev.FirmwareVersion);
+                        AppLog.Info($"[SKIP] Actor upgrade for {mac} - current matches target and ForceUpdate=false");
+                    }
 
-                    dev.RetryCount++; // total retry rounds (for summary/reporting)
+                    // Requirements for success reporting
+                    dev.requiresConfigRestore = decisions.RequiresConfigRestore;
+                    dev.requires102Restore = decisions.Requires102Restore;
 
-                    var resp = await UpgradeDeviceAsync(
+                    await UpgradeDeviceAsync(
                         dev, mac, dev.Pincode, dev.DetectotType, dev.FirmwareVersion,
-                        dev.isActorUpgradeNeeded && !dev.ActorSuccess,
-                        dev.upgradeBootloader && !dev.BootloaderSuccess,
-                        !dev.SensorSuccess,
-                        logId
+                        dev.isActorUpgradeNeeded, dev.upgradeBootloader, dev.upgradeSensor, logId
                     ).ConfigureAwait(false);
 
-                    AppLog.Warn($"[RETRY RESULT] {mac} - {resp.StatusCode} - {resp.Message}");
-UpgradeLogger.Log(logId, mac, $"Retry result: {resp.StatusCode} - {resp.Message}", resp.Success ? "Success" : "Failed");
+                    const int maxRetriesPerComponent = 5;
 
-                    // HARD FAIL: firmware missing / path issues -> never retry
-                    if (!resp.Success && resp.Message != null &&
-                        (resp.Message.Contains("Could not find a part of the path", StringComparison.OrdinalIgnoreCase) ||
-                         resp.Message.Contains("Firmware file missing", StringComparison.OrdinalIgnoreCase)))
+                    while (!dev.IsFullyUpgraded)
                     {
-                        dev.LastFailureReason = resp.Message;
-                        UpgradeLogger.Log(logId, mac, "Hard failure (firmware missing). Stopping retries.", "Failed");
-                        break;
+                        if (!UpgradeRetryPolicy.CanRetryNow(dev, maxRetriesPerComponent))
+                        {
+                            AppLog.Warn($"[RETRY STOP] {mac} - retries exhausted. " +
+                                $"actor:{dev.RetryCountActor} boot:{dev.RetryCountBootloader} sensor:{dev.RetryCountSensor}");
+                            UpgradeLogger.Log(logId, mac, "Retries exhausted.", "Info");
+                            break;
+                        }
+
+                        await Task.Delay(10_000).ConfigureAwait(false);
+
+                        dev.RetryCount++; // total retry rounds (for summary/reporting)
+
+                        var resp = await UpgradeDeviceAsync(
+                            dev, mac, dev.Pincode, dev.DetectotType, dev.FirmwareVersion,
+                            dev.isActorUpgradeNeeded && !dev.ActorSuccess,
+                            dev.upgradeBootloader && !dev.BootloaderSuccess,
+                            !dev.SensorSuccess,
+                            logId
+                        ).ConfigureAwait(false);
+
+                        AppLog.Warn($"[RETRY RESULT] {mac} - {resp.StatusCode} - {resp.Message}");
+                        UpgradeLogger.Log(logId, mac, $"Retry result: {resp.StatusCode} - {resp.Message}", resp.Success ? "Success" : "Failed");
+
+                        // HARD FAIL: firmware missing / path issues -> never retry
+                        if (!resp.Success && resp.Message != null &&
+                            (resp.Message.Contains("Could not find a part of the path", StringComparison.OrdinalIgnoreCase) ||
+                             resp.Message.Contains("Firmware file missing", StringComparison.OrdinalIgnoreCase)))
+                        {
+                            dev.LastFailureReason = resp.Message;
+                            UpgradeLogger.Log(logId, mac, "Hard failure (firmware missing). Stopping retries.", "Failed");
+                            break;
+                        }
                     }
                 }
 

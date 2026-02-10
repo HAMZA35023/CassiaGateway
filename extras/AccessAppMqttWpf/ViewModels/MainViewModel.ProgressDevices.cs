@@ -25,12 +25,22 @@ namespace AccessAppMqttWpf.ViewModels;
 
 public partial class MainViewModel : ObservableObject
 {
+    private static readonly TimeSpan WeakRssiGraceWindow = TimeSpan.FromSeconds(60);
 
 
     public ObservableCollection<string> SensorFilterOptions { get; } =
         new(new[] { "All", "P41", "P42", "P46", "P47", "P48" });
+    public ObservableCollection<int> WeakRssiThresholdOptions { get; } = new(new[] { -70, -75 });
 
     [ObservableProperty] private bool hideCompletedDevices = false;
+    [ObservableProperty] private bool hideWeakRssiEnabled = true;
+    [ObservableProperty] private int hideWeakRssiThreshold = -70;
+    [ObservableProperty] private bool suppressSameFirmwareWarnings = true;
+    [ObservableProperty] private bool showModelP41 = true;
+    [ObservableProperty] private bool showModelP42 = true;
+    [ObservableProperty] private bool showModelP46 = true;
+    [ObservableProperty] private bool showModelP47 = true;
+    [ObservableProperty] private bool showModelP48 = true;
 
     [ObservableProperty] private string deviceFilter = "";
     [ObservableProperty] private string sensorFilter = "All";
@@ -71,6 +81,25 @@ public partial class MainViewModel : ObservableObject
                     return false;
             }
 
+            var model = (d.SensorModel ?? "").Trim();
+            if (model.Equals("P41", StringComparison.OrdinalIgnoreCase) && !ShowModelP41) return false;
+            if (model.Equals("P42", StringComparison.OrdinalIgnoreCase) && !ShowModelP42) return false;
+            if (model.Equals("P46", StringComparison.OrdinalIgnoreCase) && !ShowModelP46) return false;
+            if (model.Equals("P47", StringComparison.OrdinalIgnoreCase) && !ShowModelP47) return false;
+            if (model.Equals("P48", StringComparison.OrdinalIgnoreCase) && !ShowModelP48) return false;
+
+            if (HideWeakRssiEnabled)
+            {
+                var threshold = HideWeakRssiThreshold;
+                var hasRssi = d.BestRssi != int.MinValue;
+                if (hasRssi && d.BestRssi < threshold)
+                {
+                    var now = DateTimeOffset.UtcNow;
+                    if (!d.WasAboveThresholdRecently(threshold, WeakRssiGraceWindow, now))
+                        return false;
+                }
+            }
+
             if (string.IsNullOrWhiteSpace(DeviceFilter))
                 return true;
 
@@ -108,10 +137,49 @@ public partial class MainViewModel : ObservableObject
         FilteredDevices.Refresh();
     }
 
+    partial void OnHideWeakRssiEnabledChanged(bool value)
+    {
+        RequestDevicesRefresh();
+        OnPropertyChanged(nameof(DevicesSubtitle));
+    }
+
+    partial void OnHideWeakRssiThresholdChanged(int value)
+    {
+        RequestDevicesRefresh();
+        OnPropertyChanged(nameof(DevicesSubtitle));
+    }
+
+    partial void OnSuppressSameFirmwareWarningsChanged(bool value)
+    {
+        RefreshUpgradeSuccessFromLatestGroups();
+        RequestDevicesRefresh();
+        RequestQueueRefresh();
+    }
+
     partial void OnSensorFilterChanged(string value)
     {
         RequestDevicesRefresh();
         OnPropertyChanged(nameof(DevicesSubtitle));
+    }
+
+    partial void OnShowModelP41Changed(bool value) { RequestDevicesRefresh(); OnPropertyChanged(nameof(SelectedModelFilterSummary)); OnPropertyChanged(nameof(DevicesSubtitle)); }
+    partial void OnShowModelP42Changed(bool value) { RequestDevicesRefresh(); OnPropertyChanged(nameof(SelectedModelFilterSummary)); OnPropertyChanged(nameof(DevicesSubtitle)); }
+    partial void OnShowModelP46Changed(bool value) { RequestDevicesRefresh(); OnPropertyChanged(nameof(SelectedModelFilterSummary)); OnPropertyChanged(nameof(DevicesSubtitle)); }
+    partial void OnShowModelP47Changed(bool value) { RequestDevicesRefresh(); OnPropertyChanged(nameof(SelectedModelFilterSummary)); OnPropertyChanged(nameof(DevicesSubtitle)); }
+    partial void OnShowModelP48Changed(bool value) { RequestDevicesRefresh(); OnPropertyChanged(nameof(SelectedModelFilterSummary)); OnPropertyChanged(nameof(DevicesSubtitle)); }
+
+    public string SelectedModelFilterSummary
+    {
+        get
+        {
+            var selected = new List<string>(5);
+            if (ShowModelP41) selected.Add("P41");
+            if (ShowModelP42) selected.Add("P42");
+            if (ShowModelP46) selected.Add("P46");
+            if (ShowModelP47) selected.Add("P47");
+            if (ShowModelP48) selected.Add("P48");
+            return selected.Count == 5 ? "All" : string.Join(",", selected);
+        }
     }
 
 }
