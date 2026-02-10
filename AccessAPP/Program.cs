@@ -30,6 +30,7 @@ builder.Services.AddScoped<FirmwareUploadService>();
 builder.Services.AddSingleton<FirmwareManifestService>();
 builder.Services.AddSingleton<LedRangeLocalStateStore>();
 builder.Services.AddSingleton<AccessAppSelfUpdater>();
+builder.Services.AddSingleton<Modem4GStatusService>();
 
 // ? Add CORS policy
 builder.Services.AddCors(options =>

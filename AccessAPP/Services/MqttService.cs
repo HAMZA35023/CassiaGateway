@@ -23,7 +23,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     private int _reconnectRequested;
     private DateTime _lastReconnectAttemptUtc = DateTime.MinValue;
 
-    private static readonly TimeSpan StatusHeartbeatInterval = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan StatusHeartbeatInterval = TimeSpan.FromSeconds(30);
 
     private MQTTnet.IMqttClient? _client;
     private CancellationTokenSource? _runCts;
@@ -38,6 +38,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     };
 
     public MqttOptions CurrentOptions { get; private set; }
+    private readonly Modem4GStatusService _modem4G;
 
     public event Func<StartUpdateCommand, Task>? StartUpdateRequested;
     public event Func<GetFwVersionCommand, Task>? GetFwVersionRequested;
@@ -54,10 +55,11 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     public event Func<GetFirmwareManifestCommand, Task>? GetFirmwareManifestRequested;
     public event Func<SelfUpdateCommand, Task>? SelfUpdateRequested;
 
-    public MqttService(MqttConfigStore store, RuntimeVariablesStore runtimeStore)
+    public MqttService(MqttConfigStore store, RuntimeVariablesStore runtimeStore, Modem4GStatusService modem4G)
     {
         _store = store;
         _runtimeStore = runtimeStore;
+        _modem4G = modem4G;
         CurrentOptions = _store.LoadOrCreateDefault();
     }
 
@@ -285,19 +287,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 AppLog.Debug($"Ensuring connection to {CurrentOptions.Host}:{CurrentOptions.Port} (clientId={CurrentOptions.ClientId}, network={CurrentOptions.NetworkId})");
                 await EnsureConnectedAndSubscribedAsync(ct).ConfigureAwait(false);
 
-                // retained online status
-                var online = new StatusMessage
-                {
-                    Name = CurrentOptions.Name,
-                    NetworkId = CurrentOptions.NetworkId,
-                    Time = DateTimeOffset.UtcNow,
-                    State = "online",
-                    queue = CassiaFirmwareUpgradeService.inQueue,
-                    programming = CassiaFirmwareUpgradeService.GetProgrammingCount(),
-                    totalSpeedpct = CassiaFirmwareUpgradeService.totalSpeed,
-                    uptimeSeconds = Math.Max(0, Environment.TickCount64 / 1000)
-
-                };
+                var online = await BuildStatusMessageAsync(DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
                 await PublishJsonAsync(TeleTopic("status"), online, retain: false, ct).ConfigureAwait(false);
                 AppLog.Info("Published retained online status");
                 var nextHeartbeat = DateTimeOffset.UtcNow + StatusHeartbeatInterval;
@@ -308,17 +298,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
                     if (now >= nextHeartbeat)
                     {
-                        var heartbeat = new StatusMessage
-                        {
-                            Name = CurrentOptions.Name,
-                            NetworkId = CurrentOptions.NetworkId,
-                            Time = now,
-                            State = "online",
-                            queue = CassiaFirmwareUpgradeService.inQueue,
-                    programming = CassiaFirmwareUpgradeService.GetProgrammingCount(),
-                            totalSpeedpct = CassiaFirmwareUpgradeService.totalSpeed,
-                            uptimeSeconds = Math.Max(0, Environment.TickCount64 / 1000)
-                        };
+                        var heartbeat = await BuildStatusMessageAsync(now, ct).ConfigureAwait(false);
 
                         await PublishJsonAsync(TeleTopic("status"), heartbeat, retain: false, ct)
                             .ConfigureAwait(false);
@@ -348,6 +328,44 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
         }
 
         AppLog.Debug("Run loop exited");
+    }
+
+    private async Task<StatusMessage> BuildStatusMessageAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        Modem4GSnapshot? modem = null;
+        try
+        {
+            modem = await _modem4G.GetLatestAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn($"Failed to read 4G status: {ex.Message}");
+        }
+
+        return new StatusMessage
+        {
+            Name = CurrentOptions.Name,
+            NetworkId = CurrentOptions.NetworkId,
+            Time = now,
+            State = "online",
+            queue = CassiaFirmwareUpgradeService.inQueue,
+            programming = CassiaFirmwareUpgradeService.GetProgrammingCount(),
+            totalSpeedpct = CassiaFirmwareUpgradeService.totalSpeed,
+            uptimeSeconds = Math.Max(0, Environment.TickCount64 / 1000),
+            cellularState = modem?.State,
+            cellularNetworkType = modem?.NetworkType,
+            cellularSignalBar = modem?.SignalBar,
+            cellularRssiDbm = modem?.RssiDbm,
+            cellularLteRsrpDbm = modem?.LteRsrpDbm,
+            cellularLteRsrqDb = modem?.LteRsrqDb,
+            cellularLteSnrDb = modem?.LteSnrDb,
+            cellularProvider = modem?.Provider,
+            cellularPolledAtUtc = modem?.PolledAtUtc
+        };
     }
 
     private async Task EnsureConnectedAndSubscribedAsync(CancellationToken ct)

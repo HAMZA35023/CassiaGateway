@@ -636,6 +636,7 @@
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
 
                             <TextBlock Grid.Row="0" Grid.Column="0"
@@ -682,6 +683,18 @@
                                        FontWeight="SemiBold"
                                        FontSize="12"
                                        Margin="0,2,0,0"/>
+
+                            <TextBlock Grid.Row="2" Grid.Column="0"
+                                       Text="4G:"
+                                       Foreground="{DynamicResource MutedBrush}"
+                                       FontSize="12"
+                                       Margin="0,2,6,0"/>
+                            <TextBlock Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3"
+                                       Text="{Binding CellularSummary}"
+                                       FontWeight="SemiBold"
+                                       FontSize="12"
+                                       Margin="0,2,0,0"
+                                       TextTrimming="CharacterEllipsis"/>
                         </Grid>
 
                     </StackPanel>

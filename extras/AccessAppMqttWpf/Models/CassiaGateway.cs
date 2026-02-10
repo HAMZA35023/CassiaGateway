@@ -26,6 +26,14 @@ public partial class CassiaGateway : ObservableObject
     [ObservableProperty] private DateTimeOffset uptimeReportedUtc = DateTimeOffset.MinValue;
     [ObservableProperty] private string lastSeenAgoText = "";
     [ObservableProperty] private string uptimeText = "";
+    [ObservableProperty] private string cellularState = "";
+    [ObservableProperty] private string cellularNetworkType = "";
+    [ObservableProperty] private int? cellularSignalBar;
+    [ObservableProperty] private int? cellularRssiDbm;
+    [ObservableProperty] private int? cellularLteRsrpDbm;
+    [ObservableProperty] private int? cellularLteRsrqDb;
+    [ObservableProperty] private int? cellularLteSnrDb;
+    [ObservableProperty] private string cellularProvider = "";
 
     // Client-side speed history for graphing (max 12 hours kept)
     public ObservableCollection<SpeedSample> SpeedHistory { get; } = new();
@@ -66,6 +74,22 @@ public partial class CassiaGateway : ObservableObject
     [ObservableProperty] private Dictionary<string, string[]> firmwareManifest = new(StringComparer.OrdinalIgnoreCase);
 
     public string StatusLine => $"{NetworkId} • last seen {LastSeenUtc.ToLocalTime():HH:mm:ss} • devices {DevicesSeen} • {QueueLine}";
+    public string CellularSummary
+    {
+        get
+        {
+            var bits = new List<string>();
+            if (!string.IsNullOrWhiteSpace(CellularNetworkType)) bits.Add(CellularNetworkType.Trim());
+            if (CellularSignalBar.HasValue) bits.Add($"bar {CellularSignalBar.Value}");
+            if (CellularLteRsrpDbm.HasValue) bits.Add($"RSRP {CellularLteRsrpDbm.Value} dBm");
+            else if (CellularRssiDbm.HasValue) bits.Add($"RSSI {CellularRssiDbm.Value} dBm");
+            if (CellularLteRsrqDb.HasValue) bits.Add($"RSRQ {CellularLteRsrqDb.Value} dB");
+            if (CellularLteSnrDb.HasValue) bits.Add($"SNR {CellularLteSnrDb.Value} dB");
+            if (!string.IsNullOrWhiteSpace(CellularProvider)) bits.Add(CellularProvider.Trim());
+            if (bits.Count == 0) return "";
+            return string.Join(" | ", bits);
+        }
+    }
 
     public string LastSeenLocal => LastSeenUtc == DateTimeOffset.MinValue ? "" : LastSeenUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
     public string FwManifestLastSeenLocal => FwManifestLastSeenUtc == DateTimeOffset.MinValue ? "" : FwManifestLastSeenUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
@@ -115,6 +139,14 @@ public partial class CassiaGateway : ObservableObject
         OnPropertyChanged(nameof(StatusLine));
         OnPropertyChanged(nameof(StripeBrush));
     }
+    partial void OnCellularStateChanged(string value) => OnPropertyChanged(nameof(CellularSummary));
+    partial void OnCellularNetworkTypeChanged(string value) => OnPropertyChanged(nameof(CellularSummary));
+    partial void OnCellularSignalBarChanged(int? value) => OnPropertyChanged(nameof(CellularSummary));
+    partial void OnCellularRssiDbmChanged(int? value) => OnPropertyChanged(nameof(CellularSummary));
+    partial void OnCellularLteRsrpDbmChanged(int? value) => OnPropertyChanged(nameof(CellularSummary));
+    partial void OnCellularLteRsrqDbChanged(int? value) => OnPropertyChanged(nameof(CellularSummary));
+    partial void OnCellularLteSnrDbChanged(int? value) => OnPropertyChanged(nameof(CellularSummary));
+    partial void OnCellularProviderChanged(string value) => OnPropertyChanged(nameof(CellularSummary));
 
     partial void OnParallelProgrammersChanged(int value)
     {

@@ -74,6 +74,20 @@ public partial class MainViewModel : ObservableObject
         return "";
     }
 
+    private static int? TryReadInt(JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out var el))
+            return null;
+
+        if (el.ValueKind == JsonValueKind.Number && el.TryGetInt32(out var num))
+            return num;
+
+        if (el.ValueKind == JsonValueKind.String && int.TryParse(el.GetString(), out var fromText))
+            return fromText;
+
+        return null;
+    }
+
     private void OnMqttMessage(string topic, string payload)
     {
         // 1) Handle plain-text replies regardless of topic.
@@ -137,6 +151,14 @@ public partial class MainViewModel : ObservableObject
                 int queue = root.TryGetProperty("queue", out var q) ? q.GetInt32() : 0;
                 int programming = root.TryGetProperty("programming", out var pr) ? pr.GetInt32() : 0;
                 double totalSpeedpct = root.TryGetProperty("totalSpeedpct", out var sp) ? sp.GetDouble() : 0;
+                var cellularState = root.TryGetProperty("cellularState", out var cs) ? (cs.GetString() ?? "") : "";
+                var cellularNetworkType = root.TryGetProperty("cellularNetworkType", out var cnt) ? (cnt.GetString() ?? "") : "";
+                var cellularProvider = root.TryGetProperty("cellularProvider", out var cp) ? (cp.GetString() ?? "") : "";
+                var cellularSignalBar = TryReadInt(root, "cellularSignalBar");
+                var cellularRssiDbm = TryReadInt(root, "cellularRssiDbm");
+                var cellularLteRsrpDbm = TryReadInt(root, "cellularLteRsrpDbm");
+                var cellularLteRsrqDb = TryReadInt(root, "cellularLteRsrqDb");
+                var cellularLteSnrDb = TryReadInt(root, "cellularLteSnrDb");
                 long uptimeSeconds = 0;
                 if (root.TryGetProperty("uptimeSeconds", out var upEl))
                 {
@@ -170,6 +192,14 @@ public partial class MainViewModel : ObservableObject
                     gw.Programming = programming;
                     gw.TotalSpeedpct = totalSpeedpct;
                     gw.AddSpeedSample(ts, totalSpeedpct);
+                    gw.CellularState = cellularState;
+                    gw.CellularNetworkType = cellularNetworkType;
+                    gw.CellularProvider = cellularProvider;
+                    gw.CellularSignalBar = cellularSignalBar;
+                    gw.CellularRssiDbm = cellularRssiDbm;
+                    gw.CellularLteRsrpDbm = cellularLteRsrpDbm;
+                    gw.CellularLteRsrqDb = cellularLteRsrqDb;
+                    gw.CellularLteSnrDb = cellularLteSnrDb;
                     if (uptimeSeconds > 0)
                     {
                         gw.UptimeSeconds = uptimeSeconds;
