@@ -101,7 +101,15 @@ public sealed class SshCassiaDeployer
         DeployToTarget(_opt.Host, _opt.Port, _opt.User, _opt.Password, label: _opt.Host);
     }
 
-    private void DeployToTarget(string host, int port, string user, string password, string label)
+    private void DeployToTarget(
+        string host,
+        int port,
+        string user,
+        string password,
+        string label,
+        string? expectedWifiSsid = null,
+        string? wifiPassword = null,
+        bool wifiAutoCreateProfile = true)
     {
         // IMPORTANT:
         // Many operations (service stop/start, sshd hardening, chown, etc.) use RunSudo(),
@@ -161,7 +169,15 @@ public sealed class SshCassiaDeployer
                 serviceRestartNeeded = true;
             }
 
-            UploadDirectorySftpWithManifest(ssh, sftp, _opt.LocalPublishDir, _opt.RemoteDir, _opt.RemoteManifestPath);
+            UploadDirectorySftpWithManifest(
+                ssh,
+                sftp,
+                _opt.LocalPublishDir,
+                _opt.RemoteDir,
+                _opt.RemoteManifestPath,
+                expectedWifiSsid,
+                wifiPassword,
+                wifiAutoCreateProfile);
 
             // Ensure executable bit on main app
             var remoteExe = CombineRemote(_opt.RemoteDir, _opt.RemoteExeName);
@@ -177,7 +193,7 @@ public sealed class SshCassiaDeployer
             {
                 try
                 {
-                    InstallStartupUpdater(ssh, sftp);
+                    InstallStartupUpdater(ssh, sftp, expectedWifiSsid, wifiPassword, wifiAutoCreateProfile);
                     EnsureSelfUpdateSudoers(ssh);
                 }
                 catch (Exception ex)
@@ -325,7 +341,8 @@ public sealed class SshCassiaDeployer
                     connectTimeoutSeconds: _opt.BulkWifiConnectTimeoutSeconds,
                     connectAttempts: Math.Max(1, _opt.BulkWifiConnectAttempts),
                     connectRetryDelayMs: Math.Max(0, _opt.BulkWifiConnectRetryDelayMs),
-                    autoCreateProfile: _opt.BulkWifiAutoCreateProfile);
+                    autoCreateProfile: _opt.BulkWifiAutoCreateProfile,
+                    wifiPassword: ssidPasswordLower);
                 ok++;
             }
             catch (Exception ex)
@@ -350,7 +367,8 @@ public sealed class SshCassiaDeployer
         int connectTimeoutSeconds,
         int connectAttempts,
         int connectRetryDelayMs,
-        bool autoCreateProfile)
+        bool autoCreateProfile,
+        string wifiPassword)
     {
         Exception? lastEx = null;
         for (int attempt = 1; attempt <= attempts; attempt++)
@@ -362,14 +380,22 @@ public sealed class SshCassiaDeployer
                     _log.Warn($"[{ssid}] Full deploy retry {attempt}/{attempts}...");
                     ConnectWifiWithRetry(
                         ssid,
-                        password: password,
+                        password: wifiPassword,
                         autoCreateProfile: autoCreateProfile,
                         timeoutSeconds: connectTimeoutSeconds,
                         attempts: connectAttempts,
                         retryDelayMs: connectRetryDelayMs);
                 }
 
-                DeployToTarget(host, port, user, password, label: ssid);
+                DeployToTarget(
+                    host,
+                    port,
+                    user,
+                    password,
+                    label: ssid,
+                    expectedWifiSsid: ssid,
+                    wifiPassword: wifiPassword,
+                    wifiAutoCreateProfile: autoCreateProfile);
                 return;
             }
             catch (Exception ex)
@@ -899,7 +925,12 @@ public sealed class SshCassiaDeployer
         return InitKind.Unknown;
     }
 
-    private void InstallStartupUpdater(SshClient ssh, SftpClient sftp)
+    private void InstallStartupUpdater(
+        SshClient ssh,
+        SftpClient sftp,
+        string? expectedWifiSsid,
+        string? wifiPassword,
+        bool wifiAutoCreateProfile)
     {
         var localUpdaterExe = Path.Combine(_opt.LocalUpdaterPublishDir, "AccessAppUpdater");
         if (!File.Exists(localUpdaterExe))
@@ -908,7 +939,14 @@ public sealed class SshCassiaDeployer
         _log.Info("Installing startup updater on target...");
 
         var remoteTmpPath = CombineRemote(_opt.RemoteDir, ".accessapp_updater_tmp");
-        UploadStreamSftpWithRetry(sftp, () => File.OpenRead(localUpdaterExe), remoteTmpPath);
+        UploadStreamSftpWithRetry(
+            ssh,
+            sftp,
+            () => File.OpenRead(localUpdaterExe),
+            remoteTmpPath,
+            expectedWifiSsid,
+            wifiPassword,
+            wifiAutoCreateProfile);
 
         RunSudo(ssh, $"mkdir -p {ShEscape(GetRemoteParentDir(_opt.UpdaterRemoteExePath))}");
         RunSudo(ssh, $"install -m 755 {ShEscape(remoteTmpPath)} {ShEscape(_opt.UpdaterRemoteExePath)}");
@@ -1427,7 +1465,10 @@ exit 0
         SftpClient sftp,
         string localDir,
         string remoteDir,
-        string remoteManifestPath)
+        string remoteManifestPath,
+        string? expectedWifiSsid,
+        string? wifiPassword,
+        bool wifiAutoCreateProfile)
     {
         localDir = Path.GetFullPath(localDir);
         if (!Directory.Exists(localDir))
@@ -1493,7 +1534,14 @@ exit 0
             var remoteParent = GetRemoteParentDir(remotePath);
             EnsureRemoteDirectorySftp(sftp, remoteParent);
 
-            UploadStreamSftpWithRetry(sftp, () => File.OpenRead(e.fullPath), remotePath);
+            UploadStreamSftpWithRetry(
+                ssh,
+                sftp,
+                () => File.OpenRead(e.fullPath),
+                remotePath,
+                expectedWifiSsid,
+                wifiPassword,
+                wifiAutoCreateProfile);
 
             // Set remote mtime to local mtime (critical for stable comparisons)
             var attrs = sftp.GetAttributes(remotePath);
@@ -1508,7 +1556,14 @@ exit 0
 
         // Write updated manifest via SFTP so it’s guaranteed to persist
         _log.Info("Writing remote manifest via SFTP...");
-        WriteRemoteManifestSftp(sftp, remoteManifestPath, localEntries);
+        WriteRemoteManifestSftp(
+            ssh,
+            sftp,
+            remoteManifestPath,
+            localEntries,
+            expectedWifiSsid,
+            wifiPassword,
+            wifiAutoCreateProfile);
         _log.Info("Manifest updated.");
     }
 
@@ -1546,9 +1601,13 @@ exit 0
     }
 
     private void WriteRemoteManifestSftp(
+        SshClient ssh,
         SftpClient sftp,
         string remoteManifestPath,
-        List<(string rel, long size, long mtimeUtcSeconds, string fullPath)> entries)
+        List<(string rel, long size, long mtimeUtcSeconds, string fullPath)> entries,
+        string? expectedWifiSsid,
+        string? wifiPassword,
+        bool wifiAutoCreateProfile)
     {
         EnsureRemoteDirectorySftp(sftp, GetRemoteParentDir(remoteManifestPath));
 
@@ -1560,7 +1619,14 @@ exit 0
         }
 
         var manifestBytes = ms.ToArray();
-        UploadStreamSftpWithRetry(sftp, () => new MemoryStream(manifestBytes, writable: false), remoteManifestPath);
+        UploadStreamSftpWithRetry(
+            ssh,
+            sftp,
+            () => new MemoryStream(manifestBytes, writable: false),
+            remoteManifestPath,
+            expectedWifiSsid,
+            wifiPassword,
+            wifiAutoCreateProfile);
 
         // best effort perms
         try
@@ -1602,9 +1668,13 @@ exit 0
     }
 
     private void UploadStreamSftpWithRetry(
+        SshClient ssh,
         SftpClient sftp,
         Func<Stream> openInput,
         string remotePath,
+        string? expectedWifiSsid,
+        string? wifiPassword,
+        bool wifiAutoCreateProfile,
         int attempts = 3,
         int retryDelayMs = 300)
     {
@@ -1662,11 +1732,18 @@ exit 0
                     _log.Warn($"SFTP upload retry {attempt}/{attempts} failed for {remotePath}: {ex.Message}");
                     try
                     {
-                        ReconnectSftpWithRetry(sftp);
+                        RecoverConnectivityAndReconnect(
+                            ssh,
+                            sftp,
+                            expectedWifiSsid,
+                            wifiPassword,
+                            wifiAutoCreateProfile,
+                            remotePath,
+                            ex);
                     }
                     catch (Exception reconnectEx)
                     {
-                        _log.Warn($"SFTP reconnect after failed upload also failed: {reconnectEx.Message}");
+                        _log.Warn($"Recovery reconnect after failed upload also failed: {reconnectEx.Message}");
                     }
                     if (retryDelayMs > 0)
                         Thread.Sleep(retryDelayMs);
@@ -1678,6 +1755,51 @@ exit 0
         throw new InvalidOperationException(
             $"SFTP upload failed for {remotePath} after {attempts} attempts.",
             lastEx);
+    }
+
+    private void RecoverConnectivityAndReconnect(
+        SshClient ssh,
+        SftpClient sftp,
+        string? expectedWifiSsid,
+        string? wifiPassword,
+        bool wifiAutoCreateProfile,
+        string remotePath,
+        Exception rootCause)
+    {
+        if (!string.IsNullOrWhiteSpace(expectedWifiSsid))
+        {
+            var currentSsid = GetConnectedWifiSsidLower();
+            var wifiDisconnected =
+                string.IsNullOrWhiteSpace(currentSsid) ||
+                !currentSsid.Equals(expectedWifiSsid, StringComparison.OrdinalIgnoreCase);
+
+            if (wifiDisconnected)
+            {
+                _log.Warn(
+                    $"Wi-Fi disconnected while uploading '{remotePath}' (current SSID: {(string.IsNullOrWhiteSpace(currentSsid) ? "<none>" : currentSsid)}). Reconnecting to '{expectedWifiSsid}'...");
+                ConnectWifiWithRetry(
+                    expectedWifiSsid,
+                    password: string.IsNullOrWhiteSpace(wifiPassword)
+                        ? expectedWifiSsid.ToLowerInvariant()
+                        : wifiPassword,
+                    autoCreateProfile: wifiAutoCreateProfile,
+                    timeoutSeconds: _opt.BulkWifiConnectTimeoutSeconds,
+                    attempts: Math.Max(1, _opt.BulkWifiConnectAttempts),
+                    retryDelayMs: Math.Max(0, _opt.BulkWifiConnectRetryDelayMs));
+            }
+            else
+            {
+                _log.Warn($"Wi-Fi still connected to '{expectedWifiSsid}' after upload error: {rootCause.Message}");
+            }
+        }
+
+        // After any network interruption, reconnect both channels in order (SSH first, then SFTP).
+        ConnectSshAndSftpWithRetry(
+            ssh,
+            sftp,
+            label: string.IsNullOrWhiteSpace(expectedWifiSsid) ? _opt.Host : expectedWifiSsid,
+            attempts: Math.Max(1, _opt.SshConnectAttempts),
+            retryDelayMs: Math.Max(0, _opt.SshConnectRetryDelayMs));
     }
 
     private void EnsureSftpConnected(SftpClient sftp)
