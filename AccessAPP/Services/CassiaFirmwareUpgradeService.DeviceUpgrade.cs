@@ -60,8 +60,14 @@ try
                     AppLog.Debug($"[{DateTime.Now:HH:mm:ss.fff}][T{Environment.CurrentManagedThreadId}] " +
                         System.Text.Json.JsonSerializer.Serialize(dev));
 
-
+                var autoForceFromBootMode = false;
                 var isInBootMode = CheckIfDeviceInBootMode(_gatewayIpAddress, mac);
+                if (isInBootMode && !dev.ForceUpdate)
+                {
+                    dev.ForceUpdate = true;
+                    autoForceFromBootMode = true;
+                    AppLog.Info($"[{mac}] Device in bootloader mode -> ForceUpdate auto-enabled.");
+                }
                 if (!isInBootMode)
                 {
                     // FW read can be flaky; retry a few times before giving up.
@@ -77,6 +83,8 @@ try
                 }
 
                 string logId = $"{mac.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
+                if (autoForceFromBootMode)
+                    UpgradeLogger.Log(logId, mac, "FW precheck", "Device is in bootloader; ForceUpdate auto-enabled.", dev.FirmwareVersion);
                 UpgradeLogger.Log(logId, mac, "Current FW Version:", dev.CurrentFirmwareVersion, dev.FirmwareVersion);
 
                 var canProceedWithUpgrade = true;
