@@ -831,10 +831,26 @@ public sealed class SshCassiaDeployer
         RunSudo(ssh, $"mkdir -p {ShEscape(GetRemoteParentDir(_opt.UpdaterRemoteConfigPath))}");
         RunSudo(ssh, $"echo '{configB64}' | base64 -d > {ShEscape(_opt.UpdaterRemoteConfigPath)}");
         RunSudo(ssh, $"chmod 644 {ShEscape(_opt.UpdaterRemoteConfigPath)}");
+        RunSudo(ssh, $"chown {_opt.User}:{_opt.User} {ShEscape(_opt.UpdaterRemoteConfigPath)} || true");
+        EnsureUpdaterChannelFile(ssh);
         EnsureUpdaterWorkDirWritable(ssh);
 
         _log.Info($"Startup updater installed: {_opt.UpdaterRemoteExePath}");
         _log.Info($"Startup updater config updated: {_opt.UpdaterRemoteConfigPath}");
+    }
+
+    private void EnsureUpdaterChannelFile(SshClient ssh)
+    {
+        var channelFilePath = string.IsNullOrWhiteSpace(_opt.UpdaterChannelFilePath)
+            ? "/etc/accessapp-updater.channel"
+            : _opt.UpdaterChannelFilePath.Trim();
+        var channel = NormalizeUpdaterChannel(_opt.UpdaterChannel);
+        _log.Info($"Ensuring updater channel file: {channelFilePath} ({channel})");
+
+        RunSudo(ssh, $"mkdir -p {ShEscape(GetRemoteParentDir(channelFilePath))}");
+        RunSudo(ssh, $"printf '%s\\n' {ShEscape(channel)} > {ShEscape(channelFilePath)}");
+        RunSudo(ssh, $"chmod 644 {ShEscape(channelFilePath)}");
+        RunSudo(ssh, $"chown {_opt.User}:{_opt.User} {ShEscape(channelFilePath)} || true");
     }
 
     private void EnsureUpdaterWorkDirWritable(SshClient ssh)
@@ -890,6 +906,10 @@ public sealed class SshCassiaDeployer
     private string BuildUpdaterConfigJson()
     {
         var chmodPaths = new List<string> { _opt.RemoteExeName };
+        var channel = NormalizeUpdaterChannel(_opt.UpdaterChannel);
+        var channelFilePath = string.IsNullOrWhiteSpace(_opt.UpdaterChannelFilePath)
+            ? "/etc/accessapp-updater.channel"
+            : _opt.UpdaterChannelFilePath.Trim();
 
         if (!string.IsNullOrWhiteSpace(_opt.ExtraChmod755Path))
         {
@@ -901,7 +921,8 @@ public sealed class SshCassiaDeployer
         var payload = new
         {
             ManifestUrl = _opt.UpdaterManifestUrl,
-            Channel = _opt.UpdaterChannel,
+            Channel = channel,
+            ChannelFilePath = channelFilePath,
             AllowDowngrade = false,
             InstallDir = _opt.RemoteDir,
             WorkDir = _opt.UpdaterWorkDir,
@@ -913,6 +934,22 @@ public sealed class SshCassiaDeployer
         };
 
         return JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
+    }
+
+    private static string NormalizeUpdaterChannel(string? value)
+    {
+        var channel = (value ?? string.Empty).Trim().ToLowerInvariant();
+        return channel switch
+        {
+            "stable" => "stable",
+            "test" => "test",
+            "develop" => "develop",
+            "dev" => "develop",
+            "prod-stable" => "stable",
+            "prod-test" => "test",
+            "prod-develop" => "develop",
+            _ => "stable"
+        };
     }
 
     // ------------------------------------------------------------

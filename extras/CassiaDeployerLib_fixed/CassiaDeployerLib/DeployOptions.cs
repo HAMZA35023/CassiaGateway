@@ -52,8 +52,9 @@ public sealed class DeployOptions
 
     public string UpdaterRemoteExePath { get; set; } = "/usr/local/bin/AccessAppUpdater";
     public string UpdaterRemoteConfigPath { get; set; } = "/etc/accessapp-updater.json";
-    public string UpdaterManifestUrl { get; set; } = "http://prod.statistics.niko-test.nu/accessapp/manifest.json";
+    public string UpdaterManifestUrl { get; set; } = "http://prod.statistics.niko-test.nu/accessapp/{channel}/manifest.json";
     public string UpdaterChannel { get; set; } = "stable";
+    public string UpdaterChannelFilePath { get; set; } = "/etc/accessapp-updater.channel";
     public string UpdaterWorkDir { get; set; } = "/tmp/accessapp-updater";
     public string UpdaterVersionFileName { get; set; } = "version.txt";
     public int UpdaterHttpTimeoutSeconds { get; set; } = 600;

@@ -54,6 +54,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     // NEW
     public event Func<GetFirmwareManifestCommand, Task>? GetFirmwareManifestRequested;
     public event Func<SelfUpdateCommand, Task>? SelfUpdateRequested;
+    public event Func<SetUpdateChannelCommand, Task>? SetUpdateChannelRequested;
 
     public MqttService(MqttConfigStore store, RuntimeVariablesStore runtimeStore, Modem4GStatusService modem4G)
     {
@@ -1004,6 +1005,40 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 }
 
                 return SelfUpdateRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "set-update-channel", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "set-channel", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch set-update-channel");
+                SetUpdateChannelCommand dto;
+
+                try
+                {
+                    dto = string.IsNullOrWhiteSpace(payload)
+                        ? new SetUpdateChannelCommand()
+                        : JsonSerializer.Deserialize<SetUpdateChannelCommand>(payload, JsonOptions) ?? new SetUpdateChannelCommand();
+
+                    if (string.IsNullOrWhiteSpace(dto.Channel) && !string.IsNullOrWhiteSpace(payload))
+                    {
+                        using var doc = JsonDocument.Parse(payload);
+                        if (doc.RootElement.ValueKind == JsonValueKind.String)
+                        {
+                            dto.Channel = doc.RootElement.GetString();
+                        }
+                        else if (doc.RootElement.ValueKind == JsonValueKind.Object)
+                        {
+                            if (doc.RootElement.TryGetProperty("value", out var chEl) && chEl.ValueKind == JsonValueKind.String)
+                                dto.Channel = chEl.GetString();
+                        }
+                    }
+                }
+                catch
+                {
+                    dto = new SetUpdateChannelCommand();
+                }
+
+                return SetUpdateChannelRequested?.Invoke(dto) ?? Task.CompletedTask;
             }
 
 

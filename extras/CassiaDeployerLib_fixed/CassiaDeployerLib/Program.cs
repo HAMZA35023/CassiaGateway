@@ -28,6 +28,8 @@ internal static class Program
             {
                 log.Info($"Updater exe   : {options.UpdaterRemoteExePath}");
                 log.Info($"Updater feed  : {options.UpdaterManifestUrl}");
+                log.Info($"Updater ch    : {options.UpdaterChannel}");
+                log.Info($"Updater chfile: {options.UpdaterChannelFilePath}");
             }
             log.Info("");
 
@@ -51,9 +53,8 @@ internal static class Program
 
         // Auto-close after 5 seconds
         Console.WriteLine();
-        Console.WriteLine("Press a button to exit...");
+        Console.WriteLine("Closing in 5 seconds ...");
         Thread.Sleep(TimeSpan.FromSeconds(5));
-        Console.ReadKey(true);
         return exitCode;
     }
 

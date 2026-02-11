@@ -15,6 +15,8 @@ internal static class Program
             var dryRun = HasArg(args, "--dry-run");
             var cfg = LoadConfig(configPath);
             var effectiveTimeoutSeconds = Math.Max(600, cfg.HttpTimeoutSeconds);
+            var effectiveChannel = ResolveEffectiveChannel(cfg);
+            var manifestUrl = ResolveManifestUrl(cfg.ManifestUrl, effectiveChannel);
 
             var workDir = ResolveWritableWorkDir(cfg.WorkDir);
 
@@ -23,9 +25,10 @@ internal static class Program
                 Timeout = TimeSpan.FromSeconds(effectiveTimeoutSeconds)
             };
 
-            Log($"Fetching manifest: {cfg.ManifestUrl}");
+            Log($"Channel: {effectiveChannel}");
+            Log($"Fetching manifest: {manifestUrl}");
             Log($"HTTP timeout: {effectiveTimeoutSeconds}s");
-            var manifest = await http.GetFromJsonAsync<UpdateManifest>(cfg.ManifestUrl)
+            var manifest = await http.GetFromJsonAsync<UpdateManifest>(manifestUrl)
                 ?? throw new InvalidOperationException("Manifest response was empty.");
 
             var target = SelectTargetRelease(manifest, cfg)
@@ -416,12 +419,77 @@ internal static class Program
         var chars = value.Select(c => invalid.Contains(c) ? '_' : c).ToArray();
         return new string(chars);
     }
+
+    private static string ResolveEffectiveChannel(UpdaterConfig cfg)
+    {
+        var configChannel = NormalizeChannelToken(cfg.Channel);
+        if (string.IsNullOrWhiteSpace(configChannel))
+            configChannel = "stable";
+
+        var channelFilePath = string.IsNullOrWhiteSpace(cfg.ChannelFilePath)
+            ? "/etc/accessapp-updater.channel"
+            : cfg.ChannelFilePath;
+
+        if (!File.Exists(channelFilePath))
+        {
+            cfg.Channel = configChannel;
+            return configChannel;
+        }
+
+        try
+        {
+            var fromFile = NormalizeChannelToken(File.ReadAllText(channelFilePath));
+            if (!string.IsNullOrWhiteSpace(fromFile))
+            {
+                cfg.Channel = fromFile;
+                Log($"Using channel override from file '{channelFilePath}': {fromFile}");
+                return fromFile;
+            }
+
+            Log($"Channel file '{channelFilePath}' was empty or invalid. Falling back to '{configChannel}'.");
+        }
+        catch (Exception ex)
+        {
+            Log($"Failed reading channel file '{channelFilePath}': {ex.Message}. Falling back to '{configChannel}'.");
+        }
+
+        cfg.Channel = configChannel;
+        return configChannel;
+    }
+
+    private static string ResolveManifestUrl(string manifestUrl, string channel)
+    {
+        if (string.IsNullOrWhiteSpace(manifestUrl))
+            throw new InvalidOperationException("ManifestUrl is required.");
+
+        if (manifestUrl.Contains("{channel}", StringComparison.OrdinalIgnoreCase))
+            return manifestUrl.Replace("{channel}", channel, StringComparison.OrdinalIgnoreCase);
+
+        return manifestUrl;
+    }
+
+    private static string NormalizeChannelToken(string? channel)
+    {
+        var token = (channel ?? string.Empty).Trim().ToLowerInvariant();
+        return token switch
+        {
+            "stable" => "stable",
+            "test" => "test",
+            "develop" => "develop",
+            "dev" => "develop",
+            "prod-stable" => "stable",
+            "prod-test" => "test",
+            "prod-develop" => "develop",
+            _ => string.Empty
+        };
+    }
 }
 
 internal sealed class UpdaterConfig
 {
     public string ManifestUrl { get; set; } = "https://updates.example.com/accessapp/manifest.json";
     public string Channel { get; set; } = "stable";
+    public string ChannelFilePath { get; set; } = "/etc/accessapp-updater.channel";
     public bool AllowDowngrade { get; set; }
     public string InstallDir { get; set; } = "/home/cassia/FWUpgrade";
     public string WorkDir { get; set; } = "/tmp/accessapp-updater";

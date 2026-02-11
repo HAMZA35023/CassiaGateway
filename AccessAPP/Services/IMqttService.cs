@@ -53,6 +53,9 @@ public interface IMqttService : IAsyncDisposable
 
     // Trigger local AccessAPP updater process.
     event Func<SelfUpdateCommand, Task>? SelfUpdateRequested;
+
+    // Set updater channel persisted on device.
+    event Func<SetUpdateChannelCommand, Task>? SetUpdateChannelRequested;
 }
 
 // New: command DTO for request payload
@@ -116,4 +119,13 @@ public sealed class SelfUpdateCommand
     public string? UpdaterPath { get; set; }
     public bool RestartService { get; set; } = true;
     public string ServiceName { get; set; } = "accessapp";
+    public string? UpdateChannel { get; set; }
+    public string? ChannelFilePath { get; set; }
+}
+
+public sealed class SetUpdateChannelCommand
+{
+    public string? RequestId { get; set; }
+    public string? Channel { get; set; }
+    public string? ChannelFilePath { get; set; }
 }

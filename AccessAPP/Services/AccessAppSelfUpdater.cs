@@ -7,6 +7,7 @@ namespace AccessAPP.Services;
 public sealed class AccessAppSelfUpdater
 {
     private static readonly SemaphoreSlim Gate = new(1, 1);
+    public const string DefaultChannelFilePath = "/etc/accessapp-updater.channel";
 
     public async Task<SelfUpdateRunResult> RunAsync(SelfUpdateCommand cmd, CancellationToken ct = default)
     {
@@ -224,12 +225,70 @@ public sealed class AccessAppSelfUpdater
             };
         }
     }
+
+    public SelfUpdateRunResult SetUpdateChannel(string? channel, string? channelFilePath = null)
+    {
+        var normalized = NormalizeUpdateChannel(channel);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return new SelfUpdateRunResult
+            {
+                Status = "failed",
+                Message = "Invalid channel. Allowed values: stable, test, develop."
+            };
+        }
+
+        var path = string.IsNullOrWhiteSpace(channelFilePath)
+            ? DefaultChannelFilePath
+            : channelFilePath!.Trim();
+
+        try
+        {
+            var dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrWhiteSpace(dir))
+                Directory.CreateDirectory(dir);
+
+            File.WriteAllText(path, normalized + Environment.NewLine, Encoding.UTF8);
+
+            return new SelfUpdateRunResult
+            {
+                Status = "channel-set",
+                Message = $"Update channel set to '{normalized}'.",
+                Channel = normalized
+            };
+        }
+        catch (Exception ex)
+        {
+            return new SelfUpdateRunResult
+            {
+                Status = "failed",
+                Message = $"Failed to write update channel file '{path}': {ex.Message}"
+            };
+        }
+    }
+
+    public static string NormalizeUpdateChannel(string? channel)
+    {
+        var value = (channel ?? string.Empty).Trim().ToLowerInvariant();
+        return value switch
+        {
+            "stable" => "stable",
+            "test" => "test",
+            "develop" => "develop",
+            "dev" => "develop",
+            "prod-stable" => "stable",
+            "prod-test" => "test",
+            "prod-develop" => "develop",
+            _ => string.Empty
+        };
+    }
 }
 
 public sealed class SelfUpdateRunResult
 {
     public string Status { get; set; } = "failed";
     public string Message { get; set; } = "Unknown error";
+    public string? Channel { get; set; }
     public int? ExitCode { get; set; }
     public string? StdOut { get; set; }
     public string? StdErr { get; set; }

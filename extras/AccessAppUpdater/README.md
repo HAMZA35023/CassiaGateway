@@ -28,6 +28,9 @@ Copy `extras/AccessAppUpdater/accessapp-updater.sample.json` to target, for exam
 
 - `/etc/accessapp-updater.json`
 
+Channel selection can be overridden at runtime by writing one of `stable`, `test`, `develop`
+to `/etc/accessapp-updater.channel`. Use `{channel}` in `ManifestUrl` to resolve per-channel feeds.
+
 ## systemd integration (recommended)
 
 Add this pre-start step to your `accessapp.service`:

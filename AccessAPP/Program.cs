@@ -337,6 +337,29 @@ using (var scope = app.Services.CreateScope())
     {
         var requestId = string.IsNullOrWhiteSpace(cmd.RequestId) ? Guid.NewGuid().ToString("N") : cmd.RequestId!;
         var timeout = cmd.TimeoutSeconds <= 0 ? 120 : cmd.TimeoutSeconds;
+        var requestedChannel = AccessAppSelfUpdater.NormalizeUpdateChannel(cmd.UpdateChannel);
+
+        if (!string.IsNullOrWhiteSpace(cmd.UpdateChannel))
+        {
+            var setResult = selfUpdater.SetUpdateChannel(cmd.UpdateChannel, cmd.ChannelFilePath);
+            var setOk = string.Equals(setResult.Status, "channel-set", StringComparison.OrdinalIgnoreCase);
+
+            await mqttService.PublishTeleJsonAsync("update-channel", new
+            {
+                success = setOk,
+                stage = "set",
+                requestId,
+                name = mqttService.CurrentOptions.Name,
+                networkId = mqttService.CurrentOptions.NetworkId,
+                time = DateTimeOffset.UtcNow,
+                channel = setResult.Channel ?? requestedChannel,
+                status = setResult.Status,
+                message = setResult.Message
+            });
+
+            if (!setOk)
+                return;
+        }
 
         await mqttService.PublishTeleJsonAsync("self-update", new
         {
@@ -348,7 +371,8 @@ using (var scope = app.Services.CreateScope())
             time = DateTimeOffset.UtcNow,
             dryRun = cmd.DryRun,
             timeoutSeconds = timeout,
-            restartService = cmd.RestartService
+            restartService = cmd.RestartService,
+            channel = string.IsNullOrWhiteSpace(requestedChannel) ? null : requestedChannel
         });
 
         if (cmd.RestartService)
@@ -366,6 +390,7 @@ using (var scope = app.Services.CreateScope())
                 time = DateTimeOffset.UtcNow,
                 status = queued.Status,
                 message = queued.Message,
+                channel = string.IsNullOrWhiteSpace(requestedChannel) ? null : requestedChannel,
                 exitCode = queued.ExitCode,
                 stdout = queued.StdOut,
                 stderr = queued.StdErr
@@ -398,9 +423,30 @@ using (var scope = app.Services.CreateScope())
             time = DateTimeOffset.UtcNow,
             status = result.Status,
             message = result.Message,
+            channel = string.IsNullOrWhiteSpace(requestedChannel) ? result.Channel : requestedChannel,
             exitCode = result.ExitCode,
             stdout = result.StdOut,
             stderr = result.StdErr
+        });
+    };
+
+    mqttService.SetUpdateChannelRequested += async cmd =>
+    {
+        var requestId = string.IsNullOrWhiteSpace(cmd.RequestId) ? Guid.NewGuid().ToString("N") : cmd.RequestId!;
+        var result = selfUpdater.SetUpdateChannel(cmd.Channel, cmd.ChannelFilePath);
+        var success = string.Equals(result.Status, "channel-set", StringComparison.OrdinalIgnoreCase);
+
+        await mqttService.PublishTeleJsonAsync("update-channel", new
+        {
+            success,
+            stage = "set",
+            requestId,
+            name = mqttService.CurrentOptions.Name,
+            networkId = mqttService.CurrentOptions.NetworkId,
+            time = DateTimeOffset.UtcNow,
+            channel = result.Channel,
+            status = result.Status,
+            message = result.Message
         });
     };
 

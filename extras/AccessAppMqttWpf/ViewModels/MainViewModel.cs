@@ -760,6 +760,59 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+    [RelayCommand]
+    private async Task SetUpdateChannelCassia(string cassiaName)
+    {
+        cassiaName = (cassiaName ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(cassiaName)) return;
+        if (!IsConnected) { ConnectionStatus = "Not connected"; return; }
+
+        var value = Interaction.InputBox(
+            $"Set update channel for '{cassiaName}' (stable, test, develop):",
+            "Set update channel",
+            "stable");
+
+        var normalized = NormalizeUpdateChannelToken(value);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            ConnectionStatus = "Invalid update channel. Use stable, test, or develop.";
+            return;
+        }
+
+        try
+        {
+            var topic = BuildCmdTopic(cassiaName, "set-update-channel");
+            var payload = new
+            {
+                requestId = Guid.NewGuid().ToString("N"),
+                channel = normalized
+            };
+
+            await _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+            ConnectionStatus = $"Sent set-update-channel to {cassiaName}: {normalized}";
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = "Error: " + ex.Message;
+        }
+    }
+
+    private static string NormalizeUpdateChannelToken(string? channel)
+    {
+        var value = (channel ?? string.Empty).Trim().ToLowerInvariant();
+        return value switch
+        {
+            "stable" => "stable",
+            "test" => "test",
+            "develop" => "develop",
+            "dev" => "develop",
+            "prod-stable" => "stable",
+            "prod-test" => "test",
+            "prod-develop" => "develop",
+            _ => string.Empty
+        };
+    }
+
     internal async Task SetRuntimeForCassiaAsync(string cassiaName, IReadOnlyDictionary<string, object?> payload)
     {
         if (!IsConnected) { ConnectionStatus = "Not connected"; return; }

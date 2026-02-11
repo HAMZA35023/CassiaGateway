@@ -180,6 +180,30 @@ public partial class MainViewModel : ObservableObject
         catch { }
     }
 
+    private void HandleUpdateChannelTele(string cassia, string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+            var ok = root.TryGetProperty("success", out var s) && s.ValueKind == JsonValueKind.True;
+            var channel = root.TryGetProperty("channel", out var ch) ? (ch.GetString() ?? "") : "";
+            var message = root.TryGetProperty("message", out var m) ? (m.GetString() ?? "") : "";
+
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                if (ok)
+                    ConnectionStatus = $"[{cassia}] update channel set to '{channel}'.";
+                else
+                    ConnectionStatus = $"[{cassia}] set-update-channel failed: {message}";
+            });
+        }
+        catch
+        {
+            // ignore malformed telemetry
+        }
+    }
+
     private void HandleLedRangeTele(string cassia, string payload)
     {
         try
