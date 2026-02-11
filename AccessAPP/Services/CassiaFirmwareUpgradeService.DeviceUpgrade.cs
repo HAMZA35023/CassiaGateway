@@ -82,12 +82,21 @@ try
                 var canProceedWithUpgrade = true;
                 if (!isInBootMode && string.IsNullOrWhiteSpace(dev.CurrentFirmwareVersion))
                 {
-                    canProceedWithUpgrade = false;
-                    dev.shouldRetry = false;
-                    dev.LastFailureReason = "Current FW could not be read while device is not in bootloader.";
-                    dev.finalUpgradeResult = "NoFwRead";
-                    UpgradeLogger.Log(logId, mac, "FW precheck", dev.LastFailureReason, dev.FirmwareVersion);
-                    AppLog.Warn($"[{mac}] {dev.LastFailureReason} Failing update.");
+                    if (dev.ForceUpdate)
+                    {
+                        dev.LastFailureReason = "Current FW could not be read while device is not in bootloader. Continuing because ForceUpdate=true.";
+                        UpgradeLogger.Log(logId, mac, "FW precheck", dev.LastFailureReason, dev.FirmwareVersion);
+                        AppLog.Warn($"[{mac}] {dev.LastFailureReason}");
+                    }
+                    else
+                    {
+                        canProceedWithUpgrade = false;
+                        dev.shouldRetry = false;
+                        dev.LastFailureReason = "Current FW could not be read while device is not in bootloader.";
+                        dev.finalUpgradeResult = "NoFwRead";
+                        UpgradeLogger.Log(logId, mac, "FW precheck", dev.LastFailureReason, dev.FirmwareVersion);
+                        AppLog.Warn($"[{mac}] {dev.LastFailureReason} Failing update.");
+                    }
                 }
 
                 dev.RetryCount = 0;

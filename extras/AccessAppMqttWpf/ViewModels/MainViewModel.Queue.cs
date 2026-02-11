@@ -1264,7 +1264,13 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    private async Task QueueDeviceAndRequestAsync(DiscoveredDevice d)
+    internal async Task QueueDeviceAndRequestForceAsync(DiscoveredDevice? device)
+    {
+        if (device == null) return;
+        await QueueDeviceAndRequestAsync(device, forceUpdateOverride: true);
+    }
+
+    private async Task QueueDeviceAndRequestAsync(DiscoveredDevice d, bool? forceUpdateOverride = null)
     {
         if (d == null || string.IsNullOrWhiteSpace(d.Mac))
             return;
@@ -1458,6 +1464,7 @@ public partial class MainViewModel : ObservableObject
             .Replace("{cassia}", cassia)
             .Replace("{command}", DefaultCommand);
 
+        var forceUpdate = forceUpdateOverride ?? ForceUpdateEnabled;
         var payload = new[]
         {
             new
@@ -1466,7 +1473,7 @@ public partial class MainViewModel : ObservableObject
                 FirmwareVersion = fw,
                 MacAddress = d.Mac,
                 Pincode = "",
-                forceUpdate = ForceUpdateEnabled
+                forceUpdate
             }
         };
 

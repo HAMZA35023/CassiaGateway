@@ -594,6 +594,15 @@ public partial class MainWindow : Window
             };
             cm.Items.Add(wr);
 
+            cm.Items.Add(new Separator());
+
+            var forceUpdate = new MenuItem { Header = "Update (Force)" };
+            forceUpdate.Click += async (_, __) =>
+            {
+                try { await vm.QueueDeviceAndRequestForceAsync(device).ConfigureAwait(false); } catch { }
+            };
+            cm.Items.Add(forceUpdate);
+
             // Build Assign submenu
             assignRoot.Items.Clear();
 
