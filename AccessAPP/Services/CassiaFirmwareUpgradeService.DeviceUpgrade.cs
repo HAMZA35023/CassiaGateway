@@ -80,6 +80,29 @@ try
                        
                         await Task.Delay(2000).ConfigureAwait(false);
                     }
+
+                    // Fallback: boot mode detection can occasionally be stale/false-negative.
+                    // If FW read still failed, re-check boot mode before declaring NoFwRead.
+                    if (string.IsNullOrWhiteSpace(dev.CurrentFirmwareVersion))
+                    {
+                        const int bootRecheckAttempts = 3;
+                        for (int attempt = 1; attempt <= bootRecheckAttempts; attempt++)
+                        {
+                            if (CheckIfDeviceInBootMode(_gatewayIpAddress, mac))
+                            {
+                                isInBootMode = true;
+                                if (!dev.ForceUpdate)
+                                {
+                                    dev.ForceUpdate = true;
+                                    autoForceFromBootMode = true;
+                                }
+                                AppLog.Info($"[{mac}] Boot mode detected on fallback check (attempt {attempt}/{bootRecheckAttempts}).");
+                                break;
+                            }
+
+                            await Task.Delay(750).ConfigureAwait(false);
+                        }
+                    }
                 }
 
                 string logId = $"{mac.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
