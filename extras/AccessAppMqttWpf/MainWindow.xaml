@@ -47,7 +47,7 @@
 
         <!-- Refresh badge button (same style as ONLINE/OFFLINE badge) -->
         <Style x:Key="CassiaBadgeButtonStyle" TargetType="Button">
-            <Setter Property="Padding" Value="8,2"/>
+            <Setter Property="Padding" Value="8,1"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
@@ -79,7 +79,7 @@
         </Style>
 
         <Style x:Key="CassiaBadgeButtonStyleWarning" TargetType="Button">
-            <Setter Property="Padding" Value="8,2"/>
+            <Setter Property="Padding" Value="8,1"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
@@ -502,7 +502,7 @@
         <Border Grid.Column="0" Background="{Binding StripeBrush}" CornerRadius="10,0,0,10"/>
 
         <!-- Content spacing -->
-        <Border Grid.Column="1" Padding="6" Background="Transparent">
+        <Border Grid.Column="1" Padding="3" Background="Transparent">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -555,7 +555,7 @@
                             Style="{StaticResource CassiaBadgeButtonStyleWarning}"
                             Content="&#x1F9F9;"
                             FontFamily="Segoe UI Emoji"
-                            Margin="0,0,6,6"
+                            Margin="0,0,6,4"
                             ToolTip="Clear device settings backups"
                             Command="{Binding DataContext.ClearDeviceSettingsBackupsForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                             CommandParameter="{Binding Name}"/>
@@ -563,7 +563,7 @@
                     <Button Grid.Row="0" Grid.Column="1"
                             Style="{StaticResource CassiaBadgeButtonStyleWarning}"
                             Content="&#x21BB;"
-                            Margin="0,0,0,6"
+                            Margin="0,0,0,4"
                             ToolTip="Refresh firmware manifest"
                             Command="{Binding DataContext.RefreshFwManifestForCassiaCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                             CommandParameter="{Binding Name}"/>
@@ -572,13 +572,13 @@
                             Style="{StaticResource CassiaBadgeButtonStyle}"
                             Content="&#x1F4C8;"
                             FontFamily="Segoe UI Emoji"
-                            Margin="0,0,6,6"
+                            Margin="0,0,6,4"
                             ToolTip="Open speed graph (up to 12 hours)"
                             Command="{Binding DataContext.OpenSpeedGraphCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                             CommandParameter="{Binding Name}"/>
                     <Button Grid.Row="1" Grid.Column="1"
                             Style="{StaticResource CassiaBadgeButtonStyle}"
-                            Margin="0,0,0,6"
+                            Margin="0,0,0,4"
                             ToolTip="Open LED range visualizer"
                             Command="{Binding DataContext.OpenLedRangeVisualizerCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                             CommandParameter="{Binding Name}">
@@ -592,7 +592,7 @@
                     <Button Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2"
                             Style="{StaticResource CassiaBadgeButtonStyle}"
                             Content="Workers"
-                            Margin="0,0,0,6"
+                            Margin="0,0,0,4"
                             ToolTip="Set parallel programmers"
                             Command="{Binding DataContext.SetParallelProgrammersForCassiaPromptCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                             CommandParameter="{Binding}"/>
@@ -723,7 +723,7 @@
                 <!-- =========================
                      Row 2: Assign (ONE LINE)
                      ========================= -->
-                <Grid Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,6,0,0" Visibility="Hidden">
+                <Grid Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,6,0,0" Visibility="Collapsed">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
