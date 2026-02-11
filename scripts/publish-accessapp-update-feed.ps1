@@ -24,6 +24,12 @@ param(
     [string]$WorktreeRoot = "",
     [string]$VersionFile = "AccessAPP\Version.cs",
     [string]$NotifyUrlTemplate = "",
+    [switch]$EnableSmsNotification,
+    [string]$SmsUsername = "nikodk",
+    [string]$SmsApiKey = "cadd2536-45bd-448b-8599-09f29e7d14db",
+    [string]$SmsRecipient = "4528110897",
+    [string]$SmsSender = "CS-Build",
+    [switch]$SmsSummaryOnly,
     [switch]$NotifyOnNoChanges
 )
 
@@ -178,12 +184,90 @@ function Send-CompletionNotification {
     }
 }
 
+function Send-SmsNotification {
+    param([string]$Message)
+
+    if (-not $EnableSmsNotification) {
+        return
+    }
+    if ([string]::IsNullOrWhiteSpace($SmsUsername) -or [string]::IsNullOrWhiteSpace($SmsApiKey) -or [string]::IsNullOrWhiteSpace($SmsRecipient)) {
+        Write-Warning "SMS notification is enabled, but SmsUsername/SmsApiKey/SmsRecipient is missing. Skipping SMS."
+        return
+    }
+
+    $smsMsg = $Message
+    if ($smsMsg.Length -gt 160) {
+        $smsMsg = $smsMsg.Substring(0, 160)
+    }
+
+    $query = @{
+        username  = $SmsUsername
+        apikey    = $SmsApiKey
+        flash     = 0
+        recipient = $SmsRecipient
+        message   = $smsMsg
+        from      = $SmsSender
+    }
+
+    try {
+        Invoke-RestMethod -Uri "https://www.cpsms.dk/sms/" -Method Get -Body $query | Out-Null
+        Write-Log "SMS notification sent."
+    }
+    catch {
+        Write-Warning "Failed to send SMS notification: $_"
+    }
+}
+
+function Remove-Worktree {
+    param([string]$Path)
+
+    if (-not (Test-Path $Path)) {
+        return
+    }
+
+    & git -c core.longpaths=true worktree remove --force $Path | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "git worktree remove failed for '$Path'. Trying filesystem cleanup."
+    }
+
+    if (-not (Test-Path $Path)) {
+        return
+    }
+
+    try {
+        Remove-Item -LiteralPath ("\\?\{0}" -f $Path) -Recurse -Force -ErrorAction Stop
+    }
+    catch {
+        try {
+            Remove-Item -Path $Path -Recurse -Force -ErrorAction Stop
+        }
+        catch {
+            Write-Warning "Failed to remove worktree '$Path'."
+        }
+    }
+}
+
+function Invoke-StartupWorktreeCleanup {
+    param([string]$RootPath)
+
+    if (-not (Test-Path $RootPath)) {
+        return
+    }
+
+    Write-Log "Cleaning stale worktrees in '$RootPath'..."
+    Get-ChildItem -Path $RootPath -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+        Remove-Worktree -Path $_.FullName
+    }
+}
+
 if (-not $AutoBuildAllChannels) {
     $resultVersion = Invoke-PublishAndPackage -RepoRootPath $repoRoot -TargetChannel $Channel
     Write-Host ""
     Write-Log "Update feed published successfully."
     Write-Log "Version: $resultVersion"
     Write-Log "Manifest: $(Join-Path (Join-Path $WebRoot $Channel) $ManifestFileName)"
+    Send-SmsNotification -Message ("Build {0} {1} published" -f $Channel, $resultVersion)
+    Send-CompletionNotification -Message ("Build {0} {1} published" -f $Channel, $resultVersion)
     exit 0
 }
 
@@ -191,7 +275,12 @@ if ([string]::IsNullOrWhiteSpace($ShaStoreDir)) {
     $ShaStoreDir = Join-Path $repoRoot "temp_build\branch-shas"
 }
 if ([string]::IsNullOrWhiteSpace($WorktreeRoot)) {
-    $WorktreeRoot = Join-Path $repoRoot "temp_build\branch-worktrees"
+    $drive = if ([string]::IsNullOrWhiteSpace($env:SystemDrive)) { "C:" } else { $env:SystemDrive }
+    $WorktreeRoot = Join-Path $drive "cgwt"
+}
+
+if ($BranchChannelMap.Count -eq 0) {
+    throw "BranchChannelMap is empty. Remove -BranchChannelMap to use defaults, or pass mappings such as @{ 'PROD-STABLE'='stable'; 'PROD-TEST'='test'; 'PROD-DEVELOP'='develop' }."
 }
 
 New-Item -ItemType Directory -Path $ShaStoreDir -Force | Out-Null
@@ -209,6 +298,7 @@ try {
     if ($LASTEXITCODE -ne 0) {
         Write-Warning "git worktree prune returned exit code $LASTEXITCODE"
     }
+    Invoke-StartupWorktreeCleanup -RootPath $WorktreeRoot
 
     $built = New-Object System.Collections.Generic.List[string]
     $failed = New-Object System.Collections.Generic.List[string]
@@ -254,13 +344,7 @@ try {
         $worktreePath = Join-Path $WorktreeRoot $safeBranchName
 
         if (Test-Path $worktreePath) {
-            & git worktree remove --force $worktreePath | Out-Null
-            if ($LASTEXITCODE -ne 0) {
-                Write-Warning "Could not remove stale worktree '$worktreePath'."
-            }
-            if (Test-Path $worktreePath) {
-                Remove-Item -Path $worktreePath -Recurse -Force -ErrorAction SilentlyContinue
-            }
+            Remove-Worktree -Path $worktreePath
         }
 
         try {
@@ -273,6 +357,9 @@ try {
             $newSha | Set-Content -Path $shaFile -Encoding ascii -NoNewline
             $built.Add("$branch->$targetChannel ($builtVersion)") | Out-Null
             Write-Log "Build completed for '$branch' -> '$targetChannel'."
+            if (-not $SmsSummaryOnly) {
+                Send-SmsNotification -Message ("Build {0} {1} published" -f $branch, $builtVersion)
+            }
         }
         catch {
             $failed.Add("$branch->$targetChannel") | Out-Null
@@ -280,10 +367,7 @@ try {
         }
         finally {
             if (Test-Path $worktreePath) {
-                & git worktree remove --force $worktreePath | Out-Null
-                if ($LASTEXITCODE -ne 0) {
-                    Write-Warning "Failed to remove worktree '$worktreePath'."
-                }
+                Remove-Worktree -Path $worktreePath
             }
         }
     }
@@ -305,6 +389,7 @@ try {
 
     if (($built.Count -gt 0) -or ($failed.Count -gt 0) -or $NotifyOnNoChanges) {
         Send-CompletionNotification -Message $summary
+        Send-SmsNotification -Message $summary
     }
 
     if ($failed.Count -gt 0) {
