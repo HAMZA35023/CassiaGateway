@@ -55,8 +55,10 @@
   "BulkWifiConnectTimeoutSeconds": 25,
   "BulkWifiConnectAttempts": 5,
   "BulkWifiConnectRetryDelayMs": 1500,
-  "BulkWifiScanPasses": 4,
-  "BulkWifiScanDelayMs": 1500,
+  "BulkWifiScanPasses": 8,
+  "BulkWifiScanDelayMs": 2000,
+  "BulkWifiDeployAttemptsPerTarget": 2,
+  "BulkWifiDeployRetryDelayMs": 3000,
   "SshConnectAttempts": 10,
   "SshConnectRetryDelayMs": 1500,
   "BulkWifiAutoCreateProfile": true

@@ -64,6 +64,9 @@ internal static class Program
         //   --bulk-wifi                 Enables BulkWifiDeploy (iterate cassia-E4* SSIDs)
         //   --ssid-prefix <prefix>      Override BulkWifiSsidPrefix (case-insensitive)
         //   --max <n>                   Limit number of SSIDs processed (0 = no limit)
+        //   --scan-passes <n>           Number of Wi-Fi scan passes before bulk deploy
+        //   --scan-delay-ms <n>         Delay between Wi-Fi scan passes
+        //   --deploy-attempts <n>       Full deploy retries per SSID
         //   --host <ip>                 Override host (default is 192.168.40.1)
         //   --port <n>                  Override port
         //   --user <name>               Override user
@@ -88,6 +91,18 @@ internal static class Program
 
                 case "--max":
                     if (i + 1 < args.Length && int.TryParse(args[++i], out var max)) opt.BulkWifiMaxCount = max;
+                    break;
+
+                case "--scan-passes":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var scanPasses)) opt.BulkWifiScanPasses = scanPasses;
+                    break;
+
+                case "--scan-delay-ms":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var scanDelayMs)) opt.BulkWifiScanDelayMs = scanDelayMs;
+                    break;
+
+                case "--deploy-attempts":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var deployAttempts)) opt.BulkWifiDeployAttemptsPerTarget = deployAttempts;
                     break;
 
                 case "--host":

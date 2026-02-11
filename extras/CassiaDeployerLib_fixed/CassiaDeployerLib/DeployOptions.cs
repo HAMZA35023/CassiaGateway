@@ -110,10 +110,16 @@ public sealed class DeployOptions
     public bool BulkWifiAutoCreateProfile { get; set; } = true;
 
     // How many Wi-Fi scan passes to perform to find as many Cassias as possible
-    public int BulkWifiScanPasses { get; set; } = 4;
+    public int BulkWifiScanPasses { get; set; } = 8;
 
     // Delay between Wi-Fi scan passes
-    public int BulkWifiScanDelayMs { get; set; } = 1500;
+    public int BulkWifiScanDelayMs { get; set; } = 2000;
+
+    // How many times to retry full deployment per SSID (reconnect Wi-Fi + SSH each retry)
+    public int BulkWifiDeployAttemptsPerTarget { get; set; } = 2;
+
+    // Delay between full deployment retries per SSID
+    public int BulkWifiDeployRetryDelayMs { get; set; } = 3000;
 
     // How many times to attempt SSH connect per target (at least 3 recommended)
     public int SshConnectAttempts { get; set; } = 3;

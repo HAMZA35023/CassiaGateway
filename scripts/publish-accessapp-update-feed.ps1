@@ -225,7 +225,7 @@ function Remove-Worktree {
         return
     }
 
-    & git -c core.longpaths=true worktree remove --force $Path | Out-Null
+    & git -c core.longpaths=true worktree remove --force -- $Path | Out-Null
     if ($LASTEXITCODE -ne 0) {
         Write-Warning "git worktree remove failed for '$Path'. Trying filesystem cleanup."
     }
@@ -234,16 +234,25 @@ function Remove-Worktree {
         return
     }
 
+    # Always prune metadata first so git forgets already-broken worktree records.
+    & git worktree prune | Out-Null
+
     try {
         Remove-Item -LiteralPath ("\\?\{0}" -f $Path) -Recurse -Force -ErrorAction Stop
+        return
     }
-    catch {
-        try {
-            Remove-Item -Path $Path -Recurse -Force -ErrorAction Stop
-        }
-        catch {
-            Write-Warning "Failed to remove worktree '$Path'."
-        }
+    catch {}
+
+    try {
+        Remove-Item -Path $Path -Recurse -Force -ErrorAction Stop
+        return
+    }
+    catch {}
+
+    # Final fallback for Windows long-path trees.
+    & cmd /c "rmdir /s /q ""\\?\$Path""" | Out-Null
+    if (Test-Path $Path) {
+        Write-Warning "Failed to remove worktree '$Path'."
     }
 }
 
@@ -258,6 +267,26 @@ function Invoke-StartupWorktreeCleanup {
     Get-ChildItem -Path $RootPath -Directory -ErrorAction SilentlyContinue | ForEach-Object {
         Remove-Worktree -Path $_.FullName
     }
+}
+
+function Get-WorktreeRootsToClean {
+    param(
+        [string]$PrimaryRoot,
+        [string]$RepoRootPath
+    )
+
+    $roots = New-Object System.Collections.Generic.List[string]
+    if (-not [string]::IsNullOrWhiteSpace($PrimaryRoot)) {
+        $roots.Add($PrimaryRoot) | Out-Null
+    }
+
+    # Legacy location used by previous versions of this script.
+    $legacyRoot = Join-Path $RepoRootPath "temp_build\branch-worktrees"
+    if ($legacyRoot -ne $PrimaryRoot) {
+        $roots.Add($legacyRoot) | Out-Null
+    }
+
+    return $roots
 }
 
 if (-not $AutoBuildAllChannels) {
@@ -298,7 +327,9 @@ try {
     if ($LASTEXITCODE -ne 0) {
         Write-Warning "git worktree prune returned exit code $LASTEXITCODE"
     }
-    Invoke-StartupWorktreeCleanup -RootPath $WorktreeRoot
+    foreach ($root in (Get-WorktreeRootsToClean -PrimaryRoot $WorktreeRoot -RepoRootPath $repoRoot)) {
+        Invoke-StartupWorktreeCleanup -RootPath $root
+    }
 
     $built = New-Object System.Collections.Generic.List[string]
     $failed = New-Object System.Collections.Generic.List[string]

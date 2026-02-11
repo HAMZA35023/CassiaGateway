@@ -281,7 +281,18 @@ public sealed class SshCassiaDeployer
                 var pwd = string.IsNullOrWhiteSpace(_opt.Password) ? ssidPasswordLower : _opt.Password;
 
                 _log.Info($"=== [{ssid}] Deploying to {_opt.Host}:{_opt.Port} ===");
-                DeployToTarget(_opt.Host, _opt.Port, _opt.User, pwd, label: ssid);
+                DeployToTargetWithRetry(
+                    host: _opt.Host,
+                    port: _opt.Port,
+                    user: _opt.User,
+                    password: pwd,
+                    ssid: ssid,
+                    attempts: Math.Max(1, _opt.BulkWifiDeployAttemptsPerTarget),
+                    retryDelayMs: Math.Max(0, _opt.BulkWifiDeployRetryDelayMs),
+                    connectTimeoutSeconds: _opt.BulkWifiConnectTimeoutSeconds,
+                    connectAttempts: Math.Max(1, _opt.BulkWifiConnectAttempts),
+                    connectRetryDelayMs: Math.Max(0, _opt.BulkWifiConnectRetryDelayMs),
+                    autoCreateProfile: _opt.BulkWifiAutoCreateProfile);
                 ok++;
             }
             catch (Exception ex)
@@ -293,6 +304,50 @@ public sealed class SshCassiaDeployer
 
         _log.Info("");
         _log.Info($"Bulk deploy finished. Success={ok}, Failed={fail}");
+    }
+
+    private void DeployToTargetWithRetry(
+        string host,
+        int port,
+        string user,
+        string password,
+        string ssid,
+        int attempts,
+        int retryDelayMs,
+        int connectTimeoutSeconds,
+        int connectAttempts,
+        int connectRetryDelayMs,
+        bool autoCreateProfile)
+    {
+        Exception? lastEx = null;
+        for (int attempt = 1; attempt <= attempts; attempt++)
+        {
+            try
+            {
+                if (attempt > 1)
+                {
+                    _log.Warn($"[{ssid}] Full deploy retry {attempt}/{attempts}...");
+                    ConnectWifiWithRetry(
+                        ssid,
+                        password: password,
+                        autoCreateProfile: autoCreateProfile,
+                        timeoutSeconds: connectTimeoutSeconds,
+                        attempts: connectAttempts,
+                        retryDelayMs: connectRetryDelayMs);
+                }
+
+                DeployToTarget(host, port, user, password, label: ssid);
+                return;
+            }
+            catch (Exception ex)
+            {
+                lastEx = ex;
+                if (attempt < attempts && retryDelayMs > 0)
+                    Thread.Sleep(retryDelayMs);
+            }
+        }
+
+        throw new InvalidOperationException($"[{ssid}] Deployment failed after {attempts} attempt(s).", lastEx);
     }
 
     private static List<string> ListWifiSsids()
@@ -343,6 +398,7 @@ public sealed class SshCassiaDeployer
         {
             try
             {
+                _log.Info($"Wi-Fi scan pass {pass}/{scanPasses}...");
                 // netsh triggers a scan; repeating it increases discovery reliability.
                 var ssids = ListWifiSsids();
                 foreach (var s in ssids)
