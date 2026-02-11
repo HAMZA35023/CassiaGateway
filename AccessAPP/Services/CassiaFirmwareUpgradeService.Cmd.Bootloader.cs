@@ -32,7 +32,8 @@ namespace AccessAPP.Services
 
         public bool CheckIfDeviceInBootMode(string gatewayIpAddress, string nodeMac)
         {
-            string endpoint = $"http://{gatewayIpAddress}/gatt/nodes/{nodeMac}/characteristics";
+            int chip = GetChipForMac(nodeMac);
+            string endpoint = $"http://{gatewayIpAddress}/gatt/nodes/{nodeMac}/characteristics?chip={chip}";
 
             HttpClient _httpClientTmp = new HttpClient();
             var maxAttempts = Math.Max(1, RuntimeVariables.BOOTMODE_RETRY_COUNT);
@@ -51,7 +52,7 @@ namespace AccessAPP.Services
                         var characteristics = JsonConvert.DeserializeObject<List<CharacteristicModel>>(jsonResponse);
 
                         // Check if the characteristic UUID is present
-                        return characteristics.Any(charac => charac.Uuid == "00060001-f8ce-11e4-abf4-0002a5d5c51b");
+                        return characteristics?.Any(charac => charac.Uuid == "00060001-f8ce-11e4-abf4-0002a5d5c51b") == true;
                     }
 
                     return false;

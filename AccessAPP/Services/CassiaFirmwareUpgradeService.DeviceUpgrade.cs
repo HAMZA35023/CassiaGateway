@@ -60,8 +60,39 @@ try
                     AppLog.Debug($"[{DateTime.Now:HH:mm:ss.fff}][T{Environment.CurrentManagedThreadId}] " +
                         System.Text.Json.JsonSerializer.Serialize(dev));
 
+                string logId = $"{mac.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
+
+                // Probe-connect first, then detect boot/app mode (same principle as the upgrade pipeline).
+                // This avoids stale/false-negative mode checks before a BLE session is established.
+                var probeConnected = false;
+                var probe = await ConnectOnlyWithRetryAsync_Internal(
+                    maxAttempts: 5,
+                    delayMs: 2000,
+                    stageName: "Connected (precheck probe)",
+                    macAddress: mac,
+                    firmwareVersion: dev.FirmwareVersion,
+                    logId: logId,
+                    logSuccess: false
+                ).ConfigureAwait(false);
+
+                probeConnected = probe.ok;
                 var autoForceFromBootMode = false;
-                var isInBootMode = CheckIfDeviceInBootMode(_gatewayIpAddress, mac);
+                var isInBootMode = false;
+                if (probeConnected)
+                {
+                    const int bootModeChecks = 5;
+                    for (int attempt = 1; attempt <= bootModeChecks; attempt++)
+                    {
+                        if (CheckIfDeviceInBootMode(_gatewayIpAddress, mac))
+                        {
+                            isInBootMode = true;
+                            break;
+                        }
+
+                        await Task.Delay(1500).ConfigureAwait(false);
+                    }
+                }
+
                 if (isInBootMode && !dev.ForceUpdate)
                 {
                     dev.ForceUpdate = true;
@@ -74,7 +105,16 @@ try
                     const int firmwareReadAttempts = 5;
                     for (int i = 1; i <= firmwareReadAttempts; i++)
                     {
-                        dev.CurrentFirmwareVersion = await GetFwVersion(mac, dev.Pincode);
+                        if (probeConnected)
+                        {
+                            // Reuse the existing probe connection/session instead of reconnecting.
+                            dev.CurrentFirmwareVersion = await GetFwVersionOnConnectedSessionAsync(mac, dev.Pincode).ConfigureAwait(false);
+                        }
+                        else
+                        {
+                            // Fallback only when probe connect was not available.
+                            dev.CurrentFirmwareVersion = await GetFwVersion(mac, dev.Pincode).ConfigureAwait(false);
+                        }
                         if (!string.IsNullOrWhiteSpace(dev.CurrentFirmwareVersion))
                             break;
                        
@@ -85,7 +125,7 @@ try
                     // If FW read still failed, re-check boot mode before declaring NoFwRead.
                     if (string.IsNullOrWhiteSpace(dev.CurrentFirmwareVersion))
                     {
-                        const int bootRecheckAttempts = 3;
+                        const int bootRecheckAttempts = 5;
                         for (int attempt = 1; attempt <= bootRecheckAttempts; attempt++)
                         {
                             if (CheckIfDeviceInBootMode(_gatewayIpAddress, mac))
@@ -100,12 +140,23 @@ try
                                 break;
                             }
 
-                            await Task.Delay(750).ConfigureAwait(false);
+                            await Task.Delay(1500).ConfigureAwait(false);
                         }
                     }
                 }
 
-                string logId = $"{mac.Replace(":", "")}_{DateTime.Now:yyyyMMddHHmmss}";
+                if (probeConnected)
+                {
+                    try
+                    {
+                        await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, mac, 0, chip: GetChipForMac(mac)).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // best-effort disconnect after precheck probe
+                    }
+                }
+
                 if (autoForceFromBootMode)
                     UpgradeLogger.Log(logId, mac, "FW precheck", "Device is in bootloader; ForceUpdate auto-enabled.", dev.FirmwareVersion);
                 UpgradeLogger.Log(logId, mac, "Current FW Version:", dev.CurrentFirmwareVersion, dev.FirmwareVersion);
@@ -113,21 +164,21 @@ try
                 var canProceedWithUpgrade = true;
                 if (!isInBootMode && string.IsNullOrWhiteSpace(dev.CurrentFirmwareVersion))
                 {
-                    if (dev.ForceUpdate)
+                    // Do not hard-fail precheck on unreadable FW.
+                    // In field conditions this can be transient or a boot-mode detection false negative.
+                    // Force update path is safer than stopping the run with NoFwRead.
+                    if (!dev.ForceUpdate)
                     {
-                        dev.LastFailureReason = "Current FW could not be read while device is not in bootloader. Continuing because ForceUpdate=true.";
-                        UpgradeLogger.Log(logId, mac, "FW precheck", dev.LastFailureReason, dev.FirmwareVersion);
-                        AppLog.Warn($"[{mac}] {dev.LastFailureReason}");
+                        dev.ForceUpdate = true;
+                        dev.LastFailureReason = "Current FW could not be read while device is not in bootloader. ForceUpdate auto-enabled; continuing.";
                     }
                     else
                     {
-                        canProceedWithUpgrade = false;
-                        dev.shouldRetry = false;
-                        dev.LastFailureReason = "Current FW could not be read while device is not in bootloader.";
-                        dev.finalUpgradeResult = "NoFwRead";
-                        UpgradeLogger.Log(logId, mac, "FW precheck", dev.LastFailureReason, dev.FirmwareVersion);
-                        AppLog.Warn($"[{mac}] {dev.LastFailureReason} Failing update.");
+                        dev.LastFailureReason = "Current FW could not be read while device is not in bootloader. Continuing because ForceUpdate=true.";
                     }
+
+                    UpgradeLogger.Log(logId, mac, "FW precheck", dev.LastFailureReason, dev.FirmwareVersion);
+                    AppLog.Warn($"[{mac}] {dev.LastFailureReason}");
                 }
 
                 dev.RetryCount = 0;
