@@ -11,6 +11,7 @@
   <Color x:Key="BorderColor">#FF2B3242</Color>
   <Color x:Key="GoodColor">#FF22C55E</Color>
   <Color x:Key="WarnColor">#FFF59E0B</Color>
+  <Color x:Key="NoFwColor">#FF06B6D4</Color>
   <Color x:Key="BadColor">#FFEF4444</Color>
 
   <!-- Brushes -->
@@ -23,6 +24,7 @@
   <SolidColorBrush x:Key="BorderBrush" Color="{StaticResource BorderColor}"/>
   <SolidColorBrush x:Key="GoodBrush" Color="{StaticResource GoodColor}"/>
   <SolidColorBrush x:Key="WarnBrush" Color="{StaticResource WarnColor}"/>
+  <SolidColorBrush x:Key="NoFwBrush" Color="{StaticResource NoFwColor}"/>
   <SolidColorBrush x:Key="BadBrush" Color="{StaticResource BadColor}"/>
 
   <!-- System brushes override (ensures dropdowns/menus/popups are dark) -->

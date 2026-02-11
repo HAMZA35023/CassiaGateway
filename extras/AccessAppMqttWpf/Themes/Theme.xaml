@@ -11,6 +11,7 @@
   <Color x:Key="BorderColor">#FFE5E7EB</Color>
   <Color x:Key="GoodColor">#FF16A34A</Color>
   <Color x:Key="WarnColor">#FFD97706</Color>
+  <Color x:Key="NoFwColor">#FF0891B2</Color>
   <Color x:Key="BadColor">#FFDC2626</Color>
 
   <!-- Brushes -->
@@ -23,6 +24,7 @@
   <SolidColorBrush x:Key="BorderBrush" Color="{StaticResource BorderColor}"/>
   <SolidColorBrush x:Key="GoodBrush" Color="{StaticResource GoodColor}"/>
   <SolidColorBrush x:Key="WarnBrush" Color="{StaticResource WarnColor}"/>
+  <SolidColorBrush x:Key="NoFwBrush" Color="{StaticResource NoFwColor}"/>
   <SolidColorBrush x:Key="BadBrush" Color="{StaticResource BadColor}"/>
 
   <!-- Window -->

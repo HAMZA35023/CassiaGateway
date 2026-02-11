@@ -65,7 +65,8 @@ try
                 if (!isInBootMode)
                 {
                     // FW read can be flaky; retry a few times before giving up.
-                    for (int i = 1; i <= 3; i++)
+                    const int firmwareReadAttempts = 5;
+                    for (int i = 1; i <= firmwareReadAttempts; i++)
                     {
                         dev.CurrentFirmwareVersion = await GetFwVersion(mac, dev.Pincode);
                         if (!string.IsNullOrWhiteSpace(dev.CurrentFirmwareVersion))

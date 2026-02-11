@@ -16,7 +16,7 @@
         <SolidColorBrush x:Key="DoneRowBrush" Color="#2A22C55E"/>
         <SolidColorBrush x:Key="QueueRowBrush" Color="#2A60A5FA"/>
         <SolidColorBrush x:Key="WarnRowBrush" Color="#2AFACC15"/>
-        <SolidColorBrush x:Key="NoFwRowBrush" Color="#2AFFB347"/>
+        <SolidColorBrush x:Key="NoFwRowBrush" Color="#2A06B6D4"/>
         <SolidColorBrush x:Key="FailedRowBrush" Color="#2AE74C3C"/>
 
 
