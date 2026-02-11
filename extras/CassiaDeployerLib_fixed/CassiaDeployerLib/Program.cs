@@ -53,8 +53,8 @@ internal static class Program
 
         // Auto-close after 5 seconds
         Console.WriteLine();
-        Console.WriteLine("Closing in 5 seconds ...");
-        Thread.Sleep(TimeSpan.FromSeconds(5));
+        Console.WriteLine("Closing in 60 seconds ...");
+        Thread.Sleep(TimeSpan.FromSeconds(60));
         return exitCode;
     }
 

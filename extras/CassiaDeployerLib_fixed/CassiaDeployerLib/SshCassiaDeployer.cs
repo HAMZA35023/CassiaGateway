@@ -6,6 +6,7 @@ using Renci.SshNet;
 using Renci.SshNet.Common;
 using Renci.SshNet.Sftp;
 using System.Diagnostics;
+using System.Net.Sockets;
 using System.Text.RegularExpressions;
 using System.Text;
 using System.Text.Json;
@@ -127,6 +128,9 @@ public sealed class SshCassiaDeployer
             retryDelayMs: Math.Max(0, _opt.SshConnectRetryDelayMs));
         _log.Info("Connected.");
 
+        InitKind init = InitKind.Unknown;
+        var serviceRestartNeeded = false;
+
         try
         {
             // Provision SSH public-key login (so future logins/deploys can be password-less)
@@ -145,14 +149,17 @@ public sealed class SshCassiaDeployer
 
             EnsureRemoteDirWritable(ssh);
 
-            var init = DetectInit(ssh);
+            init = DetectInit(ssh);
             _log.Info($"Init system detected: {init}");
 
             if (_opt.ManageService && _opt.InstallServiceIfMissing)
                 EnsureServiceInstalled(ssh, init);
 
             if (_opt.ManageService)
+            {
                 StopService(ssh, init);
+                serviceRestartNeeded = true;
+            }
 
             UploadDirectorySftpWithManifest(ssh, sftp, _opt.LocalPublishDir, _opt.RemoteDir, _opt.RemoteManifestPath);
 
@@ -168,15 +175,41 @@ public sealed class SshCassiaDeployer
 
             if (_opt.InstallStartupUpdater)
             {
-                InstallStartupUpdater(ssh, sftp);
-                EnsureSelfUpdateSudoers(ssh);
+                try
+                {
+                    InstallStartupUpdater(ssh, sftp);
+                    EnsureSelfUpdateSudoers(ssh);
+                }
+                catch (Exception ex)
+                {
+                    // Do not leave the device down if updater installation hits a transient error.
+                    _log.Warn($"Startup updater installation failed (continuing): {ex.Message}");
+                }
             }
 
             if (_opt.ManageService)
             {
                 StartService(ssh, init);
+                serviceRestartNeeded = false;
                 ShowServiceStatus(ssh, init);
             }
+        }
+        catch
+        {
+            if (_opt.ManageService && serviceRestartNeeded)
+            {
+                try
+                {
+                    _log.Warn("Deployment failed after service stop; attempting to restart service.");
+                    StartService(ssh, init);
+                }
+                catch (Exception startEx)
+                {
+                    _log.Error($"Failed to restart service after deployment error: {startEx.Message}");
+                }
+            }
+
+            throw;
         }
         finally
         {
@@ -1576,7 +1609,6 @@ exit 0
         int retryDelayMs = 300)
     {
         remotePath = NormalizeRemote(remotePath);
-        EnsureRemoteDirectorySftp(sftp, GetRemoteParentDir(remotePath));
 
         Exception? lastEx = null;
         var pid = Process.GetCurrentProcess().Id;
@@ -1587,6 +1619,9 @@ exit 0
 
             try
             {
+                EnsureSftpConnected(sftp);
+                EnsureRemoteDirectorySftp(sftp, GetRemoteParentDir(remotePath));
+
                 using (var input = openInput())
                 {
                     if (input.CanSeek)
@@ -1608,10 +1643,7 @@ exit 0
                 return;
             }
             catch (Exception ex) when (
-                ex is SshException ||
-                ex is SftpPermissionDeniedException ||
-                ex is SftpPathNotFoundException ||
-                ex is IOException)
+                IsTransientSftpError(ex))
             {
                 lastEx = ex;
 
@@ -1628,6 +1660,14 @@ exit 0
                 if (attempt < attempts)
                 {
                     _log.Warn($"SFTP upload retry {attempt}/{attempts} failed for {remotePath}: {ex.Message}");
+                    try
+                    {
+                        ReconnectSftpWithRetry(sftp);
+                    }
+                    catch (Exception reconnectEx)
+                    {
+                        _log.Warn($"SFTP reconnect after failed upload also failed: {reconnectEx.Message}");
+                    }
                     if (retryDelayMs > 0)
                         Thread.Sleep(retryDelayMs);
                     continue;
@@ -1638,6 +1678,61 @@ exit 0
         throw new InvalidOperationException(
             $"SFTP upload failed for {remotePath} after {attempts} attempts.",
             lastEx);
+    }
+
+    private void EnsureSftpConnected(SftpClient sftp)
+    {
+        if (sftp.IsConnected)
+            return;
+
+        ReconnectSftpWithRetry(sftp);
+    }
+
+    private void ReconnectSftpWithRetry(SftpClient sftp)
+    {
+        Exception? lastEx = null;
+        var attempts = Math.Max(1, _opt.SshConnectAttempts);
+        var retryDelayMs = Math.Max(0, _opt.SshConnectRetryDelayMs);
+
+        for (int attempt = 1; attempt <= attempts; attempt++)
+        {
+            try
+            {
+                if (sftp.IsConnected)
+                    sftp.Disconnect();
+
+                sftp.Connect();
+                return;
+            }
+            catch (Exception ex)
+            {
+                lastEx = ex;
+                if (attempt < attempts && retryDelayMs > 0)
+                    Thread.Sleep(retryDelayMs);
+            }
+        }
+
+        throw new InvalidOperationException("Failed to reconnect SFTP session.", lastEx);
+    }
+
+    private static bool IsTransientSftpError(Exception ex)
+    {
+        if (ex is SshException ||
+            ex is SshConnectionException ||
+            ex is SftpPermissionDeniedException ||
+            ex is SftpPathNotFoundException ||
+            ex is IOException ||
+            ex is SocketException)
+            return true;
+
+        if (ex is InvalidOperationException invalidEx)
+        {
+            var msg = invalidEx.Message ?? "";
+            if (msg.Contains("not connected", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 
     private static string GetRemoteParentDir(string remotePath)
@@ -1654,22 +1749,63 @@ exit 0
     private void RunCommand(SshClient ssh, string cmd)
     {
         _log.Info($"SSH: {cmd}");
-        using var c = ssh.CreateCommand(cmd);
-        c.CommandTimeout = TimeSpan.FromSeconds(180);
-        var stdout = c.Execute() ?? "";
+        var attempts = Math.Max(1, _opt.SshConnectAttempts);
+        Exception? lastEx = null;
 
-        if (c.ExitStatus != 0)
-            throw new Exception($"Command failed (exit {c.ExitStatus}): {cmd}\nSTDOUT:\n{stdout}\nSTDERR:\n{c.Error}");
+        for (int attempt = 1; attempt <= attempts; attempt++)
+        {
+            try
+            {
+                EnsureSshConnected(ssh);
+
+                using var c = ssh.CreateCommand(cmd);
+                c.CommandTimeout = TimeSpan.FromSeconds(180);
+                var stdout = c.Execute() ?? "";
+
+                if (c.ExitStatus != 0)
+                    throw new Exception($"Command failed (exit {c.ExitStatus}): {cmd}\nSTDOUT:\n{stdout}\nSTDERR:\n{c.Error}");
+
+                return;
+            }
+            catch (Exception ex) when (attempt < attempts && IsTransientSshError(ex))
+            {
+                lastEx = ex;
+                _log.Warn($"SSH command retry {attempt}/{attempts} after transient error: {ex.Message}");
+                ReconnectSshWithRetry(ssh);
+            }
+        }
+
+        if (lastEx != null)
+            throw new InvalidOperationException($"SSH command failed after {attempts} attempts: {cmd}", lastEx);
     }
 
     private string RunCommandCapture(SshClient ssh, string cmd)
     {
-        using var c = ssh.CreateCommand(cmd);
-        c.CommandTimeout = TimeSpan.FromSeconds(60);
-        var stdout = c.Execute() ?? "";
-        if (!string.IsNullOrWhiteSpace(c.Error))
-            stdout += "\n" + c.Error;
-        return stdout;
+        var attempts = Math.Max(1, _opt.SshConnectAttempts);
+        Exception? lastEx = null;
+
+        for (int attempt = 1; attempt <= attempts; attempt++)
+        {
+            try
+            {
+                EnsureSshConnected(ssh);
+
+                using var c = ssh.CreateCommand(cmd);
+                c.CommandTimeout = TimeSpan.FromSeconds(60);
+                var stdout = c.Execute() ?? "";
+                if (!string.IsNullOrWhiteSpace(c.Error))
+                    stdout += "\n" + c.Error;
+                return stdout;
+            }
+            catch (Exception ex) when (attempt < attempts && IsTransientSshError(ex))
+            {
+                lastEx = ex;
+                _log.Warn($"SSH capture retry {attempt}/{attempts} after transient error: {ex.Message}");
+                ReconnectSshWithRetry(ssh);
+            }
+        }
+
+        throw new InvalidOperationException($"SSH command capture failed after {attempts} attempts: {cmd}", lastEx);
     }
 
     private void RunSudo(SshClient ssh, string command)
@@ -1683,6 +1819,62 @@ exit 0
         // - Use -p '' so sudo doesn't print interactive prompts into STDERR
         var pwd = _opt.Password ?? "";
         RunCommand(ssh, $"printf '%s\\n' {ShEscape(pwd)} | sudo -S -p '' sh -lc '{escaped}'");
+    }
+
+    private void EnsureSshConnected(SshClient ssh)
+    {
+        if (ssh.IsConnected)
+            return;
+
+        ReconnectSshWithRetry(ssh);
+    }
+
+    private void ReconnectSshWithRetry(SshClient ssh)
+    {
+        Exception? lastEx = null;
+        var attempts = Math.Max(1, _opt.SshConnectAttempts);
+        var retryDelayMs = Math.Max(0, _opt.SshConnectRetryDelayMs);
+
+        for (int attempt = 1; attempt <= attempts; attempt++)
+        {
+            try
+            {
+                if (ssh.IsConnected)
+                    ssh.Disconnect();
+
+                ssh.Connect();
+                return;
+            }
+            catch (Exception ex)
+            {
+                lastEx = ex;
+                if (attempt < attempts && retryDelayMs > 0)
+                    Thread.Sleep(retryDelayMs);
+            }
+        }
+
+        throw new InvalidOperationException("Failed to reconnect SSH session.", lastEx);
+    }
+
+    private static bool IsTransientSshError(Exception ex)
+    {
+        if (ex is SshConnectionException ||
+            ex is SshOperationTimeoutException ||
+            ex is SocketException ||
+            ex is IOException)
+            return true;
+
+        if (ex is SshException sshEx)
+        {
+            var msg = sshEx.Message ?? "";
+            if (msg.Contains("forcibly closed", StringComparison.OrdinalIgnoreCase) ||
+                msg.Contains("connection reset", StringComparison.OrdinalIgnoreCase) ||
+                msg.Contains("connection closed", StringComparison.OrdinalIgnoreCase) ||
+                msg.Contains("timed out", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 
     // ------------------------------------------------------------
