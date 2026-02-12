@@ -204,6 +204,39 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+    private void HandleMqttConfigTele(string cassia, string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+            var ok = root.TryGetProperty("success", out var s) && s.ValueKind == JsonValueKind.True;
+            var message = root.TryGetProperty("message", out var m) ? (m.GetString() ?? "") : "";
+            var host = root.TryGetProperty("host", out var h) ? (h.GetString() ?? "") : "";
+            var port = root.TryGetProperty("port", out var p) && p.ValueKind == JsonValueKind.Number ? p.GetInt32() : 0;
+            var useTls = root.TryGetProperty("useTls", out var t) && t.ValueKind == JsonValueKind.True;
+
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                if (ok)
+                {
+                    var summary = string.IsNullOrWhiteSpace(host) || port <= 0
+                        ? "mqtt.json saved (restart required)."
+                        : $"mqtt.json saved: {host}:{port} tls={useTls} (restart required).";
+                    ConnectionStatus = $"[{cassia}] {summary}";
+                }
+                else
+                {
+                    ConnectionStatus = $"[{cassia}] mqtt config failed: {message}";
+                }
+            });
+        }
+        catch
+        {
+            // ignore malformed telemetry
+        }
+    }
+
     private void HandleLedRangeTele(string cassia, string payload)
     {
         try

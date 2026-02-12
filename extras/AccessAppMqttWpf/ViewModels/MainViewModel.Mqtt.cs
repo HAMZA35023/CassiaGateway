@@ -301,6 +301,12 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        if (kind == "tele" && leaf == "mqtt-config")
+        {
+            HandleMqttConfigTele(cassia, payload);
+            return;
+        }
+
         if (kind == "tele" && leaf == "led-range")
         {
             HandleLedRangeTele(cassia, payload);

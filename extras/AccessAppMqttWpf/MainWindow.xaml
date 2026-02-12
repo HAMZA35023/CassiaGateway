@@ -392,6 +392,7 @@
                 <Separator/>
                 <MenuItem Header="Refresh FW manifest (all)" Command="{Binding RefreshFwManifestForAllCassiasCommand}"/>
                 <MenuItem Header="Clear backups (all)" Command="{Binding ClearDeviceSettingsBackupsForAllCassiasCommand}"/>
+                <MenuItem Header="Set MQTT broker (all)..." Command="{Binding SetMqttBrokerForAllCassiasPromptCommand}"/>
                 <Separator/>
                 <MenuItem Header="Set parallel (all)" Command="{Binding SetParallelProgrammersForAllCassiasPromptCommand}"/>
                 <MenuItem Header="Get parallel (all)" Command="{Binding GetParallelProgrammersForAllCassiasCommand}"/>
@@ -480,6 +481,9 @@
                       CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
             <MenuItem Header="Set MQTT scope (networkId)..."
                       Command="{Binding PlacementTarget.Tag.SetCassiaMqttScopeCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+            <MenuItem Header="Set MQTT broker (host/port/tls)..."
+                      Command="{Binding PlacementTarget.Tag.SetCassiaMqttBrokerCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                       CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
             <MenuItem Header="Set runtime variables..."
                       Command="{Binding PlacementTarget.Tag.OpenRuntimeSettingsCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"

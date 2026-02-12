@@ -698,6 +698,118 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 });
             }
 
+            if (string.Equals(command, "set-mqtt-broker", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "set-mqtt-config", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch set-mqtt-broker");
+
+                if (string.IsNullOrWhiteSpace(payload))
+                {
+                    var bad = new
+                    {
+                        success = false,
+                        message = "Missing payload. Send e.g. {\"host\":\"broker\", \"port\":1883, \"useTls\":true}.",
+                        applyAfterRestart = true
+                    };
+                    return PublishTeleJsonAsync("mqtt-config", bad, CancellationToken.None);
+                }
+
+                return Task.Run(async () =>
+                {
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(payload);
+                        var root = doc.RootElement;
+                        if (root.ValueKind != JsonValueKind.Object)
+                        {
+                            var bad = new
+                            {
+                                success = false,
+                                message = "Expected a JSON object payload.",
+                                applyAfterRestart = true
+                            };
+                            await PublishTeleJsonAsync("mqtt-config", bad, CancellationToken.None).ConfigureAwait(false);
+                            return;
+                        }
+
+                        string? host = null;
+                        int? port = null;
+                        bool? useTls = null;
+
+                        if (root.TryGetProperty("host", out var hostEl) && hostEl.ValueKind == JsonValueKind.String)
+                            host = hostEl.GetString();
+
+                        if (root.TryGetProperty("port", out var portEl))
+                        {
+                            if (portEl.ValueKind == JsonValueKind.Number && portEl.TryGetInt32(out var p))
+                                port = p;
+                            else if (portEl.ValueKind == JsonValueKind.String && int.TryParse(portEl.GetString(), out var p2))
+                                port = p2;
+                        }
+
+                        if (root.TryGetProperty("useTls", out var tlsEl) || root.TryGetProperty("tls", out tlsEl))
+                        {
+                            if (tlsEl.ValueKind == JsonValueKind.True) useTls = true;
+                            else if (tlsEl.ValueKind == JsonValueKind.False) useTls = false;
+                            else if (tlsEl.ValueKind == JsonValueKind.String && bool.TryParse(tlsEl.GetString(), out var b))
+                                useTls = b;
+                        }
+
+                        if (string.IsNullOrWhiteSpace(host) && port == null && useTls == null)
+                        {
+                            var bad = new
+                            {
+                                success = false,
+                                message = "No changes provided. Include host, port, and/or useTls.",
+                                applyAfterRestart = true
+                            };
+                            await PublishTeleJsonAsync("mqtt-config", bad, CancellationToken.None).ConfigureAwait(false);
+                            return;
+                        }
+
+                        if (port.HasValue && (port.Value <= 0 || port.Value > 65535))
+                        {
+                            var bad = new
+                            {
+                                success = false,
+                                message = $"Invalid port '{port}'. Must be 1-65535.",
+                                applyAfterRestart = true
+                            };
+                            await PublishTeleJsonAsync("mqtt-config", bad, CancellationToken.None).ConfigureAwait(false);
+                            return;
+                        }
+
+                        var opts = _store.LoadOrCreateDefault();
+                        if (!string.IsNullOrWhiteSpace(host)) opts.Host = host.Trim();
+                        if (port.HasValue) opts.Port = port.Value;
+                        if (useTls.HasValue) opts.UseTls = useTls.Value;
+                        _store.Save(opts);
+
+                        var ok = new
+                        {
+                            success = true,
+                            message = "mqtt.json saved. Changes apply after restart/reboot.",
+                            host = opts.Host,
+                            port = opts.Port,
+                            useTls = opts.UseTls,
+                            applyAfterRestart = true
+                        };
+
+                        await PublishTeleJsonAsync("mqtt-config", ok, CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        var bad = new
+                        {
+                            success = false,
+                            message = $"Failed to update mqtt.json: {ex.Message}",
+                            applyAfterRestart = true
+                        };
+                        await PublishTeleJsonAsync("mqtt-config", bad, CancellationToken.None).ConfigureAwait(false);
+                    }
+                });
+            }
+
             // NEW: Set gateway/cassia name via MQTT (persisted)
             if (string.Equals(command, "set-name", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(command, "set-cassia-name", StringComparison.OrdinalIgnoreCase) ||

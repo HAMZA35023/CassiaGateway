@@ -636,6 +636,60 @@ public partial class MainViewModel : ObservableObject
     }
 
     [RelayCommand]
+    private async Task SetCassiaMqttBroker(string cassiaName)
+    {
+        cassiaName = (cassiaName ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(cassiaName)) return;
+        if (!IsConnected) { ConnectionStatus = "Not connected"; return; }
+
+        var host = Interaction.InputBox(
+            $"Enter MQTT broker host for '{cassiaName}' (applies after restart):",
+            "Set MQTT broker",
+            MqttHost ?? "");
+
+        host = (host ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(host)) return;
+
+        var portText = Interaction.InputBox(
+            $"Enter MQTT broker port for '{cassiaName}':",
+            "Set MQTT broker",
+            Math.Max(1, MqttPort).ToString());
+
+        if (!int.TryParse((portText ?? "").Trim(), out var port) || port <= 0 || port > 65535)
+        {
+            ConnectionStatus = "Invalid port. Must be 1-65535.";
+            return;
+        }
+
+        var tlsText = Interaction.InputBox(
+            $"Use TLS for '{cassiaName}'? (true/false):",
+            "Set MQTT broker",
+            UseTls ? "true" : "false");
+
+        if (!TryParseBoolLoose(tlsText, out var useTls))
+        {
+            ConnectionStatus = "Invalid TLS value. Use true/false or 1/0.";
+            return;
+        }
+
+        try
+        {
+            var topic = BuildCmdTopic(cassiaName, "set-mqtt-broker");
+            var payload = new { host, port, useTls };
+            await _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+            ConnectionStatus = $"Sent set-mqtt-broker to {cassiaName} -> {host}:{port} tls={useTls} (applies after restart)";
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = "Error: " + ex.Message;
+        }
+    }
+
+    [RelayCommand]
+    private async Task SetMqttBrokerForAllCassiasPrompt()
+        => await SetCassiaMqttBroker("all");
+
+    [RelayCommand]
     private async Task SetCassiaName(string cassiaName)
     {
         cassiaName = (cassiaName ?? "").Trim();
@@ -811,6 +865,28 @@ public partial class MainViewModel : ObservableObject
             "prod-develop" => "develop",
             _ => string.Empty
         };
+    }
+
+    private static bool TryParseBoolLoose(string? value, out bool result)
+    {
+        var v = (value ?? "").Trim();
+        if (bool.TryParse(v, out result)) return true;
+        if (string.Equals(v, "1", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(v, "yes", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(v, "y", StringComparison.OrdinalIgnoreCase))
+        {
+            result = true;
+            return true;
+        }
+        if (string.Equals(v, "0", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(v, "no", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(v, "n", StringComparison.OrdinalIgnoreCase))
+        {
+            result = false;
+            return true;
+        }
+        result = false;
+        return false;
     }
 
     internal async Task SetRuntimeForCassiaAsync(string cassiaName, IReadOnlyDictionary<string, object?> payload)
