@@ -112,10 +112,18 @@ namespace AccessAPP.Services
             int attempts = Math.Max(1, maxAttempts);
             int loginTimeoutMs = Math.Max(2000, RuntimeVariables.UPGRADE_LOGIN_ATTEMPT_TIMEOUT_MS);
             int retryDelayMs = Math.Max(100, RuntimeVariables.UPGRADE_LOGIN_RETRY_DELAY_MS);
+            int settleBeforeLoginMs = GetConnectStabilizationDelayMs();
             for (int attempt = 1; attempt <= attempts; attempt++)
             {
                 try
                 {
+                    if (attempt == 1 && settleBeforeLoginMs > 0)
+                    {
+                        AppLog.Debug($"{stageName}: waiting {settleBeforeLoginMs}ms before login on connected session for {macAddress}.");
+                        await Task.Delay(settleBeforeLoginMs).ConfigureAwait(false);
+                    }
+
+                    AppLog.Debug($"{stageName}: login attempt {attempt}/{attempts} for {macAddress}.");
                     using var cts = new CancellationTokenSource(loginTimeoutMs);
                     var loginResult = await _connectService
                         .AttemptLogin(_gatewayIpAddress, macAddress, cts.Token)
@@ -136,18 +144,22 @@ namespace AccessAPP.Services
 
                     if (statusOk && pinOk)
                     {
+                        AppLog.Debug($"{stageName}: login success for {macAddress} on attempt {attempt}/{attempts}.");
                         UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Success (attempt {attempt}/{attempts})", firmwareVersion ?? "");
                         return true;
                     }
 
+                    AppLog.Debug($"{stageName}: login failed for {macAddress} on attempt {attempt}/{attempts}. Status={statusText}, pinRequired={pinReq}, pinAccepted={loginResult.ResponseBody.PinCodeAccepted}.");
                     UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Failed (attempt {attempt}/{attempts}) - Status={statusText}", firmwareVersion ?? "");
                 }
                 catch (OperationCanceledException)
                 {
+                    AppLog.Debug($"{stageName}: login timeout for {macAddress} on attempt {attempt}/{attempts}.");
                     UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Timeout (attempt {attempt}/{attempts}, {loginTimeoutMs / 1000}s)", firmwareVersion ?? "");
                 }
                 catch (Exception ex)
                 {
+                    AppLog.Debug($"{stageName}: login exception for {macAddress} on attempt {attempt}/{attempts}: {ex.Message}");
                     UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Exception (attempt {attempt}/{attempts}): {ex.Message}", firmwareVersion ?? "");
                 }
 

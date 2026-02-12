@@ -33,7 +33,8 @@ namespace AccessAPP.Services
             => Math.Max(5000, RuntimeVariables.UPGRADE_CONNECT_ATTEMPT_TIMEOUT_MS);
 
         private static int GetConnectStabilizationDelayMs()
-            => Math.Max(0, RuntimeVariables.UPGRADE_CONNECT_STABILIZATION_DELAY_MS);
+            // Keep a hard minimum settle delay before login after connect.
+            => Math.Max(500, RuntimeVariables.UPGRADE_CONNECT_STABILIZATION_DELAY_MS);
 
         private static int GetConnectTransient500RetriesPerAttempt()
             => Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_TRANSIENT_500_RETRIES_PER_ATTEMPT);
@@ -51,16 +52,39 @@ namespace AccessAPP.Services
             => Math.Max(100, RuntimeVariables.UPGRADE_LOGIN_RETRY_DELAY_MS);
 
         private static int GetGatewayStateChecksOn500()
-            => Math.Max(RuntimeVariables.UPGRADE_CONNECT_GATEWAY_STATE_CHECK_ATTEMPTS, RuntimeVariables.UPGRADE_CONNECT_GATEWAY_STATE_CHECK_ATTEMPTS_ON_500);
+        {
+            int configured = RuntimeVariables.UPGRADE_CONNECT_GATEWAY_STATE_CHECK_ATTEMPTS_ON_500;
+            if (configured > 0)
+                return Math.Max(1, configured);
+
+            return Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_GATEWAY_STATE_CHECK_ATTEMPTS);
+        }
 
         private static int GetGatewayStateCheckDelayOn500Ms()
-            => Math.Max(50, RuntimeVariables.UPGRADE_CONNECT_GATEWAY_STATE_CHECK_DELAY_MS_ON_500);
+        {
+            int configured = RuntimeVariables.UPGRADE_CONNECT_GATEWAY_STATE_CHECK_DELAY_MS_ON_500;
+            if (configured > 0)
+                return Math.Max(50, configured);
+
+            return Math.Max(50, RuntimeVariables.UPGRADE_CONNECT_GATEWAY_STATE_CHECK_DELAY_MS);
+        }
 
         private static int GetGatewayStateChecksOn500PreRetry()
             => Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_GATEWAY_STATE_CHECK_ATTEMPTS_ON_500_PRE_RETRY);
 
         private static int GetGatewayStateCheckDelayOn500PreRetryMs()
             => Math.Max(50, RuntimeVariables.UPGRADE_CONNECT_GATEWAY_STATE_CHECK_DELAY_MS_ON_500_PRE_RETRY);
+
+        private static int GetGatewayStateInitialDelayOn500Ms()
+            => Math.Max(0, RuntimeVariables.UPGRADE_CONNECT_GATEWAY_STATE_CHECK_INITIAL_DELAY_MS_ON_500);
+
+        private static int GetGatewayStateInitialDelayOn500PreRetryMs()
+            => Math.Max(0, RuntimeVariables.UPGRADE_CONNECT_GATEWAY_STATE_CHECK_INITIAL_DELAY_MS_ON_500_PRE_RETRY);
+
+        private static bool ShouldSkipDisconnectAfterFailedConnect(HttpStatusCode connectStatus)
+            => RuntimeVariables.UPGRADE_OPTIMIZE_RECONNECT_FLOW &&
+               RuntimeVariables.UPGRADE_CONNECT_SKIP_DISCONNECT_ON_500 &&
+               connectStatus == HttpStatusCode.InternalServerError;
 
         private static bool ShouldUsePerChipConnectGate()
             => RuntimeVariables.UPGRADE_CONNECT_LOGIN_USE_PER_CHIP_GATE;
@@ -95,6 +119,18 @@ namespace AccessAPP.Services
 
         private static string RetryDelayText(int delayMs)
             => $"{Math.Max(1, (int)Math.Ceiling(delayMs / 1000.0))}s";
+
+        private static string LimitLogText(string? value, int maxLen = 180)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return "";
+
+            string flat = value.Replace("\r", " ").Replace("\n", " ").Trim();
+            if (flat.Length <= maxLen)
+                return flat;
+
+            return flat.Substring(0, maxLen) + "...";
+        }
 
         private async Task<LoginAttemptResult> AttemptLoginOnConnectedSessionAsync(
             string gatewayIp,
@@ -234,17 +270,22 @@ namespace AccessAPP.Services
 
             int actualChecks = Math.Max(1, checks);
             int actualDelayMs = Math.Max(50, delayMs);
+            AppLog.Debug($"Gateway connected-state probe for {macAddress} chip {expectedChip}: checks={actualChecks}, delay={actualDelayMs}ms.");
 
             for (int i = 1; i <= actualChecks; i++)
             {
                 ct.ThrowIfCancellationRequested();
                 if (await IsMacReportedConnectedOnGatewayAsync(macAddress, expectedChip).ConfigureAwait(false))
+                {
+                    AppLog.Debug($"Gateway connected-state probe for {macAddress} chip {expectedChip}: connected on check {i}/{actualChecks}.");
                     return true;
+                }
 
                 if (i < actualChecks)
                     await Task.Delay(actualDelayMs, ct).ConfigureAwait(false);
             }
 
+            AppLog.Debug($"Gateway connected-state probe for {macAddress} chip {expectedChip}: not connected after {actualChecks} checks.");
             return false;
         }
 
@@ -272,23 +313,49 @@ namespace AccessAPP.Services
                 // state probe to avoid hammering /gap/nodes.
                 if (connectTry < maxConnectTries)
                 {
-                    return await WaitForGatewayConnectedStateAsync(
+                    int initialDelayMs = GetGatewayStateInitialDelayOn500PreRetryMs();
+                    if (initialDelayMs > 0)
+                    {
+                        AppLog.Debug($"Connect state probe (pre-retry) for {macAddress} chip {expectedChip}: waiting {initialDelayMs}ms before first check.");
+                        await Task.Delay(initialDelayMs, ct).ConfigureAwait(false);
+                    }
+
+                    int checks = GetGatewayStateChecksOn500PreRetry();
+                    int delayMs = GetGatewayStateCheckDelayOn500PreRetryMs();
+                    AppLog.Debug($"Connect state probe (pre-retry) for {macAddress} chip {expectedChip}: HTTP 500, checks={checks}, delay={delayMs}ms.");
+                    bool connectedPreRetry = await WaitForGatewayConnectedStateAsync(
                         macAddress,
                         expectedChip,
-                        GetGatewayStateChecksOn500PreRetry(),
-                        GetGatewayStateCheckDelayOn500PreRetryMs(),
+                        checks,
+                        delayMs,
                         ct).ConfigureAwait(false);
+                    AppLog.Debug($"Connect state probe (pre-retry) result for {macAddress} chip {expectedChip}: connected={connectedPreRetry}.");
+                    return connectedPreRetry;
                 }
 
-                return await WaitForGatewayConnectedStateAsync(
+                int finalInitialDelayMs = GetGatewayStateInitialDelayOn500Ms();
+                if (finalInitialDelayMs > 0)
+                {
+                    AppLog.Debug($"Connect state probe (final 500 check) for {macAddress} chip {expectedChip}: waiting {finalInitialDelayMs}ms before first check.");
+                    await Task.Delay(finalInitialDelayMs, ct).ConfigureAwait(false);
+                }
+
+                int fullChecks = GetGatewayStateChecksOn500();
+                int fullDelayMs = GetGatewayStateCheckDelayOn500Ms();
+                AppLog.Debug($"Connect state probe (final 500 check) for {macAddress} chip {expectedChip}: checks={fullChecks}, delay={fullDelayMs}ms.");
+                bool connectedAfterFinal500 = await WaitForGatewayConnectedStateAsync(
                     macAddress,
                     expectedChip,
-                    GetGatewayStateChecksOn500(),
-                    GetGatewayStateCheckDelayOn500Ms(),
+                    fullChecks,
+                    fullDelayMs,
                     ct).ConfigureAwait(false);
+                AppLog.Debug($"Connect state probe (final 500 check) result for {macAddress} chip {expectedChip}: connected={connectedAfterFinal500}.");
+                return connectedAfterFinal500;
             }
 
-            return await WaitForGatewayConnectedStateAsync(macAddress, expectedChip, ct).ConfigureAwait(false);
+            bool connectedGeneric = await WaitForGatewayConnectedStateAsync(macAddress, expectedChip, ct).ConfigureAwait(false);
+            AppLog.Debug($"Connect state probe after HTTP {(int)connectStatus} {connectStatus} for {macAddress} chip {expectedChip}: connected={connectedGeneric}.");
+            return connectedGeneric;
         }
 
 
@@ -346,6 +413,8 @@ namespace AccessAPP.Services
 
                         connectStatus = connectionResult.Status;
                         lastAttemptStatus = connectStatus;
+                        string connectResponseData = LimitLogText(connectionResult.Data);
+                        AppLog.Debug($"Connect+Login connect response for {macAddress} chip {chip}: HTTP {(int)connectStatus} {connectStatus} (attempt {attempt}/{maxAttempts}, try {connectTry}/{transient500Retries}). Body='{connectResponseData}'.");
                         connected = connectionResult.Status == HttpStatusCode.OK;
                         if (!connected)
                         {
@@ -385,20 +454,28 @@ namespace AccessAPP.Services
                         lastEx = new Exception($"Connect failed (HTTP {(int)connectStatus} {connectStatus}).");
                         failedThisAttempt = true;
                         int retryDelayMs = CalculateRetryDelayMs(delayBetweenAttemptsMs, attempt, connectStatus);
+                        AppLog.Debug($"Connect+Login connect not established for {macAddress} on attempt {attempt}/{maxAttempts}. Retry delay={retryDelayMs}ms, lastStatus={(int)connectStatus} {connectStatus}.");
+                        bool skipDisconnect = ShouldSkipDisconnectAfterFailedConnect(connectStatus);
 
-                        if (touchedGateway)
+                        if (touchedGateway && !skipDisconnect)
                             await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, chip).ConfigureAwait(false);
+                        else if (touchedGateway && skipDisconnect)
+                            AppLog.Debug($"Connect+Login connect failure for {macAddress}: skipping per-attempt disconnect because status={(int)connectStatus} {connectStatus}.");
 
+                        string disconnectText = skipDisconnect ? "Skipped disconnect" : $"Disconnected chip {chip}";
                         UpgradeLogger.Log(logId, macAddress,
-                            $"Connect+Login failed on attempt {attempt}/{maxAttempts}. Disconnected chip {chip}. Retrying after {RetryDelayText(retryDelayMs)}.",
+                            $"Connect+Login failed on attempt {attempt}/{maxAttempts}. {disconnectText}. Retrying after {RetryDelayText(retryDelayMs)}.",
                             "Warn", firmwareVersion);
-                        AppLog.Info($"Connect+Login failed for {macAddress} (attempt {attempt}/{maxAttempts}). Disconnected chip {chip}; retrying after {RetryDelayText(retryDelayMs)}.");
+                        AppLog.Info($"Connect+Login failed for {macAddress} (attempt {attempt}/{maxAttempts}). {disconnectText}; retrying after {RetryDelayText(retryDelayMs)}.");
                     }
                     else
                     {
                         int stabilizeMs = GetConnectStabilizationDelayMs();
                         if (stabilizeMs > 0)
+                        {
+                            AppLog.Debug($"Connect+Login connected for {macAddress} on chip {chip}. Waiting {stabilizeMs}ms before login.");
                             await Task.Delay(stabilizeMs, cts.Token).ConfigureAwait(false);
+                        }
 
                         bool isAlreadyInBootMode = CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress);
                         if (isAlreadyInBootMode)
@@ -418,6 +495,7 @@ namespace AccessAPP.Services
                         cts.Token.ThrowIfCancellationRequested();
 
                         // 2) Login
+                        AppLog.Debug($"Connect+Login starting login for {macAddress} (attempt {attempt}/{maxAttempts}).");
                         var loginResult = await AttemptLoginOnConnectedSessionAsync(
                             gatewayIp,
                             macAddress,
@@ -429,6 +507,7 @@ namespace AccessAPP.Services
                             lastEx = new Exception($"Login failed ({loginResult.Message})");
                             failedThisAttempt = true;
                             int retryDelayMs = CalculateRetryDelayMs(delayBetweenAttemptsMs, attempt, lastAttemptStatus);
+                            AppLog.Debug($"Connect+Login login failed for {macAddress} on attempt {attempt}/{maxAttempts}. Detail='{loginResult.Message}'. Retry delay={retryDelayMs}ms.");
 
                             if (touchedGateway)
                                 await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, chip).ConfigureAwait(false);
@@ -460,6 +539,7 @@ namespace AccessAPP.Services
                     if (lastAttemptStatus == 0)
                         lastAttemptStatus = HttpStatusCode.RequestTimeout;
                     int retryDelayMs = CalculateRetryDelayMs(delayBetweenAttemptsMs, attempt, lastAttemptStatus);
+                    AppLog.Debug($"Connect+Login timeout for {macAddress} on attempt {attempt}/{maxAttempts}. Retry delay={retryDelayMs}ms.");
 
                     if (touchedGateway)
                     {
@@ -483,6 +563,7 @@ namespace AccessAPP.Services
                     lastEx = ex;
                     failedThisAttempt = true;
                     int retryDelayMs = CalculateRetryDelayMs(delayBetweenAttemptsMs, attempt, lastAttemptStatus);
+                    AppLog.Debug($"Connect+Login exception for {macAddress} on attempt {attempt}/{maxAttempts}. Retry delay={retryDelayMs}ms. Exception={ex.Message}");
                     UpgradeLogger.Log(logId, macAddress,
                         $"Connect+Login exception attempt {attempt}/{maxAttempts}: {ex.Message}",
                         "Warn", firmwareVersion);
@@ -580,6 +661,8 @@ namespace AccessAPP.Services
 
                         last = cr.Status;
                         connectData = cr.Data ?? "";
+                        string connectResponseData = LimitLogText(connectData);
+                        AppLog.Debug($"{stageName}: connect response for {macAddress} chip {chip}: HTTP {(int)last} {last} (attempt {attempt}/{maxAttempts}, try {connectTry}/{transient500Retries}). Body='{connectResponseData}'.");
                         connected = cr.Status == HttpStatusCode.OK;
                         if (!connected)
                         {
@@ -616,7 +699,10 @@ namespace AccessAPP.Services
                     {
                         int stabilizeMs = GetConnectStabilizationDelayMs();
                         if (stabilizeMs > 0)
+                        {
+                            AppLog.Debug($"{stageName}: connected for {macAddress} on chip {chip}. Waiting {stabilizeMs}ms settle.");
                             await Task.Delay(stabilizeMs, cts.Token).ConfigureAwait(false);
+                        }
 
                         if (logSuccess)
                             UpgradeLogger.Log(logId, macAddress, stageName, $"Success (attempt {attempt}/{maxAttempts})", FirmwareVersion);
@@ -626,9 +712,13 @@ namespace AccessAPP.Services
                     UpgradeLogger.Log(logId, macAddress, stageName, $"Failed (attempt {attempt}/{maxAttempts})", FirmwareVersion);
                     lastMsg = $"Connect failed ({last}) {connectData}";
                     failedThisAttempt = true;
+                    AppLog.Debug($"{stageName}: connect not established for {macAddress} on attempt {attempt}/{maxAttempts}. lastStatus={(int)last} {last}.");
+                    bool skipDisconnect = ShouldSkipDisconnectAfterFailedConnect(last);
 
-                    if (touchedGateway)
+                    if (touchedGateway && !skipDisconnect)
                         await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, chip).ConfigureAwait(false);
+                    else if (touchedGateway && skipDisconnect)
+                        AppLog.Debug($"{stageName}: skipping per-attempt disconnect for {macAddress} because status={(int)last} {last}.");
                 }
                 catch (OperationCanceledException ex)
                 {
@@ -640,12 +730,14 @@ namespace AccessAPP.Services
                         await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, chip).ConfigureAwait(false);
 
                     UpgradeLogger.Log(logId, macAddress, stageName, $"Timeout (attempt {attempt}/{maxAttempts})", FirmwareVersion);
+                    AppLog.Debug($"{stageName}: timeout for {macAddress} on attempt {attempt}/{maxAttempts}.");
                 }
                 catch (Exception ex)
                 {
                     UpgradeLogger.Log(logId, macAddress, stageName, $"Exception (attempt {attempt}/{maxAttempts}): {ex.Message}", FirmwareVersion);
                     lastMsg = ex.Message;
                     failedThisAttempt = true;
+                    AppLog.Debug($"{stageName}: exception for {macAddress} on attempt {attempt}/{maxAttempts}: {ex.Message}");
 
                     if (touchedGateway)
                         await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, chip).ConfigureAwait(false);
@@ -659,6 +751,7 @@ namespace AccessAPP.Services
                 if (attempt < maxAttempts && failedThisAttempt)
                 {
                     int retryDelayMs = CalculateRetryDelayMs(delayMs, attempt, last);
+                    AppLog.Debug($"{stageName}: retry delay for {macAddress} before attempt {attempt + 1}/{maxAttempts} is {retryDelayMs}ms (lastStatus={(int)last} {last}).");
                     await Task.Delay(retryDelayMs).ConfigureAwait(false);
                 }
             }

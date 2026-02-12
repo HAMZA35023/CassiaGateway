@@ -51,6 +51,7 @@ namespace AccessAPP.Services
                         if (statusOk && pinOk)
                         {
                             loggedIn = true;
+                            AppLog.Debug($"FW precheck login succeeded for {macAddress} on attempt {loginAttempt}/{loginAttempts}. pinRequired={pinReq}.");
                             UpgradeLogger.Log(logId ?? "", macAddress, "LoggedIn (precheck FW read)", $"Success (attempt {loginAttempt}/{loginAttempts})", firmwareVersion ?? "");
                             break;
                         }
@@ -58,6 +59,7 @@ namespace AccessAPP.Services
                         var failureReason = pinReq && !pinOk
                             ? "pincode required/invalid"
                             : $"status={statusText}";
+                        AppLog.Debug($"FW precheck login failed for {macAddress} on attempt {loginAttempt}/{loginAttempts}: {failureReason}.");
                         UpgradeLogger.Log(logId ?? "", macAddress, "LoggedIn (precheck FW read)", $"Failed (attempt {loginAttempt}/{loginAttempts}) - {failureReason}", firmwareVersion ?? "");
                     }
                     catch (OperationCanceledException)
@@ -79,7 +81,10 @@ namespace AccessAPP.Services
 
                 int delayBeforeReadMs = Math.Max(0, RuntimeVariables.UPGRADE_DELAY_AFTER_LOGIN_BEFORE_FW_READ_MS);
                 if (delayBeforeReadMs > 0)
+                {
+                    AppLog.Debug($"FW precheck read delay for {macAddress}: waiting {delayBeforeReadMs}ms after login before first FW read.");
                     await Task.Delay(delayBeforeReadMs).ConfigureAwait(false);
+                }
 
                 int fwReadAttempts = Math.Max(1, RuntimeVariables.UPGRADE_FW_READ_ATTEMPTS);
                 int fwReadRetryDelayMs = Math.Max(100, RuntimeVariables.UPGRADE_FW_READ_RETRY_DELAY_MS);
@@ -90,10 +95,12 @@ namespace AccessAPP.Services
                         var fw = await ReadFirmwareVersionAsync(macAddress).ConfigureAwait(false);
                         if (!string.IsNullOrWhiteSpace(fw))
                         {
+                            AppLog.Debug($"FW precheck read succeeded for {macAddress} on attempt {attempt}/{fwReadAttempts}.");
                             UpgradeLogger.Log(logId ?? "", macAddress, "FW Read (precheck)", $"Success (attempt {attempt}/{fwReadAttempts})", firmwareVersion ?? "");
                             return fw;
                         }
 
+                        AppLog.Debug($"FW precheck read returned empty for {macAddress} on attempt {attempt}/{fwReadAttempts}.");
                         UpgradeLogger.Log(logId ?? "", macAddress, "FW Read (precheck)", $"Failed (attempt {attempt}/{fwReadAttempts})", firmwareVersion ?? "");
                     }
                     catch (Exception ex)
