@@ -108,7 +108,11 @@ try
                         if (probeConnected)
                         {
                             // Reuse the existing probe connection/session instead of reconnecting.
-                            dev.CurrentFirmwareVersion = await GetFwVersionOnConnectedSessionAsync(mac, dev.Pincode).ConfigureAwait(false);
+                            dev.CurrentFirmwareVersion = await GetFwVersionOnConnectedSessionAsync(
+                                mac,
+                                dev.Pincode,
+                                logId,
+                                dev.FirmwareVersion).ConfigureAwait(false);
                         }
                         else
                         {

@@ -14,7 +14,11 @@ namespace AccessAPP.Services
 {
     public partial class CassiaFirmwareUpgradeService
     {
-        internal async Task<string> GetFwVersionOnConnectedSessionAsync(string macAddress, string pincode)
+        internal async Task<string> GetFwVersionOnConnectedSessionAsync(
+            string macAddress,
+            string pincode,
+            string? logId = null,
+            string? firmwareVersion = null)
         {
             try
             {
@@ -31,14 +35,23 @@ namespace AccessAPP.Services
                 if (pinReq && !loginResult.ResponseBody.PinCodeAccepted)
                 {
                     AppLog.Warn($" Login failed on connected session for {macAddress}: pincode required/invalid");
+                    UpgradeLogger.Log(logId ?? "", macAddress, "LoggedIn (precheck FW read)", "Failed (pincode required/invalid)", firmwareVersion ?? "");
                     return "";
                 }
 
-                return await ReadFirmwareVersionAsync(macAddress).ConfigureAwait(false);
+                UpgradeLogger.Log(logId ?? "", macAddress, "LoggedIn (precheck FW read)", "Success", firmwareVersion ?? "");
+                var fw = await ReadFirmwareVersionAsync(macAddress).ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(fw))
+                    UpgradeLogger.Log(logId ?? "", macAddress, "FW Read (precheck)", "Failed (empty response)", firmwareVersion ?? "");
+                else
+                    UpgradeLogger.Log(logId ?? "", macAddress, "FW Read (precheck)", "Success", firmwareVersion ?? "");
+
+                return fw;
             }
             catch (Exception ex)
             {
                 AppLog.Error($" GetFwVersionOnConnectedSession exception for {macAddress}: {ex}");
+                UpgradeLogger.Log(logId ?? "", macAddress, "LoggedIn/FW Read (precheck)", $"Exception: {ex.Message}", firmwareVersion ?? "");
                 return "";
             }
         }
