@@ -38,6 +38,19 @@ Set-StrictMode -Version Latest
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir "..")).Path
+$scriptExitCode = 0
+
+$repoRootBytes = [System.Text.Encoding]::UTF8.GetBytes($repoRoot.ToLowerInvariant())
+$repoRootHash = [System.Security.Cryptography.SHA256]::HashData($repoRootBytes)
+$repoRootHashHex = ([System.BitConverter]::ToString($repoRootHash)).Replace("-", "")
+$singleInstanceMutexName = "Global\CassiaGateway.PublishAccessApp.$repoRootHashHex"
+$singleInstanceMutex = New-Object System.Threading.Mutex($false, $singleInstanceMutexName)
+
+if (-not $singleInstanceMutex.WaitOne(0, $false)) {
+    Write-Error "Another instance of publish-accessapp-update-feed.ps1 is already running for this repository."
+    $singleInstanceMutex.Dispose()
+    exit 2
+}
 
 function Write-Log {
     param([string]$Message)
@@ -289,144 +302,158 @@ function Get-WorktreeRootsToClean {
     return $roots
 }
 
-if (-not $AutoBuildAllChannels) {
-    $resultVersion = Invoke-PublishAndPackage -RepoRootPath $repoRoot -TargetChannel $Channel
-    Write-Host ""
-    Write-Log "Update feed published successfully."
-    Write-Log "Version: $resultVersion"
-    Write-Log "Manifest: $(Join-Path (Join-Path $WebRoot $Channel) $ManifestFileName)"
-    Send-SmsNotification -Message ("Build {0} {1} published" -f $Channel, $resultVersion)
-    Send-CompletionNotification -Message ("Build {0} {1} published" -f $Channel, $resultVersion)
-    exit 0
-}
-
-if ([string]::IsNullOrWhiteSpace($ShaStoreDir)) {
-    $ShaStoreDir = Join-Path $repoRoot "temp_build\branch-shas"
-}
-if ([string]::IsNullOrWhiteSpace($WorktreeRoot)) {
-    $drive = if ([string]::IsNullOrWhiteSpace($env:SystemDrive)) { "C:" } else { $env:SystemDrive }
-    $WorktreeRoot = Join-Path $drive "cgwt"
-}
-
-if ($BranchChannelMap.Count -eq 0) {
-    throw "BranchChannelMap is empty. Remove -BranchChannelMap to use defaults, or pass mappings such as @{ 'PROD-STABLE'='stable'; 'PROD-TEST'='test'; 'PROD-DEVELOP'='develop' }."
-}
-
-New-Item -ItemType Directory -Path $ShaStoreDir -Force | Out-Null
-New-Item -ItemType Directory -Path $WorktreeRoot -Force | Out-Null
-
-Push-Location $repoRoot
 try {
-    Write-Log "Fetching latest remote refs..."
-    & git fetch origin --prune
-    if ($LASTEXITCODE -ne 0) {
-        throw "git fetch origin failed with exit code $LASTEXITCODE"
+    if (-not $AutoBuildAllChannels) {
+        $resultVersion = Invoke-PublishAndPackage -RepoRootPath $repoRoot -TargetChannel $Channel
+        Write-Host ""
+        Write-Log "Update feed published successfully."
+        Write-Log "Version: $resultVersion"
+        Write-Log "Manifest: $(Join-Path (Join-Path $WebRoot $Channel) $ManifestFileName)"
+        Send-SmsNotification -Message ("Build {0} {1} published" -f $Channel, $resultVersion)
+        Send-CompletionNotification -Message ("Build {0} {1} published" -f $Channel, $resultVersion)
+        $scriptExitCode = 0
     }
-
-    & git worktree prune
-    if ($LASTEXITCODE -ne 0) {
-        Write-Warning "git worktree prune returned exit code $LASTEXITCODE"
-    }
-    foreach ($root in (Get-WorktreeRootsToClean -PrimaryRoot $WorktreeRoot -RepoRootPath $repoRoot)) {
-        Invoke-StartupWorktreeCleanup -RootPath $root
-    }
-
-    $built = New-Object System.Collections.Generic.List[string]
-    $failed = New-Object System.Collections.Generic.List[string]
-    $skipped = New-Object System.Collections.Generic.List[string]
-
-    foreach ($entry in $BranchChannelMap.GetEnumerator() | Sort-Object Name) {
-        $branch = [string]$entry.Key
-        $targetChannel = [string]$entry.Value
-        $remoteRef = "origin/$branch"
-        $shaFile = Join-Path $ShaStoreDir ($branch + ".sha")
-
-        $oldSha = ""
-        if (Test-Path $shaFile) {
-            try {
-                $oldSha = (Get-Content -Path $shaFile -Raw).Trim()
-            }
-            catch {
-                $oldSha = ""
-            }
+    else {
+        if ([string]::IsNullOrWhiteSpace($ShaStoreDir)) {
+            $ShaStoreDir = Join-Path $repoRoot "temp_build\branch-shas"
+        }
+        if ([string]::IsNullOrWhiteSpace($WorktreeRoot)) {
+            $drive = if ([string]::IsNullOrWhiteSpace($env:SystemDrive)) { "C:" } else { $env:SystemDrive }
+            $WorktreeRoot = Join-Path $drive "cgwt"
         }
 
-        $newSha = ""
+        if ($BranchChannelMap.Count -eq 0) {
+            throw "BranchChannelMap is empty. Remove -BranchChannelMap to use defaults, or pass mappings such as @{ 'PROD-STABLE'='stable'; 'PROD-TEST'='test'; 'PROD-DEVELOP'='develop' }."
+        }
+
+        New-Item -ItemType Directory -Path $ShaStoreDir -Force | Out-Null
+        New-Item -ItemType Directory -Path $WorktreeRoot -Force | Out-Null
+
+        Push-Location $repoRoot
         try {
-            $newSha = (& git rev-parse $remoteRef).Trim()
-            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($newSha)) {
-                throw "Unable to resolve $remoteRef"
-            }
-        }
-        catch {
-            Write-Warning "Remote branch '$remoteRef' not found; skipping."
-            $failed.Add("$branch (missing remote)") | Out-Null
-            continue
-        }
-
-        if ($newSha -eq $oldSha) {
-            Write-Log "No new commit on '$branch' for channel '$targetChannel'; skipping."
-            $skipped.Add("$branch->$targetChannel") | Out-Null
-            continue
-        }
-
-        Write-Log "New commit detected on '$branch' ($newSha). Building channel '$targetChannel'..."
-        $safeBranchName = ($branch -replace '[^A-Za-z0-9._-]', '_')
-        $worktreePath = Join-Path $WorktreeRoot $safeBranchName
-
-        if (Test-Path $worktreePath) {
-            Remove-Worktree -Path $worktreePath
-        }
-
-        try {
-            & git worktree add --force --detach $worktreePath $remoteRef
+            Write-Log "Fetching latest remote refs..."
+            & git fetch origin --prune
             if ($LASTEXITCODE -ne 0) {
-                throw "git worktree add failed for '$branch'"
+                throw "git fetch origin failed with exit code $LASTEXITCODE"
             }
 
-            $builtVersion = Invoke-PublishAndPackage -RepoRootPath $worktreePath -TargetChannel $targetChannel
-            $newSha | Set-Content -Path $shaFile -Encoding ascii -NoNewline
-            $built.Add("$branch->$targetChannel ($builtVersion)") | Out-Null
-            Write-Log "Build completed for '$branch' -> '$targetChannel'."
-            if (-not $SmsSummaryOnly) {
-                Send-SmsNotification -Message ("Build {0} {1} published" -f $branch, $builtVersion)
+            & git worktree prune
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warning "git worktree prune returned exit code $LASTEXITCODE"
             }
-        }
-        catch {
-            $failed.Add("$branch->$targetChannel") | Out-Null
-            Write-Warning "Build failed for '$branch' -> '$targetChannel': $_"
+            foreach ($root in (Get-WorktreeRootsToClean -PrimaryRoot $WorktreeRoot -RepoRootPath $repoRoot)) {
+                Invoke-StartupWorktreeCleanup -RootPath $root
+            }
+
+            $built = New-Object System.Collections.Generic.List[string]
+            $failed = New-Object System.Collections.Generic.List[string]
+            $skipped = New-Object System.Collections.Generic.List[string]
+
+            foreach ($entry in $BranchChannelMap.GetEnumerator() | Sort-Object Name) {
+                $branch = [string]$entry.Key
+                $targetChannel = [string]$entry.Value
+                $remoteRef = "origin/$branch"
+                $shaFile = Join-Path $ShaStoreDir ($branch + ".sha")
+
+                $oldSha = ""
+                if (Test-Path $shaFile) {
+                    try {
+                        $oldSha = (Get-Content -Path $shaFile -Raw).Trim()
+                    }
+                    catch {
+                        $oldSha = ""
+                    }
+                }
+
+                $newSha = ""
+                try {
+                    $newSha = (& git rev-parse $remoteRef).Trim()
+                    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($newSha)) {
+                        throw "Unable to resolve $remoteRef"
+                    }
+                }
+                catch {
+                    Write-Warning "Remote branch '$remoteRef' not found; skipping."
+                    $failed.Add("$branch (missing remote)") | Out-Null
+                    continue
+                }
+
+                if ($newSha -eq $oldSha) {
+                    Write-Log "No new commit on '$branch' for channel '$targetChannel'; skipping."
+                    $skipped.Add("$branch->$targetChannel") | Out-Null
+                    continue
+                }
+
+                Write-Log "New commit detected on '$branch' ($newSha). Building channel '$targetChannel'..."
+                $safeBranchName = ($branch -replace '[^A-Za-z0-9._-]', '_')
+                $worktreePath = Join-Path $WorktreeRoot $safeBranchName
+
+                if (Test-Path $worktreePath) {
+                    Remove-Worktree -Path $worktreePath
+                }
+
+                try {
+                    & git worktree add --force --detach $worktreePath $remoteRef
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "git worktree add failed for '$branch'"
+                    }
+
+                    $builtVersion = Invoke-PublishAndPackage -RepoRootPath $worktreePath -TargetChannel $targetChannel
+                    $newSha | Set-Content -Path $shaFile -Encoding ascii -NoNewline
+                    $built.Add("$branch->$targetChannel ($builtVersion)") | Out-Null
+                    Write-Log "Build completed for '$branch' -> '$targetChannel'."
+                    if (-not $SmsSummaryOnly) {
+                        Send-SmsNotification -Message ("Build {0} {1} published" -f $branch, $builtVersion)
+                    }
+                }
+                catch {
+                    $failed.Add("$branch->$targetChannel") | Out-Null
+                    Write-Warning "Build failed for '$branch' -> '$targetChannel': $_"
+                }
+                finally {
+                    if (Test-Path $worktreePath) {
+                        Remove-Worktree -Path $worktreePath
+                    }
+                }
+            }
+
+            $summary = @(
+                "Cassia AccessAPP channel build completed.",
+                "Built: $($built.Count)",
+                "Skipped: $($skipped.Count)",
+                "Failed: $($failed.Count)"
+            ) -join " "
+
+            Write-Log $summary
+            if ($built.Count -gt 0) {
+                Write-Log ("Built branches: " + ($built -join ", "))
+            }
+            if ($failed.Count -gt 0) {
+                Write-Warning ("Failed branches: " + ($failed -join ", "))
+            }
+
+            if (($built.Count -gt 0) -or ($failed.Count -gt 0) -or $NotifyOnNoChanges) {
+                Send-CompletionNotification -Message $summary
+                Send-SmsNotification -Message $summary
+            }
+
+            if ($failed.Count -gt 0) {
+                $scriptExitCode = 1
+            }
         }
         finally {
-            if (Test-Path $worktreePath) {
-                Remove-Worktree -Path $worktreePath
-            }
+            Pop-Location
         }
-    }
-
-    $summary = @(
-        "Cassia AccessAPP channel build completed.",
-        "Built: $($built.Count)",
-        "Skipped: $($skipped.Count)",
-        "Failed: $($failed.Count)"
-    ) -join " "
-
-    Write-Log $summary
-    if ($built.Count -gt 0) {
-        Write-Log ("Built branches: " + ($built -join ", "))
-    }
-    if ($failed.Count -gt 0) {
-        Write-Warning ("Failed branches: " + ($failed -join ", "))
-    }
-
-    if (($built.Count -gt 0) -or ($failed.Count -gt 0) -or $NotifyOnNoChanges) {
-        Send-CompletionNotification -Message $summary
-        Send-SmsNotification -Message $summary
-    }
-
-    if ($failed.Count -gt 0) {
-        exit 1
     }
 }
 finally {
-    Pop-Location
+    if ($singleInstanceMutex) {
+        try {
+            $singleInstanceMutex.ReleaseMutex()
+        }
+        catch {}
+        $singleInstanceMutex.Dispose()
+    }
 }
+
+exit $scriptExitCode

@@ -65,6 +65,25 @@ internal sealed class ProbeAndBootModeStep : IDeviceUpgradeStep
         {
             AppLog.Info($"Device is in application mode, checking FW version: {ctx.MacAddress}");
             UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Device in application mode, checking FW version", "Info", ctx.FirmwareVersion);
+
+            var loggedIn = await svc.EnsureLoginOnConnectedSessionUnlessBootModeAsync(
+                ctx.MacAddress,
+                ctx.Pincode,
+                ctx.LogId,
+                ctx.FirmwareVersion,
+                stageName: "LoggedIn (probe)",
+                maxAttempts: 3).ConfigureAwait(false);
+
+            if (!loggedIn)
+            {
+                ctx.Response.Success = false;
+                ctx.Response.StatusCode = (int)HttpStatusCode.Unauthorized;
+                ctx.Response.Message = "Failed to login to device after connect.";
+                dev.LastFailureReason = ctx.Response.Message;
+                dev.RetryCount++;
+                dev.shouldRetry = false;
+                return false;
+            }
         }
 
         if (!ctx.IsInBoot && !ctx.DetectorNameLogged && DeviceStorageService.TryGetDeviceName(ctx.MacAddress, out var name))

@@ -94,6 +94,59 @@ namespace AccessAPP.Services
 	            .ConfigureAwait(false);
 	        return (r.Success, r.StatusCode, r.Message ?? "");
 	    }
+
+        internal async Task<bool> EnsureLoginOnConnectedSessionUnlessBootModeAsync(
+            string macAddress,
+            string? pincode,
+            string? logId,
+            string? firmwareVersion,
+            string stageName = "LoggedIn",
+            int maxAttempts = 3)
+        {
+            if (CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress))
+            {
+                UpgradeLogger.Log(logId ?? "", macAddress, stageName, "Skipped (bootloader mode)", firmwareVersion ?? "");
+                return true;
+            }
+
+            int attempts = Math.Max(1, maxAttempts);
+            for (int attempt = 1; attempt <= attempts; attempt++)
+            {
+                try
+                {
+                    var loginResult = await _connectService.AttemptLogin(_gatewayIpAddress, macAddress).ConfigureAwait(false);
+                    bool pinReq = loginResult.ResponseBody.PincodeRequired;
+
+                    if (pinReq && !string.IsNullOrEmpty(pincode))
+                    {
+                        var check = await _cassiaPinCodeService.CheckPincode(_gatewayIpAddress, macAddress, pincode).ConfigureAwait(false);
+                        loginResult.ResponseBody = check.ResponseBody;
+                        loginResult.ResponseBody.PincodeRequired = pinReq;
+                    }
+
+                    var statusText = loginResult.Status?.ToString() ?? "";
+                    bool statusOk = string.Equals(statusText, "OK", StringComparison.OrdinalIgnoreCase);
+                    bool pinOk = !pinReq || loginResult.ResponseBody.PinCodeAccepted;
+
+                    if (statusOk && pinOk)
+                    {
+                        UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Success (attempt {attempt}/{attempts})", firmwareVersion ?? "");
+                        return true;
+                    }
+
+                    UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Failed (attempt {attempt}/{attempts})", firmwareVersion ?? "");
+                }
+                catch (Exception ex)
+                {
+                    UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Exception (attempt {attempt}/{attempts}): {ex.Message}", firmwareVersion ?? "");
+                }
+
+                if (attempt < attempts)
+                    await Task.Delay(2000).ConfigureAwait(false);
+            }
+
+            return false;
+        }
         private string MacAddress = "";
         private double totalRows = 0;
         private string sensorType = "";
@@ -725,7 +778,7 @@ return true;
 UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
                 await Task.Delay(3000);
 
-                return await ProcessingSensorUpgrade(nodeMac, bActor, isBootloader, DetectorType, FirmwareVersion, logId);
+                return await ProcessingSensorUpgrade(nodeMac, bActor, isBootloader, DetectorType, FirmwareVersion, logId, pincode);
             }
 
             // ----------------------------
@@ -794,7 +847,7 @@ await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chi
             await Task.Delay(postDisconnectDelay);
 
             // Now do the actual programming flow
-            return await ProcessingSensorUpgrade(nodeMac, bActor, isBootloader, DetectorType, FirmwareVersion, logId);
+            return await ProcessingSensorUpgrade(nodeMac, bActor, isBootloader, DetectorType, FirmwareVersion, logId, pincode);
         }
         public async Task<ServiceResponse> UpgradeActorAsync(
             string nodeMac,

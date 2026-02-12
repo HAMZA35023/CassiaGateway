@@ -351,7 +351,14 @@ foreach (var s in ordered)
 }
 
 
-        public async Task<ServiceResponse> ProcessingSensorUpgrade(string nodeMac, bool bActor, bool isBootloader, string DetectorType, string FirmwareVersion, string logId) // should be moved to firmware services
+        public async Task<ServiceResponse> ProcessingSensorUpgrade(
+            string nodeMac,
+            bool bActor,
+            bool isBootloader,
+            string DetectorType,
+            string FirmwareVersion,
+            string logId,
+            string? pincode = null) // should be moved to firmware services
         {
             AppLog.Info($"Processing Sensor Upgrade started->{nodeMac}");
 var response = new ServiceResponse();
@@ -397,6 +404,22 @@ var response = new ServiceResponse();
 }
             else
             {
+                var loggedIn = await EnsureLoginOnConnectedSessionUnlessBootModeAsync(
+                    nodeMac,
+                    pincode,
+                    logId,
+                    FirmwareVersion,
+                    stageName: "LoggedIn (ProcessingSensorUpgrade)",
+                    maxAttempts: 3).ConfigureAwait(false);
+
+                if (!loggedIn)
+                {
+                    response.Success = false;
+                    response.StatusCode = 401;
+                    response.Message = "Failed to login to the device.";
+                    return response;
+                }
+
                 const int maxAttempts = 5;
                 bool bootModeAchieved = false;
                 for (int attempt = 0; attempt < maxAttempts; attempt++)
@@ -490,8 +513,38 @@ await Task.Delay(3000); // Delay between attempts
             }
             else
             {
-                UpgradeLogger.Log(logId, nodeMac, "Actor BootMode", "Reconnect validation skipped (runtime optimized flow enabled)");
-                AppLog.Info($"Skipping post-jump actor boot-mode validation for {nodeMac} (UPGRADE_OPTIMIZE_RECONNECT_FLOW=true).");
+                // Optimized flow: keep current session (no reconnect loop), but still verify once before programming.
+                var isActorInBootMode = await ActorBootCheck(_gatewayIpAddress, nodeMac);
+                if (!isActorInBootMode)
+                {
+                    UpgradeLogger.Log(logId, nodeMac, "Actor BootMode", "Single-check failed on optimized flow, falling back to standard validation");
+                    AppLog.Warn($"Optimized actor boot-mode single-check failed for {nodeMac}; falling back to full validation loop.");
+
+                    while (retryCount < maxRetryAttempts)
+                    {
+                        isActorInBootMode = await ActorBootCheck(_gatewayIpAddress, nodeMac);
+
+                        if (isActorInBootMode)
+                        {
+                            AppLog.Info($"Actor {nodeMac} is in boot mode.");
+                            break;
+                        }
+
+                        retryCount++;
+                        AppLog.Warn($"Actor {nodeMac} is not in boot mode. Attempting to put it into boot mode. Retry {retryCount}/{maxRetryAttempts}");
+                        var jumpToBootloaderSuccess = await SendJumpToBootloader(_gatewayIpAddress, nodeMac, bActor);
+
+                        if (!jumpToBootloaderSuccess)
+                            AppLog.Warn($"Failed to send jump-to-bootloader command for {nodeMac}. Retrying...");
+
+                        await Task.Delay(delayBetweenRetries);
+                    }
+                }
+                else
+                {
+                    UpgradeLogger.Log(logId, nodeMac, "Actor BootMode", "Optimized single-check passed (no reconnect validation loop)");
+                    AppLog.Info($"Optimized actor boot-mode single-check passed for {nodeMac}.");
+                }
             }
 
             // If after max retries the actor is still not in boot mode, return an error response
@@ -521,7 +574,7 @@ await Task.Delay(3000); // Delay between attempts
             }
             else
             {
-                UpgradeLogger.Log(logId, nodeMac, "ActorProgrammingComplete", "Success");
+                UpgradeLogger.Log(logId, nodeMac, "ActorProgrammingComplete", "Failed");
                 response.Success = false;
                 response.StatusCode = 500;
                 response.Message = "Programming Failed";
