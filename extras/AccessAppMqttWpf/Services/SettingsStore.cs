@@ -36,13 +36,13 @@ public sealed class AppSettings
 
 public sealed class MqttSettings
 {
-    public string host { get; set; } = "prod.statistics.niko-test.nu";
-    public int port { get; set; } = 18883;
+    public string host { get; set; } = "acd270e774e848e8a55de829dc58bc6c.s1.eu.hivemq.cloud";
+    public int port { get; set; } = 8883;
     public string topic { get; set; } = "accessapp/#";
     public string username { get; set; } = "accessapp";
     public string password { get; set; } = "Niko1234!";
-    public bool useTls { get; set; } = false;
-    public bool ignoreTlsErrors { get; set; } = true;
+    public bool useTls { get; set; } = true;
+    public bool ignoreTlsErrors { get; set; } = false;
 }
 
 public sealed class AccessAppSettings

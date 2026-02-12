@@ -1642,13 +1642,16 @@ var logPath = Path.Combine(currentDir, "Logs", "upgrade_logs.txt");
                   ?? throw new InvalidOperationException("Failed to create TCP options instance.");
         AppLog.Info("TCP options props: " + string.Join(", ", tcp.GetType().GetProperties().Select(p => p.Name)));
         ApplyTcpEndpoint(tcp, o.Host, o.Port);
+        ApplyTlsIfAvailable(options, tcp, o.UseTls, o.Host);
 
         if (!TrySetProp(options, "ChannelOptions", tcp))
             TrySetProp(options, "TransportOptions", tcp);
 
-        if (!string.IsNullOrWhiteSpace(o.Username))
+        var username = o.Username?.Trim();
+        AppLog.Info($"MQTT connect config: host={o.Host}, port={o.Port}, useTls={o.UseTls}, usernameSet={!string.IsNullOrWhiteSpace(username)}");
+        if (!string.IsNullOrWhiteSpace(username))
         {
-            ApplyCredentialsProvider(options, o.Username!, o.Password ?? "");
+            ApplyCredentialsProvider(options, username!, o.Password ?? "");
         }
 
         return options;
@@ -1663,36 +1666,75 @@ var logPath = Path.Combine(currentDir, "Logs", "upgrade_logs.txt");
         {
             if (typeof(System.Net.EndPoint).IsAssignableFrom(pRemote.PropertyType))
             {
-                System.Net.IPAddress? ip = null;
-                if (!System.Net.IPAddress.TryParse(host, out var parsedIp))
-                {
-                    try
-                    {
-                        var addrs = System.Net.Dns.GetHostAddresses(host);
-                        ip = addrs.FirstOrDefault(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
-                             ?? addrs.FirstOrDefault();
-                    }
-                    catch
-                    {
-                        ip = null;
-                    }
-                }
-                else
-                {
-                    ip = parsedIp;
-                }
-
-                if (ip == null)
-                    throw new InvalidOperationException($"Cannot resolve MQTT broker host '{host}' to an IP address.");
-
-                var ep = new System.Net.IPEndPoint(ip, port);
+                System.Net.EndPoint ep = System.Net.IPAddress.TryParse(host, out var parsedIp)
+                    ? new System.Net.IPEndPoint(parsedIp, port)
+                    : new System.Net.DnsEndPoint(host, port);
                 pRemote.SetValue(tcpOptions, ep);
                 return;
             }
         }
 
+        if (TrySetProp(tcpOptions, "Server", host))
+        {
+            TrySetProp(tcpOptions, "Port", port);
+            return;
+        }
+
+        if (TrySetProp(tcpOptions, "Host", host))
+        {
+            TrySetProp(tcpOptions, "Port", port);
+            return;
+        }
+
         TrySetProp(tcpOptions, "RemoteEndPoint", $"{host}:{port}");
         TrySetProp(tcpOptions, "Endpoint", $"{host}:{port}");
+    }
+
+    private static void ApplyTlsIfAvailable(object options, object tcpOptions, bool useTls, string host)
+    {
+        var tlsConfigured = false;
+
+        // MQTTnet v5 usually exposes TlsOptions on TCP options.
+        tlsConfigured |= TryConfigureTlsOptionsObject(tcpOptions, useTls, host);
+
+        // Some versions expose TLS options at the root options level.
+        tlsConfigured |= TryConfigureTlsOptionsObject(options, useTls, host);
+
+        if (useTls && !tlsConfigured)
+        {
+            AppLog.Warn("UseTls=true, but no writable TLS options were found on MQTT options object.");
+        }
+    }
+
+    private static bool TryConfigureTlsOptionsObject(object container, bool useTls, string host)
+    {
+        var prop = container.GetType().GetProperty("TlsOptions", BindingFlags.Instance | BindingFlags.Public);
+        if (prop == null || !prop.CanWrite) return false;
+
+        var tls = prop.GetValue(container);
+        if (tls == null)
+        {
+            try
+            {
+                tls = Activator.CreateInstance(prop.PropertyType);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        if (tls == null) return false;
+
+        var changed = false;
+        changed |= TrySetProp(tls, "UseTls", useTls);
+        if (useTls)
+        {
+            changed |= TrySetProp(tls, "TargetHost", host);
+        }
+
+        prop.SetValue(container, tls);
+        return changed;
     }
 
     private static void ApplyCredentialsProvider(object options, string username, string password)

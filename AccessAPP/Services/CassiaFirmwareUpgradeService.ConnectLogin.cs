@@ -622,7 +622,8 @@ namespace AccessAPP.Services
                 string macAddress,
                 string FirmwareVersion,
                 string logId,
-                bool logSuccess = true)
+                bool logSuccess = true,
+                int? discoverGattOverride = null)
         {
             HttpStatusCode last = 0;
             string lastMsg = "Connect failed";
@@ -656,7 +657,7 @@ namespace AccessAPP.Services
                     {
                         touchedGateway = true;
                         var cr = await _connectService
-                            .ConnectToBleDevice(_gatewayIpAddress, 80, macAddress, chip: chip, ct: cts.Token)
+                            .ConnectToBleDevice(_gatewayIpAddress, 80, macAddress, chip: chip, discoverGattOverride: discoverGattOverride, ct: cts.Token)
                             .ConfigureAwait(false);
 
                         last = cr.Status;

@@ -41,15 +41,17 @@ namespace AccessAPP.Services
                                     : (url + "?" + keyEq + Uri.EscapeDataString(value ?? ""));
         }
 
-        public async Task<ResponseModel> ConnectToBleDevice(string gatewayIpAddress, int gatewayPort, string macAddress, int chip = -1, bool useGlobalLock = true, CancellationToken ct = default)
+        public async Task<ResponseModel> ConnectToBleDevice(string gatewayIpAddress, int gatewayPort, string macAddress, int chip = -1, bool useGlobalLock = true, int? discoverGattOverride = null, CancellationToken ct = default)
         {
             // Define the request URL
             string url = $"http://{gatewayIpAddress}:{gatewayPort}/gap/nodes/{macAddress}/connection";
             if (chip >= 0) url = AppendQueryParam(url, "chip", chip.ToString());
 
+            int discoverGatt = discoverGattOverride ?? (RuntimeVariables.CASSIA_CONNECT_DISCOVER_GATT <= 0 ? 0 : 1);
+
             // Define the JSON content
             var jsonContent = new StringContent(
-                "{ \r\n    \"timeout\" : \"10000\",\r\n    \"type\" : \"public\",\r\n    \"discovergatt\" : 0\r\n}\r\n",
+                "{ \r\n    \"timeout\" : \"10000\",\r\n    \"type\" : \"public\",\r\n    \"discovergatt\" : " + discoverGatt + "\r\n}\r\n",
                 Encoding.UTF8,
                 "application/json"
             );
@@ -325,18 +327,15 @@ namespace AccessAPP.Services
 
         private async Task<LoginResponseModel> AttemptLoginInternal(string gatewayIpAddress, string macAddress, CancellationToken ct)
         {
+            Guid subToken = Guid.Empty;
+            HttpStatusCode writeStatus = HttpStatusCode.OK;
+            var loginResultTask = new TaskCompletionSource<LoginResponseModel>(TaskCreationOptions.RunContinuationsAsynchronously);
+
             try
             {
                 ct.ThrowIfCancellationRequested();
 
                 string hexLoginValue = new LoginTelegram().Create();
-                
-                // IMPORTANT: Dispose the HTTP response when the login attempt completes (end of method scope).
-                using var result = await cassiaReadWrite.WriteBleMessage(gatewayIpAddress, macAddress, 19, hexLoginValue, "?noresponse=1");
-
-                var loginResultTask = new TaskCompletionSource<LoginResponseModel>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-                Guid subToken = Guid.Empty;
 
                 // ✅ Subscribe to notifications using the singleton `_notificationService`
                 subToken = _notificationService.Subscribe(macAddress, (sender, data) =>
@@ -345,16 +344,24 @@ namespace AccessAPP.Services
                     if (loginReply.TelegramType == "1100")
                     {
                         var loginReplyResult = loginReply.GetResult();
-                        ResponseModel responseBody = Helper.CreateResponseWithMessage(macAddress, result, loginReplyResult.Msg, loginReplyResult.PincodeRequired);
+                        ResponseModel responseBody = Helper.CreateResponseWithMessage(
+                            macAddress,
+                            new { StatusCode = writeStatus },
+                            loginReplyResult.Msg,
+                            loginReplyResult.PincodeRequired);
 
                         var attemptLoginResult = new LoginResponseModel
                         {
-                            Status = result.StatusCode.ToString(),
+                            Status = writeStatus.ToString(),
                             ResponseBody = responseBody
                         };
                         loginResultTask.TrySetResult(attemptLoginResult);
                     }
                 });
+
+                // IMPORTANT: Dispose the HTTP response when the login attempt completes (end of method scope).
+                using var result = await cassiaReadWrite.WriteBleMessage(gatewayIpAddress, macAddress, 19, hexLoginValue, "?noresponse=1");
+                writeStatus = result.StatusCode;
 
                 using var _ = ct.Register(() => loginResultTask.TrySetCanceled(ct));
 
@@ -363,13 +370,11 @@ namespace AccessAPP.Services
 
                 if (completedTask == loginResultTask.Task)
                 {
-                    if (subToken != Guid.Empty) _notificationService.Unsubscribe(macAddress, subToken);
                     return await loginResultTask.Task; // ✅ Return successful login response
                 }
                 else
                 {
-                    // ✅ Handle timeout and unsubscribe
-                    if (subToken != Guid.Empty) _notificationService.Unsubscribe(macAddress, subToken);
+                    // ✅ Handle timeout
                     if (ct.IsCancellationRequested)
                     {
                         return new LoginResponseModel
@@ -424,6 +429,11 @@ namespace AccessAPP.Services
                         Status = HttpStatusCode.InternalServerError
                     }
                 };
+            }
+            finally
+            {
+                if (subToken != Guid.Empty)
+                    _notificationService.Unsubscribe(macAddress, subToken);
             }
         }
         public PairResponse PairDevice(string gatewayIpAddress, int gatewayPort, PairDevicesRequest pairDevicesRequest)

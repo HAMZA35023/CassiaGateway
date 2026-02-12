@@ -578,7 +578,10 @@ var response = new ServiceResponse();
                 logSuccess: false,
                 macAddress: nodeMac,
                 FirmwareVersion: FirmwareVersion,
-                logId: logId
+                logId: logId,
+                discoverGattOverride: RuntimeVariables.UPGRADE_CONNECT_DISCOVER_GATT_AFTER_BOOT_JUMP < 0
+                    ? null
+                    : (RuntimeVariables.UPGRADE_CONNECT_DISCOVER_GATT_AFTER_BOOT_JUMP <= 0 ? 0 : 1)
                 ).ConfigureAwait(false);
 
             if (!connProbe.ok)

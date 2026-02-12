@@ -71,15 +71,16 @@ namespace AccessAPP.Services
 	    internal CassiaConnectService ConnectService => _connectService;
 
 	    // Wrapper with the SAME parameter order as the original private method.
-	    internal Task<(bool ok, HttpStatusCode code, string msg)> ConnectOnlyWithRetryAsync_Internal(
+        internal Task<(bool ok, HttpStatusCode code, string msg)> ConnectOnlyWithRetryAsync_Internal(
 	        int maxAttempts,
 	        int delayMs,
 	        string stageName,
 	        string macAddress,
 	        string firmwareVersion,
 	        string? logId,
-	        bool logSuccess = true)
-	        => ConnectOnlyWithRetryAsync(maxAttempts, delayMs, stageName, macAddress, firmwareVersion, logId ?? "", logSuccess);
+	        bool logSuccess = true,
+	        int? discoverGattOverride = null)
+	        => ConnectOnlyWithRetryAsync(maxAttempts, delayMs, stageName, macAddress, firmwareVersion, logId ?? "", logSuccess, discoverGattOverride);
 
 	    internal async Task<(bool Success, int StatusCode, string Message)> ConnectAndLoginWithRetryForPipelineAsync(
 	        string gatewayIpAddress,
@@ -633,7 +634,14 @@ return resp;
             const int loginMaxAttempts = 3;
             const int bootJumpMaxAttempts = 5;
 
-            async Task<bool> ConnectWithRetryAsync(string stepName)
+            int? BootJumpDiscoverGattOverride()
+            {
+                int v = RuntimeVariables.UPGRADE_CONNECT_DISCOVER_GATT_AFTER_BOOT_JUMP;
+                if (v < 0) return null;
+                return v <= 0 ? 0 : 1;
+            }
+
+            async Task<bool> ConnectWithRetryAsync(string stepName, int? discoverGattOverride = null)
             {
                 var connect = await ConnectOnlyWithRetryAsync(
                     maxAttempts: connectMaxAttempts,
@@ -642,7 +650,8 @@ return resp;
                     macAddress: nodeMac,
                     FirmwareVersion: FirmwareVersion,
                     logId: logId,
-                    logSuccess: true).ConfigureAwait(false);
+                    logSuccess: true,
+                    discoverGattOverride: discoverGattOverride).ConfigureAwait(false);
 
                 if (!connect.ok)
                     AppLog.Warn($"{stepName}: connect failed for {nodeMac} on chip {GetChipForMac(nodeMac)} with status {connect.code}. Message: {connect.msg}");
@@ -697,7 +706,7 @@ return resp;
                     await Task.Delay(jumpDelay);
 
                     // Reconnect after jump (robust)
-                    if (!await ConnectWithRetryAsync("Connect After JumpToBoot"))
+                    if (!await ConnectWithRetryAsync("Connect After JumpToBoot", BootJumpDiscoverGattOverride()))
                     {
                         UpgradeLogger.Log(logId, nodeMac, "Connect After JumpToBoot", $"Failed (attempt {attempt}/{bootJumpMaxAttempts})");
                         await Task.Delay(3000);

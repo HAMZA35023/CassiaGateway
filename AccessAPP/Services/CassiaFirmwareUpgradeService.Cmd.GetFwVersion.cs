@@ -25,12 +25,19 @@ namespace AccessAPP.Services
                 int loginAttempts = Math.Max(1, RuntimeVariables.UPGRADE_LOGIN_RETRIES_PER_CONNECTED_SESSION);
                 int loginDelayMs = Math.Max(100, RuntimeVariables.UPGRADE_LOGIN_RETRY_DELAY_MS);
                 int loginTimeoutMs = Math.Max(2000, RuntimeVariables.UPGRADE_LOGIN_ATTEMPT_TIMEOUT_MS);
+                int settleBeforeLoginMs = GetConnectStabilizationDelayMs();
 
                 bool loggedIn = false;
                 for (int loginAttempt = 1; loginAttempt <= loginAttempts; loginAttempt++)
                 {
                     try
                     {
+                        if (loginAttempt == 1 && settleBeforeLoginMs > 0)
+                        {
+                            AppLog.Debug($"FW precheck login settle for {macAddress}: waiting {settleBeforeLoginMs}ms before login.");
+                            await Task.Delay(settleBeforeLoginMs).ConfigureAwait(false);
+                        }
+
                         using var loginCts = new CancellationTokenSource(loginTimeoutMs);
                         var loginResult = await _connectService
                             .AttemptLogin(_gatewayIpAddress, macAddress, loginCts.Token)

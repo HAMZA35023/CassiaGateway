@@ -183,13 +183,13 @@ public partial class MainViewModel : ObservableObject
 
 
 
-    [ObservableProperty] private string mqttHost = "prod.statistics.niko-test.nu";
-    [ObservableProperty] private int mqttPort = 18883;
+    [ObservableProperty] private string mqttHost = "acd270e774e848e8a55de829dc58bc6c.s1.eu.hivemq.cloud";
+    [ObservableProperty] private int mqttPort = 8883;
     [ObservableProperty] private string mqttTopic = "accessapp/#";
     [ObservableProperty] private string mqttUser = "accessapp";
     [ObservableProperty] private string? mqttPassword = "Niko1234!";
-    [ObservableProperty] private bool useTls;
-    [ObservableProperty] private bool ignoreTlsErrors = true;
+    [ObservableProperty] private bool useTls = true;
+    [ObservableProperty] private bool ignoreTlsErrors = false;
 
     [ObservableProperty] private string notesText = "";
 

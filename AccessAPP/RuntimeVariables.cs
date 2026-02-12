@@ -14,7 +14,14 @@ namespace AccessAPP
         public static int DEFAULT_CASSIA_CHIP = 1;
 
         // Max concurrent REST requests per chip (keep at 1 for strict ordering; 2 can be faster if stable).
-        public static int CASSIA_MAX_INFLIGHT_PER_CHIP = 1;
+        public static int CASSIA_MAX_INFLIGHT_PER_CHIP = 2;
+
+        // Cassia connect behavior: 1 = use cached GATT when available (faster), 0 = no cache.
+        public static int CASSIA_CONNECT_DISCOVER_GATT = 0;
+
+        // After a boot-jump, cached GATT can be stale. Use 0 to force rediscovery on next connect.
+        // Set to -1 to fall back to CASSIA_CONNECT_DISCOVER_GATT.
+        public static int UPGRADE_CONNECT_DISCOVER_GATT_AFTER_BOOT_JUMP = 0;
 
         // Scan for BLE devices while programming more than 1 device
         public static bool BLE_SCAN_UNDER_PROGRAMMING = true;

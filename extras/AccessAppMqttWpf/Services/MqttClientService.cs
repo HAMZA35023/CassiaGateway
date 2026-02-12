@@ -123,7 +123,7 @@ public sealed class MqttClientService : IDisposable
             builder = builder.WithCredentials(user, pass);
 
         if (useTls)
-            TryConfigureTls(builder, ignoreTlsErrors);
+            TryConfigureTls(builder, host, ignoreTlsErrors);
 
         var options = builder.Build();
 
@@ -149,7 +149,7 @@ public sealed class MqttClientService : IDisposable
     /// Enables TLS and optionally ignores certificate validation.
     /// Uses reflection/expressions to avoid binding to MQTTnet's TLS builder types at compile time.
     /// </summary>
-    private static void TryConfigureTls(MqttClientOptionsBuilder builder, bool ignoreTlsErrors)
+    private static void TryConfigureTls(MqttClientOptionsBuilder builder, string host, bool ignoreTlsErrors)
     {
         try
         {
@@ -168,7 +168,7 @@ public sealed class MqttClientService : IDisposable
                 var actionType = withTlsOptions.GetParameters()[0].ParameterType;
                 var tlsBuilderType = actionType.GetGenericArguments()[0];
 
-                var del = BuildTlsConfiguratorDelegate(actionType, tlsBuilderType, ignoreTlsErrors);
+                var del = BuildTlsConfiguratorDelegate(actionType, tlsBuilderType, host, ignoreTlsErrors);
                 withTlsOptions.Invoke(builder, new object[] { del });
                 return;
             }
@@ -185,7 +185,7 @@ public sealed class MqttClientService : IDisposable
         }
     }
 
-    private static object BuildTlsConfiguratorDelegate(Type actionType, Type tlsBuilderType, bool ignoreTlsErrors)
+    private static object BuildTlsConfiguratorDelegate(Type actionType, Type tlsBuilderType, string host, bool ignoreTlsErrors)
     {
         // Build: (TlsBuilder x) => { x.UseTls = true / x.UseTls(true); set validation handler => true; set ignore flags; }
         var p = Expression.Parameter(tlsBuilderType, "x");
@@ -204,6 +204,10 @@ public sealed class MqttClientService : IDisposable
             if (useTlsMethod != null)
                 block.Add(Expression.Call(p, useTlsMethod, Expression.Constant(true)));
         }
+
+        // SNI/certificate hostname target (if available in this MQTTnet build).
+        AddStringAssignIfExists(tlsBuilderType, p, block, "TargetHost", host);
+        AddStringAssignIfExists(tlsBuilderType, p, block, "SslHost", host);
 
         // CertificateValidationHandler: Func<Ctx,bool> that returns true
         var certValProp = tlsBuilderType.GetProperty("CertificateValidationHandler", BindingFlags.Public | BindingFlags.Instance);
@@ -239,6 +243,15 @@ public sealed class MqttClientService : IDisposable
     {
         var prop = tlsBuilderType.GetProperty(propName, BindingFlags.Public | BindingFlags.Instance);
         if (prop != null && prop.CanWrite && prop.PropertyType == typeof(bool))
+        {
+            block.Add(Expression.Assign(Expression.Property(p, prop), Expression.Constant(value)));
+        }
+    }
+
+    private static void AddStringAssignIfExists(Type tlsBuilderType, ParameterExpression p, System.Collections.Generic.List<Expression> block, string propName, string value)
+    {
+        var prop = tlsBuilderType.GetProperty(propName, BindingFlags.Public | BindingFlags.Instance);
+        if (prop != null && prop.CanWrite && prop.PropertyType == typeof(string))
         {
             block.Add(Expression.Assign(Expression.Property(p, prop), Expression.Constant(value)));
         }
