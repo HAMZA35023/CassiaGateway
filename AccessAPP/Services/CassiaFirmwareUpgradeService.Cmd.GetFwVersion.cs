@@ -40,13 +40,26 @@ namespace AccessAPP.Services
                 }
 
                 UpgradeLogger.Log(logId ?? "", macAddress, "LoggedIn (precheck FW read)", "Success", firmwareVersion ?? "");
-                var fw = await ReadFirmwareVersionAsync(macAddress).ConfigureAwait(false);
-                if (string.IsNullOrWhiteSpace(fw))
-                    UpgradeLogger.Log(logId ?? "", macAddress, "FW Read (precheck)", "Failed (empty response)", firmwareVersion ?? "");
-                else
-                    UpgradeLogger.Log(logId ?? "", macAddress, "FW Read (precheck)", "Success", firmwareVersion ?? "");
+                int delayBeforeReadMs = Math.Max(0, RuntimeVariables.UPGRADE_DELAY_AFTER_LOGIN_BEFORE_FW_READ_MS);
+                if (delayBeforeReadMs > 0)
+                    await Task.Delay(delayBeforeReadMs).ConfigureAwait(false);
 
-                return fw;
+                const int fwReadAttempts = 3;
+                for (int attempt = 1; attempt <= fwReadAttempts; attempt++)
+                {
+                    var fw = await ReadFirmwareVersionAsync(macAddress).ConfigureAwait(false);
+                    if (!string.IsNullOrWhiteSpace(fw))
+                    {
+                        UpgradeLogger.Log(logId ?? "", macAddress, "FW Read (precheck)", $"Success (attempt {attempt}/{fwReadAttempts})", firmwareVersion ?? "");
+                        return fw;
+                    }
+
+                    UpgradeLogger.Log(logId ?? "", macAddress, "FW Read (precheck)", $"Failed (attempt {attempt}/{fwReadAttempts})", firmwareVersion ?? "");
+                    if (attempt < fwReadAttempts)
+                        await Task.Delay(1000).ConfigureAwait(false);
+                }
+
+                return "";
             }
             catch (Exception ex)
             {

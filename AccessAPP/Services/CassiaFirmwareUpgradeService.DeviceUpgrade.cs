@@ -102,7 +102,7 @@ try
                 if (!isInBootMode)
                 {
                     // FW read can be flaky; retry a few times before giving up.
-                    const int firmwareReadAttempts = 5;
+                    const int firmwareReadAttempts = 3;
                     for (int i = 1; i <= firmwareReadAttempts; i++)
                     {
                         if (probeConnected)
@@ -113,11 +113,27 @@ try
                                 dev.Pincode,
                                 logId,
                                 dev.FirmwareVersion).ConfigureAwait(false);
+
+                            // If connected-session read failed, force a reconnect+login read attempt.
+                            if (string.IsNullOrWhiteSpace(dev.CurrentFirmwareVersion))
+                            {
+                                UpgradeLogger.Log(logId, mac, "FW Read (precheck)", "Connected-session read failed; retry via reconnect+login", dev.FirmwareVersion);
+                                try
+                                {
+                                    await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, mac, 0, chip: GetChipForMac(mac)).ConfigureAwait(false);
+                                }
+                                catch
+                                {
+                                    // best-effort disconnect before reconnect flow
+                                }
+
+                                dev.CurrentFirmwareVersion = await GetFwVersion(mac, dev.Pincode, disconnect_on_finish: true).ConfigureAwait(false);
+                            }
                         }
                         else
                         {
                             // Fallback only when probe connect was not available.
-                            dev.CurrentFirmwareVersion = await GetFwVersion(mac, dev.Pincode).ConfigureAwait(false);
+                            dev.CurrentFirmwareVersion = await GetFwVersion(mac, dev.Pincode, disconnect_on_finish: true).ConfigureAwait(false);
                         }
                         if (!string.IsNullOrWhiteSpace(dev.CurrentFirmwareVersion))
                             break;
