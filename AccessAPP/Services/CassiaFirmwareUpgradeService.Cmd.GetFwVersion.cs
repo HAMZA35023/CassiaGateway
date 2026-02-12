@@ -44,19 +44,29 @@ namespace AccessAPP.Services
                 if (delayBeforeReadMs > 0)
                     await Task.Delay(delayBeforeReadMs).ConfigureAwait(false);
 
-                const int fwReadAttempts = 3;
+                int fwReadAttempts = Math.Max(1, RuntimeVariables.UPGRADE_FW_READ_ATTEMPTS);
+                int fwReadRetryDelayMs = Math.Max(100, RuntimeVariables.UPGRADE_FW_READ_RETRY_DELAY_MS);
                 for (int attempt = 1; attempt <= fwReadAttempts; attempt++)
                 {
-                    var fw = await ReadFirmwareVersionAsync(macAddress).ConfigureAwait(false);
-                    if (!string.IsNullOrWhiteSpace(fw))
+                    try
                     {
-                        UpgradeLogger.Log(logId ?? "", macAddress, "FW Read (precheck)", $"Success (attempt {attempt}/{fwReadAttempts})", firmwareVersion ?? "");
-                        return fw;
+                        var fw = await ReadFirmwareVersionAsync(macAddress).ConfigureAwait(false);
+                        if (!string.IsNullOrWhiteSpace(fw))
+                        {
+                            UpgradeLogger.Log(logId ?? "", macAddress, "FW Read (precheck)", $"Success (attempt {attempt}/{fwReadAttempts})", firmwareVersion ?? "");
+                            return fw;
+                        }
+
+                        UpgradeLogger.Log(logId ?? "", macAddress, "FW Read (precheck)", $"Failed (attempt {attempt}/{fwReadAttempts})", firmwareVersion ?? "");
+                    }
+                    catch (Exception ex)
+                    {
+                        UpgradeLogger.Log(logId ?? "", macAddress, "FW Read (precheck)", $"Exception (attempt {attempt}/{fwReadAttempts}): {ex.Message}", firmwareVersion ?? "");
+                        AppLog.Warn($"FW read precheck attempt {attempt}/{fwReadAttempts} failed for {macAddress}: {ex.Message}");
                     }
 
-                    UpgradeLogger.Log(logId ?? "", macAddress, "FW Read (precheck)", $"Failed (attempt {attempt}/{fwReadAttempts})", firmwareVersion ?? "");
                     if (attempt < fwReadAttempts)
-                        await Task.Delay(1000).ConfigureAwait(false);
+                        await Task.Delay(fwReadRetryDelayMs).ConfigureAwait(false);
                 }
 
                 return "";
@@ -71,29 +81,43 @@ namespace AccessAPP.Services
 
         private async Task<string> ReadFirmwareVersionAsync(string macAddress)
         {
-            string sensorInfo = "";
-            string actorInfo = "";
-
-            // Sensor
-            string sensorCommand = "01290107005A5E";
-            var sensorResponse = await _connectService.GetDataFromBleDevice(_gatewayIpAddress, _gatewayPort, macAddress, sensorCommand).ConfigureAwait(false);
-            if (sensorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(sensorResponse.Data))
-            {
-                sensorInfo = ScanDataParser.ParseSoftwareVersionFromResponse(sensorResponse.Data);
-            }
-
-            // Actor
-            string actorCommand = "012B01070032B3";
-            var actorResponse = await _connectService.GetDataFromBleDevice(_gatewayIpAddress, _gatewayPort, macAddress, actorCommand).ConfigureAwait(false);
-            if (actorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(actorResponse.Data))
-            {
-                actorInfo = ScanDataParser.ParseSoftwareVersionFromResponse(actorResponse.Data);
-            }
+            string sensorInfo = await ReadFirmwarePartWithRetryAsync(macAddress, "Sensor", "01290107005A5E").ConfigureAwait(false);
+            string actorInfo = await ReadFirmwarePartWithRetryAsync(macAddress, "Actor", "012B01070032B3").ConfigureAwait(false);
 
             AppLog.Info($"{macAddress} - Get this Version: Sensor: {sensorInfo} | Actor: {actorInfo}");
             if (string.IsNullOrWhiteSpace(sensorInfo) && string.IsNullOrWhiteSpace(actorInfo))
                 return "";
             return $"Sensor: {sensorInfo} | Actor: {actorInfo}";
+        }
+
+        private async Task<string> ReadFirmwarePartWithRetryAsync(string macAddress, string partName, string commandHex)
+        {
+            int attempts = Math.Max(1, RuntimeVariables.UPGRADE_FW_COMMAND_RETRY_ATTEMPTS);
+            int delayMs = Math.Max(100, RuntimeVariables.UPGRADE_FW_COMMAND_RETRY_DELAY_MS);
+
+            for (int attempt = 1; attempt <= attempts; attempt++)
+            {
+                try
+                {
+                    var response = await _connectService
+                        .GetDataFromBleDevice(_gatewayIpAddress, _gatewayPort, macAddress, commandHex)
+                        .ConfigureAwait(false);
+
+                    if (response.Status == HttpStatusCode.OK && !string.IsNullOrEmpty(response.Data))
+                        return ScanDataParser.ParseSoftwareVersionFromResponse(response.Data);
+
+                    AppLog.Warn($"FW read {partName} failed for {macAddress} (attempt {attempt}/{attempts}): status={response.Status}, data={response.Data}");
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Warn($"FW read {partName} exception for {macAddress} (attempt {attempt}/{attempts}): {ex.Message}");
+                }
+
+                if (attempt < attempts)
+                    await Task.Delay(delayMs).ConfigureAwait(false);
+            }
+
+            return "";
         }
 
         public async Task<string> GetFwVersion(string macAddress, string pincode, bool disconnect_on_finish = false)

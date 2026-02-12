@@ -31,7 +31,13 @@ namespace AccessAPP
         public static int UPGRADE_DELAY_AFTER_FAILED_CONNECT_MS = 3000;
         public static int UPGRADE_CONNECT_ATTEMPT_TIMEOUT_MS = 12000;
         public static int UPGRADE_CONNECT_STABILIZATION_DELAY_MS = 500;
+        public static int UPGRADE_CONNECT_GATEWAY_STATE_CHECK_ATTEMPTS = 3;
+        public static int UPGRADE_CONNECT_GATEWAY_STATE_CHECK_DELAY_MS = 300;
         public static int UPGRADE_DELAY_AFTER_LOGIN_BEFORE_FW_READ_MS = 3000;
+        public static int UPGRADE_FW_READ_ATTEMPTS = 3;
+        public static int UPGRADE_FW_READ_RETRY_DELAY_MS = 1000;
+        public static int UPGRADE_FW_COMMAND_RETRY_ATTEMPTS = 3;
+        public static int UPGRADE_FW_COMMAND_RETRY_DELAY_MS = 800;
         public static int UPGRADE_CONNECT_MAX_ATTEMPTS = 10;
         public static bool UPGRADE_OPTIMIZE_RECONNECT_FLOW = true;
         public static bool UPGRADE_CONNECT_TRUST_GATEWAY_CONNECTED_STATE = true;

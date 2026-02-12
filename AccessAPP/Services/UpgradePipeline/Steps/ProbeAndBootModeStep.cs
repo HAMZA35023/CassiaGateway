@@ -16,6 +16,25 @@ internal sealed class ProbeAndBootModeStep : IDeviceUpgradeStep
 
         UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Process Start Device Async", "Success", ctx.FirmwareVersion);
 
+        bool noFwActionsRequired =
+            !ctx.UpgradeActor &&
+            !ctx.UpgradeBootloader &&
+            !ctx.UpgradeSensor &&
+            !dev.requiresConfigRestore &&
+            !dev.requires102Restore;
+
+        if (noFwActionsRequired)
+        {
+            UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Connected (probe)", "Skipped (no FW actions required in this attempt)", ctx.FirmwareVersion);
+            if (!ctx.DetectorNameLogged && DeviceStorageService.TryGetDeviceName(ctx.MacAddress, out var detectorName))
+            {
+                UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Device Name", detectorName, ctx.FirmwareVersion, detectorName);
+                ctx.DetectorNameLogged = true;
+            }
+
+            return true;
+        }
+
         // 0) Determine boot/application mode early (best-effort + robust connect)
         AppLog.Info($"Getting current FW Verison if possible {ctx.MacAddress}");
 

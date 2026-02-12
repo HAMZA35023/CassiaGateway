@@ -65,6 +65,27 @@ namespace AccessAPP.Services
             return false;
         }
 
+        private async Task<bool> WaitForGatewayConnectedStateAsync(string macAddress, int expectedChip, CancellationToken ct = default)
+        {
+            if (!RuntimeVariables.UPGRADE_CONNECT_TRUST_GATEWAY_CONNECTED_STATE)
+                return false;
+
+            int checks = Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_GATEWAY_STATE_CHECK_ATTEMPTS);
+            int delayMs = Math.Max(50, RuntimeVariables.UPGRADE_CONNECT_GATEWAY_STATE_CHECK_DELAY_MS);
+
+            for (int i = 1; i <= checks; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (await IsMacReportedConnectedOnGatewayAsync(macAddress, expectedChip).ConfigureAwait(false))
+                    return true;
+
+                if (i < checks)
+                    await Task.Delay(delayMs, ct).ConfigureAwait(false);
+            }
+
+            return false;
+        }
+
 
         private async Task<ConnectLoginResult> ConnectAndLoginWithRetryAsync(
             string gatewayIp,
@@ -102,7 +123,7 @@ namespace AccessAPP.Services
                     bool connected = connectionResult.Status == HttpStatusCode.OK;
                     if (!connected)
                     {
-                        connected = await IsMacReportedConnectedOnGatewayAsync(macAddress, chip).ConfigureAwait(false);
+                        connected = await WaitForGatewayConnectedStateAsync(macAddress, chip, cts.Token).ConfigureAwait(false);
                         if (connected)
                         {
                             UpgradeLogger.Log(logId, macAddress, "Connected",
@@ -278,7 +299,7 @@ namespace AccessAPP.Services
                     bool connected = cr.Status == HttpStatusCode.OK;
                     if (!connected)
                     {
-                        connected = await IsMacReportedConnectedOnGatewayAsync(macAddress, chip).ConfigureAwait(false);
+                        connected = await WaitForGatewayConnectedStateAsync(macAddress, chip, cts.Token).ConfigureAwait(false);
                         if (connected)
                         {
                             UpgradeLogger.Log(logId, macAddress, stageName, $"Recovered via gateway state (attempt {attempt}/{maxAttempts})", FirmwareVersion);
