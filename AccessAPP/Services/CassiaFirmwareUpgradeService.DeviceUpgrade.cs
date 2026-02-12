@@ -257,6 +257,35 @@ try
 
                     while (!dev.IsFullyUpgraded)
                     {
+                        bool retryActor = dev.isActorUpgradeNeeded && !dev.ActorSuccess;
+                        bool retryBootloader = dev.upgradeBootloader && !dev.BootloaderSuccess;
+                        bool retrySensor = !dev.SensorSuccess;
+                        bool retryHasFirmwareWork = retryActor || retryBootloader || retrySensor;
+
+                        // Guard against retry cycling with no actionable FW steps.
+                        if (!retryHasFirmwareWork)
+                        {
+                            bool pendingConfig = dev.requiresConfigRestore && !dev.isConfigRestored;
+                            bool pending102 = dev.requires102Restore && !dev.restore102Success;
+                            string pending = string.Join(", ",
+                                new[]
+                                {
+                                    pendingConfig ? "settings-restore" : null,
+                                    pending102 ? "dali-102-restore" : null
+                                }.Where(x => !string.IsNullOrWhiteSpace(x)));
+                            if (string.IsNullOrWhiteSpace(pending))
+                                pending = "unknown-state";
+
+                            dev.LastFailureReason = $"Retry stopped: no firmware actions pending, but upgrade is not fully satisfied ({pending}).";
+                            if (!string.Equals(dev.finalUpgradeResult, "Failed", StringComparison.OrdinalIgnoreCase))
+                                dev.finalUpgradeResult = "Warn";
+                            dev.shouldRetry = false;
+
+                            AppLog.Warn($"[RETRY STOP] {mac} - {dev.LastFailureReason}");
+                            UpgradeLogger.Log(logId, mac, dev.LastFailureReason, "Warn", dev.FirmwareVersion);
+                            break;
+                        }
+
                         if (!UpgradeRetryPolicy.CanRetryNow(dev, maxRetriesPerComponent))
                         {
                             AppLog.Warn($"[RETRY STOP] {mac} - retries exhausted. " +
@@ -271,9 +300,9 @@ try
 
                         var resp = await UpgradeDeviceAsync(
                             dev, mac, dev.Pincode, dev.DetectotType, dev.FirmwareVersion,
-                            dev.isActorUpgradeNeeded && !dev.ActorSuccess,
-                            dev.upgradeBootloader && !dev.BootloaderSuccess,
-                            !dev.SensorSuccess,
+                            retryActor,
+                            retryBootloader,
+                            retrySensor,
                             logId
                         ).ConfigureAwait(false);
 
