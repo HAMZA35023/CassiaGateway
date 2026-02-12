@@ -15,6 +15,7 @@ internal sealed class BootloaderUpgradeStep : IDeviceUpgradeStep
         var dev = ctx.Dev;
 
         dev.RetryCountBootloader++;
+        ctx.AnyFirmwareStepExecuted = true;
         AppLog.Info($"Starting bootloader upgrade for {ctx.MacAddress}");
 
         // cooldown before bootloader step often helps after actor step

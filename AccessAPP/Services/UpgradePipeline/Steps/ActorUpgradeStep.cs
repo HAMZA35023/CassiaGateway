@@ -18,6 +18,8 @@ internal sealed class ActorUpgradeStep : IDeviceUpgradeStep
 
         AppLog.Info($"Starting actor upgrade for {ctx.MacAddress}");
         dev.RetryCountActor++;
+        ctx.AnyFirmwareStepExecuted = true;
+        ctx.ActorFirmwareStepExecuted = true;
 
         ctx.Stopwatch.Restart();
         var actorUpgradeResult = await svc.UpgradeActorAsync(ctx.MacAddress, ctx.Pincode, true, ctx.DetectorType, ctx.FirmwareVersion, ctx.LogId)

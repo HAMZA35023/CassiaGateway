@@ -233,14 +233,8 @@ namespace AccessAPP.Services
                     failedThisAttempt = true;
 
                     int chip = GetChipForMac(macAddress);
-                    UpgradeLogger.Log(logId, macAddress,
-                        $"{stageName}: disconnecting chip {chip} after failed connect attempt {attempt}/{maxAttempts}.",
-                        "Warn", FirmwareVersion);
                     AppLog.Info($"{stageName}: failed connect for {macAddress} (attempt {attempt}/{maxAttempts}). Disconnecting chip {chip}.");
                     await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, chip).ConfigureAwait(false);
-                    UpgradeLogger.Log(logId, macAddress,
-                        $"{stageName}: disconnected chip {chip} after failed attempt {attempt}/{maxAttempts}.",
-                        "Info", FirmwareVersion);
                     AppLog.Info($"{stageName}: disconnected chip {chip} for {macAddress} after failed attempt {attempt}/{maxAttempts}.");
                 }
                 catch (Exception ex)
@@ -250,14 +244,8 @@ namespace AccessAPP.Services
                     failedThisAttempt = true;
 
                     int chip = GetChipForMac(macAddress);
-                    UpgradeLogger.Log(logId, macAddress,
-                        $"{stageName}: disconnecting chip {chip} after exception attempt {attempt}/{maxAttempts}.",
-                        "Warn", FirmwareVersion);
                     AppLog.Info($"{stageName}: exception for {macAddress} (attempt {attempt}/{maxAttempts}). Disconnecting chip {chip}.");
                     await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, chip).ConfigureAwait(false);
-                    UpgradeLogger.Log(logId, macAddress,
-                        $"{stageName}: disconnected chip {chip} after exception attempt {attempt}/{maxAttempts}.",
-                        "Info", FirmwareVersion);
                     AppLog.Info($"{stageName}: disconnected chip {chip} for {macAddress} after exception attempt {attempt}/{maxAttempts}.");
                 }
 

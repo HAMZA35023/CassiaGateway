@@ -14,9 +14,29 @@ internal sealed class SettingsRestoreStep : IDeviceUpgradeStep
         var svc = ctx.Svc;
         var dev = ctx.Dev;
 
+        if (!ctx.AnyFirmwareStepExecuted)
+        {
+            UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Settings restore skipped (no FW step executed in this attempt)", "Info", ctx.FirmwareVersion);
+            return true;
+        }
+
         // 3) Restore settings right after sensor upgrade (do NOT reboot here)
         if (!(RuntimeVariables.RestoreSettingsAfterUpgrade && !ctx.IsInBoot && UpgradePipelineSupport.SupportsSettingsBackup(ctx.DetectorType)))
             return true;
+
+        ctx.SettingsBackupPath ??= dev.SettingsBackupPath;
+        if (string.IsNullOrWhiteSpace(ctx.SettingsBackupPath))
+        {
+            UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Settings restore skipped (no backup file available)", "Failed", ctx.FirmwareVersion);
+            AppLog.Error($" Settings restore skipped for {ctx.MacAddress} - no backup file available");
+
+            if (dev.requiresConfigRestore)
+            {
+                dev.shouldRetry = false;
+                dev.finalUpgradeResult = "Warn";
+            }
+            return true;
+        }
 
         await Task.Delay(10000).ConfigureAwait(false);
 
@@ -49,23 +69,6 @@ internal sealed class SettingsRestoreStep : IDeviceUpgradeStep
         }
 
         AppLog.Info($"Starting settings restore for {ctx.MacAddress} - upload config");
-        ctx.SettingsBackupPath ??= dev.SettingsBackupPath;
-
-        if (string.IsNullOrWhiteSpace(ctx.SettingsBackupPath))
-        {
-            UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Settings restore skipped (no backup file available)", "Failed", ctx.FirmwareVersion);
-            AppLog.Error($" Settings restore skipped for {ctx.MacAddress} - no backup file available");
-
-            if (dev.requiresConfigRestore)
-            {
-                dev.shouldRetry = false;
-                dev.finalUpgradeResult = "Warn";
-            }
-
-            await svc.ConnectService.DisconnectFromBleDevice(svc.GatewayIpAddress, ctx.MacAddress, 0, chip: ctx.ChipId).ConfigureAwait(false);
-            return true;
-        }
-
         try
         {
             ServiceResponse restore = new() { Success = false, StatusCode = 500, Message = "Restore not attempted" };

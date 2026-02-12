@@ -19,6 +19,7 @@ internal sealed class SensorUpgradeStep : IDeviceUpgradeStep
 
         AppLog.Info($"Starting Sensor upgrade for {ctx.MacAddress}");
         dev.RetryCountSensor++;
+        ctx.AnyFirmwareStepExecuted = true;
 
         // IMPORTANT: after JumpToBootloader, Cassia often needs a longer cool-down before next Connect+Login
         await Task.Delay(8000).ConfigureAwait(false);

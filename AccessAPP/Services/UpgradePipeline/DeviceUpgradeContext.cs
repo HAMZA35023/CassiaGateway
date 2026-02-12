@@ -29,6 +29,8 @@ internal sealed class DeviceUpgradeContext
     public byte? OriginalDaliSysFailLevel { get; set; }
     public bool ActorUpdatedBeforeFirmware { get; set; }
     public bool ActorConnectionReuseConsumed { get; set; }
+    public bool AnyFirmwareStepExecuted { get; set; }
+    public bool ActorFirmwareStepExecuted { get; set; }
 
     public Stopwatch Stopwatch { get; } = new();
 

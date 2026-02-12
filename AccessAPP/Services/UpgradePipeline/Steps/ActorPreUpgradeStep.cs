@@ -27,6 +27,8 @@ internal sealed class ActorPreUpgradeStep : IDeviceUpgradeStep
 
         AppLog.Info($"Starting actor upgrade (pre-sensor) for {ctx.MacAddress}");
         dev.RetryCountActor++;
+        ctx.AnyFirmwareStepExecuted = true;
+        ctx.ActorFirmwareStepExecuted = true;
 
         ctx.Stopwatch.Restart();
         var actorUpgradeResult = await svc.UpgradeActorAsync(
