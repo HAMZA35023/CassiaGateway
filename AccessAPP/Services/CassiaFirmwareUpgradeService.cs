@@ -633,99 +633,30 @@ return resp;
 
             async Task<bool> ConnectWithRetryAsync(string stepName)
             {
-                for (int attempt = 1; attempt <= connectMaxAttempts; attempt++)
-                {
-                    try
-                    {
-                        int chip = GetChipForMac(nodeMac);
-                        int timeoutMs = GetConnectAttemptTimeoutMs();
-                        using var cts = new System.Threading.CancellationTokenSource(timeoutMs);
+                var connect = await ConnectOnlyWithRetryAsync(
+                    maxAttempts: connectMaxAttempts,
+                    delayMs: 2000,
+                    stageName: stepName,
+                    macAddress: nodeMac,
+                    FirmwareVersion: FirmwareVersion,
+                    logId: logId,
+                    logSuccess: true).ConfigureAwait(false);
 
-						var cr = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac, chip: chip, ct: cts.Token);
-                        bool connected = cr.Status == HttpStatusCode.OK;
-                        if (!connected)
-                        {
-                            connected = await IsMacReportedConnectedOnGatewayAsync(nodeMac, chip).ConfigureAwait(false);
-                            if (connected)
-                            {
-                                UpgradeLogger.Log(logId, nodeMac, stepName, $"Recovered via gateway state (attempt {attempt}/{connectMaxAttempts})");
-                                AppLog.Info($"{stepName}: connect returned {cr.Status} for {nodeMac}, but gateway reports connected on chip {chip}. Continuing.");
-                            }
-                        }
+                if (!connect.ok)
+                    AppLog.Warn($"{stepName}: connect failed for {nodeMac} on chip {GetChipForMac(nodeMac)} with status {connect.code}. Message: {connect.msg}");
 
-                        if (connected)
-                        {
-                            int stabilizeMs = GetConnectStabilizationDelayMs();
-                            if (stabilizeMs > 0)
-                                await Task.Delay(stabilizeMs, cts.Token);
-
-                            UpgradeLogger.Log(logId, nodeMac, stepName, $"Success (attempt {attempt}/{connectMaxAttempts})");
-                            return true;
-                        }
-
-                        UpgradeLogger.Log(logId, nodeMac, stepName, $"Failed (attempt {attempt}/{connectMaxAttempts})");
-                        AppLog.Warn($"{stepName}: connect failed for {nodeMac} on chip {chip} with status {cr.Status}. Disconnecting before retry.");
-                        await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 1, chip).ConfigureAwait(false);
-                    }
-                    catch (Exception ex)
-                    {
-                        UpgradeLogger.Log(logId, nodeMac, stepName, $"Exception (attempt {attempt}/{connectMaxAttempts}): {ex.Message}");
-                        try
-                        {
-                            int chip = GetChipForMac(nodeMac);
-                            await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 1, chip).ConfigureAwait(false);
-                        }
-                        catch
-                        {
-                            // best-effort cleanup between retries
-                        }
-                    }
-
-                    // Backoff (fast -> slower)
-                    int delay = attempt switch
-                    {
-                        1 => 1500,
-                        2 => 3000,
-                        3 => 5000,
-                        _ => 8000
-                    };
-                    if (RuntimeVariables.UPGRADE_DELAY_AFTER_FAILED_CONNECT_MS > 0)
-                        delay += RuntimeVariables.UPGRADE_DELAY_AFTER_FAILED_CONNECT_MS;
-                    await Task.Delay(delay);
-                }
-
-                return false;
+                return connect.ok;
             }
 
             async Task<bool> LoginWithRetryAsync()
             {
-                for (int attempt = 1; attempt <= loginMaxAttempts; attempt++)
-                {
-                    try
-                    {
-                        var loginResult = await _connectService.AttemptLogin(_gatewayIpAddress, nodeMac);
-
-                        bool pinReq = loginResult.ResponseBody.PincodeRequired;
-                        if (pinReq && !string.IsNullOrEmpty(pincode))
-                        {
-                            var check = await _cassiaPinCodeService.CheckPincode(_gatewayIpAddress, nodeMac, pincode);
-                            loginResult.ResponseBody = check.ResponseBody;
-                            loginResult.ResponseBody.PincodeRequired = pinReq;
-                        }
-
-                        // NOTE: you previously commented out the "fail if not accepted".
-                        // Keep your behavior: log success and continue.
-                        UpgradeLogger.Log(logId, nodeMac, "LoggedIn", $"Success (attempt {attempt}/{loginMaxAttempts})");
-                        return true;
-                    }
-                    catch (Exception ex)
-                    {
-                        UpgradeLogger.Log(logId, nodeMac, "Login", $"Exception (attempt {attempt}/{loginMaxAttempts}): {ex.Message}");
-                    }
-
-                    await Task.Delay(2000);
-                }
-                return false;
+                return await EnsureLoginOnConnectedSessionUnlessBootModeAsync(
+                    nodeMac,
+                    pincode,
+                    logId,
+                    FirmwareVersion,
+                    stageName: "LoggedIn",
+                    maxAttempts: loginMaxAttempts).ConfigureAwait(false);
             }
 
             async Task<bool> EnsureBootModeAsync()
@@ -918,103 +849,30 @@ await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chi
 
             async Task<bool> ConnectWithRetryAsync(string stepName)
             {
-                for (int attempt = 1; attempt <= connectMaxAttempts; attempt++)
-                {
-                    try
-                    {
-                        int chip = GetChipForMac(nodeMac);
-                        int timeoutMs = GetConnectAttemptTimeoutMs();
-                        using var cts = new System.Threading.CancellationTokenSource(timeoutMs);
+                var connect = await ConnectOnlyWithRetryAsync(
+                    maxAttempts: connectMaxAttempts,
+                    delayMs: 2000,
+                    stageName: stepName,
+                    macAddress: nodeMac,
+                    FirmwareVersion: FirmwareVersion,
+                    logId: logId,
+                    logSuccess: true).ConfigureAwait(false);
 
-						var cr = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac, chip: chip, ct: cts.Token);
-                        bool connected = cr.Status == HttpStatusCode.OK;
-                        if (!connected)
-                        {
-                            connected = await IsMacReportedConnectedOnGatewayAsync(nodeMac, chip).ConfigureAwait(false);
-                            if (connected)
-                            {
-                                UpgradeLogger.Log(logId, nodeMac, stepName, $"Recovered via gateway state (attempt {attempt}/{connectMaxAttempts})");
-                                AppLog.Info($"{stepName}: connect returned {cr.Status} for {nodeMac}, but gateway reports connected on chip {chip}. Continuing.");
-                            }
-                        }
+                if (!connect.ok)
+                    AppLog.Warn($"{stepName}: connect failed for {nodeMac} on chip {GetChipForMac(nodeMac)} with status {connect.code}. Message: {connect.msg}");
 
-                        if (connected)
-                        {
-                            int stabilizeMs = GetConnectStabilizationDelayMs();
-                            if (stabilizeMs > 0)
-                                await Task.Delay(stabilizeMs, cts.Token);
-
-                            UpgradeLogger.Log(logId, nodeMac, stepName, $"Success (attempt {attempt}/{connectMaxAttempts})");
-                            return true;
-                        }
-
-                        UpgradeLogger.Log(logId, nodeMac, stepName, $"Failed (attempt {attempt}/{connectMaxAttempts})");
-                        AppLog.Warn($"{stepName}: connect failed for {nodeMac} on chip {chip} with status {cr.Status}. Disconnecting before retry.");
-                        await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 1, chip).ConfigureAwait(false);
-                    }
-                    catch (Exception ex)
-                    {
-                        UpgradeLogger.Log(logId, nodeMac, stepName, $"Exception (attempt {attempt}/{connectMaxAttempts}): {ex.Message}");
-                        try
-                        {
-                            int chip = GetChipForMac(nodeMac);
-                            await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 1, chip).ConfigureAwait(false);
-                        }
-                        catch
-                        {
-                            // best-effort cleanup between retries
-                        }
-                    }
-
-                    int delay = attempt switch
-                    {
-                        1 => 1500,
-                        2 => 3000,
-                        3 => 5000,
-                        _ => 8000
-                    };
-                    if (RuntimeVariables.UPGRADE_DELAY_AFTER_FAILED_CONNECT_MS > 0)
-                        delay += RuntimeVariables.UPGRADE_DELAY_AFTER_FAILED_CONNECT_MS;
-                    await Task.Delay(delay);
-                }
-
-                return false;
+                return connect.ok;
             }
 
             async Task<bool> LoginWithRetryAsync()
             {
-                for (int attempt = 1; attempt <= loginMaxAttempts; attempt++)
-                {
-                    try
-                    {
-                        var loginResult = await _connectService.AttemptLogin(_gatewayIpAddress, nodeMac);
-
-                        if (loginResult.ResponseBody.PincodeRequired && !string.IsNullOrEmpty(pincode))
-                        {
-                            var check = await _cassiaPinCodeService.CheckPincode(_gatewayIpAddress, nodeMac, pincode);
-                            loginResult.ResponseBody = check.ResponseBody;
-                        }
-
-                        // For actor you DO enforce pincode accepted (keeps your original behavior)
-                        if (loginResult.ResponseBody.PincodeRequired && !loginResult.ResponseBody.PinCodeAccepted)
-                        {
-                            UpgradeLogger.Log(logId, nodeMac, "Login", $"Failed (attempt {attempt}/{loginMaxAttempts})");
-                            await Task.Delay(2000);
-                            continue;
-                        }
-
-                        UpgradeLogger.Log(logId, nodeMac, "LoggedIn", $"Success (attempt {attempt}/{loginMaxAttempts})");
-                        return true;
-                    }
-                    catch (Exception ex)
-                    {
-                        UpgradeLogger.Log(logId, nodeMac, "Login", $"Exception (attempt {attempt}/{loginMaxAttempts}): {ex.Message}");
-                    }
-
-                    await Task.Delay(2000);
-                }
-
-                return false;
+                return await EnsureLoginOnConnectedSessionUnlessBootModeAsync(
+                    nodeMac,
+                    pincode,
+                    logId,
+                    FirmwareVersion,
+                    stageName: "LoggedIn",
+                    maxAttempts: loginMaxAttempts).ConfigureAwait(false);
             }
 
             async Task<bool> JumpActorToBootModeAsync()
