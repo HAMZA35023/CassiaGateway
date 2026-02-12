@@ -33,8 +33,14 @@ namespace AccessAPP
         public static int UPGRADE_CONNECT_STABILIZATION_DELAY_MS = 500;
         public static int UPGRADE_CONNECT_GATEWAY_STATE_CHECK_ATTEMPTS = 3;
         public static int UPGRADE_CONNECT_GATEWAY_STATE_CHECK_DELAY_MS = 300;
+        public static int UPGRADE_CONNECT_GATEWAY_STATE_CHECK_ATTEMPTS_ON_500 = 12;
+        public static int UPGRADE_CONNECT_GATEWAY_STATE_CHECK_DELAY_MS_ON_500 = 150;
         public static int UPGRADE_CONNECT_TRANSIENT_500_RETRIES_PER_ATTEMPT = 2;
         public static int UPGRADE_CONNECT_TRANSIENT_500_RETRY_DELAY_MS = 350;
+        public static bool UPGRADE_CONNECT_LOGIN_USE_PER_CHIP_GATE = true;
+        public static int UPGRADE_CONNECT_RETRY_BACKOFF_MULTIPLIER_X100 = 170;
+        public static int UPGRADE_CONNECT_RETRY_BACKOFF_MAX_MS = 15000;
+        public static int UPGRADE_CONNECT_RETRY_JITTER_PCT = 30;
         public static int UPGRADE_LOGIN_ATTEMPT_TIMEOUT_MS = 8000;
         public static int UPGRADE_LOGIN_RETRIES_PER_CONNECTED_SESSION = 2;
         public static int UPGRADE_LOGIN_RETRY_DELAY_MS = 400;
