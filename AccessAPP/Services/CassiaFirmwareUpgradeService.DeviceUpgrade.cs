@@ -73,7 +73,7 @@ try
                     macAddress: mac,
                     firmwareVersion: dev.FirmwareVersion,
                     logId: logId,
-                    logSuccess: false
+                    logSuccess: true
                 ).ConfigureAwait(false);
 
                 probeConnected = probe.ok;
