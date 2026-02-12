@@ -29,9 +29,12 @@ namespace AccessAPP
         public static int UPGRADE_DELAY_AFTER_END_DISCONNECT_MS = 0;
         public static int UPGRADE_DELAY_AFTER_BOOT_JUMP_MS = 0;
         public static int UPGRADE_DELAY_AFTER_FAILED_CONNECT_MS = 3000;
+        public static int UPGRADE_CONNECT_ATTEMPT_TIMEOUT_MS = 12000;
+        public static int UPGRADE_CONNECT_STABILIZATION_DELAY_MS = 500;
         public static int UPGRADE_DELAY_AFTER_LOGIN_BEFORE_FW_READ_MS = 3000;
         public static int UPGRADE_CONNECT_MAX_ATTEMPTS = 10;
         public static bool UPGRADE_OPTIMIZE_RECONNECT_FLOW = true;
+        public static bool UPGRADE_CONNECT_TRUST_GATEWAY_CONNECTED_STATE = true;
 
         // LED range visualization command defaults
         public static int LED_RANGE_MIN_RSSI = -75;

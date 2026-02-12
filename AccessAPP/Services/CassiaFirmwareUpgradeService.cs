@@ -615,18 +615,48 @@ return resp;
                 {
                     try
                     {
-						var cr = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac, chip: GetChipForMac(nodeMac));
-                        if (cr.Status == HttpStatusCode.OK)
+                        int chip = GetChipForMac(nodeMac);
+                        int timeoutMs = GetConnectAttemptTimeoutMs();
+                        using var cts = new System.Threading.CancellationTokenSource(timeoutMs);
+
+						var cr = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac, chip: chip, ct: cts.Token);
+                        bool connected = cr.Status == HttpStatusCode.OK;
+                        if (!connected)
                         {
+                            connected = await IsMacReportedConnectedOnGatewayAsync(nodeMac, chip).ConfigureAwait(false);
+                            if (connected)
+                            {
+                                UpgradeLogger.Log(logId, nodeMac, stepName, $"Recovered via gateway state (attempt {attempt}/{connectMaxAttempts})");
+                                AppLog.Info($"{stepName}: connect returned {cr.Status} for {nodeMac}, but gateway reports connected on chip {chip}. Continuing.");
+                            }
+                        }
+
+                        if (connected)
+                        {
+                            int stabilizeMs = GetConnectStabilizationDelayMs();
+                            if (stabilizeMs > 0)
+                                await Task.Delay(stabilizeMs, cts.Token);
+
                             UpgradeLogger.Log(logId, nodeMac, stepName, $"Success (attempt {attempt}/{connectMaxAttempts})");
                             return true;
                         }
 
                         UpgradeLogger.Log(logId, nodeMac, stepName, $"Failed (attempt {attempt}/{connectMaxAttempts})");
+                        AppLog.Warn($"{stepName}: connect failed for {nodeMac} on chip {chip} with status {cr.Status}. Disconnecting before retry.");
+                        await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 1, chip).ConfigureAwait(false);
                     }
                     catch (Exception ex)
                     {
                         UpgradeLogger.Log(logId, nodeMac, stepName, $"Exception (attempt {attempt}/{connectMaxAttempts}): {ex.Message}");
+                        try
+                        {
+                            int chip = GetChipForMac(nodeMac);
+                            await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 1, chip).ConfigureAwait(false);
+                        }
+                        catch
+                        {
+                            // best-effort cleanup between retries
+                        }
                     }
 
                     // Backoff (fast -> slower)
@@ -870,18 +900,48 @@ await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chi
                 {
                     try
                     {
-						var cr = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac, chip: GetChipForMac(nodeMac));
-                        if (cr.Status == HttpStatusCode.OK)
+                        int chip = GetChipForMac(nodeMac);
+                        int timeoutMs = GetConnectAttemptTimeoutMs();
+                        using var cts = new System.Threading.CancellationTokenSource(timeoutMs);
+
+						var cr = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac, chip: chip, ct: cts.Token);
+                        bool connected = cr.Status == HttpStatusCode.OK;
+                        if (!connected)
                         {
+                            connected = await IsMacReportedConnectedOnGatewayAsync(nodeMac, chip).ConfigureAwait(false);
+                            if (connected)
+                            {
+                                UpgradeLogger.Log(logId, nodeMac, stepName, $"Recovered via gateway state (attempt {attempt}/{connectMaxAttempts})");
+                                AppLog.Info($"{stepName}: connect returned {cr.Status} for {nodeMac}, but gateway reports connected on chip {chip}. Continuing.");
+                            }
+                        }
+
+                        if (connected)
+                        {
+                            int stabilizeMs = GetConnectStabilizationDelayMs();
+                            if (stabilizeMs > 0)
+                                await Task.Delay(stabilizeMs, cts.Token);
+
                             UpgradeLogger.Log(logId, nodeMac, stepName, $"Success (attempt {attempt}/{connectMaxAttempts})");
                             return true;
                         }
 
                         UpgradeLogger.Log(logId, nodeMac, stepName, $"Failed (attempt {attempt}/{connectMaxAttempts})");
+                        AppLog.Warn($"{stepName}: connect failed for {nodeMac} on chip {chip} with status {cr.Status}. Disconnecting before retry.");
+                        await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 1, chip).ConfigureAwait(false);
                     }
                     catch (Exception ex)
                     {
                         UpgradeLogger.Log(logId, nodeMac, stepName, $"Exception (attempt {attempt}/{connectMaxAttempts}): {ex.Message}");
+                        try
+                        {
+                            int chip = GetChipForMac(nodeMac);
+                            await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 1, chip).ConfigureAwait(false);
+                        }
+                        catch
+                        {
+                            // best-effort cleanup between retries
+                        }
                     }
 
                     int delay = attempt switch

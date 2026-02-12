@@ -40,7 +40,7 @@ namespace AccessAPP.Services
                                     : (url + "?" + keyEq + Uri.EscapeDataString(value ?? ""));
         }
 
-        public async Task<ResponseModel> ConnectToBleDevice(string gatewayIpAddress, int gatewayPort, string macAddress, int chip = -1, bool useGlobalLock = true)
+        public async Task<ResponseModel> ConnectToBleDevice(string gatewayIpAddress, int gatewayPort, string macAddress, int chip = -1, bool useGlobalLock = true, CancellationToken ct = default)
         {
             // Define the request URL
             string url = $"http://{gatewayIpAddress}:{gatewayPort}/gap/nodes/{macAddress}/connection";
@@ -65,13 +65,13 @@ namespace AccessAPP.Services
 
                 if (useGlobalLock)
                 {
-                    await semaphore.WaitAsync(); // lock connect requests (legacy behavior)
+                    await semaphore.WaitAsync(ct); // lock connect requests (legacy behavior)
                 }
 
                 try
                 {
                     // Send the request
-                    response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+                    response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
                 }
                 catch (Exception e)
                 {
