@@ -14,7 +14,7 @@ namespace AccessAPP
         public static int DEFAULT_CASSIA_CHIP = 1;
 
         // Max concurrent REST requests per chip (keep at 1 for strict ordering; 2 can be faster if stable).
-        public static int CASSIA_MAX_INFLIGHT_PER_CHIP = 2;
+        public static int CASSIA_MAX_INFLIGHT_PER_CHIP = 1;
 
         // Cassia connect behavior: 1 = use cached GATT when available (faster), 0 = no cache.
         public static int CASSIA_CONNECT_DISCOVER_GATT = 0;
