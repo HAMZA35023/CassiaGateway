@@ -56,6 +56,12 @@ namespace AccessAPP.Services
         private static int GetGatewayStateCheckDelayOn500Ms()
             => Math.Max(50, RuntimeVariables.UPGRADE_CONNECT_GATEWAY_STATE_CHECK_DELAY_MS_ON_500);
 
+        private static int GetGatewayStateChecksOn500PreRetry()
+            => Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_GATEWAY_STATE_CHECK_ATTEMPTS_ON_500_PRE_RETRY);
+
+        private static int GetGatewayStateCheckDelayOn500PreRetryMs()
+            => Math.Max(50, RuntimeVariables.UPGRADE_CONNECT_GATEWAY_STATE_CHECK_DELAY_MS_ON_500_PRE_RETRY);
+
         private static bool ShouldUsePerChipConnectGate()
             => RuntimeVariables.UPGRADE_CONNECT_LOGIN_USE_PER_CHIP_GATE;
 
@@ -256,10 +262,24 @@ namespace AccessAPP.Services
             string macAddress,
             int expectedChip,
             HttpStatusCode connectStatus,
+            int connectTry,
+            int maxConnectTries,
             CancellationToken ct = default)
         {
             if (connectStatus == HttpStatusCode.InternalServerError)
             {
+                // On transient 500 before a same-attempt re-connect try, do only a very light
+                // state probe to avoid hammering /gap/nodes.
+                if (connectTry < maxConnectTries)
+                {
+                    return await WaitForGatewayConnectedStateAsync(
+                        macAddress,
+                        expectedChip,
+                        GetGatewayStateChecksOn500PreRetry(),
+                        GetGatewayStateCheckDelayOn500PreRetryMs(),
+                        ct).ConfigureAwait(false);
+                }
+
                 return await WaitForGatewayConnectedStateAsync(
                     macAddress,
                     expectedChip,
@@ -329,7 +349,13 @@ namespace AccessAPP.Services
                         connected = connectionResult.Status == HttpStatusCode.OK;
                         if (!connected)
                         {
-                            connected = await WaitForGatewayConnectedStateAfterConnectErrorAsync(macAddress, chip, connectionResult.Status, cts.Token).ConfigureAwait(false);
+                            connected = await WaitForGatewayConnectedStateAfterConnectErrorAsync(
+                                macAddress,
+                                chip,
+                                connectionResult.Status,
+                                connectTry,
+                                transient500Retries,
+                                cts.Token).ConfigureAwait(false);
                             if (connected)
                             {
                                 UpgradeLogger.Log(logId, macAddress, "Connected",
@@ -557,7 +583,13 @@ namespace AccessAPP.Services
                         connected = cr.Status == HttpStatusCode.OK;
                         if (!connected)
                         {
-                            connected = await WaitForGatewayConnectedStateAfterConnectErrorAsync(macAddress, chip, cr.Status, cts.Token).ConfigureAwait(false);
+                            connected = await WaitForGatewayConnectedStateAfterConnectErrorAsync(
+                                macAddress,
+                                chip,
+                                cr.Status,
+                                connectTry,
+                                transient500Retries,
+                                cts.Token).ConfigureAwait(false);
                             if (connected)
                             {
                                 UpgradeLogger.Log(logId, macAddress, stageName, $"Recovered via gateway state (attempt {attempt}/{maxAttempts})", FirmwareVersion);
