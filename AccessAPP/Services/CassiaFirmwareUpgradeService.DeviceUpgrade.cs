@@ -10,7 +10,11 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -338,6 +342,12 @@ try
                     status: "OK"));
 
                 UpgradeLogger.Log(logId, mac, "Device Upgrade Completed.", dev.finalUpgradeResult);
+                await SendUpgradeResultLogAsync(
+                    mac: mac,
+                    dev: dev,
+                    totalProcessTime: deviceSw.Elapsed,
+                    result: dev.finalUpgradeResult,
+                    failedStep: dev.LastFailureReason).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -352,6 +362,17 @@ try
 				seconds: deviceSw.Elapsed.TotalSeconds,
 				status: "ERROR",
 				error: ex.ToString()));
+
+                var failedStep = string.IsNullOrWhiteSpace(dev.LastFailureReason)
+                    ? ex.Message
+                    : dev.LastFailureReason;
+
+                await SendUpgradeResultLogAsync(
+                    mac: mac,
+                    dev: dev,
+                    totalProcessTime: deviceSw.Elapsed,
+                    result: "Failed",
+                    failedStep: failedStep).ConfigureAwait(false);
             }
             finally
             {
@@ -365,6 +386,126 @@ try
                 
 _programmingTargets.TryRemove(mac, out _);
 Interlocked.Decrement(ref UpgradeDevicesInProgress);
+            }
+        }
+
+        private async Task SendUpgradeResultLogAsync(
+            string mac,
+            UpgradeProgress dev,
+            TimeSpan totalProcessTime,
+            string result,
+            string? failedStep)
+        {
+            if (!RuntimeVariables.UPGRADE_RESULT_DB_LOG_ENABLED)
+                return;
+
+            string apiUrl = (RuntimeVariables.UPGRADE_RESULT_DB_LOG_URL ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(apiUrl))
+                return;
+
+            string productNo = "";
+            if (!DeviceStorageService.TryGetProductNumber(mac, out productNo))
+                productNo = (dev.DetectotType ?? "").Trim();
+
+            string oldSw = (dev.CurrentFirmwareVersion ?? "").Trim();
+            string newSw = (dev.FirmwareVersion ?? "").Trim();
+            string actorVersion = ExtractActorAppVersion(oldSw);
+            if (string.IsNullOrWhiteSpace(actorVersion))
+                actorVersion = newSw;
+
+            string mqttCassiaName = (_mqttService.CurrentOptions?.Name ?? "").Trim();
+            string mqttNetworkId = (_mqttService.CurrentOptions?.NetworkId ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(mqttCassiaName))
+                mqttCassiaName = Environment.MachineName;
+            if (string.IsNullOrWhiteSpace(mqttNetworkId))
+                mqttNetworkId = Environment.UserName;
+
+            string normalizedResult = string.IsNullOrWhiteSpace(result)
+                ? (dev.IsFullyUpgraded ? "Success" : "Failed")
+                : result.Trim();
+
+            var payload = new
+            {
+                MAC = mac,
+                ProductNo = productNo,
+                DateTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                OldSW = oldSw,
+                NewSW = newSw,
+                ActorVersion = actorVersion,
+                TestResult = dev.IsFullyUpgraded ? "Pass" : "Fail",
+                ExecutionTime = FormatDuration(totalProcessTime),
+                Handler = "AccessAPP",
+                Result = normalizedResult,
+                TotalProcessTime = FormatDuration(totalProcessTime),
+                FailedStep = failedStep ?? "",
+                User = mqttNetworkId,
+                Machine = mqttCassiaName,
+                ToolVersion = AccessAPP.Version.AppVersion
+            };
+
+            int timeoutMs = Math.Max(1000, RuntimeVariables.UPGRADE_RESULT_DB_LOG_TIMEOUT_MS);
+
+            try
+            {
+                using var cts = new CancellationTokenSource(timeoutMs);
+                string json = JsonSerializer.Serialize(payload);
+                using var content = new StringContent(json, Encoding.UTF8, "application/json");
+                using var response = await _httpClient.PostAsync(apiUrl, content, cts.Token).ConfigureAwait(false);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    AppLog.Info($"[UPGRADE DB LOG] Sent: {mac} ({(int)response.StatusCode})");
+                    return;
+                }
+
+                string errorBody = await TryReadResponseBodyAsync(response).ConfigureAwait(false);
+                AppLog.Warn($"[UPGRADE DB LOG] Failed for {mac}: HTTP {(int)response.StatusCode} {response.ReasonPhrase}. {errorBody}");
+            }
+            catch (OperationCanceledException)
+            {
+                AppLog.Warn($"[UPGRADE DB LOG] Timeout after {timeoutMs}ms for {mac}.");
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn($"[UPGRADE DB LOG] Send failed for {mac}: {ex.Message}");
+            }
+        }
+
+        private static string FormatDuration(TimeSpan value)
+        {
+            if (value < TimeSpan.Zero)
+                value = TimeSpan.Zero;
+
+            return value.ToString(@"hh\:mm\:ss");
+        }
+
+        private static string ExtractActorAppVersion(string firmwareText)
+        {
+            if (string.IsNullOrWhiteSpace(firmwareText))
+                return "";
+
+            var match = Regex.Match(
+                firmwareText,
+                @"Actor:\s*App:\s*([0-9]{1,2}\.[0-9]{2})",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+            return match.Success ? match.Groups[1].Value : "";
+        }
+
+        private static async Task<string> TryReadResponseBodyAsync(HttpResponseMessage response)
+        {
+            try
+            {
+                string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(body))
+                    return "";
+
+                string flat = body.Replace("\r", " ").Replace("\n", " ").Trim();
+                return flat.Length <= 220 ? flat : flat.Substring(0, 220) + "...";
+            }
+            catch
+            {
+                return "";
             }
         }
 

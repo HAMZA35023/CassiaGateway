@@ -160,6 +160,20 @@ namespace AccessAPP.Services
             return !string.IsNullOrWhiteSpace(name);
         }
 
+        public static bool TryGetProductNumber(string mac, out string productNumber)
+        {
+            productNumber = "";
+            var inst = _ownInstance;
+            if (inst is null) return false;
+            if (string.IsNullOrWhiteSpace(mac)) return false;
+
+            if (!inst._deviceList.TryGetValue(mac, out var dev) || dev is null)
+                return false;
+
+            productNumber = (dev.ProductNumber ?? "").Trim();
+            return !string.IsNullOrWhiteSpace(productNumber);
+        }
+
         // Add or update devices based on MAC address and filter by RSSI
         public void AddOrUpdateDevice(ScannedDevicesView device, int minRssi)
         {

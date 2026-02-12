@@ -58,6 +58,11 @@ namespace AccessAPP
         public static bool UPGRADE_OPTIMIZE_RECONNECT_FLOW = true;
         public static bool UPGRADE_CONNECT_TRUST_GATEWAY_CONNECTED_STATE = true;
 
+        // End-of-upgrade reporting (best-effort, no local buffering)
+        public static bool UPGRADE_RESULT_DB_LOG_ENABLED = true;
+        public static string UPGRADE_RESULT_DB_LOG_URL = "https://devel.statistics.niko-test.nu/api/logentry";
+        public static int UPGRADE_RESULT_DB_LOG_TIMEOUT_MS = 5000;
+
         // LED range visualization command defaults
         public static int LED_RANGE_MIN_RSSI = -75;
         public static int LED_RANGE_GREEN_THRESHOLD = -55;

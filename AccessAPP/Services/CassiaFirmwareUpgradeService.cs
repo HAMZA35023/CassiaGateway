@@ -45,6 +45,7 @@ namespace AccessAPP.Services
         private readonly CassiaConnectService _connectService;
         private readonly CassiaPinCodeService _cassiaPinCodeService;
         private static DeviceStorageService _deviceStorageService;
+        private readonly IMqttService _mqttService;
         private readonly IConfiguration _configuration;
 
         private readonly IDeviceSettingsBackupService _settingsBackup;
@@ -280,13 +281,14 @@ public static int GetProgrammingCount()
 
         // Overall / all instances
 
-        public CassiaFirmwareUpgradeService(HttpClient httpClient, CassiaConnectService connectService, CassiaPinCodeService cassiaPinCodeService, CassiaNotificationService notificationService, DeviceStorageService deviceStorageService, IConfiguration configuration)
+        public CassiaFirmwareUpgradeService(HttpClient httpClient, CassiaConnectService connectService, CassiaPinCodeService cassiaPinCodeService, CassiaNotificationService notificationService, DeviceStorageService deviceStorageService, IConfiguration configuration, IMqttService mqttService)
         {
             _ownInstance = this;
             _httpClient = httpClient;
             _connectService = connectService;
             _deviceStorageService = deviceStorageService;
             _cassiaPinCodeService = cassiaPinCodeService;
+            _mqttService = mqttService;
             _configuration = configuration;
             _gatewayIpAddress = _configuration.GetValue<string>("GatewayConfiguration:IpAddress");
             _gatewayPort = _configuration.GetValue<int>("GatewayConfiguration:Port");
