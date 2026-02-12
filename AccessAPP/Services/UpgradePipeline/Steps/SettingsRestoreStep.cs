@@ -128,6 +128,23 @@ internal sealed class SettingsRestoreStep : IDeviceUpgradeStep
             }
         }
 
+        bool postActorNeedsConnection =
+            UpgradePipelineSupport.IsDaliMaster(ctx.DetectorType) &&
+            (RuntimeVariables.AutoSetSysFailLevelUnderUpdate || RuntimeVariables.Restore102DBAfterUpgrade);
+
+        bool actorStepPending = ctx.UpgradeActor && !dev.ActorSuccess;
+        bool keepSessionForPostActor =
+            RuntimeVariables.UPGRADE_OPTIMIZE_RECONNECT_FLOW &&
+            postActorNeedsConnection &&
+            !actorStepPending;
+
+        if (keepSessionForPostActor)
+        {
+            ctx.ReuseConnectionForPostActor = true;
+            UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Connected", "Session kept for post-actor steps", ctx.FirmwareVersion);
+            return true;
+        }
+
         await svc.ConnectService.DisconnectFromBleDevice(svc.GatewayIpAddress, ctx.MacAddress, 0, chip: ctx.ChipId).ConfigureAwait(false);
         return true;
     }

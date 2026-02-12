@@ -28,21 +28,49 @@ internal sealed class PostActorStep : IDeviceUpgradeStep
 
         if (isDaliMaster)
         {
-            await Task.Delay(10000).ConfigureAwait(false);
+            bool loggedIn = false;
+            bool reusedSession =
+                RuntimeVariables.UPGRADE_OPTIMIZE_RECONNECT_FLOW &&
+                ctx.ReuseConnectionForPostActor;
 
-            AppLog.Info($"Post-actor: connect+login for {ctx.MacAddress}");
-            var cl = await svc.ConnectAndLoginWithRetryForPipelineAsync(
-                svc.GatewayIpAddress, 80, ctx.MacAddress, ctx.Pincode, ctx.LogId, ctx.FirmwareVersion,
-                maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
-                delayBetweenAttemptsMs: 6000).ConfigureAwait(false);
-
-            if (!cl.Success)
+            if (!reusedSession)
             {
-                UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, $"Post-actor connect+login failed: {cl.Message}", "Warn", ctx.FirmwareVersion);
-                ctx.Response.Success = false;
-                ctx.Response.StatusCode = 500;
-                ctx.Response.Message = "Could not connect and login to detector!";
-                return false;
+                await Task.Delay(10000).ConfigureAwait(false);
+            }
+            else
+            {
+                UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Connected", "Skipped (reusing session from settings restore)", ctx.FirmwareVersion);
+                loggedIn = await svc.EnsureLoginOnConnectedSessionUnlessBootModeAsync(
+                    ctx.MacAddress,
+                    ctx.Pincode,
+                    ctx.LogId,
+                    ctx.FirmwareVersion,
+                    stageName: "LoggedIn (post-actor reused session)",
+                    maxAttempts: 1).ConfigureAwait(false);
+
+                if (!loggedIn)
+                {
+                    UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Connected", "Reused session unavailable; reconnecting", ctx.FirmwareVersion);
+                    ctx.ReuseConnectionForPostActor = false;
+                }
+            }
+
+            if (!loggedIn)
+            {
+                AppLog.Info($"Post-actor: connect+login for {ctx.MacAddress}");
+                var cl = await svc.ConnectAndLoginWithRetryForPipelineAsync(
+                    svc.GatewayIpAddress, 80, ctx.MacAddress, ctx.Pincode, ctx.LogId, ctx.FirmwareVersion,
+                    maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
+                    delayBetweenAttemptsMs: 6000).ConfigureAwait(false);
+
+                if (!cl.Success)
+                {
+                    UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, $"Post-actor connect+login failed: {cl.Message}", "Warn", ctx.FirmwareVersion);
+                    ctx.Response.Success = false;
+                    ctx.Response.StatusCode = 500;
+                    ctx.Response.Message = "Could not connect and login to detector!";
+                    return false;
+                }
             }
 
             if (RuntimeVariables.AutoSetSysFailLevelUnderUpdate)
