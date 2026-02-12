@@ -48,7 +48,8 @@ namespace AccessAPP.Services
                     if (!string.Equals(nodeMac, targetMac, StringComparison.OrdinalIgnoreCase))
                         continue;
 
-                    if (expectedChip >= 0 && node.chipId != expectedChip)
+                    int nodeChip = node.chipId >= 0 ? node.chipId : node.chip;
+                    if (expectedChip >= 0 && nodeChip >= 0 && nodeChip != expectedChip)
                         continue;
 
                     var state = node.connectionState ?? "";

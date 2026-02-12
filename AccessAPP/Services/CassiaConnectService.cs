@@ -1,6 +1,7 @@
 ﻿using AccessAPP.Models;
 using AccessAPP.Services.HelperClasses;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using System.Net;
 using System.Text;
 using System.Threading;
@@ -182,7 +183,15 @@ namespace AccessAPP.Services
                 if (getResponse.IsSuccessStatusCode)
                 {
                     string responseBody = await getResponse.Content.ReadAsStringAsync();
-                    var connectedDevices = JsonConvert.DeserializeObject<ConnectedDevicesView>(responseBody);
+
+                    // Cassia may return "nodes" as a single object when only one device is connected.
+                    // Normalize to an array so deserialization is stable across both response shapes.
+                    var root = JObject.Parse(responseBody);
+                    if (root["nodes"] is JObject singleNode)
+                        root["nodes"] = new JArray(singleNode);
+
+                    var connectedDevices = root.ToObject<ConnectedDevicesView>() ?? new ConnectedDevicesView();
+                    connectedDevices.nodes ??= new List<Node>();
                     return connectedDevices;
                 }
                 else
