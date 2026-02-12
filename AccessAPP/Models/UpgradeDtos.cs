@@ -29,6 +29,8 @@ namespace AccessAPP.Models
         public bool requires102Restore = false;
         public bool restore102Success = false;
         public bool shouldRetry = true;
+        public bool PrecheckSessionAlive { get; set; } = false;
+        public bool PrecheckBootMode { get; set; } = false;
 
         public string finalUpgradeResult = "Failed";
 

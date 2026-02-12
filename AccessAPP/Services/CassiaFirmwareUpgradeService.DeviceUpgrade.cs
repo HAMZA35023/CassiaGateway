@@ -65,6 +65,7 @@ try
                 // Probe-connect first, then detect boot/app mode (same principle as the upgrade pipeline).
                 // This avoids stale/false-negative mode checks before a BLE session is established.
                 var probeConnected = false;
+                var precheckSessionAlive = false;
                 var probe = await ConnectOnlyWithRetryAsync_Internal(
                     maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
                     delayMs: 2000,
@@ -76,6 +77,7 @@ try
                 ).ConfigureAwait(false);
 
                 probeConnected = probe.ok;
+                precheckSessionAlive = probeConnected;
                 var autoForceFromBootMode = false;
                 var isInBootMode = false;
                 if (probeConnected)
@@ -121,6 +123,7 @@ try
                                 try
                                 {
                                     await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, mac, 0, chip: GetChipForMac(mac)).ConfigureAwait(false);
+                                    precheckSessionAlive = false;
                                 }
                                 catch
                                 {
@@ -128,12 +131,14 @@ try
                                 }
 
                                 dev.CurrentFirmwareVersion = await GetFwVersion(mac, dev.Pincode, disconnect_on_finish: true).ConfigureAwait(false);
+                                precheckSessionAlive = false;
                             }
                         }
                         else
                         {
                             // Fallback only when probe connect was not available.
                             dev.CurrentFirmwareVersion = await GetFwVersion(mac, dev.Pincode, disconnect_on_finish: true).ConfigureAwait(false);
+                            precheckSessionAlive = false;
                         }
                         if (!string.IsNullOrWhiteSpace(dev.CurrentFirmwareVersion))
                             break;
@@ -165,17 +170,25 @@ try
                     }
                 }
 
-                if (probeConnected)
+                if (probeConnected && !(RuntimeVariables.UPGRADE_OPTIMIZE_RECONNECT_FLOW && precheckSessionAlive && !isInBootMode))
                 {
                     try
                     {
                         await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, mac, 0, chip: GetChipForMac(mac)).ConfigureAwait(false);
+                        precheckSessionAlive = false;
                     }
                     catch
                     {
                         // best-effort disconnect after precheck probe
                     }
                 }
+                else if (probeConnected && precheckSessionAlive && RuntimeVariables.UPGRADE_OPTIMIZE_RECONNECT_FLOW && !isInBootMode)
+                {
+                    UpgradeLogger.Log(logId, mac, "Connected (precheck probe)", "Keeping session open for next pipeline step", dev.FirmwareVersion);
+                }
+
+                dev.PrecheckSessionAlive = precheckSessionAlive;
+                dev.PrecheckBootMode = isInBootMode;
 
                 if (autoForceFromBootMode)
                     UpgradeLogger.Log(logId, mac, "FW precheck", "Device is in bootloader; ForceUpdate auto-enabled.", dev.FirmwareVersion);

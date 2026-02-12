@@ -19,26 +19,34 @@ internal sealed class ProbeAndBootModeStep : IDeviceUpgradeStep
         // 0) Determine boot/application mode early (best-effort + robust connect)
         AppLog.Info($"Getting current FW Verison if possible {ctx.MacAddress}");
 
-        var connProbe = await svc.ConnectOnlyWithRetryAsync_Internal(
-            maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
-            delayMs: 2000,
-            stageName: "Connected (probe)",
-            logSuccess: false,
-            macAddress: ctx.MacAddress,
-            firmwareVersion: ctx.FirmwareVersion,
-            logId: ctx.LogId
-        ).ConfigureAwait(false);
-
-        if (!connProbe.ok)
+        bool reusedPrecheckSession = RuntimeVariables.UPGRADE_OPTIMIZE_RECONNECT_FLOW && dev.PrecheckSessionAlive;
+        if (!reusedPrecheckSession)
         {
-            UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Connected", "Failed", ctx.FirmwareVersion);
-            ctx.Response.Success = false;
-            ctx.Response.StatusCode = (int)(connProbe.code == 0 ? HttpStatusCode.ServiceUnavailable : connProbe.code);
-            ctx.Response.Message = "Failed to connect to device.";
-            dev.LastFailureReason = ctx.Response.Message;
-            dev.RetryCount++;
-            dev.shouldRetry = false;
-            return false;
+            var connProbe = await svc.ConnectOnlyWithRetryAsync_Internal(
+                maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
+                delayMs: 2000,
+                stageName: "Connected (probe)",
+                logSuccess: false,
+                macAddress: ctx.MacAddress,
+                firmwareVersion: ctx.FirmwareVersion,
+                logId: ctx.LogId
+            ).ConfigureAwait(false);
+
+            if (!connProbe.ok)
+            {
+                UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Connected", "Failed", ctx.FirmwareVersion);
+                ctx.Response.Success = false;
+                ctx.Response.StatusCode = (int)(connProbe.code == 0 ? HttpStatusCode.ServiceUnavailable : connProbe.code);
+                ctx.Response.Message = "Failed to connect to device.";
+                dev.LastFailureReason = ctx.Response.Message;
+                dev.RetryCount++;
+                dev.shouldRetry = false;
+                return false;
+            }
+        }
+        else
+        {
+            UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Connected (probe)", "Skipped (reusing live precheck session)", ctx.FirmwareVersion);
         }
 
         ctx.ChipId = svc.GetChipForMac(ctx.MacAddress);
