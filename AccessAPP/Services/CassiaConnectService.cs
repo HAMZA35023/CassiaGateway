@@ -185,10 +185,29 @@ namespace AccessAPP.Services
                     string responseBody = await getResponse.Content.ReadAsStringAsync();
 
                     // Cassia may return "nodes" as a single object when only one device is connected.
-                    // Normalize to an array so deserialization is stable across both response shapes.
+                    // Cassia may also return "bdaddrs" as either an object or an array.
+                    // Normalize both shapes so deserialization is stable.
                     var root = JObject.Parse(responseBody);
                     if (root["nodes"] is JObject singleNode)
                         root["nodes"] = new JArray(singleNode);
+                    else if (root["nodes"] is not JArray)
+                        root["nodes"] = new JArray();
+
+                    if (root["nodes"] is JArray nodesArray)
+                    {
+                        foreach (var token in nodesArray)
+                        {
+                            if (token is not JObject nodeObj)
+                                continue;
+
+                            if (nodeObj["bdaddrs"] is JArray bdArr)
+                            {
+                                nodeObj["bdaddrs"] = bdArr.Count > 0 && bdArr[0] is JObject first
+                                    ? first
+                                    : new JObject();
+                            }
+                        }
+                    }
 
                     var connectedDevices = root.ToObject<ConnectedDevicesView>() ?? new ConnectedDevicesView();
                     connectedDevices.nodes ??= new List<Node>();

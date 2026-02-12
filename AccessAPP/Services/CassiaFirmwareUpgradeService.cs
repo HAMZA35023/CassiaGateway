@@ -110,11 +110,17 @@ namespace AccessAPP.Services
             }
 
             int attempts = Math.Max(1, maxAttempts);
+            int loginTimeoutMs = Math.Max(2000, RuntimeVariables.UPGRADE_LOGIN_ATTEMPT_TIMEOUT_MS);
+            int retryDelayMs = Math.Max(100, RuntimeVariables.UPGRADE_LOGIN_RETRY_DELAY_MS);
             for (int attempt = 1; attempt <= attempts; attempt++)
             {
                 try
                 {
-                    var loginResult = await _connectService.AttemptLogin(_gatewayIpAddress, macAddress).ConfigureAwait(false);
+                    using var cts = new CancellationTokenSource(loginTimeoutMs);
+                    var loginResult = await _connectService
+                        .AttemptLogin(_gatewayIpAddress, macAddress, cts.Token)
+                        .ConfigureAwait(false);
+
                     bool pinReq = loginResult.ResponseBody.PincodeRequired;
 
                     if (pinReq && !string.IsNullOrEmpty(pincode))
@@ -134,7 +140,11 @@ namespace AccessAPP.Services
                         return true;
                     }
 
-                    UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Failed (attempt {attempt}/{attempts})", firmwareVersion ?? "");
+                    UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Failed (attempt {attempt}/{attempts}) - Status={statusText}", firmwareVersion ?? "");
+                }
+                catch (OperationCanceledException)
+                {
+                    UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Timeout (attempt {attempt}/{attempts}, {loginTimeoutMs / 1000}s)", firmwareVersion ?? "");
                 }
                 catch (Exception ex)
                 {
@@ -142,7 +152,7 @@ namespace AccessAPP.Services
                 }
 
                 if (attempt < attempts)
-                    await Task.Delay(2000).ConfigureAwait(false);
+                    await Task.Delay(retryDelayMs).ConfigureAwait(false);
             }
 
             return false;

@@ -103,8 +103,9 @@ try
                 }
                 if (!isInBootMode)
                 {
-                    // FW read can be flaky; retry a few times before giving up.
-                    const int firmwareReadAttempts = 3;
+                    // Connected-session read + reconnect fallback already have internal retries.
+                    // Keep the outer loop to a single pass to avoid repeated reconnect storms.
+                    const int firmwareReadAttempts = 1;
                     for (int i = 1; i <= firmwareReadAttempts; i++)
                     {
                         if (probeConnected)
@@ -170,7 +171,11 @@ try
                     }
                 }
 
-                if (probeConnected && !(RuntimeVariables.UPGRADE_OPTIMIZE_RECONNECT_FLOW && precheckSessionAlive && !isInBootMode))
+                if (probeConnected && !precheckSessionAlive)
+                {
+                    // Session already closed in precheck fallback path; avoid redundant disconnect call.
+                }
+                else if (probeConnected && !(RuntimeVariables.UPGRADE_OPTIMIZE_RECONNECT_FLOW && precheckSessionAlive && !isInBootMode))
                 {
                     try
                     {

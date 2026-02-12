@@ -22,24 +22,61 @@ namespace AccessAPP.Services
         {
             try
             {
-                var loginResult = await _connectService.AttemptLogin(_gatewayIpAddress, macAddress).ConfigureAwait(false);
+                int loginAttempts = Math.Max(1, RuntimeVariables.UPGRADE_LOGIN_RETRIES_PER_CONNECTED_SESSION);
+                int loginDelayMs = Math.Max(100, RuntimeVariables.UPGRADE_LOGIN_RETRY_DELAY_MS);
+                int loginTimeoutMs = Math.Max(2000, RuntimeVariables.UPGRADE_LOGIN_ATTEMPT_TIMEOUT_MS);
 
-                bool pinReq = loginResult.ResponseBody.PincodeRequired;
-                if (pinReq && !string.IsNullOrEmpty(pincode))
+                bool loggedIn = false;
+                for (int loginAttempt = 1; loginAttempt <= loginAttempts; loginAttempt++)
                 {
-                    var check = await _cassiaPinCodeService.CheckPincode(_gatewayIpAddress, macAddress, pincode).ConfigureAwait(false);
-                    loginResult.ResponseBody = check.ResponseBody;
-                    loginResult.ResponseBody.PincodeRequired = pinReq;
+                    try
+                    {
+                        using var loginCts = new CancellationTokenSource(loginTimeoutMs);
+                        var loginResult = await _connectService
+                            .AttemptLogin(_gatewayIpAddress, macAddress, loginCts.Token)
+                            .ConfigureAwait(false);
+
+                        bool pinReq = loginResult.ResponseBody.PincodeRequired;
+                        if (pinReq && !string.IsNullOrEmpty(pincode))
+                        {
+                            var check = await _cassiaPinCodeService.CheckPincode(_gatewayIpAddress, macAddress, pincode).ConfigureAwait(false);
+                            loginResult.ResponseBody = check.ResponseBody;
+                            loginResult.ResponseBody.PincodeRequired = pinReq;
+                        }
+
+                        var statusText = loginResult.Status?.ToString() ?? "";
+                        bool statusOk = string.Equals(statusText, "OK", StringComparison.OrdinalIgnoreCase);
+                        bool pinOk = !pinReq || loginResult.ResponseBody.PinCodeAccepted;
+
+                        if (statusOk && pinOk)
+                        {
+                            loggedIn = true;
+                            UpgradeLogger.Log(logId ?? "", macAddress, "LoggedIn (precheck FW read)", $"Success (attempt {loginAttempt}/{loginAttempts})", firmwareVersion ?? "");
+                            break;
+                        }
+
+                        var failureReason = pinReq && !pinOk
+                            ? "pincode required/invalid"
+                            : $"status={statusText}";
+                        UpgradeLogger.Log(logId ?? "", macAddress, "LoggedIn (precheck FW read)", $"Failed (attempt {loginAttempt}/{loginAttempts}) - {failureReason}", firmwareVersion ?? "");
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        UpgradeLogger.Log(logId ?? "", macAddress, "LoggedIn (precheck FW read)", $"Timeout (attempt {loginAttempt}/{loginAttempts}, {loginTimeoutMs / 1000}s)", firmwareVersion ?? "");
+                    }
+                    catch (Exception ex)
+                    {
+                        UpgradeLogger.Log(logId ?? "", macAddress, "LoggedIn (precheck FW read)", $"Exception (attempt {loginAttempt}/{loginAttempts}): {ex.Message}", firmwareVersion ?? "");
+                        AppLog.Warn($"Login precheck attempt {loginAttempt}/{loginAttempts} failed for {macAddress}: {ex.Message}");
+                    }
+
+                    if (loginAttempt < loginAttempts)
+                        await Task.Delay(loginDelayMs).ConfigureAwait(false);
                 }
 
-                if (pinReq && !loginResult.ResponseBody.PinCodeAccepted)
-                {
-                    AppLog.Warn($" Login failed on connected session for {macAddress}: pincode required/invalid");
-                    UpgradeLogger.Log(logId ?? "", macAddress, "LoggedIn (precheck FW read)", "Failed (pincode required/invalid)", firmwareVersion ?? "");
+                if (!loggedIn)
                     return "";
-                }
 
-                UpgradeLogger.Log(logId ?? "", macAddress, "LoggedIn (precheck FW read)", "Success", firmwareVersion ?? "");
                 int delayBeforeReadMs = Math.Max(0, RuntimeVariables.UPGRADE_DELAY_AFTER_LOGIN_BEFORE_FW_READ_MS);
                 if (delayBeforeReadMs > 0)
                     await Task.Delay(delayBeforeReadMs).ConfigureAwait(false);

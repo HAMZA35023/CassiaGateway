@@ -28,11 +28,16 @@ namespace AccessAPP
         // Upgrade delay tuning (runtime-only)
         public static int UPGRADE_DELAY_AFTER_END_DISCONNECT_MS = 0;
         public static int UPGRADE_DELAY_AFTER_BOOT_JUMP_MS = 0;
-        public static int UPGRADE_DELAY_AFTER_FAILED_CONNECT_MS = 3000;
+        public static int UPGRADE_DELAY_AFTER_FAILED_CONNECT_MS = 500;
         public static int UPGRADE_CONNECT_ATTEMPT_TIMEOUT_MS = 12000;
         public static int UPGRADE_CONNECT_STABILIZATION_DELAY_MS = 500;
         public static int UPGRADE_CONNECT_GATEWAY_STATE_CHECK_ATTEMPTS = 3;
         public static int UPGRADE_CONNECT_GATEWAY_STATE_CHECK_DELAY_MS = 300;
+        public static int UPGRADE_CONNECT_TRANSIENT_500_RETRIES_PER_ATTEMPT = 2;
+        public static int UPGRADE_CONNECT_TRANSIENT_500_RETRY_DELAY_MS = 350;
+        public static int UPGRADE_LOGIN_ATTEMPT_TIMEOUT_MS = 8000;
+        public static int UPGRADE_LOGIN_RETRIES_PER_CONNECTED_SESSION = 2;
+        public static int UPGRADE_LOGIN_RETRY_DELAY_MS = 400;
         public static int UPGRADE_DELAY_AFTER_LOGIN_BEFORE_FW_READ_MS = 3000;
         public static int UPGRADE_FW_READ_ATTEMPTS = 3;
         public static int UPGRADE_FW_READ_RETRY_DELAY_MS = 1000;
