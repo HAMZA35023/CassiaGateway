@@ -531,7 +531,8 @@ return resp;
             bool isBootloader,
             string DetectorType,
             string FirmwareVersion,
-            string logId = null)
+            string logId = null,
+            bool reuseExistingConnection = false)
         {
             ServiceResponse response = new ServiceResponse();
             sensorType = DetectorType;
@@ -551,7 +552,7 @@ return resp;
             // Local helpers (no new deps)
             // ----------------------------
 
-            const int connectMaxAttempts = 5;
+            int connectMaxAttempts = Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS);
             const int loginMaxAttempts = 3;
             const int bootJumpMaxAttempts = 5;
 
@@ -700,12 +701,20 @@ return true;
             // ----------------------------
             // Step 1: Connect (robust)
             // ----------------------------
-            if (!await ConnectWithRetryAsync("Connected"))
+            if (!reuseExistingConnection)
             {
-                response.Success = false;
-                response.StatusCode = 500;
-                response.Message = "Failed to connect to device.";
-                return response;
+                if (!await ConnectWithRetryAsync("Connected"))
+                {
+                    response.Success = false;
+                    response.StatusCode = 500;
+                    response.Message = "Failed to connect to device.";
+                    return response;
+                }
+            }
+            else
+            {
+                UpgradeLogger.Log(logId, nodeMac, "Connected", "Skipped (reusing existing session)");
+                AppLog.Info($"Skipping initial connect for {nodeMac} (reusing existing session).");
             }
 
             AppLog.Info($"Connected to device...{nodeMac}");
@@ -724,11 +733,33 @@ UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
             // ----------------------------
             if (!await LoginWithRetryAsync())
             {
+                if (reuseExistingConnection)
+                {
+                    UpgradeLogger.Log(logId, nodeMac, "Login", "Failed on reused session; reconnecting");
+                    if (!await ConnectWithRetryAsync("Connected (fallback after reused-session login fail)"))
+                    {
+                        response.Success = false;
+                        response.StatusCode = 500;
+                        response.Message = "Failed to connect to device.";
+                        return response;
+                    }
+                    if (!await LoginWithRetryAsync())
+                    {
+                        response.Success = false;
+                        response.StatusCode = 401;
+                        response.Message = "Failed to login to the device.";
+                        UpgradeLogger.Log(logId, nodeMac, "Login", "Failed");
+                        return response;
+                    }
+                }
+                else
+                {
                 response.Success = false;
                 response.StatusCode = 401;
                 response.Message = "Failed to login to the device.";
                 UpgradeLogger.Log(logId, nodeMac, "Login", "Failed");
                 return response;
+                }
             }
 
             AppLog.Info($"Logged into device...{nodeMac}");
@@ -776,7 +807,7 @@ await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chi
             UpgradeLogger.Log(logId, nodeMac, "Process Start Actor Upgrade", "Success");
             ServiceResponse response = new();
 
-            const int connectMaxAttempts = 5;
+            int connectMaxAttempts = Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS);
             const int loginMaxAttempts = 3;
             const int bootJumpMaxAttempts = 3;
 
@@ -941,7 +972,13 @@ await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chi
             if (RuntimeVariables.UPGRADE_DELAY_AFTER_BOOT_JUMP_MS > 0)
                 await Task.Delay(RuntimeVariables.UPGRADE_DELAY_AFTER_BOOT_JUMP_MS);
 
-            return await ProcessingActorUpgrade(nodeMac, bActor, DetectorType, FirmwareVersion, logId);
+            return await ProcessingActorUpgrade(
+                nodeMac,
+                bActor,
+                DetectorType,
+                FirmwareVersion,
+                logId,
+                skipBootModeValidation: RuntimeVariables.UPGRADE_OPTIMIZE_RECONNECT_FLOW);
         }
 
         

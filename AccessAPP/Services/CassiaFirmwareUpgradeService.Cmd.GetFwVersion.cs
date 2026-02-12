@@ -76,7 +76,7 @@ namespace AccessAPP.Services
             {
                 var cl = await ConnectAndLoginWithRetryAsync(
                     _gatewayIpAddress, 80, macAddress, pincode, null, null,
-                    maxAttempts: 3,
+                    maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
                     delayBetweenAttemptsMs: 2000).ConfigureAwait(false);
                 if (!cl.Success)
                 {

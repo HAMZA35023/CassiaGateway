@@ -28,7 +28,9 @@ namespace AccessAPP
         // Upgrade delay tuning (runtime-only)
         public static int UPGRADE_DELAY_AFTER_END_DISCONNECT_MS = 0;
         public static int UPGRADE_DELAY_AFTER_BOOT_JUMP_MS = 0;
-        public static int UPGRADE_DELAY_AFTER_FAILED_CONNECT_MS = 0;
+        public static int UPGRADE_DELAY_AFTER_FAILED_CONNECT_MS = 1000;
+        public static int UPGRADE_CONNECT_MAX_ATTEMPTS = 10;
+        public static bool UPGRADE_OPTIMIZE_RECONNECT_FLOW = true;
 
         // LED range visualization command defaults
         public static int LED_RANGE_MIN_RSSI = -75;

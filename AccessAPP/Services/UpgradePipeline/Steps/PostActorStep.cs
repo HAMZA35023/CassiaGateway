@@ -1,3 +1,4 @@
+using System;
 using System.Threading.Tasks;
 using AccessAPP.Logging;
 using AccessAPP.Services.HelperClasses;
@@ -26,7 +27,7 @@ internal sealed class PostActorStep : IDeviceUpgradeStep
             AppLog.Info($"Post-actor: connect+login for {ctx.MacAddress}");
             var cl = await svc.ConnectAndLoginWithRetryForPipelineAsync(
                 svc.GatewayIpAddress, 80, ctx.MacAddress, ctx.Pincode, ctx.LogId, ctx.FirmwareVersion,
-                maxAttempts: 4,
+                maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
                 delayBetweenAttemptsMs: 6000).ConfigureAwait(false);
 
             if (!cl.Success)
@@ -61,7 +62,7 @@ internal sealed class PostActorStep : IDeviceUpgradeStep
             {
                 await svc.ConnectAndLoginWithRetryForPipelineAsync(
                     svc.GatewayIpAddress, svc.GatewayPort, ctx.MacAddress, ctx.Pincode, ctx.LogId, ctx.FirmwareVersion,
-                    maxAttempts: 3,
+                    maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
                     delayBetweenAttemptsMs: 2000).ConfigureAwait(false);
             }
         }

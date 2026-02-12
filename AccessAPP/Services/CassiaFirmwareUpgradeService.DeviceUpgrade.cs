@@ -66,7 +66,7 @@ try
                 // This avoids stale/false-negative mode checks before a BLE session is established.
                 var probeConnected = false;
                 var probe = await ConnectOnlyWithRetryAsync_Internal(
-                    maxAttempts: 5,
+                    maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
                     delayMs: 2000,
                     stageName: "Connected (precheck probe)",
                     macAddress: mac,
@@ -357,7 +357,7 @@ foreach (var s in ordered)
 var response = new ServiceResponse();
 
             var connProbe = await ConnectOnlyWithRetryAsync(
-                maxAttempts: 10,
+                maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
                 delayMs: 5000,
                 stageName: "Connected (ProcessingSensorUpgrade probe)",
                 logSuccess: false,
@@ -446,7 +446,13 @@ await Task.Delay(3000); // Delay between attempts
 
         }
 
-        public async Task<ServiceResponse> ProcessingActorUpgrade(string nodeMac, bool bActor, string DetectorType, string FirmwareVersion, string logId) // should be moved to firmware services
+        public async Task<ServiceResponse> ProcessingActorUpgrade(
+            string nodeMac,
+            bool bActor,
+            string DetectorType,
+            string FirmwareVersion,
+            string logId,
+            bool skipBootModeValidation = false) // should be moved to firmware services
         {
             var response = new ServiceResponse();
             const int maxRetryAttempts = 3; // Maximum number of retries to put the actor into boot mode
@@ -454,38 +460,46 @@ await Task.Delay(3000); // Delay between attempts
             int retryCount = 0;
 
             // Step 1: Check if the actor is in boot mode
-            while (retryCount < maxRetryAttempts)
+            if (!skipBootModeValidation)
             {
-                var isActorInBootMode = await ActorBootCheck(_gatewayIpAddress, nodeMac);
-
-                if (isActorInBootMode)
+                while (retryCount < maxRetryAttempts)
                 {
-                    AppLog.Info($"Actor {nodeMac} is in boot mode.");
-break; // Exit the loop if the actor is already in boot mode
-                }
-                else
-                {
-                    retryCount++;
-                    AppLog.Warn($"Actor {nodeMac} is not in boot mode. Attempting to put it into boot mode. Retry {retryCount}/{maxRetryAttempts}");
-// Send a command to put the actor into boot mode
-                    var jumpToBootloaderSuccess = await SendJumpToBootloader(_gatewayIpAddress, nodeMac, bActor);
+                    var isActorInBootMode = await ActorBootCheck(_gatewayIpAddress, nodeMac);
 
-                    if (!jumpToBootloaderSuccess)
+                    if (isActorInBootMode)
                     {
-                        AppLog.Warn($"Failed to send jump-to-bootloader command for {nodeMac}. Retrying...");
-}
+                        AppLog.Info($"Actor {nodeMac} is in boot mode.");
+                        break; // Exit the loop if the actor is already in boot mode
+                    }
+                    else
+                    {
+                        retryCount++;
+                        AppLog.Warn($"Actor {nodeMac} is not in boot mode. Attempting to put it into boot mode. Retry {retryCount}/{maxRetryAttempts}");
+                        // Send a command to put the actor into boot mode
+                        var jumpToBootloaderSuccess = await SendJumpToBootloader(_gatewayIpAddress, nodeMac, bActor);
 
-                    // Wait for a while before retrying
-                    await Task.Delay(delayBetweenRetries);
+                        if (!jumpToBootloaderSuccess)
+                        {
+                            AppLog.Warn($"Failed to send jump-to-bootloader command for {nodeMac}. Retrying...");
+                        }
+
+                        // Wait for a while before retrying
+                        await Task.Delay(delayBetweenRetries);
+                    }
                 }
+            }
+            else
+            {
+                UpgradeLogger.Log(logId, nodeMac, "Actor BootMode", "Reconnect validation skipped (runtime optimized flow enabled)");
+                AppLog.Info($"Skipping post-jump actor boot-mode validation for {nodeMac} (UPGRADE_OPTIMIZE_RECONNECT_FLOW=true).");
             }
 
             // If after max retries the actor is still not in boot mode, return an error response
-            if (retryCount >= maxRetryAttempts)
+            if (!skipBootModeValidation && retryCount >= maxRetryAttempts)
             {
                 UpgradeLogger.Log(logId, nodeMac, "Actor BootMode", "Failed");
                 AppLog.Warn($"Failed to put actor {nodeMac} into boot mode after {maxRetryAttempts} attempts.");
-response.Success = false;
+                response.Success = false;
                 response.StatusCode = 500;
                 response.Message = "Failed to put actor into boot mode.";
                 return response;

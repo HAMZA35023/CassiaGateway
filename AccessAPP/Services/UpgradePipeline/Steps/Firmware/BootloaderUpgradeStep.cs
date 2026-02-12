@@ -21,6 +21,11 @@ internal sealed class BootloaderUpgradeStep : IDeviceUpgradeStep
         await Task.Delay(5000).ConfigureAwait(false);
 
         ctx.Stopwatch.Restart();
+        bool reuseExistingConnection =
+            RuntimeVariables.UPGRADE_OPTIMIZE_RECONNECT_FLOW &&
+            ctx.ActorUpdatedBeforeFirmware &&
+            !ctx.ActorConnectionReuseConsumed;
+
         var bootloaderUpgradeResult = await svc.UpgradeSensorAsync(
             ctx.MacAddress,
             ctx.Pincode,
@@ -28,7 +33,11 @@ internal sealed class BootloaderUpgradeStep : IDeviceUpgradeStep
             true,
             ctx.DetectorType,
             ctx.FirmwareVersion,
-            ctx.LogId).ConfigureAwait(false);
+            ctx.LogId,
+            reuseExistingConnection: reuseExistingConnection).ConfigureAwait(false);
+
+        if (reuseExistingConnection)
+            ctx.ActorConnectionReuseConsumed = true;
         ctx.Stopwatch.Stop();
 
         AppLog.Info($"Bootloader upgrade completed for {ctx.MacAddress}. Time taken: {ctx.Stopwatch.Elapsed.TotalSeconds} seconds - result: {bootloaderUpgradeResult.Success}");

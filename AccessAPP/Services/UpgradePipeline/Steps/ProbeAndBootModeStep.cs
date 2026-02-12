@@ -20,7 +20,7 @@ internal sealed class ProbeAndBootModeStep : IDeviceUpgradeStep
         AppLog.Info($"Getting current FW Verison if possible {ctx.MacAddress}");
 
         var connProbe = await svc.ConnectOnlyWithRetryAsync_Internal(
-            maxAttempts: 5,
+            maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
             delayMs: 2000,
             stageName: "Connected (probe)",
             logSuccess: false,

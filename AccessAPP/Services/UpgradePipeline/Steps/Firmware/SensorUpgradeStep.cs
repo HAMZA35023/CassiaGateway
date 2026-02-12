@@ -24,6 +24,11 @@ internal sealed class SensorUpgradeStep : IDeviceUpgradeStep
         await Task.Delay(8000).ConfigureAwait(false);
 
         ctx.Stopwatch.Restart();
+        bool reuseExistingConnection =
+            RuntimeVariables.UPGRADE_OPTIMIZE_RECONNECT_FLOW &&
+            ctx.ActorUpdatedBeforeFirmware &&
+            !ctx.ActorConnectionReuseConsumed;
+
         var sensorUpgradeResult = await svc.UpgradeSensorAsync(
             ctx.MacAddress,
             ctx.Pincode,
@@ -31,7 +36,11 @@ internal sealed class SensorUpgradeStep : IDeviceUpgradeStep
             false,
             ctx.DetectorType,
             ctx.FirmwareVersion,
-            ctx.LogId).ConfigureAwait(false);
+            ctx.LogId,
+            reuseExistingConnection: reuseExistingConnection).ConfigureAwait(false);
+
+        if (reuseExistingConnection)
+            ctx.ActorConnectionReuseConsumed = true;
         ctx.Stopwatch.Stop();
 
         AppLog.Info($"Sensor upgrade completed for {ctx.MacAddress}. Time taken: {ctx.Stopwatch.Elapsed.TotalSeconds} seconds - result: {sensorUpgradeResult.Success}");
