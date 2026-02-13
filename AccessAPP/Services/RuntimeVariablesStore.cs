@@ -1,19 +1,54 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json;
+using AccessAPP.Logging;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 
 namespace AccessAPP.Services;
 
 /// <summary>
-/// Runtime-only setter for AccessAPP.RuntimeVariables (public static fields).
-/// NOTE: This does NOT persist values. RuntimeVariables always start at their coded defaults after restart.
+/// Setter for AccessAPP.RuntimeVariables (public static fields) with optional persistence.
+/// If a runtime.json (or configured path) exists, it can be loaded at startup.
 /// </summary>
 public sealed class RuntimeVariablesStore
 {
     private static readonly FieldInfo[] Fields =
         typeof(RuntimeVariables).GetFields(BindingFlags.Public | BindingFlags.Static);
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true,
+        DictionaryKeyPolicy = null
+    };
+
+    private readonly object _fileGate = new();
+
+    public string FilePath { get; }
+
+    public RuntimeVariablesStore()
+    {
+        FilePath = "runtime.json";
+    }
+
+    public RuntimeVariablesStore(string filePath)
+    {
+        FilePath = string.IsNullOrWhiteSpace(filePath) ? "runtime.json" : filePath;
+    }
+
+    public RuntimeVariablesStore(IConfiguration cfg, IHostEnvironment env)
+    {
+        var path = cfg.GetValue<string>("RuntimeVariables:ConfigPath");
+        if (string.IsNullOrWhiteSpace(path))
+            path = "runtime.json";
+        if (!Path.IsPathRooted(path))
+            path = Path.Combine(env.ContentRootPath, path);
+
+        FilePath = path;
+    }
 
     public Dictionary<string, object?> GetAll()
     {
@@ -62,7 +97,7 @@ public sealed class RuntimeVariablesStore
     /// <summary>
     /// Apply variables from a JSON object payload: { "WRITE_SLEEP_MS": 50, "FOO": true }
     /// </summary>
-    public (List<string> applied, Dictionary<string, string> errors) SetFromJsonObject(JsonElement root)
+    public (List<string> applied, Dictionary<string, string> errors) SetFromJsonObject(JsonElement root, ISet<string>? ignoreNames = null)
     {
         var applied = new List<string>();
         var errors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -75,6 +110,9 @@ public sealed class RuntimeVariablesStore
 
         foreach (var prop in root.EnumerateObject())
         {
+            if (ignoreNames != null && ignoreNames.Contains(prop.Name))
+                continue;
+
             if (SetSingle(prop.Name, prop.Value, out var err))
                 applied.Add(prop.Name);
             else
@@ -82,6 +120,56 @@ public sealed class RuntimeVariablesStore
         }
 
         return (applied, errors);
+    }
+
+    public (List<string> applied, Dictionary<string, string> errors) LoadFromDisk(bool createIfMissing = true)
+    {
+        lock (_fileGate)
+        {
+            try
+            {
+                if (!File.Exists(FilePath))
+                {
+                    if (createIfMissing)
+                        SaveToDisk();
+                    return (new List<string>(), new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
+                }
+
+                var json = File.ReadAllText(FilePath);
+                using var doc = JsonDocument.Parse(json);
+                return SetFromJsonObject(doc.RootElement);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn($"Runtime variables load failed: {ex.Message}");
+                return (new List<string>(), new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["file"] = ex.Message
+                });
+            }
+        }
+    }
+
+    public bool SaveToDisk()
+    {
+        lock (_fileGate)
+        {
+            try
+            {
+                var dir = Path.GetDirectoryName(FilePath);
+                if (!string.IsNullOrWhiteSpace(dir))
+                    Directory.CreateDirectory(dir);
+
+                var json = JsonSerializer.Serialize(GetAll(), JsonOptions);
+                File.WriteAllText(FilePath, json);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn($"Runtime variables save failed: {ex.Message}");
+                return false;
+            }
+        }
     }
 
     private static object? ConvertJsonElement(JsonElement el, Type targetType)

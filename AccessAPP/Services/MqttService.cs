@@ -900,7 +900,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 });
             }
 
-            // NEW: Set one or more runtime variables via MQTT (persisted)
+            // NEW: Set one or more runtime variables via MQTT (persist to runtime.json by default)
             if (string.Equals(command, "set-runtime", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(command, "set-runtime-variables", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(command, "set-runtime-vars", StringComparison.OrdinalIgnoreCase) ||
@@ -914,7 +914,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                     var bad = new
                     {
                         success = false,
-                        message = "Missing payload. Send e.g. {\"WRITE_SLEEP_MS\":50,\"USE_BOTH_CASSIA_CHIPS\":true} or {\"name\":\"WRITE_SLEEP_MS\",\"value\":50}.",
+                        message = "Missing payload. Send e.g. {\"WRITE_SLEEP_MS\":50,\"USE_BOTH_CASSIA_CHIPS\":true} or {\"name\":\"WRITE_SLEEP_MS\",\"value\":50}. Optional: {\"persist\":true}.",
                         variables = _runtimeStore.GetAll()
                     };
                     return PublishTeleJsonAsync("runtime", bad, CancellationToken.None);
@@ -929,6 +929,18 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
                         int applied = 0;
                         List<string> errors = new();
+                        bool persist = true;
+                        bool persisted = false;
+
+                        if (root.ValueKind == JsonValueKind.Object &&
+                            root.TryGetProperty("persist", out var persistEl))
+                        {
+                            if (persistEl.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                                persist = persistEl.GetBoolean();
+                            else if (persistEl.ValueKind == JsonValueKind.String &&
+                                     bool.TryParse(persistEl.GetString(), out var p))
+                                persist = p;
+                        }
 
                         // Shape A: {"name":"X","value":...}
                         if (root.ValueKind == JsonValueKind.Object &&
@@ -944,17 +956,23 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                         else
                         {
                             // Shape B: {"X":..., "Y":...}
-                            var (appliedNames, errorMap) = _runtimeStore.SetFromJsonObject(root);
+                            var ignore = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "persist" };
+                            var (appliedNames, errorMap) = _runtimeStore.SetFromJsonObject(root, ignore);
                             applied = appliedNames.Count;
                             foreach (var kv in errorMap)
                                 errors.Add($"{kv.Key}: {kv.Value}");
                         }
+
+                        if (persist && applied > 0)
+                            persisted = _runtimeStore.SaveToDisk();
 
                         var resp = new
                         {
                             success = applied > 0 && errors.Count == 0,
                             applied,
                             errors,
+                            persisted,
+                            persistPath = _runtimeStore.FilePath,
                             variables = _runtimeStore.GetAll()
                         };
 
@@ -966,6 +984,8 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                         {
                             success = false,
                             message = $"Failed to set runtime variables: {ex.Message}",
+                            persisted = false,
+                            persistPath = _runtimeStore.FilePath,
                             variables = _runtimeStore.GetAll()
                         };
 

@@ -42,24 +42,50 @@ internal sealed class SettingsBackupStep : IDeviceUpgradeStep
         AppLog.Info($"Starting settings backup for {ctx.MacAddress}");
         try
         {
-            // IMPORTANT: increased retries + delays, because logs show 417 after boot transitions.
-            var cl = await svc.ConnectAndLoginWithRetryForPipelineAsync(
-                svc.GatewayIpAddress, 80, ctx.MacAddress, ctx.Pincode, ctx.LogId, ctx.FirmwareVersion,
-                maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
-                delayBetweenAttemptsMs: 5000).ConfigureAwait(false);
+            bool reuseSession =
+                RuntimeVariables.UPGRADE_OPTIMIZE_RECONNECT_FLOW &&
+                dev.PrecheckSessionAlive &&
+                !ctx.IsInBoot;
 
-            if (!cl.Success)
+            bool loggedInViaReuse = false;
+            if (reuseSession)
             {
-                UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, $"[1] Connect+login failed: {cl.Message}", "Warn", ctx.FirmwareVersion);
-                AppLog.Warn($" [1] Connect+login failed for {ctx.MacAddress}: {cl.Message}");
+                AppLog.Info($"Reusing precheck session for settings backup: {ctx.MacAddress}");
+                loggedInViaReuse = await svc.EnsureLoginOnConnectedSessionUnlessBootModeAsync(
+                    ctx.MacAddress,
+                    ctx.Pincode,
+                    ctx.LogId,
+                    ctx.FirmwareVersion,
+                    stageName: "LoggedIn (settings backup)",
+                    maxAttempts: 2).ConfigureAwait(false);
 
-                // CRITICAL: Do NOT start firmware update if backup cannot be taken.
-                ctx.Response.Success = false;
-                ctx.Response.StatusCode = cl.StatusCode;
-                ctx.Response.Message = $"Settings backup blocked upgrade: {cl.Message}";
-                dev.LastFailureReason = ctx.Response.Message;
-                dev.shouldRetry = false;
-                return false;
+                if (loggedInViaReuse)
+                {
+                    UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Connected", "Reusing precheck session for settings backup", ctx.FirmwareVersion);
+                }
+            }
+
+            if (!loggedInViaReuse)
+            {
+                // IMPORTANT: increased retries + delays, because logs show 417 after boot transitions.
+                var cl = await svc.ConnectAndLoginWithRetryForPipelineAsync(
+                    svc.GatewayIpAddress, 80, ctx.MacAddress, ctx.Pincode, ctx.LogId, ctx.FirmwareVersion,
+                    maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
+                    delayBetweenAttemptsMs: 5000).ConfigureAwait(false);
+
+                if (!cl.Success)
+                {
+                    UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, $"[1] Connect+login failed: {cl.Message}", "Warn", ctx.FirmwareVersion);
+                    AppLog.Warn($" [1] Connect+login failed for {ctx.MacAddress}: {cl.Message}");
+
+                    // CRITICAL: Do NOT start firmware update if backup cannot be taken.
+                    ctx.Response.Success = false;
+                    ctx.Response.StatusCode = cl.StatusCode;
+                    ctx.Response.Message = $"Settings backup blocked upgrade: {cl.Message}";
+                    dev.LastFailureReason = ctx.Response.Message;
+                    dev.shouldRetry = false;
+                    return false;
+                }
             }
 
             if (RuntimeVariables.AutoSetSysFailLevelUnderUpdate && (ctx.DetectorType == "P48" || ctx.DetectorType == "P47"))

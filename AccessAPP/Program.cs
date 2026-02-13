@@ -60,7 +60,7 @@ builder.Services.AddSingleton<MqttConfigStore>(sp =>
 });
 
 
-// --- Runtime variables persistence ---
+// --- Runtime variables (optional persistence via runtime.json) ---
 builder.Services.AddSingleton<RuntimeVariablesStore>();
 
 builder.Services.AddSingleton<IMqttService, MqttService>();
@@ -71,6 +71,14 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var serviceProvider = scope.ServiceProvider;
+
+    // Load runtime variable overrides BEFORE constructing services that read them on init.
+    var runtimeStore = serviceProvider.GetRequiredService<RuntimeVariablesStore>();
+    var loadResult = runtimeStore.LoadFromDisk();
+    if (loadResult.applied.Count > 0)
+        AppLog.Info($"Runtime variables loaded: {loadResult.applied.Count} applied from {runtimeStore.FilePath}");
+    if (loadResult.errors.Count > 0)
+        AppLog.Warn($"Runtime variables load errors: {string.Join(", ", loadResult.errors.Select(kv => $"{kv.Key}={kv.Value}"))}");
 
     var cassiaConnectService = serviceProvider.GetRequiredService<CassiaConnectService>();
     var cassiaNotificationService = serviceProvider.GetRequiredService<CassiaNotificationService>();

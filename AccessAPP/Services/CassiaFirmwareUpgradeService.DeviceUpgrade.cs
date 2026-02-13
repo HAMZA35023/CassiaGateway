@@ -248,6 +248,34 @@ try
                         AppLog.Info($"[SKIP] Actor upgrade for {mac} - current matches target and ForceUpdate=false");
                     }
 
+                    // If the sensor is already in boot mode and an actor upgrade is needed,
+                    // we must restore the sensor to application mode first. Force bootloader + sensor update.
+                    if (dev.PrecheckBootMode && dev.isActorUpgradeNeeded)
+                    {
+                        bool forced = false;
+                        if (!dev.upgradeBootloader)
+                        {
+                            dev.upgradeBootloader = true;
+                            forced = true;
+                        }
+                        if (!dev.upgradeSensor)
+                        {
+                            dev.upgradeSensor = true;
+                            forced = true;
+                        }
+
+                        if (forced)
+                        {
+                            UpgradeLogger.Log(
+                                logId,
+                                mac,
+                                "Boot mode recovery",
+                                "Sensor in boot mode while actor upgrade needed -> forcing bootloader + sensor update",
+                                dev.FirmwareVersion);
+                            AppLog.Warn($"[{mac}] Sensor in boot mode while actor upgrade needed -> forcing bootloader + sensor update.");
+                        }
+                    }
+
                     // Requirements for success reporting
                     dev.requiresConfigRestore = decisions.RequiresConfigRestore;
                     dev.requires102Restore = decisions.Requires102Restore;
@@ -256,6 +284,10 @@ try
                         dev, mac, dev.Pincode, dev.DetectotType, dev.FirmwareVersion,
                         dev.isActorUpgradeNeeded, dev.upgradeBootloader, dev.upgradeSensor, logId
                     ).ConfigureAwait(false);
+                    // The pipeline always disconnects at the end of an attempt.
+                    // Never reuse the precheck session on subsequent retries.
+                    dev.PrecheckSessionAlive = false;
+                    dev.PrecheckBootMode = false;
 
                     const int maxRetriesPerComponent = 5;
 
@@ -309,6 +341,8 @@ try
                             retrySensor,
                             logId
                         ).ConfigureAwait(false);
+                        dev.PrecheckSessionAlive = false;
+                        dev.PrecheckBootMode = false;
 
                         AppLog.Warn($"[RETRY RESULT] {mac} - {resp.StatusCode} - {resp.Message}");
                         UpgradeLogger.Log(logId, mac, $"Retry result: {resp.StatusCode} - {resp.Message}", resp.Success ? "Success" : "Failed");
