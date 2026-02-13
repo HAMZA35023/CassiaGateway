@@ -41,7 +41,19 @@ $repoRoot = (Resolve-Path (Join-Path $scriptDir "..")).Path
 $scriptExitCode = 0
 
 $repoRootBytes = [System.Text.Encoding]::UTF8.GetBytes($repoRoot.ToLowerInvariant())
-$repoRootHash = [System.Security.Cryptography.SHA256]::HashData($repoRootBytes)
+$shaHashDataMethod = [System.Security.Cryptography.SHA256].GetMethod("HashData", [Type[]]@([byte[]]))
+if ($shaHashDataMethod) {
+    $repoRootHash = [System.Security.Cryptography.SHA256]::HashData($repoRootBytes)
+}
+else {
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $repoRootHash = $sha256.ComputeHash($repoRootBytes)
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
 $repoRootHashHex = ([System.BitConverter]::ToString($repoRootHash)).Replace("-", "")
 $singleInstanceMutexName = "Global\CassiaGateway.PublishAccessApp.$repoRootHashHex"
 $singleInstanceMutex = New-Object System.Threading.Mutex($false, $singleInstanceMutexName)
