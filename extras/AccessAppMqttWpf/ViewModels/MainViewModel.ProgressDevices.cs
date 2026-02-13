@@ -26,6 +26,8 @@ namespace AccessAppMqttWpf.ViewModels;
 public partial class MainViewModel : ObservableObject
 {
     private static readonly TimeSpan WeakRssiGraceWindow = TimeSpan.FromSeconds(60);
+    private readonly IgnoredDevicesStore _ignoredDevicesStore = new();
+    private readonly HashSet<string> _ignoredDeviceMacs = new(StringComparer.OrdinalIgnoreCase);
 
 
     public ObservableCollection<string> SensorFilterOptions { get; } =
@@ -72,6 +74,9 @@ public partial class MainViewModel : ObservableObject
         {
             if (obj is not DiscoveredDevice d) return false;
 
+            if (IsIgnoredDevice(d.Mac))
+                return false;
+
             if (HideCompletedDevices && d.IsUpgradeSuccess)
                 return false;
 
@@ -110,6 +115,31 @@ public partial class MainViewModel : ObservableObject
                 || (d.BestCassia?.Contains(f, StringComparison.OrdinalIgnoreCase) ?? false)
                 || (d.RssiAll?.Contains(f, StringComparison.OrdinalIgnoreCase) ?? false);
         };
+    }
+
+    private void InitIgnoredDevices()
+    {
+        _ignoredDeviceMacs.Clear();
+
+        foreach (var raw in _ignoredDevicesStore.Load())
+        {
+            var mac = NormalizeMac(raw);
+            if (!string.IsNullOrWhiteSpace(mac))
+                _ignoredDeviceMacs.Add(mac);
+        }
+    }
+
+    private static string NormalizeMac(string? mac) => (mac ?? "").Trim().ToUpperInvariant();
+
+    private bool IsIgnoredDevice(string? mac)
+    {
+        var normalized = NormalizeMac(mac);
+        return normalized.Length > 0 && _ignoredDeviceMacs.Contains(normalized);
+    }
+
+    private void SaveIgnoredDevices()
+    {
+        _ignoredDevicesStore.Save(_ignoredDeviceMacs);
     }
 
     private void InitProgressBuffering()
@@ -170,6 +200,47 @@ public partial class MainViewModel : ObservableObject
     partial void OnShowModelP46Changed(bool value) { RequestDevicesRefresh(); OnPropertyChanged(nameof(SelectedModelFilterSummary)); OnPropertyChanged(nameof(DevicesSubtitle)); }
     partial void OnShowModelP47Changed(bool value) { RequestDevicesRefresh(); OnPropertyChanged(nameof(SelectedModelFilterSummary)); OnPropertyChanged(nameof(DevicesSubtitle)); }
     partial void OnShowModelP48Changed(bool value) { RequestDevicesRefresh(); OnPropertyChanged(nameof(SelectedModelFilterSummary)); OnPropertyChanged(nameof(DevicesSubtitle)); }
+
+    [RelayCommand]
+    private void IgnoreSelectedDevices()
+    {
+        var selected = _devices.Where(d => d != null && d.IsSelected).ToList();
+        if (selected.Count == 0)
+            return;
+
+        var added = 0;
+        foreach (var d in selected)
+        {
+            var mac = NormalizeMac(d.Mac);
+            if (string.IsNullOrWhiteSpace(mac)) continue;
+
+            if (_ignoredDeviceMacs.Add(mac))
+                added++;
+
+            d.IsSelected = false;
+        }
+
+        if (SelectedDevice != null && IsIgnoredDevice(SelectedDevice.Mac))
+            SelectedDevice = null;
+
+        SaveIgnoredDevices();
+        RequestDevicesRefresh();
+        OnPropertyChanged(nameof(DevicesSubtitle));
+        ConnectionStatus = $"Ignored {added} device(s)";
+    }
+
+    [RelayCommand]
+    private void ClearIgnoredDevices()
+    {
+        if (_ignoredDeviceMacs.Count == 0)
+            return;
+
+        _ignoredDeviceMacs.Clear();
+        SaveIgnoredDevices();
+        RequestDevicesRefresh();
+        OnPropertyChanged(nameof(DevicesSubtitle));
+        ConnectionStatus = "Cleared ignored devices";
+    }
 
     public string SelectedModelFilterSummary
     {

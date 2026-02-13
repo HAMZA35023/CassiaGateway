@@ -380,6 +380,7 @@ public partial class MainViewModel : ObservableObject
         LoadFirmwareOptions();
 
 
+        InitIgnoredDevices();
         InitDeviceFiltering();
 
         HostBleDevicesView = CollectionViewSource.GetDefaultView(HostBleDevices);

@@ -5,7 +5,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="AC Controller for AccessAPP - v0.9.0"
+        Title="AC Controller for AccessAPP - v0.11.0"
         Height="941" Width="1715"
         WindowStartupLocation="CenterScreen">
 
@@ -406,6 +406,10 @@
                           Header="Dark"
                           IsCheckable="True"
                           Click="ThemeDark_Click"/>
+            </MenuItem>
+            <MenuItem Header="Devices">
+                <MenuItem Header="Remove all ignored devices"
+                          Command="{Binding ClearIgnoredDevicesCommand}"/>
             </MenuItem>
         </Menu>
 
@@ -940,6 +944,13 @@
                                                 VerticalAlignment="Center"
                                                 Margin="8,0,0,0"
                                                 Command="{Binding GetFwSelectedCommand}"/>
+
+                                        <Button Style="{StaticResource GhostButton}"
+                                                Content="Ignore devices"
+                                                Padding="12,6"
+                                                VerticalAlignment="Center"
+                                                Margin="8,0,0,0"
+                                                Command="{Binding IgnoreSelectedDevicesCommand}"/>
                                     </StackPanel>
 
                                     <!-- Middle: checkboxes (RIGHT aligned, sits next to Reassign) -->
