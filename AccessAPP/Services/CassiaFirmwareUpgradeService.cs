@@ -366,11 +366,9 @@ return true; // command was likely accepted before disconnect
 
             try
             {
-                var sensorResponse = await _connectService.GetDataFromBleDevice(
-                    _gatewayIpAddress,
-                    _gatewayPort,
-                    nodeMac,
-                    cmd);
+                var sensorResponse = await GetDataWithSysFailTimeoutAsync(nodeMac, cmd, "SysFailLevel set").ConfigureAwait(false);
+                if (sensorResponse == null)
+                    return false;
 
                 if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
                 {
@@ -403,11 +401,9 @@ return true; // command was likely accepted before disconnect
 
             try
             {
-                var sensorResponse = await _connectService.GetDataFromBleDevice(
-                    _gatewayIpAddress,
-                    _gatewayPort,
-                    nodeMac,
-                    cmd);
+                var sensorResponse = await GetDataWithSysFailTimeoutAsync(nodeMac, cmd, "SysFailLevel read").ConfigureAwait(false);
+                if (sensorResponse == null)
+                    return null;
 
                 if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
                 {
@@ -448,6 +444,32 @@ return true; // command was likely accepted before disconnect
                 AppLog.Warn($"[DALI] CommonParam read exception: MAC={nodeMac}, {ex.Message}");
                 return null;
             }
+        }
+
+        private static int GetSysFailTimeoutMs()
+        {
+            int configured = RuntimeVariables.UPGRADE_DALI_SYSFAIL_TIMEOUT_MS;
+            if (configured <= 0)
+                configured = 5000;
+
+            return Math.Min(5000, configured);
+        }
+
+        private async Task<DataResponseModel?> GetDataWithSysFailTimeoutAsync(
+            string nodeMac,
+            string cmd,
+            string label)
+        {
+            int timeoutMs = GetSysFailTimeoutMs();
+            var task = _connectService.GetDataFromBleDevice(_gatewayIpAddress, _gatewayPort, nodeMac, cmd);
+            var completed = await Task.WhenAny(task, Task.Delay(timeoutMs)).ConfigureAwait(false);
+            if (completed != task)
+            {
+                AppLog.Warn($"[DALI] {label} timed out after {timeoutMs}ms: MAC={nodeMac}");
+                return null;
+            }
+
+            return await task.ConfigureAwait(false);
         }
 
         public async Task<string> GetBLEPushButtonList(string nodeMac)
