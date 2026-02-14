@@ -18,16 +18,20 @@ public class CassiaReadWriteService : IDisposable
         EnableMultipleHttp2Connections = false
     });
 
-    // Concurrency control:
+// Concurrency control:
 // We want parallelism across the two Cassia BLE chips, but still keep backpressure
 // so we don't overload the local REST API.
 //
 // Policy:
 // - Per-chip limiter (chip 0 and chip 1 are independent)
+// - IMPORTANT: these must be GLOBAL across ALL CassiaReadWriteService instances.
+//   Multiple services are instantiated in the app (connect, pincode, firmware, controllers).
+//   If the semaphores are per-instance, the effective inflight count multiplies and
+//   overloads the gateway (connect/login failures under parallel upgrades).
 // - Optional global limiter for backwards-compatibility if some code assigns it
 //   (but we don't set it by default).
-private readonly SemaphoreSlim _chip0Semaphore = new SemaphoreSlim(RuntimeVariables.CASSIA_MAX_INFLIGHT_PER_CHIP, RuntimeVariables.CASSIA_MAX_INFLIGHT_PER_CHIP);
-private readonly SemaphoreSlim _chip1Semaphore = new SemaphoreSlim(RuntimeVariables.CASSIA_MAX_INFLIGHT_PER_CHIP, RuntimeVariables.CASSIA_MAX_INFLIGHT_PER_CHIP);
+private static readonly SemaphoreSlim s_chip0Semaphore = new SemaphoreSlim(RuntimeVariables.CASSIA_MAX_INFLIGHT_PER_CHIP, RuntimeVariables.CASSIA_MAX_INFLIGHT_PER_CHIP);
+private static readonly SemaphoreSlim s_chip1Semaphore = new SemaphoreSlim(RuntimeVariables.CASSIA_MAX_INFLIGHT_PER_CHIP, RuntimeVariables.CASSIA_MAX_INFLIGHT_PER_CHIP);
 
 // Backwards-compatible global limiter (avoid using this if you want dual-chip scaling)
 private SemaphoreSlim? _globalSemaphore = null;
@@ -37,9 +41,9 @@ public SemaphoreSlim? semaphore
     set => _globalSemaphore = value;
 }
 
-private SemaphoreSlim GetChipSemaphore(int chip)
+private static SemaphoreSlim GetChipSemaphore(int chip)
 {
-    return chip == 1 ? _chip1Semaphore : _chip0Semaphore;
+    return chip == 1 ? s_chip1Semaphore : s_chip0Semaphore;
 }
 
 private static string AppendQueryParam(string url, string key, string value)

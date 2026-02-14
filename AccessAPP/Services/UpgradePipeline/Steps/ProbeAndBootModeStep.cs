@@ -110,49 +110,44 @@ internal sealed class ProbeAndBootModeStep : IDeviceUpgradeStep
                 {
                     UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "LoggedIn (probe)", "Failed on reused session; reconnecting", ctx.FirmwareVersion);
                     AppLog.Warn($"Login failed on reused precheck session for {ctx.MacAddress}. Reconnecting...");
-
-                    var connProbe = await svc.ConnectOnlyWithRetryAsync_Internal(
-                        maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
-                        delayMs: 2000,
-                        stageName: "Connected (probe retry)",
-                        logSuccess: true,
-                        macAddress: ctx.MacAddress,
-                        firmwareVersion: ctx.FirmwareVersion,
-                        logId: ctx.LogId
-                    ).ConfigureAwait(false);
-
-                    if (!connProbe.ok)
-                    {
-                        UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Connected (probe retry)", "Failed", ctx.FirmwareVersion);
-                        ctx.Response.Success = false;
-                        ctx.Response.StatusCode = (int)(connProbe.code == 0 ? HttpStatusCode.ServiceUnavailable : connProbe.code);
-                        ctx.Response.Message = "Failed to connect to device.";
-                        dev.LastFailureReason = ctx.Response.Message;
-                        dev.RetryCount++;
-                        dev.shouldRetry = false;
-                        return false;
-                    }
-
-                    loggedIn = await svc.EnsureLoginOnConnectedSessionUnlessBootModeAsync(
-                        ctx.MacAddress,
-                        ctx.Pincode,
-                        ctx.LogId,
-                        ctx.FirmwareVersion,
-                        stageName: "LoggedIn (probe retry)",
-                        maxAttempts: 3).ConfigureAwait(false);
-
-                    if (!loggedIn)
-                    {
-                        ctx.Response.Success = false;
-                        ctx.Response.StatusCode = (int)HttpStatusCode.Unauthorized;
-                        ctx.Response.Message = "Failed to login to device after connect.";
-                        dev.LastFailureReason = ctx.Response.Message;
-                        dev.RetryCount++;
-                        dev.shouldRetry = false;
-                        return false;
-                    }
                 }
                 else
+                {
+                    UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "LoggedIn (probe)", "Failed; reconnecting", ctx.FirmwareVersion);
+                    AppLog.Warn($"Login failed for {ctx.MacAddress}. Reconnecting...");
+                }
+
+                var connProbe = await svc.ConnectOnlyWithRetryAsync_Internal(
+                    maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
+                    delayMs: 2000,
+                    stageName: "Connected (probe retry)",
+                    logSuccess: true,
+                    macAddress: ctx.MacAddress,
+                    firmwareVersion: ctx.FirmwareVersion,
+                    logId: ctx.LogId
+                ).ConfigureAwait(false);
+
+                if (!connProbe.ok)
+                {
+                    UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Connected (probe retry)", "Failed", ctx.FirmwareVersion);
+                    ctx.Response.Success = false;
+                    ctx.Response.StatusCode = (int)(connProbe.code == 0 ? HttpStatusCode.ServiceUnavailable : connProbe.code);
+                    ctx.Response.Message = "Failed to connect to device.";
+                    dev.LastFailureReason = ctx.Response.Message;
+                    dev.RetryCount++;
+                    dev.shouldRetry = false;
+                    return false;
+                }
+
+                loggedIn = await svc.EnsureLoginOnConnectedSessionUnlessBootModeAsync(
+                    ctx.MacAddress,
+                    ctx.Pincode,
+                    ctx.LogId,
+                    ctx.FirmwareVersion,
+                    stageName: "LoggedIn (probe retry)",
+                    maxAttempts: 3).ConfigureAwait(false);
+
+                if (!loggedIn)
                 {
                     ctx.Response.Success = false;
                     ctx.Response.StatusCode = (int)HttpStatusCode.Unauthorized;
