@@ -149,6 +149,47 @@ internal sealed class ProbeAndBootModeStep : IDeviceUpgradeStep
 
                 if (!loggedIn)
                 {
+                    // Final fallback: do a full Connect+Login retry sequence before failing the probe.
+                    UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "LoggedIn (probe)", "Fallback to Connect+Login retry", ctx.FirmwareVersion);
+                    AppLog.Warn($"Login failed after probe reconnect for {ctx.MacAddress}. Trying full Connect+Login fallback.");
+
+                    var cl = await svc.ConnectAndLoginWithRetryForPipelineAsync(
+                        svc.GatewayIpAddress,
+                        svc.GatewayPort,
+                        ctx.MacAddress,
+                        ctx.Pincode,
+                        ctx.LogId,
+                        ctx.FirmwareVersion,
+                        maxAttempts: Math.Min(3, Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS)),
+                        delayBetweenAttemptsMs: 4000).ConfigureAwait(false);
+
+                    if (cl.Success)
+                    {
+                        loggedIn = true;
+                    }
+                    else
+                    {
+                        bool bootDetected = false;
+                        try
+                        {
+                            bootDetected = svc.CheckIfDeviceInBootMode(svc.GatewayIpAddress, ctx.MacAddress);
+                        }
+                        catch (Exception ex)
+                        {
+                            UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, $"BootMode check exception after login fallback: {ex.Message}", "Warn", ctx.FirmwareVersion);
+                        }
+
+                        if (bootDetected || cl.StatusCode == (int)HttpStatusCode.Conflict)
+                        {
+                            ctx.IsInBoot = true;
+                            loggedIn = true;
+                            UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "LoggedIn (probe)", "Skipped (bootloader mode after login fallback)", ctx.FirmwareVersion);
+                        }
+                    }
+                }
+
+                if (!loggedIn)
+                {
                     ctx.Response.Success = false;
                     ctx.Response.StatusCode = (int)HttpStatusCode.Unauthorized;
                     ctx.Response.Message = "Failed to login to device after connect.";

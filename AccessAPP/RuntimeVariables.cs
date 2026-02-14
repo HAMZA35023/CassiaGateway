@@ -56,6 +56,7 @@ namespace AccessAPP
         public static int UPGRADE_LOGIN_ATTEMPT_TIMEOUT_MS = 8000;
         public static int UPGRADE_LOGIN_RETRIES_PER_CONNECTED_SESSION = 2;
         public static int UPGRADE_LOGIN_RETRY_DELAY_MS = 400;
+        public static int UPGRADE_LOGIN_DELAY_AFTER_CONNECT_MS = 300;
         public static int UPGRADE_DELAY_AFTER_LOGIN_BEFORE_FW_READ_MS = 3000;
         public static int UPGRADE_FW_READ_ATTEMPTS = 3;
         public static int UPGRADE_FW_READ_RETRY_DELAY_MS = 1000;

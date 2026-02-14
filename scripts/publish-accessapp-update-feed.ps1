@@ -210,12 +210,18 @@ function Send-CompletionNotification {
 }
 
 function Send-SmsNotification {
-    param([string]$Message)
+    param (
+        [string]$Message
+    )
 
     if (-not $EnableSmsNotification) {
         return
     }
-    if ([string]::IsNullOrWhiteSpace($SmsUsername) -or [string]::IsNullOrWhiteSpace($SmsApiKey) -or [string]::IsNullOrWhiteSpace($SmsRecipient)) {
+
+    if ([string]::IsNullOrWhiteSpace($SmsUsername) -or
+        [string]::IsNullOrWhiteSpace($SmsApiKey) -or
+        [string]::IsNullOrWhiteSpace($SmsRecipient)) {
+
         Write-Warning "SMS notification is enabled, but SmsUsername/SmsApiKey/SmsRecipient is missing. Skipping SMS."
         return
     }
@@ -225,23 +231,35 @@ function Send-SmsNotification {
         $smsMsg = $smsMsg.Substring(0, 160)
     }
 
-    $query = @{
+    $params = @{
         username  = $SmsUsername
         apikey    = $SmsApiKey
-        flash     = 0
+        flash     = "0"
         recipient = $SmsRecipient
         message   = $smsMsg
         from      = $SmsSender
     }
 
+    $pairs = @()
+    foreach ($key in $params.Keys) {
+        $pairs += (
+            [Uri]::EscapeDataString($key) + "=" +
+            [Uri]::EscapeDataString([string]$params[$key])
+        )
+    }
+
+    $qs = $pairs -join "&"
+    $url = "https://www.cpsms.dk/sms/?$qs"
+
     try {
-        Invoke-RestMethod -Uri "https://www.cpsms.dk/sms/" -Method Get -Body $query | Out-Null
+        Invoke-RestMethod -Uri $url -Method Get | Out-Null
         Write-Log "SMS notification sent."
     }
     catch {
         Write-Warning "Failed to send SMS notification: $_"
     }
 }
+
 
 function Remove-Worktree {
     param([string]$Path)

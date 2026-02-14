@@ -335,6 +335,10 @@ namespace AccessAPP.Services
             {
                 ct.ThrowIfCancellationRequested();
 
+                int delayMs = Math.Max(0, RuntimeVariables.UPGRADE_LOGIN_DELAY_AFTER_CONNECT_MS);
+                if (delayMs > 0)
+                    await Task.Delay(delayMs, ct).ConfigureAwait(false);
+
                 string hexLoginValue = new LoginTelegram().Create();
 
                 // ✅ Subscribe to notifications using the singleton `_notificationService`
