@@ -117,6 +117,44 @@ namespace AccessAPP.Services
             return backupFilePath ?? string.Empty;
         }
 
+        private static int GetBackupReadAttempts()
+            => Math.Max(1, RuntimeVariables.UPGRADE_SETTINGS_BACKUP_READ_ATTEMPTS);
+
+        private static int GetBackupReadRetryDelayMs()
+            => Math.Max(200, RuntimeVariables.UPGRADE_SETTINGS_BACKUP_READ_RETRY_DELAY_MS);
+
+        private static async Task<string> ReadRequiredAsync(
+            Func<Task<string>> readFunc,
+            string label)
+        {
+            int attempts = GetBackupReadAttempts();
+            int delayMs = GetBackupReadRetryDelayMs();
+            string lastError = "empty response";
+
+            for (int attempt = 1; attempt <= attempts; attempt++)
+            {
+                try
+                {
+                    var hex = await readFunc().ConfigureAwait(false);
+                    if (!string.IsNullOrWhiteSpace(hex))
+                        return hex;
+
+                    lastError = "empty response";
+                    AppLog.Warn($"[Backup] {label} empty (attempt {attempt}/{attempts}).");
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    AppLog.Warn($"[Backup] {label} exception (attempt {attempt}/{attempts}): {ex.Message}");
+                }
+
+                if (attempt < attempts)
+                    await Task.Delay(delayMs).ConfigureAwait(false);
+            }
+
+            throw new Exception($"Settings backup read failed for {label} after {attempts} attempts. Last error: {lastError}");
+        }
+
         public async Task<(string filePath, DeviceSettingsSnapshot snapshot)> BackupToFileAsync(
             string macAddress,
             string pincode, // kept in interface for your earlier calls; not used here
@@ -136,19 +174,19 @@ namespace AccessAPP.Services
                 FirmwareVersionTarget = firmwareVersion,
 
                 UserConfigHex = profile.UserConfig
-                    ? StripBleHeader(await _ble.GetUserConfig(macAddress).ConfigureAwait(false))
+                    ? StripBleHeader(await ReadRequiredAsync(() => _ble.GetUserConfig(macAddress), "UserConfig").ConfigureAwait(false))
                     : null,
 
                 PushButtonsHex = profile.WiredPushButtons
-                    ? StripBleHeader(await _ble.GetWiredPushButtonList(macAddress).ConfigureAwait(false))
+                    ? StripBleHeader(await ReadRequiredAsync(() => _ble.GetWiredPushButtonList(macAddress), "WiredPushButtons").ConfigureAwait(false))
                     : null,
 
                 DaliPushButtonsHex = profile.DaliPushButtons
-                    ? StripBleHeader(await _ble.GetDaliPushButtonList(macAddress).ConfigureAwait(false))
+                    ? StripBleHeader(await ReadRequiredAsync(() => _ble.GetDaliPushButtonList(macAddress), "DaliPushButtons").ConfigureAwait(false))
                     : null,
 
                 BlePushButtonsHex = profile.BlePushButtons
-                    ? StripBleHeader(await _ble.GetBLEPushButtonList(macAddress).ConfigureAwait(false))
+                    ? StripBleHeader(await ReadRequiredAsync(() => _ble.GetBLEPushButtonList(macAddress), "BlePushButtons").ConfigureAwait(false))
                     : null,
             };
 

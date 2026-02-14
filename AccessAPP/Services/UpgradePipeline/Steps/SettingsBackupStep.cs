@@ -117,27 +117,76 @@ internal sealed class SettingsBackupStep : IDeviceUpgradeStep
                 }
             }
 
-            var backup = await svc.SettingsBackupService
-                .BackupToFileAsync(ctx.MacAddress, ctx.Pincode, ctx.DetectorType, ctx.FirmwareVersion, ctx.LogId)
-                .ConfigureAwait(false);
+            int backupRounds = Math.Max(1, RuntimeVariables.UPGRADE_SETTINGS_BACKUP_RETRY_ROUNDS);
+            int backupRetryDelayMs = Math.Max(500, RuntimeVariables.UPGRADE_SETTINGS_BACKUP_RETRY_DELAY_MS);
+            Exception? lastBackupEx = null;
+            bool backupOk = false;
 
-            ctx.SettingsBackupPath = backup.filePath;
-            dev.SettingsBackupPath = ctx.SettingsBackupPath;
+            for (int attempt = 1; attempt <= backupRounds; attempt++)
+            {
+                try
+                {
+                    var backup = await svc.SettingsBackupService
+                        .BackupToFileAsync(ctx.MacAddress, ctx.Pincode, ctx.DetectorType, ctx.FirmwareVersion, ctx.LogId)
+                        .ConfigureAwait(false);
 
-            UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Settings backup saved", "Success", ctx.FirmwareVersion);
+                    ctx.SettingsBackupPath = backup.filePath;
+                    dev.SettingsBackupPath = ctx.SettingsBackupPath;
 
-            if (string.IsNullOrWhiteSpace(ctx.SettingsBackupPath) || !File.Exists(ctx.SettingsBackupPath))
+                    if (string.IsNullOrWhiteSpace(ctx.SettingsBackupPath) || !File.Exists(ctx.SettingsBackupPath))
+                        throw new Exception($"Settings backup failed (file missing): {ctx.SettingsBackupPath}");
+
+                    UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Settings backup saved", "Success", ctx.FirmwareVersion);
+                    AppLog.Info($" Settings backup saved for {ctx.MacAddress} to: {ctx.SettingsBackupPath}");
+                    backupOk = true;
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    lastBackupEx = ex;
+                    UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, $"Settings backup attempt {attempt}/{backupRounds} failed: {ex.Message}", "Warn", ctx.FirmwareVersion);
+                    AppLog.Warn($" Settings backup attempt {attempt}/{backupRounds} failed for {ctx.MacAddress}: {ex.Message}");
+
+                    if (attempt < backupRounds)
+                    {
+                        // Best-effort reconnect before retry
+                        try
+                        {
+                            await svc.ConnectService
+                                .DisconnectFromBleDevice(svc.GatewayIpAddress, ctx.MacAddress, 0, chip: svc.GetChipForMac(ctx.MacAddress))
+                                .ConfigureAwait(false);
+                        }
+                        catch
+                        {
+                            // ignore
+                        }
+
+                        var cl = await svc.ConnectAndLoginWithRetryForPipelineAsync(
+                            svc.GatewayIpAddress, 80, ctx.MacAddress, ctx.Pincode, ctx.LogId, ctx.FirmwareVersion,
+                            maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
+                            delayBetweenAttemptsMs: 5000).ConfigureAwait(false);
+
+                        if (!cl.Success)
+                        {
+                            UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, $"Settings backup reconnect failed: {cl.Message}", "Warn", ctx.FirmwareVersion);
+                            AppLog.Warn($" Settings backup reconnect failed for {ctx.MacAddress}: {cl.Message}");
+                        }
+
+                        await Task.Delay(backupRetryDelayMs).ConfigureAwait(false);
+                    }
+                }
+            }
+
+            if (!backupOk)
             {
                 ctx.Response.Success = false;
                 ctx.Response.StatusCode = 500;
-                ctx.Response.Message = $"Settings backup failed (file missing): {ctx.SettingsBackupPath}";
+                ctx.Response.Message = $"Settings backup failed: {lastBackupEx?.Message}";
                 UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, ctx.Response.Message, "Failed", ctx.FirmwareVersion);
                 dev.LastFailureReason = ctx.Response.Message;
                 dev.shouldRetry = false;
                 return false;
             }
-
-            AppLog.Info($" Settings backup saved for {ctx.MacAddress} to: {ctx.SettingsBackupPath}");
         }
         catch (Exception ex)
         {
