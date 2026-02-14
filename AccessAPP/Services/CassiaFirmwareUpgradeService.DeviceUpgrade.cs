@@ -359,8 +359,6 @@ try
                     }
                 }
 
-                await VerifyPostUpgradeFirmwareAsync(dev, mac, logId).ConfigureAwait(false);
-
                 deviceSw.Stop();
                 addDeviceMs(deviceSw.ElapsedMilliseconds);
 
@@ -531,7 +529,7 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             return match.Success ? match.Groups[1].Value : "";
         }
 
-        private async Task VerifyPostUpgradeFirmwareAsync(UpgradeProgress dev, string mac, string logId)
+        private async Task VerifyPostUpgradeFirmwareAsync(UpgradeProgress dev, string mac, string logId, bool reuseExistingConnection)
         {
             try
             {
@@ -544,7 +542,21 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                     await Task.Delay(delayMs).ConfigureAwait(false);
 
                 UpgradeLogger.Log(logId, mac, "FW Read (post-upgrade)", "Starting", dev.FirmwareVersion);
-                string postFw = await GetFwVersion(mac, dev.Pincode, disconnect_on_finish: true).ConfigureAwait(false);
+                string postFw = "";
+                if (reuseExistingConnection)
+                {
+                    postFw = await GetFwVersionOnConnectedSessionAsync(
+                        mac,
+                        dev.Pincode ?? "",
+                        logId,
+                        dev.FirmwareVersion).ConfigureAwait(false);
+                }
+
+                if (string.IsNullOrWhiteSpace(postFw))
+                {
+                    postFw = await GetFwVersion(mac, dev.Pincode, disconnect_on_finish: false).ConfigureAwait(false);
+                }
+
                 dev.PostFirmwareVersion = postFw;
 
                 if (string.IsNullOrWhiteSpace(postFw))
