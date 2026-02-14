@@ -169,6 +169,21 @@ namespace AccessAPP.Services
                     await Task.Delay(retryDelayMs).ConfigureAwait(false);
             }
 
+            // Final safety: boot mode can flip after a jump and the first check may be stale.
+            // If we are actually in boot mode, treat login as "not required".
+            try
+            {
+                if (CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress))
+                {
+                    UpgradeLogger.Log(logId ?? "", macAddress, stageName, "Skipped (bootloader mode detected after login failure)", firmwareVersion ?? "");
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLog.Debug($"{stageName}: boot-mode recheck failed for {macAddress}: {ex.Message}");
+            }
+
             return false;
         }
         private string MacAddress = "";
