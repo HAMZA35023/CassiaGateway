@@ -359,6 +359,7 @@ try
                     }
                 }
 
+                await VerifyPostUpgradeFirmwareAsync(dev, mac, logId).ConfigureAwait(false);
 
                 deviceSw.Stop();
                 addDeviceMs(deviceSw.ElapsedMilliseconds);
@@ -442,8 +443,12 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                 productNo = (dev.DetectotType ?? "").Trim();
 
             string oldSw = (dev.CurrentFirmwareVersion ?? "").Trim();
-            string newSw = (dev.FirmwareVersion ?? "").Trim();
-            string actorVersion = ExtractActorAppVersion(oldSw);
+            string postSw = (dev.PostFirmwareVersion ?? "").Trim();
+            string newSw = string.IsNullOrWhiteSpace(postSw)
+                ? (dev.FirmwareVersion ?? "").Trim()
+                : postSw;
+
+            string actorVersion = ExtractActorAppVersion(string.IsNullOrWhiteSpace(postSw) ? oldSw : postSw);
             if (string.IsNullOrWhiteSpace(actorVersion))
                 actorVersion = newSw;
 
@@ -524,6 +529,100 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
             return match.Success ? match.Groups[1].Value : "";
+        }
+
+        private async Task VerifyPostUpgradeFirmwareAsync(UpgradeProgress dev, string mac, string logId)
+        {
+            try
+            {
+                string target = (dev.FirmwareVersion ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(target))
+                    return;
+
+                int delayMs = Math.Max(0, RuntimeVariables.UPGRADE_POST_UPGRADE_FW_READ_DELAY_MS);
+                if (delayMs > 0)
+                    await Task.Delay(delayMs).ConfigureAwait(false);
+
+                UpgradeLogger.Log(logId, mac, "FW Read (post-upgrade)", "Starting", dev.FirmwareVersion);
+                string postFw = await GetFwVersion(mac, dev.Pincode, disconnect_on_finish: true).ConfigureAwait(false);
+                dev.PostFirmwareVersion = postFw;
+
+                if (string.IsNullOrWhiteSpace(postFw))
+                {
+                    dev.PostUpgradeFwMatch = false;
+                    string reason = "Post-upgrade FW read failed (empty response).";
+                    dev.LastFailureReason = string.IsNullOrWhiteSpace(dev.LastFailureReason)
+                        ? reason
+                        : $"{dev.LastFailureReason} | {reason}";
+                    dev.finalUpgradeResult = "Failed";
+                    UpgradeLogger.Log(logId, mac, "FW Read (post-upgrade)", "Failed (empty response)", dev.FirmwareVersion);
+                    return;
+                }
+
+                bool match = FirmwareMatchesTarget(postFw, target);
+                dev.PostUpgradeFwMatch = match;
+
+                if (!match)
+                {
+                    string reason = $"Post-upgrade FW mismatch. Target={target}, Actual={postFw}";
+                    dev.LastFailureReason = string.IsNullOrWhiteSpace(dev.LastFailureReason)
+                        ? reason
+                        : $"{dev.LastFailureReason} | {reason}";
+                    dev.finalUpgradeResult = "Failed";
+                    UpgradeLogger.Log(logId, mac, "FW Read (post-upgrade)", "Mismatch", dev.FirmwareVersion);
+                }
+                else
+                {
+                    UpgradeLogger.Log(logId, mac, "FW Read (post-upgrade)", "Match", dev.FirmwareVersion);
+                }
+            }
+            catch (Exception ex)
+            {
+                dev.PostUpgradeFwMatch = false;
+                string reason = $"Post-upgrade FW read failed: {ex.Message}";
+                dev.LastFailureReason = string.IsNullOrWhiteSpace(dev.LastFailureReason)
+                    ? reason
+                    : $"{dev.LastFailureReason} | {reason}";
+                dev.finalUpgradeResult = "Failed";
+                UpgradeLogger.Log(logId, mac, "FW Read (post-upgrade)", $"Exception: {ex.Message}", dev.FirmwareVersion);
+            }
+        }
+
+        private static bool FirmwareMatchesTarget(string actual, string target)
+        {
+            string targetToken = ExtractVersionToken(target);
+            if (string.IsNullOrWhiteSpace(targetToken))
+                return false;
+
+            if (actual.IndexOf(targetToken, StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+
+            var actualTokens = ExtractVersionTokens(actual);
+            return actualTokens.Contains(targetToken);
+        }
+
+        private static string ExtractVersionToken(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return "";
+
+            var match = Regex.Match(value, @"\d{1,3}\.\d{1,3}", RegexOptions.CultureInvariant);
+            return match.Success ? match.Value : "";
+        }
+
+        private static HashSet<string> ExtractVersionTokens(string value)
+        {
+            var tokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrWhiteSpace(value))
+                return tokens;
+
+            foreach (Match m in Regex.Matches(value, @"\d{1,3}\.\d{1,3}", RegexOptions.CultureInvariant))
+            {
+                if (m.Success && !string.IsNullOrWhiteSpace(m.Value))
+                    tokens.Add(m.Value);
+            }
+
+            return tokens;
         }
 
         private static async Task<string> TryReadResponseBodyAsync(HttpResponseMessage response)

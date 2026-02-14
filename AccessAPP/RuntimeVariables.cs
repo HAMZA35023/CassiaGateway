@@ -89,6 +89,8 @@ namespace AccessAPP
         public static int UPGRADE_LOGIN_DELAY_AFTER_CONNECT_MS = 300;
         // Delay after login before reading firmware version.
         public static int UPGRADE_DELAY_AFTER_LOGIN_BEFORE_FW_READ_MS = 3000;
+        // Delay before post-upgrade firmware verification read.
+        public static int UPGRADE_POST_UPGRADE_FW_READ_DELAY_MS = 3000;
         // Firmware read attempts (per part).
         public static int UPGRADE_FW_READ_ATTEMPTS = 3;
         // Delay between firmware read attempts.
@@ -118,7 +120,7 @@ namespace AccessAPP
         // Enable posting upgrade results to the statistics endpoint.
         public static bool UPGRADE_RESULT_DB_LOG_ENABLED = true;
         // Endpoint for upgrade result logging.
-        public static string UPGRADE_RESULT_DB_LOG_URL = "https://devel.statistics.niko-test.nu/api/logentry";
+        public static string UPGRADE_RESULT_DB_LOG_URL = "https://prod.statistics.niko-test.nu/api/logentry";
         // HTTP timeout for upgrade result logging.
         public static int UPGRADE_RESULT_DB_LOG_TIMEOUT_MS = 5000;
 

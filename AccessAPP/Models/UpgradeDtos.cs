@@ -8,6 +8,8 @@ namespace AccessAPP.Models
         public string DetectotType { get; set; }
         public string FirmwareVersion { get; set; }
         public string CurrentFirmwareVersion { get; set; }
+        public string? PostFirmwareVersion { get; set; }
+        public bool PostUpgradeFwMatch { get; set; } = true;
         public string? SettingsBackupPath { get; set; }
 
         // If true, forces re-programming even when current FW matches target.
@@ -39,7 +41,8 @@ namespace AccessAPP.Models
                && (!upgradeBootloader || BootloaderSuccess)
                && (SensorSuccess)
                && (!requiresConfigRestore || isConfigRestored)
-               && (!requires102Restore || restore102Success);
+               && (!requires102Restore || restore102Success)
+               && PostUpgradeFwMatch;
     }
     public class UpgradeResponse
     {
