@@ -6,6 +6,12 @@ namespace AccessAPP
         // Bootloader write pacing (ms). 0 = no extra delay between writes.
         public static int WRITE_SLEEP_MS = 0;
 
+        // Actor BLE chunking/pacing.
+        // Chunk size for actor boot packets (bytes). 0/negative = default (80).
+        public static int ACTOR_CHUNK_SIZE = 80;
+        // Delay between actor chunks (ms). 0 = no extra delay.
+        public static int ACTOR_INTER_CHUNK_SLEEP_MS = 100;
+
         // If true, the app will use both BLE chips on Cassia X2000.
         // When multiple parallel upgrades are running, they will be distributed across chip 0 and chip 1.
         public static bool USE_BOTH_CASSIA_CHIPS = true;

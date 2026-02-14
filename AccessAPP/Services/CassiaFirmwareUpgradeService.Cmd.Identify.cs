@@ -538,14 +538,22 @@ if (GetHidDevice())
         private static async Task SendBleMessageAsync(BleMessage message, string macAddress)
         {
             // AppLog.Verbose($"Sending BLE message of size {message._BleMessageBuffer.Length}");
-if (message._BleMessageBuffer.Length > 80) // Assuming 251 is the MTU size
+            int configuredChunkSize = RuntimeVariables.ACTOR_CHUNK_SIZE;
+            if (configuredChunkSize <= 0)
+                configuredChunkSize = 80;
+
+            int interChunkSleepMs = RuntimeVariables.ACTOR_INTER_CHUNK_SLEEP_MS;
+            if (interChunkSleepMs < 0)
+                interChunkSleepMs = 0;
+
+            if (message._BleMessageBuffer.Length > configuredChunkSize) // configurable chunking
             {
                 int bytesSent = 0;
                 int remainingBytes = message._BleMessageBuffer.Length;
 
                 while (remainingBytes > 0)
                 {
-                    int chunkSize = Math.Min(80, remainingBytes);
+                    int chunkSize = Math.Min(configuredChunkSize, remainingBytes);
                     byte[] chunk = new byte[chunkSize];
                     Array.Copy(message._BleMessageBuffer, bytesSent, chunk, 0, chunkSize);
 
@@ -554,9 +562,10 @@ if (message._BleMessageBuffer.Length > 80) // Assuming 251 is the MTU size
                     remainingBytes -= chunkSize;
 
                     // AppLog.Verbose($"Sent chunk of size {chunkSize}. Remaining: {remainingBytes}");
-if (remainingBytes > 0)
+                    if (remainingBytes > 0)
                     {
-                        Thread.Sleep(1000);
+                        if (interChunkSleepMs > 0)
+                            Thread.Sleep(interChunkSleepMs);
                     }
                     else
                     {
