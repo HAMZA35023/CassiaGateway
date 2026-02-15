@@ -590,6 +590,7 @@ public partial class MainViewModel : ObservableObject
                 qi.Progress = pctRounded;
             }
 
+            qi.SpeedPctPerMin = p.SpeedPctPerMin;
             qi.LastUpdateUtc = p.TimeUtc;
         }
 

@@ -39,6 +39,7 @@ private static bool IsTerminalStatus(string? status)
 
     [ObservableProperty] private string status = "Queued";
     [ObservableProperty] private int progress = 0;
+    [ObservableProperty] private double? speedPctPerMin;
     [ObservableProperty] private string notes = "";
     [ObservableProperty] private DateTimeOffset lastUpdateUtc = DateTimeOffset.MinValue;
 
@@ -47,6 +48,7 @@ private static bool IsTerminalStatus(string? status)
     public ObservableCollection<RssiEntry> RssiEntries { get; } = new();
 
     public string ProgressText => $"{Progress}%";
+    public string SpeedText => SpeedPctPerMin.HasValue ? $"{SpeedPctPerMin.Value:0.##} %/min" : "";
     public string LastUpdateLocal => lastUpdateUtc == DateTimeOffset.MinValue ? "" : lastUpdateUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
 
     public void UpdateRssiEntries(Dictionary<string, int> cassiaRssi, string queuedCassia)
@@ -71,5 +73,6 @@ private static bool IsTerminalStatus(string? status)
     }
 
     partial void OnProgressChanged(int value) => OnPropertyChanged(nameof(ProgressText));
+    partial void OnSpeedPctPerMinChanged(double? value) => OnPropertyChanged(nameof(SpeedText));
     partial void OnLastUpdateUtcChanged(DateTimeOffset value) => OnPropertyChanged(nameof(LastUpdateLocal));
 }

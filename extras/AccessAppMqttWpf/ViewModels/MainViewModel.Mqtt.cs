@@ -347,6 +347,13 @@ if (kind == "tele" && leaf == "progress")
                     else if (pEl.ValueKind == JsonValueKind.String && double.TryParse(pEl.GetString(), out var pd)) pct = pd;
                 }
 
+                double? speedPctPerMin = null;
+                if (root.TryGetProperty("speedPctPerMin", out var spEl))
+                {
+                    if (spEl.ValueKind == JsonValueKind.Number) speedPctPerMin = spEl.GetDouble();
+                    else if (spEl.ValueKind == JsonValueKind.String && double.TryParse(spEl.GetString(), out var sd)) speedPctPerMin = sd;
+                }
+
                 lock (_progressBufLock)
                 {
                     if (!_progressByMac.TryGetValue(mac, out var bp))
@@ -358,6 +365,7 @@ if (kind == "tele" && leaf == "progress")
                     bp.Stage = stage;
                     bp.FirmwareTarget = fwTarget;
                     bp.ProgressPercent = pct;
+                    bp.SpeedPctPerMin = speedPctPerMin;
                     bp.TimeUtc = ts;
                 }
             }

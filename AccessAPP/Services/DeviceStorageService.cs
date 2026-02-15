@@ -336,7 +336,7 @@ namespace AccessAPP.Services
         }
 
 
-        public void UpdateFirmwareProgress(string mac, double progress, string status = "Programming")
+        public void UpdateFirmwareProgress(string mac, double progress, string status = "Programming", double? speedPctPerMin = null)
         {
             _progressStatus.AddOrUpdate(mac,
                 new FirmwareProgressStatus
@@ -344,19 +344,21 @@ namespace AccessAPP.Services
                     MacAddress = mac,
                     Progress = progress,
                     Status = status,
+                    SpeedPctPerMin = speedPctPerMin,
                     LastUpdated = DateTime.UtcNow
                 },
                 (key, existing) =>
                 {
                     existing.Progress = Math.Min(progress, 100);
                     existing.Status = status;
+                    existing.SpeedPctPerMin = speedPctPerMin;
                     existing.LastUpdated = DateTime.UtcNow;
                     return existing;
                 });
 
             // MQTT publish (throttled, but always sends 100%)
             var p = Math.Min(progress, 100);
-            PublishProgressThrottled(mac, p, status);
+            PublishProgressThrottled(mac, p, status, speedPctPerMin);
         }
 
         public void MarkFirmwareFailed(string mac)
@@ -367,11 +369,13 @@ namespace AccessAPP.Services
                     MacAddress = mac,
                     Progress = 0,
                     Status = "Failed",
+                    SpeedPctPerMin = null,
                     LastUpdated = DateTime.UtcNow
                 },
                 (key, existing) =>
                 {
                     existing.Status = "Failed";
+                    existing.SpeedPctPerMin = null;
                     existing.LastUpdated = DateTime.UtcNow;
                     return existing;
                 });
@@ -383,7 +387,8 @@ namespace AccessAPP.Services
                 {
                     Mac = mac,
                     ProgressPercent = 0,
-                    Stage = "Failed"
+                    Stage = "Failed",
+                    SpeedPctPerMin = null
                 }, ct);
 
                 await _mqtt.PublishLogAsync(new LogMessage
@@ -453,7 +458,7 @@ namespace AccessAPP.Services
         }
 
 
-        private void PublishProgressThrottled(string mac, double progress, string status)
+        private void PublishProgressThrottled(string mac, double progress, string status, double? speedPctPerMin)
         {
             var now = DateTime.UtcNow;
 
@@ -472,7 +477,8 @@ namespace AccessAPP.Services
                 {
                     Mac = mac,
                     ProgressPercent = progress,
-                    Stage = status
+                    Stage = status,
+                    SpeedPctPerMin = speedPctPerMin
                 }, ct);
             });
         }

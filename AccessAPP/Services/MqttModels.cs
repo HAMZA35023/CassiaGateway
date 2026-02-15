@@ -92,6 +92,8 @@ public sealed class UpdateProgressMessage
     public double ProgressPercent { get; set; }
     public string? Stage { get; set; }
     public string? FirmwareTarget { get; set; }
+    // Percent points per minute (10s sliding window); null when not applicable.
+    public double? SpeedPctPerMin { get; set; }
 }
 
 public sealed class LogMessage

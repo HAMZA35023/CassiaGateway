@@ -59,6 +59,7 @@ public partial class MainViewModel : ObservableObject
         public string Stage { get; set; } = "";
         public string FirmwareTarget { get; set; } = "";
         public double ProgressPercent { get; set; }
+        public double? SpeedPctPerMin { get; set; }
         public DateTimeOffset TimeUtc { get; set; } = DateTimeOffset.UtcNow;
 
         // Throttle per device (avoid repainting 20+ rows every 200ms if value didn't change)

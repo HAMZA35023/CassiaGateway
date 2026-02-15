@@ -885,6 +885,8 @@ public partial class MainViewModel : ObservableObject
 
                         if (isCompletion)
                         qi.Progress = 100;
+                        if (isCompletion)
+                        qi.SpeedPctPerMin = null;
 
                         if (LooksLikeFirmwareVersion(fw))
                         qi.FirmwareVersion = fw;
