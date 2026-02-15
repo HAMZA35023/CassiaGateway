@@ -393,6 +393,9 @@ try
                     totalProcessTime: deviceSw.Elapsed,
                     result: dev.finalUpgradeResult,
                     failedStep: dev.LastFailureReason).ConfigureAwait(false);
+
+                if (dev.finalUpgradeResult == "Success" && RuntimeVariables.UPGRADE_POST_UPDATE_BLUE_LED_HOLD_ENABLED)
+                    await HoldPostUpdateBlueLedAsync(mac, dev.Pincode).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -518,6 +521,146 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             {
                 AppLog.Warn($"[UPGRADE DB LOG] Send failed for {mac}: {ex.Message}");
             }
+        }
+
+        private async Task HoldPostUpdateBlueLedAsync(string mac, string? pincode)
+        {
+            try
+            {
+                int chip = GetChipForMac(mac);
+                int maxAttempts = Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS);
+                int connectTimeoutMs = Math.Max(5000, RuntimeVariables.UPGRADE_CONNECT_ATTEMPT_TIMEOUT_MS);
+                int retryDelayMs = 2000;
+
+                AppLog.Info($"[POST] {mac} reconnecting to hold blue LED.");
+
+                bool connected = false;
+                HttpStatusCode lastStatus = 0;
+                for (int attempt = 1; attempt <= maxAttempts; attempt++)
+                {
+                    using var cts = new CancellationTokenSource(connectTimeoutMs);
+                    var connect = await _connectService
+                        .ConnectToBleDevice(_gatewayIpAddress, _gatewayPort, mac, chip: chip, ct: cts.Token)
+                        .ConfigureAwait(false);
+
+                    lastStatus = connect.Status;
+                    if (connect.Status == HttpStatusCode.OK || connect.Status == HttpStatusCode.Conflict)
+                    {
+                        connected = true;
+                        break;
+                    }
+
+                    AppLog.Warn($"[POST] {mac} connect attempt {attempt}/{maxAttempts} failed ({connect.Status}).");
+                    await Task.Delay(retryDelayMs).ConfigureAwait(false);
+                }
+
+                if (!connected)
+                {
+                    AppLog.Warn($"[POST] {mac} could not reconnect for blue LED hold. Last status={lastStatus}.");
+                    return;
+                }
+
+                bool isBootMode = false;
+                try
+                {
+                    isBootMode = CheckIfDeviceInBootMode(_gatewayIpAddress, mac);
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Debug($"[POST] {mac} boot-mode check failed: {ex.Message}");
+                }
+
+                if (!isBootMode)
+                {
+                    var login = await AttemptLoginOnConnectedSessionAsync(
+                        _gatewayIpAddress,
+                        mac,
+                        pincode,
+                        CancellationToken.None).ConfigureAwait(false);
+
+                    if (!login.Success)
+                    {
+                        AppLog.Warn($"[POST] {mac} login failed; skipping blue LED hold.");
+                        await SafeDisconnectAsync(mac, chip).ConfigureAwait(false);
+                        return;
+                    }
+                }
+
+                var (ledOk, ledData, ledError) = await SendLedCommandFastAsync(
+                    mac,
+                    chip,
+                    LedBreathBlueCmd,
+                    CancellationToken.None).ConfigureAwait(false);
+
+                if (!ledOk)
+                {
+                    AppLog.Warn($"[POST] {mac} LED command failed: {ledError}");
+                    await SafeDisconnectAsync(mac, chip).ConfigureAwait(false);
+                    return;
+                }
+
+                var data = (ledData ?? "").Trim().ToUpperInvariant();
+                var ok = data == "00" || data == "0000" || string.IsNullOrWhiteSpace(data);
+                if (!ok)
+                {
+                    AppLog.Warn($"[POST] {mac} LED command rejected: {data}");
+                    await SafeDisconnectAsync(mac, chip).ConfigureAwait(false);
+                    return;
+                }
+
+                AppLog.Info($"[POST] {mac} blue LED hold active. Waiting for device to disconnect.");
+                while (await IsMacConnectedOnGatewayAsync(mac, chip).ConfigureAwait(false))
+                {
+                    await Task.Delay(2000).ConfigureAwait(false);
+                }
+
+                AppLog.Info($"[POST] {mac} disconnected. Blue LED hold ended.");
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn($"[POST] {mac} blue LED hold failed: {ex.Message}");
+            }
+        }
+
+        private async Task<bool> IsMacConnectedOnGatewayAsync(string macAddress, int expectedChip)
+        {
+            try
+            {
+                var connected = await _connectService
+                    .GetConnectedBleDevices(_gatewayIpAddress, _gatewayPort)
+                    .ConfigureAwait(false);
+
+                if (connected?.nodes == null || connected.nodes.Count == 0)
+                    return false;
+
+                var targetMac = NormalizeMac(macAddress);
+                foreach (var node in connected.nodes)
+                {
+                    if (node == null)
+                        continue;
+
+                    var nodeMac = NormalizeMac(node.bdaddrs?.Bdaddr);
+                    if (string.IsNullOrWhiteSpace(nodeMac))
+                        nodeMac = NormalizeMac(node.id);
+
+                    if (!string.Equals(nodeMac, targetMac, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    int nodeChip = node.chipId >= 0 ? node.chipId : node.chip;
+                    if (expectedChip >= 0 && nodeChip >= 0 && nodeChip != expectedChip)
+                        continue;
+
+                    var state = node.connectionState ?? "";
+                    return string.IsNullOrWhiteSpace(state) ||
+                           string.Equals(state, "connected", StringComparison.OrdinalIgnoreCase);
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLog.Debug($"[POST] Gateway connected-state check failed for {macAddress}: {ex.Message}");
+            }
+
+            return false;
         }
 
         private static string FormatDuration(TimeSpan value)

@@ -121,6 +121,8 @@ namespace AccessAPP
         public static bool UPGRADE_OPTIMIZE_RECONNECT_FLOW = true;
         // Trust /gap/nodes connected state to recover after connect errors.
         public static bool UPGRADE_CONNECT_TRUST_GATEWAY_CONNECTED_STATE = true;
+        // After a successful upgrade, reconnect and keep the session alive while blinking blue LED (disabled by default).
+        public static bool UPGRADE_POST_UPDATE_BLUE_LED_HOLD_ENABLED = false;
 
         // End-of-upgrade reporting (best-effort, no local buffering)
         // Enable posting upgrade results to the statistics endpoint.
