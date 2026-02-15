@@ -59,6 +59,9 @@ public sealed class AccessAppSettings
     // DALI master only (P47/P48) => 4, otherwise => 2.
     public bool autoSetWorkersByModel { get; set; } = true;
 
+    // If true, force specific runtime variables to false before every start-update.
+    public bool productionUpdate { get; set; } = false;
+
     /// <summary>
     /// Remembers the selected firmware per detector model across app restarts/resync.
     /// Keys are typically "P41", "P42", "P46", "P47", "P48".

@@ -1464,6 +1464,18 @@ public partial class MainViewModel : ObservableObject
             .Replace("{cassia}", cassia)
             .Replace("{command}", DefaultCommand);
 
+        if (ProductionUpdateEnabled)
+        {
+            var runtimePayload = new Dictionary<string, object?>
+            {
+                ["RebootDetectorAfterUpgrade"] = false,
+                ["Restore102DBAfterUpgrade"] = false,
+                ["RestoreSettingsAfterUpgrade"] = false,
+                ["AutoSetSysFailLevelUnderUpdate"] = false
+            };
+            await SetRuntimeForCassiaAsync(cassia, runtimePayload).ConfigureAwait(false);
+        }
+
         var forceUpdate = forceUpdateOverride ?? ForceUpdateEnabled;
         var payload = new[]
         {

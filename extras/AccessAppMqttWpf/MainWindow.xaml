@@ -829,6 +829,10 @@
                     <TextBlock Text="NetworkId" Style="{StaticResource MetaLabel}"/>
                     <TextBox Text="{Binding NetworkId}"/>
 
+                    <CheckBox Content="Production-Update"
+                              IsChecked="{Binding ProductionUpdateEnabled, Mode=TwoWay}"
+                              Margin="0,8,0,0"/>
+
                     <TextBlock Text="Command topic template" Style="{StaticResource MetaLabel}" Visibility="Collapsed"/>
                     <TextBox Text="{Binding CommandTopicTemplate}" Visibility="Collapsed"/>
 
@@ -965,46 +969,20 @@
                     HorizontalAlignment="Right"
                     Margin="0,0,10,0">
 
-                                        <CheckBox x:Name="EnableDoubleClickQueueCheckBox"
-                      Content="Double-click to queue"
-                      IsChecked="{Binding EnableDoubleClickQueue, Mode=TwoWay}"
-                      Margin="0,0,10,0"
-                      VerticalAlignment="Center"/>
-
                                         <CheckBox Content="Hide completed"
                       IsChecked="{Binding HideCompletedDevices, Mode=TwoWay}"
                       Margin="14,0,0,0"
                       VerticalAlignment="Center"/>
 
-                                        <Menu Margin="14,0,8,0" VerticalAlignment="Center" Background="Transparent">
-                                            <MenuItem Header="{Binding SelectedModelFilterSummary}" Width="150">
-                                                <MenuItem StaysOpenOnClick="True">
-                                                    <MenuItem.Header>
-                                                        <CheckBox Content="P41" IsChecked="{Binding ShowModelP41, Mode=TwoWay}"/>
-                                                    </MenuItem.Header>
-                                                </MenuItem>
-                                                <MenuItem StaysOpenOnClick="True">
-                                                    <MenuItem.Header>
-                                                        <CheckBox Content="P42" IsChecked="{Binding ShowModelP42, Mode=TwoWay}"/>
-                                                    </MenuItem.Header>
-                                                </MenuItem>
-                                                <MenuItem StaysOpenOnClick="True">
-                                                    <MenuItem.Header>
-                                                        <CheckBox Content="P46" IsChecked="{Binding ShowModelP46, Mode=TwoWay}"/>
-                                                    </MenuItem.Header>
-                                                </MenuItem>
-                                                <MenuItem StaysOpenOnClick="True">
-                                                    <MenuItem.Header>
-                                                        <CheckBox Content="P47" IsChecked="{Binding ShowModelP47, Mode=TwoWay}"/>
-                                                    </MenuItem.Header>
-                                                </MenuItem>
-                                                <MenuItem StaysOpenOnClick="True">
-                                                    <MenuItem.Header>
-                                                        <CheckBox Content="P48" IsChecked="{Binding ShowModelP48, Mode=TwoWay}"/>
-                                                    </MenuItem.Header>
-                                                </MenuItem>
-                                            </MenuItem>
-                                        </Menu>
+                                        <TextBlock Text="Model:"
+                                                   Margin="14,0,6,0"
+                                                   VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource MutedBrush}"/>
+                                        <ComboBox Width="80"
+                                                  ItemsSource="{Binding SensorFilterOptions}"
+                                                  SelectedItem="{Binding SensorFilter, Mode=TwoWay}"
+                                                  VerticalAlignment="Center"
+                                                  Margin="0,0,8,0"/>
 
                                         <CheckBox Content="Hide weak RSSI"
                       IsChecked="{Binding HideWeakRssiEnabled, Mode=TwoWay}"
@@ -1050,7 +1028,6 @@
                                       SelectedItem="{Binding SelectedDevice, Mode=TwoWay}"
                                       AutoGenerateColumns="False"
                                       SelectionChanged="DevicesGrid_SelectionChanged"
-                                      MouseDoubleClick="DevicesGrid_MouseDoubleClick"
                                       IsReadOnly="False"
                                       CanUserSortColumns="True" EnableRowVirtualization="True" EnableColumnVirtualization="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.IsDeferredScrollingEnabled="True" ScrollViewer.CanContentScroll="True">
 

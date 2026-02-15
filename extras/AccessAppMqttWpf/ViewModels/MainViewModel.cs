@@ -226,6 +226,8 @@ public partial class MainViewModel : ObservableObject
     // If true, auto-adjust workers from queued model mix:
     // DALI master only (P47/P48) => 4, otherwise => 2.
     [ObservableProperty] private bool autoSetWorkersByModelEnabled = false;
+    // If true, apply "Production-Update" runtime overrides before start-update.
+    [ObservableProperty] private bool productionUpdateEnabled = false;
 
     // Firmware selection per model (dropdowns). Will later be populated from MQTT; for now hardcoded list.
     public ObservableCollection<string> FirmwareOptionsP41 { get; } = new();
@@ -304,6 +306,7 @@ public partial class MainViewModel : ObservableObject
         DefaultCommand = s.accessapp.defaultCommand;
         ForceUpdateEnabled = s.accessapp.forceUpdate;
         AutoSetWorkersByModelEnabled = s.accessapp.autoSetWorkersByModel;
+        ProductionUpdateEnabled = s.accessapp.productionUpdate;
 
         // Firmware selections: remember across restarts/resync.
         try
@@ -1126,6 +1129,7 @@ public partial class MainViewModel : ObservableObject
             theme = string.IsNullOrWhiteSpace(existingTheme) ? App.CurrentTheme : existingTheme,
             forceUpdate = ForceUpdateEnabled,
             autoSetWorkersByModel = AutoSetWorkersByModelEnabled,
+            productionUpdate = ProductionUpdateEnabled,
             selectedFirmwareByModel = fwMap
         };
 

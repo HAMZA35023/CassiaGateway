@@ -130,16 +130,6 @@ public partial class MainWindow : Window
         if (ThemeDarkMenuItem != null) ThemeDarkMenuItem.IsChecked = isDark;
     }
 
-    private void DevicesGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
-    {
-        // Only queue on double click when explicitly enabled
-        if (EnableDoubleClickQueueCheckBox?.IsChecked != true)
-            return;
-
-        if (DataContext is MainViewModel vm)
-            ExecuteQueueSingle(vm, vm.SelectedDevice);
-    }
-
     private void PasswordBox_PasswordChanged(object sender, RoutedEventArgs e)
     {
         if (DataContext is MainViewModel vm && sender is PasswordBox pb)

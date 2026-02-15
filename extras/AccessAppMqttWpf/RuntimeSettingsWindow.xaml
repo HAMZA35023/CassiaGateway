@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:models="clr-namespace:AccessAppMqttWpf.Models"
         Title="Runtime Variables"
-        Height="560" Width="720"
+        Height="560" Width="820"
         WindowStartupLocation="CenterOwner">
 
     <Window.Resources>
@@ -40,7 +40,7 @@
                             <DataTemplate DataType="{x:Type models:RuntimeVariableItem}">
                                 <Grid Margin="0,2">
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="260"/>
+                                        <ColumnDefinition Width="560"/>
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Text="{Binding Name}" VerticalAlignment="Center"/>

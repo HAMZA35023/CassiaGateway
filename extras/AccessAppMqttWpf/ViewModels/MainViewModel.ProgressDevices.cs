@@ -96,7 +96,8 @@ public partial class MainViewModel : ObservableObject
             if (HideWeakRssiEnabled)
             {
                 var threshold = HideWeakRssiThreshold;
-                var hasRssi = d.BestRssi != int.MinValue;
+                // Treat -127 as "no RSSI" (do not hide those devices).
+                var hasRssi = d.BestRssi != int.MinValue && d.BestRssi > -127;
                 if (hasRssi && d.BestRssi < threshold)
                 {
                     var now = DateTimeOffset.UtcNow;
