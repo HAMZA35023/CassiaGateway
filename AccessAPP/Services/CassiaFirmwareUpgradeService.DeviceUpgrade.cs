@@ -357,6 +357,18 @@ try
                             break;
                         }
                     }
+
+                    bool anyFirmwarePlanned = dev.isActorUpgradeNeeded || dev.upgradeBootloader || dev.upgradeSensor;
+                    bool firmwareDone =
+                        (!dev.isActorUpgradeNeeded || dev.ActorSuccess) &&
+                        (!dev.upgradeBootloader || dev.BootloaderSuccess) &&
+                        dev.SensorSuccess;
+
+                    // Only run the post FW read once firmware work is fully satisfied.
+                    if (anyFirmwarePlanned && firmwareDone)
+                    {
+                        await VerifyPostUpgradeFirmwareAsync(dev, mac, logId ?? "", reuseExistingConnection: false).ConfigureAwait(false);
+                    }
                 }
 
                 deviceSw.Stop();
@@ -554,7 +566,10 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
 
                 if (string.IsNullOrWhiteSpace(postFw))
                 {
-                    postFw = await GetFwVersion(mac, dev.Pincode, disconnect_on_finish: false).ConfigureAwait(false);
+                    postFw = await GetFwVersion(
+                        mac,
+                        dev.Pincode,
+                        disconnect_on_finish: !reuseExistingConnection).ConfigureAwait(false);
                 }
 
                 dev.PostFirmwareVersion = postFw;

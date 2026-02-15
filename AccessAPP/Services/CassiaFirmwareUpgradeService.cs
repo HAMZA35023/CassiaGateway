@@ -1085,8 +1085,7 @@ await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chi
             }
             finally
             {
-                // Verify firmware version BEFORE disconnecting so we can reuse the active session when possible.
-                await VerifyPostUpgradeFirmwareAsync(ctx.Dev, ctx.MacAddress, ctx.LogId ?? "", reuseExistingConnection: true).ConfigureAwait(false);
+                // Post-upgrade FW read is handled after all firmware work is complete (outside this attempt).
 
                 // Always disconnect at the end, identical to the original implementation.
                 await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0, chip: ctx.ChipId).ConfigureAwait(false);
