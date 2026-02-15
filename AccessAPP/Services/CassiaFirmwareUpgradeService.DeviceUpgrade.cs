@@ -280,7 +280,53 @@ try
                     dev.requiresConfigRestore = decisions.RequiresConfigRestore;
                     dev.requires102Restore = decisions.Requires102Restore;
 
-                    await UpgradeDeviceAsync(
+                    bool IsActorBlockedByBootMode(ServiceResponse resp)
+                    {
+                        if (resp == null || resp.Success)
+                            return false;
+                        if (resp.StatusCode != (int)HttpStatusCode.Conflict)
+                            return false;
+                        return resp.Message?.Contains("Sensor is already in boot mode", StringComparison.OrdinalIgnoreCase) == true;
+                    }
+
+                    void ForceBootModeRecoveryIfNeeded(ServiceResponse resp)
+                    {
+                        if (!IsActorBlockedByBootMode(resp))
+                            return;
+
+                        bool changed = false;
+                        if (!dev.upgradeBootloader)
+                        {
+                            dev.upgradeBootloader = true;
+                            changed = true;
+                        }
+                        if (!dev.upgradeSensor)
+                        {
+                            dev.upgradeSensor = true;
+                            changed = true;
+                        }
+                        if (dev.BootloaderSuccess)
+                        {
+                            dev.BootloaderSuccess = false;
+                            changed = true;
+                        }
+                        if (dev.SensorSuccess)
+                        {
+                            dev.SensorSuccess = false;
+                            changed = true;
+                        }
+
+                        if (changed)
+                        {
+                            dev.LastFailureReason = "Actor upgrade blocked by sensor boot mode; forcing bootloader + sensor recovery.";
+                            UpgradeLogger.Log(logId, mac, "Boot mode recovery",
+                                "Actor upgrade blocked by boot mode -> forcing bootloader + sensor update",
+                                dev.FirmwareVersion);
+                            AppLog.Warn($"[{mac}] Actor upgrade blocked by sensor boot mode -> forcing bootloader + sensor update.");
+                        }
+                    }
+
+                    var initialResp = await UpgradeDeviceAsync(
                         dev, mac, dev.Pincode, dev.DetectotType, dev.FirmwareVersion,
                         dev.isActorUpgradeNeeded, dev.upgradeBootloader, dev.upgradeSensor, logId
                     ).ConfigureAwait(false);
@@ -288,6 +334,7 @@ try
                     // Never reuse the precheck session on subsequent retries.
                     dev.PrecheckSessionAlive = false;
                     dev.PrecheckBootMode = false;
+                    ForceBootModeRecoveryIfNeeded(initialResp);
 
                     const int maxRetriesPerComponent = 5;
 
@@ -346,6 +393,7 @@ try
 
                         AppLog.Warn($"[RETRY RESULT] {mac} - {resp.StatusCode} - {resp.Message}");
                         UpgradeLogger.Log(logId, mac, $"Retry result: {resp.StatusCode} - {resp.Message}", resp.Success ? "Success" : "Failed");
+                        ForceBootModeRecoveryIfNeeded(resp);
 
                         // HARD FAIL: firmware missing / path issues -> never retry
                         if (!resp.Success && resp.Message != null &&

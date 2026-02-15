@@ -966,6 +966,27 @@ await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chi
                 return false;
             }
 
+            async Task<bool> WaitForApplicationModeAsync()
+            {
+                int waitAttempts = Math.Max(1, RuntimeVariables.UPGRADE_ACTOR_APP_MODE_WAIT_ATTEMPTS);
+                int waitDelayMs = Math.Max(0, RuntimeVariables.UPGRADE_ACTOR_APP_MODE_WAIT_DELAY_MS);
+
+                for (int attempt = 1; attempt <= waitAttempts; attempt++)
+                {
+                    if (!CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac))
+                    {
+                        UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", $"Cleared (attempt {attempt}/{waitAttempts})");
+                        return true;
+                    }
+
+                    UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", $"Still detected; waiting {waitDelayMs}ms (attempt {attempt}/{waitAttempts})");
+                    if (waitDelayMs > 0)
+                        await Task.Delay(waitDelayMs).ConfigureAwait(false);
+                }
+
+                return false;
+            }
+
             // ----------------------------
             // Step 1: Connect (robust)
             // ----------------------------
@@ -983,20 +1004,32 @@ await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chi
             {
                 UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
 
-                response.Success = false;
-                response.StatusCode = 409;
-                response.Message = "Sensor is already in boot mode. It needs to be in Application mode.";
-
-                UpgradeLogger.Log(logId, nodeMac, "Disconnected as sensor is in bootmode", "Info");
-
-                try
+                bool appModeReady = await WaitForApplicationModeAsync().ConfigureAwait(false);
+                if (!appModeReady)
                 {
-					await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chip: GetChipForMac(nodeMac));
-                }
-                catch { /* ignore */ }
+                    response.Success = false;
+                    response.StatusCode = 409;
+                    response.Message = "Sensor is already in boot mode. It needs to be in Application mode.";
 
-                await Task.Delay(5000);
-                return response;
+                    UpgradeLogger.Log(logId, nodeMac, "Disconnected as sensor is in bootmode", "Info");
+
+                    try
+                    {
+						await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chip: GetChipForMac(nodeMac));
+                    }
+                    catch { /* ignore */ }
+
+                    await Task.Delay(5000);
+                    return response;
+                }
+
+                if (!await ConnectWithRetryAsync("Connected (post-bootmode wait)").ConfigureAwait(false))
+                {
+                    response.Success = false;
+                    response.StatusCode = 500;
+                    response.Message = "Failed to connect to device.";
+                    return response;
+                }
             }
 
             // ----------------------------

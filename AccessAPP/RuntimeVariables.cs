@@ -162,6 +162,10 @@ namespace AccessAPP
         // Delay between boot mode check retries.
         public static int BOOTMODE_RETRY_DELAY_MS = 3000;
 
+        // Actor upgrade: wait for sensor to return to application mode if boot mode detected.
+        public static int UPGRADE_ACTOR_APP_MODE_WAIT_ATTEMPTS = 6;
+        public static int UPGRADE_ACTOR_APP_MODE_WAIT_DELAY_MS = 5000;
+
         
     }
 }
