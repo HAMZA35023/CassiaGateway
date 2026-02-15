@@ -27,7 +27,7 @@
         <Border Style="{StaticResource Card}" Padding="14" Margin="0,0,0,12">
             <StackPanel>
                 <TextBlock Text="Set runtime variables" FontSize="16" FontWeight="SemiBold"/>
-                <TextBlock Text="{Binding CassiaName, StringFormat=Target: {0}}" Foreground="{DynamicResource MutedBrush}" Margin="0,4,0,0"/>
+                <TextBlock Text="{Binding TargetLabel, StringFormat=Target: {0}}" Foreground="{DynamicResource MutedBrush}" Margin="0,4,0,0"/>
             </StackPanel>
         </Border>
 

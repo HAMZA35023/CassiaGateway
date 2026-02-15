@@ -773,21 +773,26 @@ public partial class MainViewModel : ObservableObject
             if (!IsConnected)
             {
                 // Still clear the UI so user starts from a clean slate.
-                ClearAllUiAndState();
+                ClearAllUiAndState(ShouldResetSpeedHistoryForCurrentScope());
                 ConnectionStatus = "Not connected";
                 return;
             }
 
-            await ResyncCoreAsync().ConfigureAwait(false);
+            await ResyncCoreAsync(ShouldResetSpeedHistoryForCurrentScope(), clearUi: true).ConfigureAwait(false);
         }
 
         /// <summary>
         /// Clears all UI collections and internal caches.
         /// </summary>
-        private void ClearAllUiAndState()
+        private void ClearAllUiAndState(bool resetSpeedHistory)
         {
             Application.Current.Dispatcher.Invoke(() =>
             {
+                if (resetSpeedHistory)
+                    _speedHistoryByGateway.Clear();
+                else
+                    CaptureSpeedHistorySnapshot();
+
                 // Devices
                 _devices.Clear();
                 _deviceByMac.Clear();
@@ -840,9 +845,12 @@ public partial class MainViewModel : ObservableObject
         /// <summary>
         /// Clears UI/state and requests fresh snapshots the same way as on a new connect.
         /// </summary>
-        private async Task ResyncCoreAsync()
+        private async Task ResyncCoreAsync(bool resetSpeedHistory, bool clearUi)
         {
-            ClearAllUiAndState();
+            if (clearUi)
+                ClearAllUiAndState(resetSpeedHistory);
+            else if (resetSpeedHistory)
+                _speedHistoryByGateway.Clear();
 
             // Ensure subscriptions exist for the current NetworkId.
             try

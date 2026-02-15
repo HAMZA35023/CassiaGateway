@@ -48,6 +48,13 @@ public partial class MainWindow : Window
         ClearExpiredGridSelections();
     }
 
+    private void CassiaTile_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        if (DataContext is not MainViewModel vm) return;
+        if (vm.DeveloperModeUnlocked) return;
+        e.Handled = true;
+    }
+
     private void DevicesGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (sender is not DataGrid grid) return;

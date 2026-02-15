@@ -171,6 +171,7 @@ public partial class MainViewModel : ObservableObject
                     if (gw == null)
                     {
                         gw = new CassiaGateway { Name = name, NetworkId = net };
+                        RestoreSpeedHistoryIfPresent(gw);
                         CassiaGateways.Add(gw);
                         SortCassiaGatewaysByName();
                         SortCassiaGatewaysByName();

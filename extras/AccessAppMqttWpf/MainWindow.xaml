@@ -5,7 +5,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="AC Controller for AccessAPP - v0.11.0"
+        Title="AC Controller for AccessAPP - v0.11.1"
         Height="941" Width="1715"
         WindowStartupLocation="CenterScreen">
 
@@ -393,6 +393,9 @@
                 <MenuItem Header="Refresh FW manifest (all)" Command="{Binding RefreshFwManifestForAllCassiasCommand}"/>
                 <MenuItem Header="Clear backups (all)" Command="{Binding ClearDeviceSettingsBackupsForAllCassiasCommand}"/>
                 <MenuItem Header="Set MQTT broker (all)..." Command="{Binding SetMqttBrokerForAllCassiasPromptCommand}"/>
+                <MenuItem Header="Set runtime variables (all)..."
+                          Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"
+                          Command="{Binding OpenRuntimeSettingsAllCommand}"/>
                 <Separator/>
                 <MenuItem Header="Set parallel (all)" Command="{Binding SetParallelProgrammersForAllCassiasPromptCommand}"/>
                 <MenuItem Header="Get parallel (all)" Command="{Binding GetParallelProgrammersForAllCassiasCommand}"/>
@@ -471,6 +474,7 @@
         CornerRadius="10"
         Margin="0,0,0,8"
         HorizontalAlignment="Stretch"
+        ContextMenuOpening="CassiaTile_ContextMenuOpening"
         Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}">
 
     <Border.ContextMenu>
@@ -489,10 +493,11 @@
             <MenuItem Header="Set MQTT broker (host/port/tls)..."
                       Command="{Binding PlacementTarget.Tag.SetCassiaMqttBrokerCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                       CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+            <Separator Visibility="{Binding PlacementTarget.Tag.DeveloperModeUnlocked, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}"/>
             <MenuItem Header="Set runtime variables..."
+                      Visibility="{Binding PlacementTarget.Tag.DeveloperModeUnlocked, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}"
                       Command="{Binding PlacementTarget.Tag.OpenRuntimeSettingsCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                       CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
-            <Separator Visibility="{Binding PlacementTarget.Tag.DeveloperModeUnlocked, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}"/>
             <MenuItem Header="Remote self-update (restart service)"
                       Visibility="{Binding PlacementTarget.Tag.DeveloperModeUnlocked, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}"
                       Command="{Binding PlacementTarget.Tag.SelfUpdateCassiaCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"

@@ -14,14 +14,16 @@ internal sealed class SettingsRestoreStep : IDeviceUpgradeStep
         var svc = ctx.Svc;
         var dev = ctx.Dev;
 
-        if (!ctx.AnyFirmwareStepExecuted)
+        bool restorePending = dev.requiresConfigRestore && !dev.isConfigRestored;
+
+        if (!ctx.AnyFirmwareStepExecuted && !restorePending)
         {
             UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Settings restore skipped (no FW step executed in this attempt)", "Info", ctx.FirmwareVersion);
             return true;
         }
 
         // 3) Restore settings right after sensor upgrade (do NOT reboot here)
-        if (!(RuntimeVariables.RestoreSettingsAfterUpgrade && !ctx.IsInBoot && UpgradePipelineSupport.SupportsSettingsBackup(ctx.DetectorType)))
+        if (!(RuntimeVariables.RestoreSettingsAfterUpgrade && UpgradePipelineSupport.SupportsSettingsBackup(ctx.DetectorType)))
             return true;
 
         ctx.SettingsBackupPath ??= dev.SettingsBackupPath;
@@ -39,6 +41,26 @@ internal sealed class SettingsRestoreStep : IDeviceUpgradeStep
         }
 
         await Task.Delay(10000).ConfigureAwait(false);
+
+        if (ctx.IsInBoot)
+        {
+            try
+            {
+                // Re-check boot mode after delay to avoid stale status across retries.
+                ctx.IsInBoot = svc.CheckIfDeviceInBootMode(svc.GatewayIpAddress, ctx.MacAddress);
+            }
+            catch (Exception ex)
+            {
+                UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, $"BootMode check exception before settings restore: {ex.Message}", "Warn", ctx.FirmwareVersion);
+            }
+
+            if (ctx.IsInBoot)
+            {
+                UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Settings restore skipped (device still in boot mode)", "Warn", ctx.FirmwareVersion);
+                AppLog.Warn($" Settings restore skipped for {ctx.MacAddress} - device still in boot mode");
+                return true;
+            }
+        }
 
         AppLog.Info($"Starting settings restore for {ctx.MacAddress} - trying to connect and login");
 

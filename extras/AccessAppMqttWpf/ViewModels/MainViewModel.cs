@@ -28,6 +28,21 @@ public partial class MainViewModel : ObservableObject
     private readonly MqttClientService _mqtt = new();
     private readonly SettingsStore _store = new();
 
+    private CancellationTokenSource? _autoReconnectCts;
+    private Task? _autoReconnectTask;
+    private bool _manualDisconnectRequested;
+    private bool _autoReconnectEnabled;
+    private bool _hasEverConnected;
+    private bool _isConnecting;
+    private readonly TimeSpan[] _autoReconnectBackoff = new[]
+    {
+        TimeSpan.FromSeconds(1),
+        TimeSpan.FromSeconds(2),
+        TimeSpan.FromSeconds(5),
+        TimeSpan.FromSeconds(10),
+        TimeSpan.FromSeconds(20),
+        TimeSpan.FromSeconds(30)
+    };
 
     public ObservableCollection<CassiaGateway> CassiaGateways { get; } = new();
 
@@ -35,6 +50,8 @@ public partial class MainViewModel : ObservableObject
     private readonly CassiaGateway _speedAllGateways = new() { Name = "(All gateways)" };
     private readonly CassiaGateway _speedTotalGateways = new() { Name = "(Total)" };
     public ObservableCollection<CassiaGateway> SpeedGraphGateways { get; } = new();
+    private readonly Dictionary<string, List<SpeedSample>> _speedHistoryByGateway = new(StringComparer.OrdinalIgnoreCase);
+    private string _speedHistoryScopeKey = "";
 
     // Names for dropdowns (assignment, commands, etc.)
     public ObservableCollection<string> CassiaNameOptions { get; } = new();
@@ -312,6 +329,11 @@ public partial class MainViewModel : ObservableObject
             // We request FW manifests when we see each gateway's status (online)
             if (connected)
             {
+                _manualDisconnectRequested = false;
+                _autoReconnectEnabled = true;
+                _hasEverConnected = true;
+                _autoReconnectCts?.Cancel();
+
                 _connectedAtUtc = DateTimeOffset.UtcNow;
                 _fwManifestRequestedForGw.Clear();
                 _runtimeStateRequestedForGw.Clear();
@@ -324,6 +346,7 @@ public partial class MainViewModel : ObservableObject
             {
                 // Keep the last subscriptions remembered; next connect/resync will subscribe again.
                 // (We don't force-clear UI on disconnect; user asked for re-sync on reconnect.)
+                StartAutoReconnect();
             }
         };
 
@@ -570,30 +593,115 @@ public partial class MainViewModel : ObservableObject
         {
             if (IsConnected)
             {
+                _manualDisconnectRequested = true;
+                _autoReconnectEnabled = false;
+                _autoReconnectCts?.Cancel();
                 await _mqtt.DisconnectAsync();
                 return;
             }
 
+            _manualDisconnectRequested = false;
+            _autoReconnectEnabled = true;
+            _autoReconnectCts?.Cancel();
+
             // Always start a fresh session when connecting (clears UI + internal caches)
             // so reconnect behaves the same as a "clean" connect.
-            ClearAllUiAndState();
+            var resetSpeedHistory = ShouldResetSpeedHistoryForCurrentScope();
+            ClearAllUiAndState(resetSpeedHistory);
 
-            await _mqtt.ConnectAsync(
-                MqttHost,
-                MqttPort,
-                MqttUser,
-                MqttPassword ?? "",
-                UseTls,
-                IgnoreTlsErrors,
-                MqttTopic,
-                _appCts.Token);
+            _isConnecting = true;
+            try
+            {
+                await _mqtt.ConnectAsync(
+                    MqttHost,
+                    MqttPort,
+                    MqttUser,
+                    MqttPassword ?? "",
+                    UseTls,
+                    IgnoreTlsErrors,
+                    MqttTopic,
+                    _appCts.Token);
+            }
+            finally
+            {
+                _isConnecting = false;
+            }
 
             // Full clean re-sync (subscribe + request snapshots).
-            await ResyncCoreAsync().ConfigureAwait(false);
+            await ResyncCoreAsync(resetSpeedHistory, clearUi: false).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             ConnectionStatus = "Error: " + ex.Message;
+        }
+    }
+
+    private void StartAutoReconnect()
+    {
+        if (!_autoReconnectEnabled || _manualDisconnectRequested || !_hasEverConnected || _isConnecting) return;
+        if (_autoReconnectTask != null && !_autoReconnectTask.IsCompleted) return;
+
+        _autoReconnectCts?.Cancel();
+        _autoReconnectCts = new CancellationTokenSource();
+        _autoReconnectTask = AutoReconnectLoopAsync(_autoReconnectCts.Token);
+    }
+
+    private async Task AutoReconnectLoopAsync(CancellationToken ct)
+    {
+        var attempt = 0;
+
+        while (!ct.IsCancellationRequested && !IsConnected)
+        {
+            var delay = _autoReconnectBackoff[Math.Min(attempt, _autoReconnectBackoff.Length - 1)];
+            attempt++;
+
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                ConnectionStatus = $"Disconnected. Reconnecting in {delay.TotalSeconds:0}s...";
+            });
+
+            try
+            {
+                await Task.Delay(delay, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
+            if (ct.IsCancellationRequested || IsConnected) return;
+
+            try
+            {
+                var resetSpeedHistory = ShouldResetSpeedHistoryForCurrentScope();
+                _isConnecting = true;
+                try
+                {
+                    await _mqtt.ConnectAsync(
+                        MqttHost,
+                        MqttPort,
+                        MqttUser,
+                        MqttPassword ?? "",
+                        UseTls,
+                        IgnoreTlsErrors,
+                        MqttTopic,
+                        _appCts.Token).ConfigureAwait(false);
+                }
+                finally
+                {
+                    _isConnecting = false;
+                }
+
+                await ResyncCoreAsync(resetSpeedHistory, clearUi: true).ConfigureAwait(false);
+                return;
+            }
+            catch (Exception ex)
+            {
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    ConnectionStatus = $"Reconnect failed: {ex.Message}";
+                });
+            }
         }
     }
 
@@ -606,7 +714,7 @@ public partial class MainViewModel : ObservableObject
 
         // If we are connected, immediately re-sync to reflect the new NetworkId/topic scope.
         if (IsConnected)
-            await ResyncCoreAsync().ConfigureAwait(false);
+            await ResyncCoreAsync(ShouldResetSpeedHistoryForCurrentScope(), clearUi: true).ConfigureAwait(false);
     }
 
     [RelayCommand]
@@ -760,7 +868,7 @@ public partial class MainViewModel : ObservableObject
         {
             Application.Current.Dispatcher.Invoke(() =>
             {
-                var wnd = new RuntimeSettingsWindow(this, cassiaName)
+                var wnd = new RuntimeSettingsWindow(this, cassiaName, cassiaName, applyToAll: false)
                 {
                     Owner = Application.Current.MainWindow
                 };
@@ -771,6 +879,37 @@ public partial class MainViewModel : ObservableObject
         catch (Exception ex)
         {
             ConnectionStatus = "Open runtime settings failed: " + ex.Message;
+        }
+    }
+
+    [RelayCommand]
+    private void OpenRuntimeSettingsAll()
+    {
+        var source = CassiaGateways
+            .FirstOrDefault(g => string.Equals(g.State, "online", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(g.Name))
+            ?? CassiaGateways.FirstOrDefault(g => !string.IsNullOrWhiteSpace(g.Name));
+
+        if (source == null)
+        {
+            ConnectionStatus = "No Cassia gateway available to load runtime variables.";
+            return;
+        }
+
+        try
+        {
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                var wnd = new RuntimeSettingsWindow(this, targetCassia: "all", sourceCassia: source.Name, applyToAll: true)
+                {
+                    Owner = Application.Current.MainWindow
+                };
+                wnd.Show();
+                wnd.Activate();
+            });
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = "Open runtime settings (all) failed: " + ex.Message;
         }
     }
 
@@ -905,6 +1044,39 @@ public partial class MainViewModel : ObservableObject
         catch (Exception ex)
         {
             ConnectionStatus = $"set-runtime failed ({cassiaName}): {ex.Message}";
+        }
+    }
+
+    internal async Task SetRuntimeForAllCassiasAsync(IReadOnlyDictionary<string, object?> payload)
+    {
+        if (!IsConnected) { ConnectionStatus = "Not connected"; return; }
+        if (payload == null || payload.Count == 0) return;
+
+        var targets = CassiaGateways
+            .Select(g => (g.Name ?? "").Trim())
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (targets.Count == 0)
+        {
+            ConnectionStatus = "No Cassia gateways available.";
+            return;
+        }
+
+        try
+        {
+            foreach (var cassia in targets)
+            {
+                await _mqtt.PublishJsonAsync(BuildCmdTopic(cassia, "set-runtime"), payload, retain: false, qos: 1, ct: _appCts.Token)
+                    .ConfigureAwait(false);
+            }
+
+            ConnectionStatus = $"Sent set-runtime to {targets.Count} Cassia(s)";
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = $"set-runtime failed (all): {ex.Message}";
         }
     }
 
@@ -1110,6 +1282,56 @@ public partial class MainViewModel : ObservableObject
         if (SelectedSpeedGateway == null || !SpeedGraphGateways.Contains(SelectedSpeedGateway))
         {
             SelectedSpeedGateway = CassiaGateways.FirstOrDefault() ?? _speedAllGateways;
+        }
+    }
+
+    private string BuildSpeedHistoryScopeKey()
+        => $"{(MqttHost ?? "").Trim().ToLowerInvariant()}|{MqttPort}|{(NetworkId ?? "").Trim().ToLowerInvariant()}";
+
+    private bool ShouldResetSpeedHistoryForCurrentScope()
+    {
+        var key = BuildSpeedHistoryScopeKey();
+        if (string.IsNullOrWhiteSpace(_speedHistoryScopeKey))
+        {
+            _speedHistoryScopeKey = key;
+            return false;
+        }
+
+        if (!string.Equals(_speedHistoryScopeKey, key, StringComparison.OrdinalIgnoreCase))
+        {
+            _speedHistoryScopeKey = key;
+            return true;
+        }
+
+        return false;
+    }
+
+    private void CaptureSpeedHistorySnapshot()
+    {
+        var snapshot = new Dictionary<string, List<SpeedSample>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var gw in CassiaGateways)
+        {
+            if (gw.SpeedHistory.Count == 0) continue;
+            snapshot[gw.Name] = gw.SpeedHistory.ToList();
+        }
+
+        if (snapshot.Count == 0)
+            return;
+
+        _speedHistoryByGateway.Clear();
+        foreach (var kv in snapshot)
+            _speedHistoryByGateway[kv.Key] = kv.Value;
+    }
+
+    private void RestoreSpeedHistoryIfPresent(CassiaGateway gw)
+    {
+        if (gw == null) return;
+        if (gw.SpeedHistory.Count > 0) return;
+
+        if (_speedHistoryByGateway.TryGetValue(gw.Name, out var history))
+        {
+            foreach (var s in history)
+                gw.SpeedHistory.Add(s);
         }
     }
 

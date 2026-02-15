@@ -13,17 +13,29 @@ namespace AccessAppMqttWpf.ViewModels;
 public partial class RuntimeSettingsViewModel : ObservableObject, IDisposable
 {
     private readonly MainViewModel _main;
+    private readonly bool _applyToAll;
 
-    public RuntimeSettingsViewModel(MainViewModel main, string cassiaName)
+    public RuntimeSettingsViewModel(MainViewModel main, string targetCassia, string sourceCassia, bool applyToAll)
     {
         _main = main ?? throw new ArgumentNullException(nameof(main));
-        CassiaName = (cassiaName ?? "").Trim();
+        TargetCassia = (targetCassia ?? "").Trim();
+        SourceCassia = (sourceCassia ?? "").Trim();
+        _applyToAll = applyToAll;
+        TargetLabel = _applyToAll
+            ? $"ALL Cassias (loaded from {SourceCassia})"
+            : TargetCassia;
+        WindowTitle = _applyToAll
+            ? "Runtime Variables - ALL"
+            : $"Runtime Variables - {TargetCassia}";
         Variables = new ObservableCollection<RuntimeVariableItem>();
         _main.RuntimeVariablesReceived += OnRuntimeVariablesReceived;
         _ = RefreshAsync();
     }
 
-    public string CassiaName { get; }
+    public string TargetCassia { get; }
+    public string SourceCassia { get; }
+    public string TargetLabel { get; }
+    public string WindowTitle { get; }
 
     public ObservableCollection<RuntimeVariableItem> Variables { get; }
 
@@ -40,7 +52,7 @@ public partial class RuntimeSettingsViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private async Task Apply()
     {
-        if (string.IsNullOrWhiteSpace(CassiaName))
+        if (string.IsNullOrWhiteSpace(TargetCassia))
         {
             RequestClose?.Invoke();
             return;
@@ -63,8 +75,17 @@ public partial class RuntimeSettingsViewModel : ObservableObject, IDisposable
             return;
         }
 
-        await _main.SetRuntimeForCassiaAsync(CassiaName, payload).ConfigureAwait(false);
-        StatusText = "Sent update. Waiting for refresh...";
+        if (_applyToAll)
+        {
+            await _main.SetRuntimeForAllCassiasAsync(payload).ConfigureAwait(false);
+            StatusText = "Sent update to ALL Cassias. Waiting for refresh...";
+        }
+        else
+        {
+            await _main.SetRuntimeForCassiaAsync(TargetCassia, payload).ConfigureAwait(false);
+            StatusText = "Sent update. Waiting for refresh...";
+        }
+
         await RefreshAsync().ConfigureAwait(false);
 
         Application.Current.Dispatcher.Invoke(() => RequestClose?.Invoke());
@@ -78,13 +99,13 @@ public partial class RuntimeSettingsViewModel : ObservableObject, IDisposable
 
     private async Task RefreshAsync()
     {
-        if (string.IsNullOrWhiteSpace(CassiaName))
+        if (string.IsNullOrWhiteSpace(SourceCassia))
             return;
 
         IsLoading = true;
         StatusText = "Loading runtime variables...";
 
-        var snapshot = await _main.RequestRuntimeVariablesAsync(CassiaName).ConfigureAwait(false);
+        var snapshot = await _main.RequestRuntimeVariablesAsync(SourceCassia).ConfigureAwait(false);
 
         Application.Current.Dispatcher.Invoke(() =>
         {
@@ -106,7 +127,7 @@ public partial class RuntimeSettingsViewModel : ObservableObject, IDisposable
 
     private void OnRuntimeVariablesReceived(string cassia, IReadOnlyDictionary<string, RuntimeVariableValue> vars)
     {
-        if (!string.Equals(cassia, CassiaName, StringComparison.OrdinalIgnoreCase)) return;
+        if (!string.Equals(cassia, SourceCassia, StringComparison.OrdinalIgnoreCase)) return;
 
         Application.Current.Dispatcher.Invoke(() =>
         {

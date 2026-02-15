@@ -8,12 +8,12 @@ public partial class RuntimeSettingsWindow : Window
 {
     private readonly RuntimeSettingsViewModel _vm;
 
-    public RuntimeSettingsWindow(MainViewModel main, string cassiaName)
+    public RuntimeSettingsWindow(MainViewModel main, string targetCassia, string sourceCassia, bool applyToAll)
     {
         InitializeComponent();
-        _vm = new RuntimeSettingsViewModel(main, cassiaName);
+        _vm = new RuntimeSettingsViewModel(main, targetCassia, sourceCassia, applyToAll);
         DataContext = _vm;
-        Title = $"Runtime Variables - {cassiaName}";
+        Title = _vm.WindowTitle;
 
         _vm.RequestClose += () =>
         {
