@@ -68,6 +68,12 @@ namespace AccessAPP.Services
                             : $"status={statusText}";
                         AppLog.Debug($"FW precheck login failed for {macAddress} on attempt {loginAttempt}/{loginAttempts}: {failureReason}.");
                         UpgradeLogger.Log(logId ?? "", macAddress, "LoggedIn (precheck FW read)", $"Failed (attempt {loginAttempt}/{loginAttempts}) - {failureReason}", firmwareVersion ?? "");
+
+                        if (loginAttempt == 1 && string.Equals(statusText, "Error", StringComparison.OrdinalIgnoreCase))
+                        {
+                            AppLog.Debug($"FW precheck login returned Status=Error on first attempt for {macAddress}; short-circuiting retries to force reconnect.");
+                            break;
+                        }
                     }
                     catch (OperationCanceledException)
                     {

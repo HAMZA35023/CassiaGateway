@@ -50,17 +50,17 @@ namespace AccessAPP
         // Extra delay after JumpToBootloader before next step.
         public static int UPGRADE_DELAY_AFTER_BOOT_JUMP_MS = 0;
         // Extra delay added after a failed connect (in addition to backoff).
-        public static int UPGRADE_DELAY_AFTER_FAILED_CONNECT_MS = 500;
+        public static int UPGRADE_DELAY_AFTER_FAILED_CONNECT_MS = 1500;
         // Timeout per connect attempt.
         public static int UPGRADE_CONNECT_ATTEMPT_TIMEOUT_MS = 12000;
         // Delay after connect before login (session stabilization).
-        public static int UPGRADE_CONNECT_STABILIZATION_DELAY_MS = 500;
+        public static int UPGRADE_CONNECT_STABILIZATION_DELAY_MS = 1200;
         // Number of /gap/nodes state checks after a non-OK connect.
-        public static int UPGRADE_CONNECT_GATEWAY_STATE_CHECK_ATTEMPTS = 2;
+        public static int UPGRADE_CONNECT_GATEWAY_STATE_CHECK_ATTEMPTS = 4;
         // Delay between gateway state checks.
-        public static int UPGRADE_CONNECT_GATEWAY_STATE_CHECK_DELAY_MS = 250;
+        public static int UPGRADE_CONNECT_GATEWAY_STATE_CHECK_DELAY_MS = 500;
         // Number of state checks after HTTP 500 connect (final check).
-        public static int UPGRADE_CONNECT_GATEWAY_STATE_CHECK_ATTEMPTS_ON_500 = 1;
+        public static int UPGRADE_CONNECT_GATEWAY_STATE_CHECK_ATTEMPTS_ON_500 = 2;
         // Delay between state checks after HTTP 500 connect (final check).
         public static int UPGRADE_CONNECT_GATEWAY_STATE_CHECK_DELAY_MS_ON_500 = 250;
         // Number of state checks after HTTP 500 before in-attempt retry.
@@ -68,7 +68,7 @@ namespace AccessAPP
         // Delay between state checks after HTTP 500 before in-attempt retry.
         public static int UPGRADE_CONNECT_GATEWAY_STATE_CHECK_DELAY_MS_ON_500_PRE_RETRY = 100;
         // Initial delay before first state check after HTTP 500 (final check).
-        public static int UPGRADE_CONNECT_GATEWAY_STATE_CHECK_INITIAL_DELAY_MS_ON_500 = 500;
+        public static int UPGRADE_CONNECT_GATEWAY_STATE_CHECK_INITIAL_DELAY_MS_ON_500 = 1000;
         // Initial delay before first state check after HTTP 500 (pre-retry).
         public static int UPGRADE_CONNECT_GATEWAY_STATE_CHECK_INITIAL_DELAY_MS_ON_500_PRE_RETRY = 250;
         // Quick retries within a single connect attempt on transient HTTP 500.
@@ -80,7 +80,7 @@ namespace AccessAPP
         // Serialize connect+login per chip (prevents overlap on same chip).
         public static bool UPGRADE_CONNECT_LOGIN_USE_PER_CHIP_GATE = true;
         // Backoff multiplier (x100). Example: 170 => 1.7x.
-        public static int UPGRADE_CONNECT_RETRY_BACKOFF_MULTIPLIER_X100 = 170;
+        public static int UPGRADE_CONNECT_RETRY_BACKOFF_MULTIPLIER_X100 = 200;
         // Max backoff delay between connect attempts.
         public static int UPGRADE_CONNECT_RETRY_BACKOFF_MAX_MS = 15000;
         // Random jitter applied to retry delay (percent, 0-90).
@@ -90,11 +90,11 @@ namespace AccessAPP
         // Login retries on the same connected session before reconnecting.
         public static int UPGRADE_LOGIN_RETRIES_PER_CONNECTED_SESSION = 2;
         // Delay between login retries.
-        public static int UPGRADE_LOGIN_RETRY_DELAY_MS = 400;
+        public static int UPGRADE_LOGIN_RETRY_DELAY_MS = 800;
         // Small delay from "connected" to sending the login telegram.
-        public static int UPGRADE_LOGIN_DELAY_AFTER_CONNECT_MS = 300;
+        public static int UPGRADE_LOGIN_DELAY_AFTER_CONNECT_MS = 800;
         // Delay after login before reading firmware version.
-        public static int UPGRADE_DELAY_AFTER_LOGIN_BEFORE_FW_READ_MS = 3000;
+        public static int UPGRADE_DELAY_AFTER_LOGIN_BEFORE_FW_READ_MS = 5000;
         // Delay before post-upgrade firmware verification read.
         public static int UPGRADE_POST_UPGRADE_FW_READ_DELAY_MS = 3000;
         // Firmware read attempts (per part).
