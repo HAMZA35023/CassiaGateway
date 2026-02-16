@@ -7,13 +7,13 @@ namespace AccessAPP
         public static string LOG_MIN_LEVEL = "Warning";
 
         // Bootloader write pacing (ms). 0 = no extra delay between writes.
-        public static int WRITE_SLEEP_MS = 0;
+        public static int WRITE_SLEEP_MS = 1;
 
         // Actor BLE chunking/pacing.
         // Chunk size for actor boot packets (bytes). 0/negative = default (80).
         public static int ACTOR_CHUNK_SIZE = 80;
         // Delay between actor chunks (ms). 0 = no extra delay.
-        public static int ACTOR_INTER_CHUNK_SLEEP_MS = 0;
+        public static int ACTOR_INTER_CHUNK_SLEEP_MS = 1;
 
         // If true, the app will use both BLE chips on Cassia X2000.
         // When multiple parallel upgrades are running, they will be distributed across chip 0 and chip 1.
@@ -35,7 +35,7 @@ namespace AccessAPP
         public static int UPGRADE_CONNECT_DISCOVER_GATT_AFTER_BOOT_JUMP = 0;
 
         // Scan for BLE devices while programming more than 1 device.
-        public static bool BLE_SCAN_UNDER_PROGRAMMING = true;
+        public static bool BLE_SCAN_UNDER_PROGRAMMING = false;
         // BLE scan chip mode for /gap/nodes SSE:
         // -1 = gateway default (no chip query), 0 = chip 0, 1 = chip 1, 2 = both chips.
         public static int BLE_SCAN_CHIP_MODE = 0;
@@ -198,7 +198,7 @@ namespace AccessAPP
         // Actor upload retries and pacing (actor-only)
         public static int UPGRADE_ACTOR_UPLOAD_MAX_ATTEMPTS = 1;
         public static int UPGRADE_ACTOR_UPLOAD_RETRY_DELAY_MS = 3000;
-        public static int UPGRADE_ACTOR_WRITE_SLEEP_MS = 150;
+        public static int UPGRADE_ACTOR_WRITE_SLEEP_MS = 1;
 
         
     }
