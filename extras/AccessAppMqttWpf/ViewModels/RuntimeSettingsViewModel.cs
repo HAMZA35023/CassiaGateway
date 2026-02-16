@@ -84,6 +84,7 @@ public partial class RuntimeSettingsViewModel : ObservableObject, IDisposable
         ("UPGRADE_LOGIN_", GroupConnectLogin),
         ("UPGRADE_FW_", GroupFirmwareRead),
         ("UPGRADE_POST_UPGRADE_FW_", GroupFirmwareRead),
+        ("UPGRADE_WORKER_BALANCER_", GroupUpgradeFlow),
         ("UPGRADE_SETTINGS_BACKUP_", GroupSettingsDali),
         ("UPGRADE_DALI_", GroupSettingsDali),
         ("UPGRADE_RESULT_DB_LOG_", GroupResultLogging),

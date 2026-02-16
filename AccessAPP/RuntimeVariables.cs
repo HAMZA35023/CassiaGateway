@@ -4,7 +4,7 @@ namespace AccessAPP
     {
 
         // Bootloader write pacing (ms). 0 = no extra delay between writes.
-        public static int WRITE_SLEEP_MS = 50;
+        public static int WRITE_SLEEP_MS = 100;
 
         // Actor BLE chunking/pacing.
         // Chunk size for actor boot packets (bytes). 0/negative = default (80).
@@ -22,7 +22,7 @@ namespace AccessAPP
 
         // Max concurrent REST/GATT requests per chip.
         // Keep at 1 for strict ordering; 2 can be faster if the gateway is stable.
-        public static int CASSIA_MAX_INFLIGHT_PER_CHIP = 1;
+        public static int CASSIA_MAX_INFLIGHT_PER_CHIP = 2;
 
         // Cassia connect behavior: 1 = use cached GATT when available (faster), 0 = no cache.
         public static int CASSIA_CONNECT_DISCOVER_GATT = 0;
@@ -130,6 +130,20 @@ namespace AccessAPP
         public static bool UPGRADE_CONNECT_TRUST_GATEWAY_CONNECTED_STATE = true;
         // After a successful upgrade, reconnect and keep the session alive while blinking blue LED (disabled by default).
         public static bool UPGRADE_POST_UPDATE_BLUE_LED_HOLD_ENABLED = false;
+        // Adaptive balancer: if one worker is persistently slow, add delay to the other workers to lower gateway pressure.
+        public static bool UPGRADE_WORKER_BALANCER_ENABLED = true;
+        // Slow-worker threshold in % progress per minute.
+        public static double UPGRADE_WORKER_BALANCER_SLOW_THRESHOLD_PCT_PER_MIN = 7.0;
+        // Ignore balancer decisions until this progress level is reached.
+        public static int UPGRADE_WORKER_BALANCER_MIN_PROGRESS_PCT = 3;
+        // Number of consecutive low-rate samples required before a worker is marked as slow.
+        public static int UPGRADE_WORKER_BALANCER_LOW_STREAK = 3;
+        // Number of consecutive recovery samples required before clearing slow state.
+        public static int UPGRADE_WORKER_BALANCER_RECOVERY_STREAK = 2;
+        // Balancer only acts when at least this many workers are active.
+        public static int UPGRADE_WORKER_BALANCER_MIN_ACTIVE_WORKERS = 2;
+        // Extra delay (ms) added to non-slow workers while balancing is active.
+        public static int UPGRADE_WORKER_BALANCER_RELIEF_DELAY_MS = 100;
 
         // End-of-upgrade reporting (best-effort, no local buffering)
         // Enable posting upgrade results to the statistics endpoint.

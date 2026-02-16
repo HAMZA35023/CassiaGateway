@@ -473,6 +473,8 @@ try
             finally
             {
                 _macsInProgress.TryRemove(mac, out _);
+                PurgeInstance(mac);
+                ClearWorkerBalancerStateForMac(mac);
 
 				// Release chip assignment + lease
 				_chipManager.UnbindMac(mac);

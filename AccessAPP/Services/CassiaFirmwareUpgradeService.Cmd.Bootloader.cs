@@ -194,6 +194,7 @@ return false;
             if (progress >= 100.0 - 0.0001)
             {
                 PurgeInstance(macContext);
+                _ownInstance?.ClearWorkerBalancerStateForMac(macContext);
 
                 double globalTotalAfterPurge = 0.0;
                 foreach (var rate in _lastInstanceRate.Values)
@@ -223,6 +224,7 @@ var stage = _ownInstance?._programmingStageByMac.TryGetValue(macContext, out var
             // ---- Per-instance rate (%/min, 10s avg) ----
             var tracker = _macRate10s.GetOrAdd(macContext, _ => new SlidingRate10s());
             var ratePerMinThisMac = tracker.AddAndGetRatePerMinute(progress);
+            _ownInstance?.OnWorkerRateSample(macContext, ratePerMinThisMac, progress);
 
             // Cache latest rate so global speeds are correct
             _lastInstanceRate[macContext] = ratePerMinThisMac;
