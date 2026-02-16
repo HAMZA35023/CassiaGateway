@@ -85,6 +85,11 @@ public sealed class RuntimeVariablesStore
             }
 
             field.SetValue(null, converted);
+
+            // Apply side effects for specific runtime variables (e.g., logging level).
+            if (string.Equals(field.Name, nameof(RuntimeVariables.LOG_MIN_LEVEL), StringComparison.OrdinalIgnoreCase))
+                LoggingBootstrapper.RefreshLogLevelFromRuntime();
+
             return true;
         }
         catch (Exception ex)

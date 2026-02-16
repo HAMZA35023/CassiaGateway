@@ -2,15 +2,18 @@ namespace AccessAPP
 {
     public class RuntimeVariables
     {
+        // Logging: minimum level for Serilog + fallback console. Default = Warning.
+        // Accepted values (case-insensitive): verbose, debug, information|info, warning|warn, error, fatal.
+        public static string LOG_MIN_LEVEL = "Warning";
 
         // Bootloader write pacing (ms). 0 = no extra delay between writes.
-        public static int WRITE_SLEEP_MS = 10;
+        public static int WRITE_SLEEP_MS = 0;
 
         // Actor BLE chunking/pacing.
         // Chunk size for actor boot packets (bytes). 0/negative = default (80).
         public static int ACTOR_CHUNK_SIZE = 80;
         // Delay between actor chunks (ms). 0 = no extra delay.
-        public static int ACTOR_INTER_CHUNK_SLEEP_MS = 10;
+        public static int ACTOR_INTER_CHUNK_SLEEP_MS = 0;
 
         // If true, the app will use both BLE chips on Cassia X2000.
         // When multiple parallel upgrades are running, they will be distributed across chip 0 and chip 1.
@@ -22,7 +25,7 @@ namespace AccessAPP
 
         // Max concurrent REST/GATT requests per chip.
         // Keep at 1 for strict ordering; 2 can be faster if the gateway is stable.
-        public static int CASSIA_MAX_INFLIGHT_PER_CHIP = 2;
+        public static int CASSIA_MAX_INFLIGHT_PER_CHIP = 1;
 
         // Cassia connect behavior: 1 = use cached GATT when available (faster), 0 = no cache.
         public static int CASSIA_CONNECT_DISCOVER_GATT = 0;
