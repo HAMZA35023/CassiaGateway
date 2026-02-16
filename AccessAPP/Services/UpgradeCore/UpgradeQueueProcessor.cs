@@ -242,14 +242,12 @@ namespace AccessAPP.Services.UpgradeCore
                         totalDevicesProcessed++;
 
                         ChipAllocationManager.ChipLease lease;
-                        // When there is only one active upgrade, still honor DEFAULT_CASSIA_CHIP
-                        // but count it in the allocator so later devices stay balanced.
-                        bool singleActiveDevice = running.Count == 0 && _upgradeQueue.IsEmpty;
                         if (RuntimeVariables.USE_BOTH_CASSIA_CHIPS && maxThreads >= 2)
                         {
-                            lease = singleActiveDevice
-                                ? await _chip.AcquireAsync(RuntimeVariables.DEFAULT_CASSIA_CHIP).ConfigureAwait(false)
-                                : await _chip.AcquireAsync().ConfigureAwait(false);
+                            // Always use allocator balancing in dual-chip mode.
+                            // Preferring DEFAULT_CASSIA_CHIP on "single-active" starts can bias
+                            // assignments toward one chip when devices are enqueued incrementally.
+                            lease = await _chip.AcquireAsync().ConfigureAwait(false);
                         }
                         else
                         {
