@@ -66,7 +66,7 @@ public static class LoggingBootstrapper
     private const string OtlpEndpoint = "https://otlp-gateway-prod-eu-north-0.grafana.net/otlp/v1/logs";
     private const string OtlpHeaders = "Authorization=Basic Z2xjX2V5SnZJam9pTVRZM01UVTRPU0lzSW00aU9pSmhZMk5sYzNOaGNIQWlMQ0pySWpvaWFVZHplVWN5TkRsMU1qRXpRbU0zTTJ4R1NUWkNUazB5SWl3aWJTSTZleUp5SWpvaWNISnZaQzFsZFMxdWIzSjBhQzB3SW4xOToxNTI4NDI2";
 
-    private static void ConfigureOtlpSink(LoggerConfiguration cfg, IReadOnlyDictionary<string, object> resourceAttributes)
+    private static void ConfigureOtlpSink(LoggerConfiguration cfg, IDictionary<string, object> resourceAttributes)
     {
         try
         {
@@ -76,7 +76,7 @@ public static class LoggingBootstrapper
             {
                 otel.Endpoint = OtlpEndpoint;
                 otel.Protocol = OtlpProtocol.HttpProtobuf;
-                if (!string.IsNullOrWhiteSpace(normalizedHeaders))
+                if (normalizedHeaders != null && normalizedHeaders.Count > 0)
                     otel.Headers = normalizedHeaders;
                 if (resourceAttributes.Count > 0)
                     otel.ResourceAttributes = resourceAttributes;
@@ -89,7 +89,7 @@ public static class LoggingBootstrapper
         }
     }
 
-    private static IReadOnlyDictionary<string, object> BuildOtlpResourceAttributes(WebApplicationBuilder builder)
+    private static Dictionary<string, object> BuildOtlpResourceAttributes(WebApplicationBuilder builder)
     {
         var (mqttName, mqttNetwork) = TryReadMqttIdentity(builder);
 
@@ -131,7 +131,7 @@ public static class LoggingBootstrapper
         return "accessapp";
     }
 
-    private static string? NormalizeOtlpHeaders(string? raw)
+    private static IDictionary<string, string>? NormalizeOtlpHeaders(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw))
             return null;
@@ -140,12 +140,23 @@ public static class LoggingBootstrapper
         try
         {
             // Handles %20 (spaces) and other URL-encoded chars commonly used in env vars
-            return Uri.UnescapeDataString(trimmed);
+            trimmed = Uri.UnescapeDataString(trimmed);
         }
         catch
         {
-            return trimmed.Replace("%20", " ");
+            trimmed = trimmed.Replace("%20", " ");
         }
+
+        // Accept either a single header (key=value) or multiple separated by commas.
+        var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in trimmed.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var kv = pair.Split('=', 2, StringSplitOptions.TrimEntries);
+            if (kv.Length == 2 && !string.IsNullOrWhiteSpace(kv[0]))
+                dict[kv[0]] = kv[1];
+        }
+
+        return dict;
     }
 
     private static (string? name, string? networkId) TryReadMqttIdentity(WebApplicationBuilder builder)
