@@ -10,7 +10,7 @@ namespace AccessAPP
         // Chunk size for actor boot packets (bytes). 0/negative = default (80).
         public static int ACTOR_CHUNK_SIZE = 80;
         // Delay between actor chunks (ms). 0 = no extra delay.
-        public static int ACTOR_INTER_CHUNK_SLEEP_MS = 100;
+        public static int ACTOR_INTER_CHUNK_SLEEP_MS = 10;
 
         // If true, the app will use both BLE chips on Cassia X2000.
         // When multiple parallel upgrades are running, they will be distributed across chip 0 and chip 1.
@@ -131,7 +131,7 @@ namespace AccessAPP
         // After a successful upgrade, reconnect and keep the session alive while blinking blue LED (disabled by default).
         public static bool UPGRADE_POST_UPDATE_BLUE_LED_HOLD_ENABLED = false;
         // Adaptive balancer: if one worker is persistently slow, add delay to the other workers to lower gateway pressure.
-        public static bool UPGRADE_WORKER_BALANCER_ENABLED = true;
+        public static bool UPGRADE_WORKER_BALANCER_ENABLED = false;
         // Slow-worker threshold in % progress per minute.
         public static double UPGRADE_WORKER_BALANCER_SLOW_THRESHOLD_PCT_PER_MIN = 7.0;
         // Ignore balancer decisions until this progress level is reached.
@@ -193,7 +193,7 @@ namespace AccessAPP
         public static int UPGRADE_ACTOR_BOOTMODE_CHECK_TIMEOUT_MS = 120000; // ms
         public static int UPGRADE_ACTOR_POST_BOOTMODE_DELAY_MS = 5000;
         // Actor upload retries and pacing (actor-only)
-        public static int UPGRADE_ACTOR_UPLOAD_MAX_ATTEMPTS = 2;
+        public static int UPGRADE_ACTOR_UPLOAD_MAX_ATTEMPTS = 1;
         public static int UPGRADE_ACTOR_UPLOAD_RETRY_DELAY_MS = 3000;
         public static int UPGRADE_ACTOR_WRITE_SLEEP_MS = 150;
 
