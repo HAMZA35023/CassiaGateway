@@ -119,7 +119,8 @@ bootCheckResultTask.TrySetResult(false);
 
                     // Wait for the boot check result or timeout
                     var bootCheckTask = bootCheckResultTask.Task;
-                    var timeoutTask = Task.Delay(TimeSpan.FromSeconds(120));
+                    var timeoutMs = Math.Max(30_000, RuntimeVariables.UPGRADE_ACTOR_BOOTMODE_CHECK_TIMEOUT_MS);
+                    var timeoutTask = Task.Delay(timeoutMs);
                     var completedTask = await Task.WhenAny(bootCheckTask, timeoutTask);
 
                     // Unsubscribe from notifications

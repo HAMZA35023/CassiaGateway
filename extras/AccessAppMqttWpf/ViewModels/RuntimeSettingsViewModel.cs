@@ -90,7 +90,8 @@ public partial class RuntimeSettingsViewModel : ObservableObject, IDisposable
         ("UPGRADE_RESULT_DB_LOG_", GroupResultLogging),
         ("LED_RANGE_", GroupLedRange),
         ("BOOTMODE_", GroupBootActor),
-        ("UPGRADE_ACTOR_APP_MODE_", GroupBootActor)
+        ("UPGRADE_ACTOR_APP_MODE_", GroupBootActor),
+        ("UPGRADE_ACTOR_", GroupBootActor)
     };
 
     public RuntimeSettingsViewModel(MainViewModel main, string targetCassia, string sourceCassia, bool applyToAll)

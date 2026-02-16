@@ -1042,8 +1042,8 @@ await Task.Delay(3000); // Delay between attempts
             bool skipBootModeValidation = false) // should be moved to firmware services
         {
             var response = new ServiceResponse();
-            const int maxRetryAttempts = 3; // Maximum number of retries to put the actor into boot mode
-            const int delayBetweenRetries = 5000; // Delay between retries (in milliseconds)
+            int maxRetryAttempts = Math.Max(1, RuntimeVariables.UPGRADE_ACTOR_BOOTMODE_RETRY_COUNT);
+            int delayBetweenRetries = Math.Max(0, RuntimeVariables.UPGRADE_ACTOR_BOOTMODE_RETRY_DELAY_MS);
             int retryCount = 0;
 
             // Step 1: Check if the actor is in boot mode
@@ -1121,6 +1121,10 @@ await Task.Delay(3000); // Delay between attempts
                 response.Message = "Failed to put actor into boot mode.";
                 return response;
             }
+
+            int postBootDelay = Math.Max(0, RuntimeVariables.UPGRADE_ACTOR_POST_BOOTMODE_DELAY_MS);
+            if (postBootDelay > 0)
+                await Task.Delay(postBootDelay).ConfigureAwait(false);
 
             // Step 2: Enable notifications
 
@@ -1228,10 +1232,23 @@ m_comm_data.WriteData = WriteSensorData;
                 allRows.TryAdd(nodeMac, allRowsH);
 
 
-                // Call programming function
-                local_status = bActor
-                    ? (ReturnCodes)Bootloader_Utils.CyBtldr_Program(firmwarePath, null, _appID, ref m_comm_data, Upd)
-                    : (ReturnCodes)Bootloader_Utils.CyBtldr_Program(firmwarePath, _securityKey, _appID, ref m_comm_data, Upd);
+                int actorAttempts = bActor ? Math.Max(1, RuntimeVariables.UPGRADE_ACTOR_UPLOAD_MAX_ATTEMPTS) : 1;
+                int actorRetryDelayMs = bActor ? Math.Max(0, RuntimeVariables.UPGRADE_ACTOR_UPLOAD_RETRY_DELAY_MS) : 0;
+                local_status = ReturnCodes.CYRET_SUCCESS;
+
+                for (int attempt = 1; attempt <= actorAttempts; attempt++)
+                {
+                    local_status = bActor
+                        ? (ReturnCodes)Bootloader_Utils.CyBtldr_Program(firmwarePath, null, _appID, ref m_comm_data, Upd)
+                        : (ReturnCodes)Bootloader_Utils.CyBtldr_Program(firmwarePath, _securityKey, _appID, ref m_comm_data, Upd);
+
+                    if (local_status == ReturnCodes.CYRET_SUCCESS)
+                        break;
+
+                    AppLog.Warn($"Actor programming attempt {attempt}/{actorAttempts} failed: status={local_status}");
+                    if (bActor && attempt < actorAttempts && actorRetryDelayMs > 0)
+                        Thread.Sleep(actorRetryDelayMs);
+                }
 
                 // Handle failure
                 if (local_status != ReturnCodes.CYRET_SUCCESS)

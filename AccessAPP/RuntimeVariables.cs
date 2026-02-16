@@ -4,7 +4,7 @@ namespace AccessAPP
     {
 
         // Bootloader write pacing (ms). 0 = no extra delay between writes.
-        public static int WRITE_SLEEP_MS = 100;
+        public static int WRITE_SLEEP_MS = 10;
 
         // Actor BLE chunking/pacing.
         // Chunk size for actor boot packets (bytes). 0/negative = default (80).
@@ -143,7 +143,7 @@ namespace AccessAPP
         // Balancer only acts when at least this many workers are active.
         public static int UPGRADE_WORKER_BALANCER_MIN_ACTIVE_WORKERS = 2;
         // Extra delay (ms) added to non-slow workers while balancing is active.
-        public static int UPGRADE_WORKER_BALANCER_RELIEF_DELAY_MS = 100;
+        public static int UPGRADE_WORKER_BALANCER_RELIEF_DELAY_MS = 300;
 
         // End-of-upgrade reporting (best-effort, no local buffering)
         // Enable posting upgrade results to the statistics endpoint.
@@ -186,6 +186,16 @@ namespace AccessAPP
         // Actor upgrade: wait for sensor to return to application mode if boot mode detected.
         public static int UPGRADE_ACTOR_APP_MODE_WAIT_ATTEMPTS = 6;
         public static int UPGRADE_ACTOR_APP_MODE_WAIT_DELAY_MS = 5000;
+
+        // Actor boot-mode robustness
+        public static int UPGRADE_ACTOR_BOOTMODE_RETRY_COUNT = 5;
+        public static int UPGRADE_ACTOR_BOOTMODE_RETRY_DELAY_MS = 5000;
+        public static int UPGRADE_ACTOR_BOOTMODE_CHECK_TIMEOUT_MS = 120000; // ms
+        public static int UPGRADE_ACTOR_POST_BOOTMODE_DELAY_MS = 5000;
+        // Actor upload retries and pacing (actor-only)
+        public static int UPGRADE_ACTOR_UPLOAD_MAX_ATTEMPTS = 2;
+        public static int UPGRADE_ACTOR_UPLOAD_RETRY_DELAY_MS = 3000;
+        public static int UPGRADE_ACTOR_WRITE_SLEEP_MS = 150;
 
         
     }

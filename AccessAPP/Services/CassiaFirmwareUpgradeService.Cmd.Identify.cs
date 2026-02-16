@@ -407,6 +407,14 @@ namespace AccessAPP.Services
 
         ///Sensor Programming
 
+        private static int ResolveActorWriteDelayMs()
+        {
+            int actorDelay = RuntimeVariables.UPGRADE_ACTOR_WRITE_SLEEP_MS;
+            if (actorDelay <= 0)
+                actorDelay = RuntimeVariables.WRITE_SLEEP_MS;
+            return Math.Max(0, actorDelay);
+        }
+
         private static void SleepWithDynamicWriteDelay(string macAddress, int baseDelayMs)
         {
             int delayMs = Math.Max(0, baseDelayMs);
@@ -436,7 +444,7 @@ namespace AccessAPP.Services
 // AppLog.Verbose($"size of buffer: {size}");
 //SendMessage(data);
 					_ownInstance.cassiaReadWriteService.WriteBleMessageSync(_ownInstance._gatewayIpAddress, macContext, 14, hexData, "", chip: _ownInstance.GetChipForMac(macContext));
-                    SleepWithDynamicWriteDelay(macContext, RuntimeVariables.WRITE_SLEEP_MS);
+                    SleepWithDynamicWriteDelay(macContext, ResolveActorWriteDelayMs());
 
                     status = true;
                 }
@@ -457,7 +465,7 @@ namespace AccessAPP.Services
 //SendMessage(data);
                         AppLog.Info($"Trying again... (waited)");
 _ownInstance.cassiaReadWriteService.WriteBleMessageSync(_ownInstance._gatewayIpAddress, macContext, 14, hexData, "", chip: _ownInstance.GetChipForMac(macContext));
-                        SleepWithDynamicWriteDelay(macContext, RuntimeVariables.WRITE_SLEEP_MS);
+                        SleepWithDynamicWriteDelay(macContext, ResolveActorWriteDelayMs());
 
                         status = true;
                     }
@@ -576,7 +584,7 @@ if (GetHidDevice())
                     }
                     else
                     {
-                        SleepWithDynamicWriteDelay(macAddress, RuntimeVariables.WRITE_SLEEP_MS);
+                        SleepWithDynamicWriteDelay(macAddress, ResolveActorWriteDelayMs());
                     }
 
                 }
@@ -585,7 +593,7 @@ if (GetHidDevice())
             {
                 await SendChunk(message._BleMessageBuffer, macAddress);
                 //await Task.Delay(100); // Adjust delay as needed
-                SleepWithDynamicWriteDelay(macAddress, RuntimeVariables.WRITE_SLEEP_MS);
+                SleepWithDynamicWriteDelay(macAddress, ResolveActorWriteDelayMs());
             }
         }
 
