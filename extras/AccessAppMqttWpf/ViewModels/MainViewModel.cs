@@ -416,6 +416,7 @@ public partial class MainViewModel : ObservableObject
 
         InitIgnoredDevices();
         InitDeviceFiltering();
+        InitProductFilterTracking();
 
         HostBleDevicesView = CollectionViewSource.GetDefaultView(HostBleDevices);
         HostBleDevicesView.SortDescriptions.Add(new SortDescription(nameof(HostBleScanItem.AvgHostRssi), ListSortDirection.Descending));

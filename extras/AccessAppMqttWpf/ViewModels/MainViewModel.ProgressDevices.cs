@@ -6,6 +6,7 @@ using System;
 using System.Collections.ObjectModel;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.IO;
 using System.IO.Compression;
@@ -29,6 +30,7 @@ public partial class MainViewModel : ObservableObject
     private readonly IgnoredDevicesStore _ignoredDevicesStore = new();
     private readonly HashSet<string> _ignoredDeviceMacs = new(StringComparer.OrdinalIgnoreCase);
     private const string AllFilterOption = "All";
+    private bool _pendingProductFilterOptionsRefresh;
 
 
     public ObservableCollection<string> SensorFilterOptions { get; } =
@@ -126,6 +128,56 @@ public partial class MainViewModel : ObservableObject
                 || (d.BestCassia?.Contains(f, StringComparison.OrdinalIgnoreCase) ?? false)
                 || (d.RssiAll?.Contains(f, StringComparison.OrdinalIgnoreCase) ?? false);
         };
+    }
+
+    private void InitProductFilterTracking()
+    {
+        _devices.CollectionChanged += OnDevicesCollectionChangedForProductFilter;
+        RefreshProductFilterOptions();
+    }
+
+    private void OnDevicesCollectionChangedForProductFilter(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (e.OldItems != null)
+        {
+            foreach (var oldItem in e.OldItems)
+            {
+                if (oldItem is DiscoveredDevice d)
+                    d.PropertyChanged -= OnTrackedDevicePropertyChangedForProductFilter;
+            }
+        }
+
+        if (e.NewItems != null)
+        {
+            foreach (var newItem in e.NewItems)
+            {
+                if (newItem is DiscoveredDevice d)
+                    d.PropertyChanged += OnTrackedDevicePropertyChangedForProductFilter;
+            }
+        }
+
+        RequestProductFilterOptionsRefresh();
+    }
+
+    private void OnTrackedDevicePropertyChangedForProductFilter(object? sender, PropertyChangedEventArgs e)
+    {
+        if (string.Equals(e.PropertyName, nameof(DiscoveredDevice.ProductNumber), StringComparison.OrdinalIgnoreCase))
+            RequestProductFilterOptionsRefresh();
+    }
+
+    private void RequestProductFilterOptionsRefresh(bool immediate = false)
+    {
+        if (_pendingProductFilterOptionsRefresh && !immediate) return;
+        _pendingProductFilterOptionsRefresh = true;
+
+        Application.Current.Dispatcher.InvokeAsync(async () =>
+        {
+            if (!immediate)
+                await Task.Delay(350);
+
+            _pendingProductFilterOptionsRefresh = false;
+            RefreshProductFilterOptions();
+        });
     }
 
     private void RefreshProductFilterOptions()

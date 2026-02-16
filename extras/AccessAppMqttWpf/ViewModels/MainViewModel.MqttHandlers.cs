@@ -38,7 +38,6 @@ public partial class MainViewModel : ObservableObject
                 // preserve selection
                 var selectedMac = SelectedDevice?.Mac;
 
-                RefreshProductFilterOptions();
                 FilteredDevices.Refresh();
 
                 if (!string.IsNullOrWhiteSpace(selectedMac))
