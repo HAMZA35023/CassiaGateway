@@ -28,11 +28,13 @@ public partial class MainViewModel : ObservableObject
     private static readonly TimeSpan WeakRssiGraceWindow = TimeSpan.FromSeconds(60);
     private readonly IgnoredDevicesStore _ignoredDevicesStore = new();
     private readonly HashSet<string> _ignoredDeviceMacs = new(StringComparer.OrdinalIgnoreCase);
+    private const string AllFilterOption = "All";
 
 
     public ObservableCollection<string> SensorFilterOptions { get; } =
-        new(new[] { "All", "P41", "P42", "P46", "P47", "P48" });
-    public ObservableCollection<int> WeakRssiThresholdOptions { get; } = new(new[] { -70, -75 });
+        new(new[] { AllFilterOption, "P41", "P42", "P46", "P47", "P48" });
+    public ObservableCollection<string> ProductFilterOptions { get; } = new(new[] { AllFilterOption });
+    public ObservableCollection<int> WeakRssiThresholdOptions { get; } = new(new[] { -80, -75, -70, -65, -60, -55, -50, -45, -40, -35 });
 
     [ObservableProperty] private bool hideCompletedDevices = false;
     [ObservableProperty] private bool hideWeakRssiEnabled = true;
@@ -45,7 +47,8 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private bool showModelP48 = true;
 
     [ObservableProperty] private string deviceFilter = "";
-    [ObservableProperty] private string sensorFilter = "All";
+    [ObservableProperty] private string sensorFilter = AllFilterOption;
+    [ObservableProperty] private string productFilter = AllFilterOption;
 
     // ---- Progress buffering (prevents UI lag / lost clicks when many % updates arrive) ----
     private readonly object _progressBufLock = new();
@@ -94,6 +97,12 @@ public partial class MainViewModel : ObservableObject
             if (model.Equals("P47", StringComparison.OrdinalIgnoreCase) && !ShowModelP47) return false;
             if (model.Equals("P48", StringComparison.OrdinalIgnoreCase) && !ShowModelP48) return false;
 
+            if (!string.IsNullOrWhiteSpace(ProductFilter) && !ProductFilter.Equals(AllFilterOption, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!string.Equals((d.ProductNumber ?? "").Trim(), ProductFilter.Trim(), StringComparison.OrdinalIgnoreCase))
+                    return false;
+            }
+
             if (HideWeakRssiEnabled)
             {
                 var threshold = HideWeakRssiThreshold;
@@ -117,6 +126,31 @@ public partial class MainViewModel : ObservableObject
                 || (d.BestCassia?.Contains(f, StringComparison.OrdinalIgnoreCase) ?? false)
                 || (d.RssiAll?.Contains(f, StringComparison.OrdinalIgnoreCase) ?? false);
         };
+    }
+
+    private void RefreshProductFilterOptions()
+    {
+        var selected = (ProductFilter ?? "").Trim();
+        var availableProducts = _devices
+            .Select(d => (d.ProductNumber ?? "").Trim())
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        ProductFilterOptions.Clear();
+        ProductFilterOptions.Add(AllFilterOption);
+        foreach (var product in availableProducts)
+            ProductFilterOptions.Add(product);
+
+        if (string.IsNullOrWhiteSpace(selected) || selected.Equals(AllFilterOption, StringComparison.OrdinalIgnoreCase))
+        {
+            ProductFilter = AllFilterOption;
+            return;
+        }
+
+        var matchingOption = ProductFilterOptions.FirstOrDefault(p => string.Equals(p, selected, StringComparison.OrdinalIgnoreCase));
+        ProductFilter = matchingOption ?? AllFilterOption;
     }
 
     private void InitIgnoredDevices()
@@ -197,11 +231,37 @@ public partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(DevicesSubtitle));
     }
 
+    partial void OnProductFilterChanged(string value)
+    {
+        RequestDevicesRefresh();
+        OnPropertyChanged(nameof(DevicesSubtitle));
+    }
+
     partial void OnShowModelP41Changed(bool value) { RequestDevicesRefresh(); OnPropertyChanged(nameof(SelectedModelFilterSummary)); OnPropertyChanged(nameof(DevicesSubtitle)); }
     partial void OnShowModelP42Changed(bool value) { RequestDevicesRefresh(); OnPropertyChanged(nameof(SelectedModelFilterSummary)); OnPropertyChanged(nameof(DevicesSubtitle)); }
     partial void OnShowModelP46Changed(bool value) { RequestDevicesRefresh(); OnPropertyChanged(nameof(SelectedModelFilterSummary)); OnPropertyChanged(nameof(DevicesSubtitle)); }
     partial void OnShowModelP47Changed(bool value) { RequestDevicesRefresh(); OnPropertyChanged(nameof(SelectedModelFilterSummary)); OnPropertyChanged(nameof(DevicesSubtitle)); }
     partial void OnShowModelP48Changed(bool value) { RequestDevicesRefresh(); OnPropertyChanged(nameof(SelectedModelFilterSummary)); OnPropertyChanged(nameof(DevicesSubtitle)); }
+
+    [RelayCommand]
+    private void SelectAllModelFilters()
+    {
+        ShowModelP41 = true;
+        ShowModelP42 = true;
+        ShowModelP46 = true;
+        ShowModelP47 = true;
+        ShowModelP48 = true;
+    }
+
+    [RelayCommand]
+    private void ClearModelFilters()
+    {
+        ShowModelP41 = false;
+        ShowModelP42 = false;
+        ShowModelP46 = false;
+        ShowModelP47 = false;
+        ShowModelP48 = false;
+    }
 
     [RelayCommand]
     private void IgnoreSelectedDevices()
@@ -254,7 +314,8 @@ public partial class MainViewModel : ObservableObject
             if (ShowModelP46) selected.Add("P46");
             if (ShowModelP47) selected.Add("P47");
             if (ShowModelP48) selected.Add("P48");
-            return selected.Count == 5 ? "All" : string.Join(",", selected);
+            if (selected.Count == 0) return "None";
+            return selected.Count == 5 ? AllFilterOption : string.Join(",", selected);
         }
     }
 

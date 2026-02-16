@@ -67,7 +67,8 @@ public partial class MainViewModel : ObservableObject
     private static readonly TimeSpan GatewayOfflineAfter = TimeSpan.FromMinutes(1);
 
     public string ConnectButtonText => IsConnected ? "Disconnect" : "Connect";
-    public string DevicesSubtitle => $"{FilteredDevices.Cast<object>().Count()} device(s) - models: {SelectedModelFilterSummary} - filter: {DeviceFilter}";
+    public string DevicesSubtitle =>
+        $"{FilteredDevices.Cast<object>().Count()} device(s) - models: {SelectedModelFilterSummary} - product: {ProductFilter} - filter: {DeviceFilter}";
 
     private readonly System.Collections.Generic.Dictionary<string, System.Collections.Generic.HashSet<string>> _gwSeenMacs
     = new(StringComparer.OrdinalIgnoreCase);
@@ -216,6 +217,8 @@ public partial class MainViewModel : ObservableObject
 
 
     [ObservableProperty] private string networkId = "dk-lab";
+    public ObservableCollection<string> AvailableScopes { get; } = new();
+    [ObservableProperty] private string selectedScope = "";
     [ObservableProperty] private string commandTopicTemplate = "accessapp/{networkId}/cmd/{cassia}/{command}";
     [ObservableProperty] private string defaultCommand = "start-update";
 
@@ -274,6 +277,9 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private CassiaGateway? selectedSpeedGateway;
 
     private bool _isInitializing = true;
+    private bool _syncingScopeSelection;
+    private readonly SemaphoreSlim _scopeResyncLock = new(1, 1);
+    private string _lastScopeResyncNetworkId = "";
 
     
 
@@ -302,6 +308,8 @@ public partial class MainViewModel : ObservableObject
         _notesAutosaveTimer.Start();
 
         NetworkId = s.accessapp.networkId;
+        RegisterObservedScope(NetworkId);
+        SelectedScope = NetworkId;
         CommandTopicTemplate = s.accessapp.commandTopicTemplate;
         DefaultCommand = s.accessapp.defaultCommand;
         ForceUpdateEnabled = s.accessapp.forceUpdate;
@@ -480,6 +488,121 @@ public partial class MainViewModel : ObservableObject
 
         _isInitializing = false;
 }
+
+    partial void OnSelectedScopeChanged(string value)
+    {
+        if (_syncingScopeSelection || _isInitializing) return;
+
+        var scope = (value ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(scope)) return;
+        if (string.Equals(NetworkId, scope, StringComparison.OrdinalIgnoreCase)) return;
+
+        _syncingScopeSelection = true;
+        try
+        {
+            NetworkId = scope;
+        }
+        finally
+        {
+            _syncingScopeSelection = false;
+        }
+    }
+
+    partial void OnNetworkIdChanged(string value)
+    {
+        var scope = (value ?? "").Trim();
+        if (!string.Equals(value, scope, StringComparison.Ordinal))
+        {
+            NetworkId = scope;
+            return;
+        }
+
+        RegisterObservedScope(scope);
+
+        if (!_syncingScopeSelection)
+        {
+            var selected = AvailableScopes.FirstOrDefault(s => s.Equals(scope, StringComparison.OrdinalIgnoreCase)) ?? "";
+            _syncingScopeSelection = true;
+            try
+            {
+                SelectedScope = selected;
+            }
+            finally
+            {
+                _syncingScopeSelection = false;
+            }
+        }
+
+        if (_isInitializing || !IsConnected) return;
+        _ = ResyncAfterScopeChangeAsync(scope);
+    }
+
+    private void RegisterObservedScopeFromTopic(string topic)
+    {
+        var scope = ExtractScopeFromTopic(topic);
+        RegisterObservedScope(scope);
+    }
+
+    private static string ExtractScopeFromTopic(string? topic)
+    {
+        var parts = (topic ?? "").Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 2) return "";
+        if (!parts[0].Equals("accessapp", StringComparison.OrdinalIgnoreCase)) return "";
+        return (parts[1] ?? "").Trim();
+    }
+
+    private void RegisterObservedScope(string? scope)
+    {
+        var value = (scope ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(value)) return;
+
+        void AddScope()
+        {
+            if (AvailableScopes.Any(s => s.Equals(value, StringComparison.OrdinalIgnoreCase))) return;
+
+            var sorted = AvailableScopes
+                .Append(value)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            AvailableScopes.Clear();
+            foreach (var item in sorted)
+                AvailableScopes.Add(item);
+        }
+
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher == null || dispatcher.CheckAccess())
+            AddScope();
+        else
+            dispatcher.BeginInvoke((Action)AddScope);
+    }
+
+    private async Task ResyncAfterScopeChangeAsync(string requestedScope)
+    {
+        requestedScope = (requestedScope ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(requestedScope)) return;
+
+        await _scopeResyncLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            var currentScope = (NetworkId ?? "").Trim();
+            if (!string.Equals(currentScope, requestedScope, StringComparison.OrdinalIgnoreCase)) return;
+            if (string.Equals(_lastScopeResyncNetworkId, currentScope, StringComparison.OrdinalIgnoreCase)) return;
+
+            await ResyncCoreAsync(ShouldResetSpeedHistoryForCurrentScope(), clearUi: true).ConfigureAwait(false);
+            _lastScopeResyncNetworkId = currentScope;
+            ConnectionStatus = $"Scope changed to '{currentScope}'. Resynced.";
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = $"Scope resync failed: {ex.Message}";
+        }
+        finally
+        {
+            _scopeResyncLock.Release();
+        }
+    }
 
     partial void OnSelectedQueueItemChanged(QueueItem? value)
     {
@@ -940,21 +1063,77 @@ public partial class MainViewModel : ObservableObject
 
         try
         {
-            var topic = BuildCmdTopic(cassiaName, "self-update");
-            var payload = new
-            {
-                requestId = Guid.NewGuid().ToString("N"),
-                restartService = true,
-                serviceName = "accessapp"
-            };
-
-            await _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+            await PublishSelfUpdateAsync(cassiaName).ConfigureAwait(false);
             ConnectionStatus = $"Sent self-update to {cassiaName}";
         }
         catch (Exception ex)
         {
             ConnectionStatus = "Error: " + ex.Message;
         }
+    }
+
+    [RelayCommand]
+    private async Task SelfUpdateAllCassias()
+    {
+        if (!IsConnected) { ConnectionStatus = "Not connected"; return; }
+
+        var targets = CassiaGateways
+            .Select(g => (g.Name ?? "").Trim())
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (targets.Count == 0)
+        {
+            ConnectionStatus = "No Cassia gateways available.";
+            return;
+        }
+
+        var proceed = false;
+        try
+        {
+            var result = MessageBox.Show(
+                $"Trigger remote self-update on {targets.Count} Cassia(s)?\n\n" +
+                "This will queue a service restart on each gateway so the updater can run before AccessAPP starts.",
+                "Remote self-update (all)",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            proceed = result == MessageBoxResult.Yes;
+        }
+        catch { }
+
+        if (!proceed) return;
+
+        var sent = 0;
+        foreach (var cassiaName in targets)
+        {
+            try
+            {
+                await PublishSelfUpdateAsync(cassiaName).ConfigureAwait(false);
+                sent++;
+            }
+            catch
+            {
+                // Continue with remaining gateways.
+            }
+        }
+
+        ConnectionStatus = sent == targets.Count
+            ? $"Sent self-update to {sent} Cassia(s)"
+            : $"Sent self-update to {sent}/{targets.Count} Cassia(s)";
+    }
+
+    private Task PublishSelfUpdateAsync(string cassiaName)
+    {
+        var topic = BuildCmdTopic(cassiaName, "self-update");
+        var payload = new
+        {
+            requestId = Guid.NewGuid().ToString("N"),
+            restartService = true,
+            serviceName = "accessapp"
+        };
+
+        return _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token);
     }
 
     [RelayCommand]
@@ -1167,6 +1346,7 @@ public partial class MainViewModel : ObservableObject
         CassiaGateways.Clear();
         CassiaNameOptions.Clear();
         _gwSeenMacs.Clear(); // <-- reset unique counters
+        RefreshProductFilterOptions();
         OnPropertyChanged(nameof(DevicesSubtitle));
     }
 
@@ -1200,6 +1380,7 @@ public partial class MainViewModel : ObservableObject
         _devices.Clear();
         _deviceByMac.Clear();
         _gwSeenMacs.Clear();
+        RefreshProductFilterOptions();
 
         // Keep queue/progress cache so queued/programming still shows if devices come back.
         // But reset per-device assignment counts.

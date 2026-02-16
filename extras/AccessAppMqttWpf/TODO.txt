@@ -1,27 +1,6 @@
 ﻿CRITICAL:
-Need a way to get 4g signal strength
-
-Need a way to show 4G signal:
-Implement function like this in the access-app, so we can send 4G status, and signal strength on the status signal (once every 30 second)
-https://github.com/pmcrwf-mid/ZTE-MF79U-api/tree/main
-=> ip = 192.168.0.1 / password=Kode1234!
-The AccessAppMqttWpf should show the 4G signal as well.
 
 MAJOR:
-Checkbox to hide devices under -70 or -75 rssi (if rssi has been over for the last 60 seconds, still show it)
-
-Hide warn when firmware was the same, and "Device Upgrade Completed." in the UI (checkbox)
-
-If actor was updated before bootloader / sensor, then there is no need to reboot after actor-update.
-
-if device is not in bootloader, and we cant get the current FW, then we should not continue with the FW update, and fail the update, and show it with a new color in the device-list, that indicates we have tried, but did not succeed.
-
-Upgrade log should show total uniq sensors success & failed (also take into account the "latest pr mac")
-
-Need a button to clear the device-list on cassia-as well, as make a complete new scan (To be used when a cassia is moved)
-
-MINOR: 
-The dropdown with P41-P48, we should be able to in a checkbox to select and deselect what we want to see
 
 
 TRIVIAL:

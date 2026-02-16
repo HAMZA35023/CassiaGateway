@@ -23,7 +23,9 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     private int _reconnectRequested;
     private DateTime _lastReconnectAttemptUtc = DateTime.MinValue;
 
-    private static readonly TimeSpan StatusHeartbeatInterval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan DefaultStatusHeartbeatInterval = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan MinStatusHeartbeatInterval = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan MaxStatusHeartbeatInterval = TimeSpan.FromSeconds(3600);
 
     private MQTTnet.IMqttClient? _client;
     private CancellationTokenSource? _runCts;
@@ -288,23 +290,25 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 AppLog.Debug($"Ensuring connection to {CurrentOptions.Host}:{CurrentOptions.Port} (clientId={CurrentOptions.ClientId}, network={CurrentOptions.NetworkId})");
                 await EnsureConnectedAndSubscribedAsync(ct).ConfigureAwait(false);
 
-                var online = await BuildStatusMessageAsync(DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
+                var now = DateTimeOffset.UtcNow;
+                var online = await BuildStatusMessageAsync(now, ct).ConfigureAwait(false);
                 await PublishJsonAsync(TeleTopic("status"), online, retain: false, ct).ConfigureAwait(false);
                 AppLog.Info("Published retained online status");
-                var nextHeartbeat = DateTimeOffset.UtcNow + StatusHeartbeatInterval;
+                var lastStatusPublishAt = now;
 
                 while (!ct.IsCancellationRequested && _client is not null && _client.IsConnected)
                 {
-                    var now = DateTimeOffset.UtcNow;
+                    now = DateTimeOffset.UtcNow;
+                    var heartbeatInterval = GetStatusHeartbeatInterval();
 
-                    if (now >= nextHeartbeat)
+                    if ((now - lastStatusPublishAt) >= heartbeatInterval)
                     {
                         var heartbeat = await BuildStatusMessageAsync(now, ct).ConfigureAwait(false);
 
                         await PublishJsonAsync(TeleTopic("status"), heartbeat, retain: false, ct)
                             .ConfigureAwait(false);
 
-                        nextHeartbeat = now + StatusHeartbeatInterval;
+                        lastStatusPublishAt = now;
                     }
 
                     await Task.Delay(500, ct).ConfigureAwait(false);
@@ -329,6 +333,15 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
         }
 
         AppLog.Debug("Run loop exited");
+    }
+
+    private static TimeSpan GetStatusHeartbeatInterval()
+    {
+        var seconds = RuntimeVariables.MQTT_STATUS_HEARTBEAT_SECONDS;
+        if (seconds <= 0)
+            return DefaultStatusHeartbeatInterval;
+
+        return TimeSpan.FromSeconds(Math.Clamp(seconds, (int)MinStatusHeartbeatInterval.TotalSeconds, (int)MaxStatusHeartbeatInterval.TotalSeconds));
     }
 
     private async Task<StatusMessage> BuildStatusMessageAsync(DateTimeOffset now, CancellationToken ct)

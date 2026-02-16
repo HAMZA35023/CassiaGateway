@@ -4,13 +4,13 @@ namespace AccessAPP
     {
 
         // Bootloader write pacing (ms). 0 = no extra delay between writes.
-        public static int WRITE_SLEEP_MS = 0;
+        public static int WRITE_SLEEP_MS = 50;
 
         // Actor BLE chunking/pacing.
         // Chunk size for actor boot packets (bytes). 0/negative = default (80).
         public static int ACTOR_CHUNK_SIZE = 80;
         // Delay between actor chunks (ms). 0 = no extra delay.
-        public static int ACTOR_INTER_CHUNK_SLEEP_MS = 150;
+        public static int ACTOR_INTER_CHUNK_SLEEP_MS = 100;
 
         // If true, the app will use both BLE chips on Cassia X2000.
         // When multiple parallel upgrades are running, they will be distributed across chip 0 and chip 1.
@@ -46,6 +46,10 @@ namespace AccessAPP
         public static bool RestoreSettingsAfterUpgrade = true;
         // Temporarily set DALI SysFail level during update (usually to 0xFF).
         public static bool AutoSetSysFailLevelUnderUpdate = true;
+
+        // MQTT telemetry
+        // Periodic status publish interval for tele/.../status (seconds).
+        public static int MQTT_STATUS_HEARTBEAT_SECONDS = 10;
 
         // Upgrade delay tuning (runtime-only; all values in milliseconds)
         // Delay after final disconnect at the end of an upgrade attempt.

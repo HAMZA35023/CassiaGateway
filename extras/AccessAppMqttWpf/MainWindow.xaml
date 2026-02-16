@@ -396,6 +396,9 @@
                 <MenuItem Header="Set runtime variables (all)..."
                           Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"
                           Command="{Binding OpenRuntimeSettingsAllCommand}"/>
+                <MenuItem Header="Remote self-update (all)"
+                          Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"
+                          Command="{Binding SelfUpdateAllCassiasCommand}"/>
                 <Separator/>
                 <MenuItem Header="Set parallel (all)" Command="{Binding SetParallelProgrammersForAllCassiasPromptCommand}"/>
                 <MenuItem Header="Get parallel (all)" Command="{Binding GetParallelProgrammersForAllCassiasCommand}"/>
@@ -828,6 +831,12 @@
 
                     <TextBlock Text="NetworkId" Style="{StaticResource MetaLabel}"/>
                     <TextBox Text="{Binding NetworkId}"/>
+                    <TextBlock Text="Known scopes"
+                               Style="{StaticResource MetaLabel}"
+                               Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"/>
+                    <ComboBox ItemsSource="{Binding AvailableScopes}"
+                              SelectedItem="{Binding SelectedScope, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                              Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"/>
 
                     <CheckBox Content="Production-Update"
                               IsChecked="{Binding ProductionUpdateEnabled, Mode=TwoWay}"
@@ -978,9 +987,45 @@
                                                    Margin="14,0,6,0"
                                                    VerticalAlignment="Center"
                                                    Foreground="{DynamicResource MutedBrush}"/>
-                                        <ComboBox Width="80"
-                                                  ItemsSource="{Binding SensorFilterOptions}"
-                                                  SelectedItem="{Binding SensorFilter, Mode=TwoWay}"
+                                        <Menu VerticalAlignment="Center"
+                                              Margin="0,0,8,0"
+                                              Background="Transparent">
+                                            <MenuItem Header="{Binding SelectedModelFilterSummary}">
+                                                <MenuItem Header="Select all"
+                                                          Command="{Binding SelectAllModelFiltersCommand}"/>
+                                                <MenuItem Header="Clear all"
+                                                          Command="{Binding ClearModelFiltersCommand}"/>
+                                                <Separator/>
+                                                <MenuItem Header="P41"
+                                                          IsCheckable="True"
+                                                          IsChecked="{Binding ShowModelP41, Mode=TwoWay}"
+                                                          StaysOpenOnClick="True"/>
+                                                <MenuItem Header="P42"
+                                                          IsCheckable="True"
+                                                          IsChecked="{Binding ShowModelP42, Mode=TwoWay}"
+                                                          StaysOpenOnClick="True"/>
+                                                <MenuItem Header="P46"
+                                                          IsCheckable="True"
+                                                          IsChecked="{Binding ShowModelP46, Mode=TwoWay}"
+                                                          StaysOpenOnClick="True"/>
+                                                <MenuItem Header="P47"
+                                                          IsCheckable="True"
+                                                          IsChecked="{Binding ShowModelP47, Mode=TwoWay}"
+                                                          StaysOpenOnClick="True"/>
+                                                <MenuItem Header="P48"
+                                                          IsCheckable="True"
+                                                          IsChecked="{Binding ShowModelP48, Mode=TwoWay}"
+                                                          StaysOpenOnClick="True"/>
+                                            </MenuItem>
+                                        </Menu>
+
+                                        <TextBlock Text="Product:"
+                                                   Margin="8,0,6,0"
+                                                   VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource MutedBrush}"/>
+                                        <ComboBox Width="110"
+                                                  ItemsSource="{Binding ProductFilterOptions}"
+                                                  SelectedItem="{Binding ProductFilter, Mode=TwoWay}"
                                                   VerticalAlignment="Center"
                                                   Margin="0,0,8,0"/>
 

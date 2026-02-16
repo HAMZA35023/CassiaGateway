@@ -90,6 +90,9 @@ public partial class MainViewModel : ObservableObject
 
     private void OnMqttMessage(string topic, string payload)
     {
+        // Learn available scopes from incoming topics so the user can switch quickly.
+        RegisterObservedScopeFromTopic(topic);
+
         // 1) Handle plain-text replies regardless of topic.
         // We accept:
         //   "AA:BB:..: connect OK"
