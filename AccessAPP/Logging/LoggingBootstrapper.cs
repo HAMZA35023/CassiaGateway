@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.IO;
 using System.Text.Json;
 using AccessAPP;
 using Serilog;
@@ -28,6 +30,7 @@ public static class LoggingBootstrapper
         var logDir = ResolveLogDirectory(builder.Environment.ContentRootPath);
         Directory.CreateDirectory(logDir);
         CleanupOldLogs(logDir, TimeSpan.FromDays(3));
+        EnableSerilogSelfLog(logDir);
 
         var otlpResources = BuildOtlpResourceAttributes(builder);
 
@@ -58,13 +61,14 @@ public static class LoggingBootstrapper
         });
 
         AppLog.SerilogEnabled = true;
-        Log.Information("Serilog enabled. MinLevel={MinLevel}; LogDir={LogDir}; OTLP endpoint={OtlpEndpoint}",
-            minLevel, logDir, OtlpEndpoint);
+        Log.Information("Serilog enabled. MinLevel={MinLevel}; LogDir={LogDir}; OTLP endpoint={OtlpEndpoint}; service.name={ServiceName}",
+            minLevel, logDir, OtlpEndpoint, otlpResources.GetValueOrDefault("service.name"));
         return true;
     }
 
     private const string OtlpEndpoint = "https://otlp-gateway-prod-eu-north-0.grafana.net/otlp/v1/logs";
-    private const string OtlpHeaders = "Authorization=Basic Z2xjX2V5SnZJam9pTVRZM01UVTRPU0lzSW00aU9pSmhZMk5sYzNOaGNIQWlMQ0pySWpvaWFVZHplVWN5TkRsMU1qRXpRbU0zTTJ4R1NUWkNUazB5SWl3aWJTSTZleUp5SWpvaWNISnZaQzFsZFMxdWIzSjBhQzB3SW4xOToxNTI4NDI2";
+    // Grafana Cloud OTLP: Basic auth = base64("1528426:glc_...")  (stack id first, then token)
+    private const string OtlpHeaders = "Authorization=Basic MTUyODQyNjpnbGNfZXlKdklqb2lNVFkzTVRVNE9TSXNJbTRpT2lKaFkyTmxjM05oY0hBdFkyRnpjMmxoSWl3aWF5STZJbk52YldnMFJqRTVaRmcxTURVMU1sYzNXamhHUjBoWFppSXNJbTBpT25zaWNpSTZJbkJ5YjJRdFpYVXRibTl5ZEdndE1DSjlmUT09";
 
     private static void ConfigureOtlpSink(LoggerConfiguration cfg, IDictionary<string, object> resourceAttributes)
     {
@@ -81,6 +85,9 @@ public static class LoggingBootstrapper
                 if (resourceAttributes.Count > 0)
                     otel.ResourceAttributes = resourceAttributes;
             });
+
+            Log.Information("OTLP sink configured: endpoint={Endpoint}, headers={HeaderCount}, resources={ResourceCount}",
+                OtlpEndpoint, normalizedHeaders?.Count ?? 0, resourceAttributes.Count);
         }
         catch (Exception ex)
         {
@@ -157,6 +164,24 @@ public static class LoggingBootstrapper
         }
 
         return dict;
+    }
+
+    private static void EnableSerilogSelfLog(string logDir)
+    {
+        try
+        {
+            var selfLogPath = Path.Combine(logDir, "serilog-selflog.txt");
+            var writer = new StreamWriter(new FileStream(selfLogPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+            {
+                AutoFlush = true
+            };
+            Serilog.Debugging.SelfLog.Enable(TextWriter.Synchronized(writer));
+            Console.WriteLine($"[info] Serilog SelfLog writing to {selfLogPath}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[warn] Failed to enable Serilog SelfLog: {ex.Message}");
+        }
     }
 
     private static (string? name, string? networkId) TryReadMqttIdentity(WebApplicationBuilder builder)
