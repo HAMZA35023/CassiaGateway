@@ -21,6 +21,8 @@ public static class UpgradeLogger
     public static Action<string>? DebugLog { get; set; }
     private static void D(string msg) => DebugLog?.Invoke("[UpgradeLogger] " + msg);
 
+    private const int UpgradeLogQos = 1; // deliver-at-least-once for upgrade-log messages
+
     private static readonly object _lock = new object();
     private static readonly string LogDir = Path.Combine(AppContext.BaseDirectory, "Logs");
     private static readonly string LogFilePath = Path.Combine(LogDir, "upgrade_logs.txt");
@@ -127,7 +129,7 @@ public static class UpgradeLogger
                     line = item.Line
                 });
 
-                await mqtt.PublishAsync(topic, payload, retain: false, qos: 0, ct: ct).ConfigureAwait(false);
+                await mqtt.PublishAsync(topic, payload, retain: false, qos: UpgradeLogQos, ct: ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -197,7 +199,7 @@ public static class UpgradeLogger
                 compressedBytes = compressedBytes.Length,
                 data = compressedBase64,
                 timeLocal = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
-            }), retain: false, qos: 0, ct: ct).ConfigureAwait(false);
+            }), retain: false, qos: UpgradeLogQos, ct: ct).ConfigureAwait(false);
 
             D($"PublishSavedLogAsync: done. totalLines={lines.Length}, originalBytes={sourceBytes.Length}, compressedBytes={compressedBytes.Length}.");
         }

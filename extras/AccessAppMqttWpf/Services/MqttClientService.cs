@@ -1,5 +1,6 @@
 using MQTTnet;
 using MQTTnet.Client;
+using MQTTnet.Protocol;
 using System;
 using System.Collections.Concurrent;
 using System.Linq;
@@ -138,11 +139,23 @@ public sealed class MqttClientService : IDisposable
     /// Subscribe after connecting (or to add additional topic filters).
     /// No-op if not connected.
     /// </summary>
-    public async Task SubscribeAsync(string topicFilter)
+    public async Task SubscribeAsync(string topicFilter, int qos = 0)
     {
         if (!IsConnected) return;
         if (string.IsNullOrWhiteSpace(topicFilter)) return;
-        await _client.SubscribeAsync(topicFilter).ConfigureAwait(false);
+
+        var level = qos <= 0
+            ? MqttQualityOfServiceLevel.AtMostOnce
+            : qos == 1
+                ? MqttQualityOfServiceLevel.AtLeastOnce
+                : MqttQualityOfServiceLevel.ExactlyOnce;
+
+        var filter = new MqttTopicFilterBuilder()
+            .WithTopic(topicFilter)
+            .WithQualityOfServiceLevel(level)
+            .Build();
+
+        await _client.SubscribeAsync(filter).ConfigureAwait(false);
     }
 
     /// <summary>

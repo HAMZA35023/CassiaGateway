@@ -859,6 +859,7 @@ public partial class MainViewModel : ObservableObject
                 if (!string.IsNullOrWhiteSpace(net) && !string.Equals(_lastSubscribedNetworkId, net, StringComparison.OrdinalIgnoreCase))
                 {
                     await _mqtt.SubscribeAsync($"accessapp/{net}/tele/#").ConfigureAwait(false);
+                    await _mqtt.SubscribeAsync($"accessapp/{net}/tele/+/upgrade-log", qos: 1).ConfigureAwait(false);
                     await _mqtt.SubscribeAsync($"accessapp/{net}/cmd/#").ConfigureAwait(false);
                     _lastSubscribedNetworkId = net;
                 }
