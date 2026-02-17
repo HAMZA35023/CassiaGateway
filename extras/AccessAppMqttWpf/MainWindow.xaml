@@ -987,37 +987,74 @@
                                                    Margin="14,0,6,0"
                                                    VerticalAlignment="Center"
                                                    Foreground="{DynamicResource MutedBrush}"/>
-                                        <Menu VerticalAlignment="Center"
-                                              Margin="0,0,8,0"
-                                              Background="Transparent">
-                                            <MenuItem Header="{Binding SelectedModelFilterSummary}">
-                                                <MenuItem Header="Select all"
-                                                          Command="{Binding SelectAllModelFiltersCommand}"/>
-                                                <MenuItem Header="Clear all"
-                                                          Command="{Binding ClearModelFiltersCommand}"/>
-                                                <Separator/>
-                                                <MenuItem Header="P41"
-                                                          IsCheckable="True"
-                                                          IsChecked="{Binding ShowModelP41, Mode=TwoWay}"
-                                                          StaysOpenOnClick="True"/>
-                                                <MenuItem Header="P42"
-                                                          IsCheckable="True"
-                                                          IsChecked="{Binding ShowModelP42, Mode=TwoWay}"
-                                                          StaysOpenOnClick="True"/>
-                                                <MenuItem Header="P46"
-                                                          IsCheckable="True"
-                                                          IsChecked="{Binding ShowModelP46, Mode=TwoWay}"
-                                                          StaysOpenOnClick="True"/>
-                                                <MenuItem Header="P47"
-                                                          IsCheckable="True"
-                                                          IsChecked="{Binding ShowModelP47, Mode=TwoWay}"
-                                                          StaysOpenOnClick="True"/>
-                                                <MenuItem Header="P48"
-                                                          IsCheckable="True"
-                                                          IsChecked="{Binding ShowModelP48, Mode=TwoWay}"
-                                                          StaysOpenOnClick="True"/>
-                                            </MenuItem>
-                                        </Menu>
+                                        <Border Margin="0,0,8,0"
+                                                Background="{DynamicResource CardBrush}"
+                                                BorderBrush="{DynamicResource BorderBrush}"
+                                                BorderThickness="1"
+                                                CornerRadius="4">
+                                            <Menu VerticalAlignment="Center"
+                                                  Background="Transparent"
+                                                  Padding="0">
+                                                <MenuItem Padding="6,4">
+                                                    <MenuItem.Header>
+                                                        <DockPanel LastChildFill="False">
+                                                            <TextBlock Text="{Binding SelectedModelFilterSummary}"
+                                                                       VerticalAlignment="Center"
+                                                                       Margin="0,0,8,0"/>
+                                                            <Path Data="M 0 0 L 8 0 L 4 5 Z"
+                                                                  Fill="{DynamicResource MutedBrush}"
+                                                                  Width="10"
+                                                                  Height="6"
+                                                                  VerticalAlignment="Center"/>
+                                                        </DockPanel>
+                                                    </MenuItem.Header>
+
+                                                    <MenuItem Header="Select all"
+                                                              Command="{Binding SelectAllModelFiltersCommand}"
+                                                              StaysOpenOnClick="True"/>
+                                                    <MenuItem Header="Clear all"
+                                                              Command="{Binding ClearModelFiltersCommand}"
+                                                              StaysOpenOnClick="True"/>
+                                                    <Separator/>
+
+                                                    <MenuItem StaysOpenOnClick="True" Padding="2,1">
+                                                        <MenuItem.Header>
+                                                            <CheckBox Content="P41"
+                                                                      IsChecked="{Binding ShowModelP41, Mode=TwoWay}"
+                                                                      Focusable="False"/>
+                                                        </MenuItem.Header>
+                                                    </MenuItem>
+                                                    <MenuItem StaysOpenOnClick="True" Padding="2,1">
+                                                        <MenuItem.Header>
+                                                            <CheckBox Content="P42"
+                                                                      IsChecked="{Binding ShowModelP42, Mode=TwoWay}"
+                                                                      Focusable="False"/>
+                                                        </MenuItem.Header>
+                                                    </MenuItem>
+                                                    <MenuItem StaysOpenOnClick="True" Padding="2,1">
+                                                        <MenuItem.Header>
+                                                            <CheckBox Content="P46"
+                                                                      IsChecked="{Binding ShowModelP46, Mode=TwoWay}"
+                                                                      Focusable="False"/>
+                                                        </MenuItem.Header>
+                                                    </MenuItem>
+                                                    <MenuItem StaysOpenOnClick="True" Padding="2,1">
+                                                        <MenuItem.Header>
+                                                            <CheckBox Content="P47"
+                                                                      IsChecked="{Binding ShowModelP47, Mode=TwoWay}"
+                                                                      Focusable="False"/>
+                                                        </MenuItem.Header>
+                                                    </MenuItem>
+                                                    <MenuItem StaysOpenOnClick="True" Padding="2,1">
+                                                        <MenuItem.Header>
+                                                            <CheckBox Content="P48"
+                                                                      IsChecked="{Binding ShowModelP48, Mode=TwoWay}"
+                                                                      Focusable="False"/>
+                                                        </MenuItem.Header>
+                                                    </MenuItem>
+                                                </MenuItem>
+                                            </Menu>
+                                        </Border>
 
                                         <TextBlock Text="Product:"
                                                    Margin="8,0,6,0"
