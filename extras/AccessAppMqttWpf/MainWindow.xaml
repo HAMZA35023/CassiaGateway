@@ -396,6 +396,9 @@
                 <MenuItem Header="Set runtime variables (all)..."
                           Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"
                           Command="{Binding OpenRuntimeSettingsAllCommand}"/>
+                <MenuItem Header="Cassia web settings (first online)..."
+                          Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"
+                          Command="{Binding OpenCassiaSettingsFirstOnlineCommand}"/>
                 <MenuItem Header="Remote self-update (all)"
                           Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"
                           Command="{Binding SelfUpdateAllCassiasCommand}"/>
@@ -500,6 +503,10 @@
             <MenuItem Header="Set runtime variables..."
                       Visibility="{Binding PlacementTarget.Tag.DeveloperModeUnlocked, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}"
                       Command="{Binding PlacementTarget.Tag.OpenRuntimeSettingsCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+            <MenuItem Header="Cassia web settings..."
+                      Visibility="{Binding PlacementTarget.Tag.DeveloperModeUnlocked, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}"
+                      Command="{Binding PlacementTarget.Tag.OpenCassiaSettingsCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                       CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
             <MenuItem Header="Remote self-update (restart service)"
                       Visibility="{Binding PlacementTarget.Tag.DeveloperModeUnlocked, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}"

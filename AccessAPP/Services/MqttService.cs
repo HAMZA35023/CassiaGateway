@@ -7,6 +7,7 @@ using System.Buffers;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace AccessAPP.Services;
 
@@ -41,6 +42,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
     public MqttOptions CurrentOptions { get; private set; }
     private readonly Modem4GStatusService _modem4G;
+    private readonly CassiaWebSettingsService _cassiaWebSettings;
 
     public event Func<StartUpdateCommand, Task>? StartUpdateRequested;
     public event Func<GetFwVersionCommand, Task>? GetFwVersionRequested;
@@ -58,11 +60,16 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     public event Func<SelfUpdateCommand, Task>? SelfUpdateRequested;
     public event Func<SetUpdateChannelCommand, Task>? SetUpdateChannelRequested;
 
-    public MqttService(MqttConfigStore store, RuntimeVariablesStore runtimeStore, Modem4GStatusService modem4G)
+    public MqttService(
+        MqttConfigStore store,
+        RuntimeVariablesStore runtimeStore,
+        Modem4GStatusService modem4G,
+        CassiaWebSettingsService cassiaWebSettings)
     {
         _store = store;
         _runtimeStore = runtimeStore;
         _modem4G = modem4G;
+        _cassiaWebSettings = cassiaWebSettings;
         CurrentOptions = _store.LoadOrCreateDefault();
     }
 
@@ -1021,6 +1028,233 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                     time = DateTimeOffset.UtcNow
                 };
                 return PublishTeleJsonAsync("runtime", resp, CancellationToken.None);
+            }
+
+            if (string.Equals(command, "get-cassia-settings", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "get-gateway-settings", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch get-cassia-settings");
+
+                return Task.Run(async () =>
+                {
+                    string requestId = Guid.NewGuid().ToString("N");
+                    string? gatewayIp = null;
+                    string? username = null;
+                    string? password = null;
+                    string? passwordEncrypted = null;
+
+                    try
+                    {
+                        if (!string.IsNullOrWhiteSpace(payload))
+                        {
+                            using var doc = JsonDocument.Parse(payload);
+                            var root = doc.RootElement;
+                            if (root.ValueKind == JsonValueKind.Object)
+                            {
+                                requestId = ReadString(root, "requestId") ?? requestId;
+                                gatewayIp = ReadString(root, "gatewayIp");
+                                username = ReadString(root, "username");
+                                password = ReadString(root, "password");
+                                passwordEncrypted = ReadString(root, "passwordEncrypted");
+                            }
+                        }
+
+                        var req = new CassiaWebSettingsRequest(
+                            GatewayIp: gatewayIp,
+                            Username: username,
+                            Password: password,
+                            PasswordEncrypted: passwordEncrypted);
+
+                        var snapshot = await _cassiaWebSettings.GetSettingsAsync(req, CancellationToken.None).ConfigureAwait(false);
+
+                        var ok = new
+                        {
+                            success = true,
+                            action = "get",
+                            requestId,
+                            message = "Cassia settings loaded.",
+                            cassia = target,
+                            gatewayIp = snapshot.GatewayIp,
+                            csrf = snapshot.Csrf,
+                            settings = snapshot.Settings,
+                            savePayloadTemplate = snapshot.SavePayloadTemplate,
+                            name = CurrentOptions.Name,
+                            networkId = CurrentOptions.NetworkId,
+                            time = DateTimeOffset.UtcNow
+                        };
+
+                        await PublishTeleJsonAsync("cassia-settings", ok, CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        var bad = new
+                        {
+                            success = false,
+                            action = "get",
+                            requestId,
+                            message = $"Failed to load Cassia settings: {ex.Message}",
+                            cassia = target,
+                            name = CurrentOptions.Name,
+                            networkId = CurrentOptions.NetworkId,
+                            time = DateTimeOffset.UtcNow
+                        };
+
+                        await PublishTeleJsonAsync("cassia-settings", bad, CancellationToken.None).ConfigureAwait(false);
+                    }
+
+                    static string? ReadString(JsonElement obj, string propertyName)
+                    {
+                        if (!obj.TryGetProperty(propertyName, out var value))
+                            return null;
+
+                        if (value.ValueKind == JsonValueKind.String)
+                            return value.GetString();
+
+                        if (value.ValueKind == JsonValueKind.Number)
+                            return value.ToString();
+
+                        if (value.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                            return value.GetBoolean() ? "true" : "false";
+
+                        return null;
+                    }
+                });
+            }
+
+            if (string.Equals(command, "set-cassia-settings", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "save-cassia-settings", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch set-cassia-settings");
+
+                return Task.Run(async () =>
+                {
+                    string requestId = Guid.NewGuid().ToString("N");
+                    string? gatewayIp = null;
+                    string? username = null;
+                    string? password = null;
+                    string? passwordEncrypted = null;
+                    JsonObject? settingsPayload = null;
+
+                    try
+                    {
+                        if (string.IsNullOrWhiteSpace(payload))
+                        {
+                            var bad = new
+                            {
+                                success = false,
+                                action = "set",
+                                requestId,
+                                message = "Missing payload. Send {\"settings\":{...}}.",
+                                cassia = target,
+                                name = CurrentOptions.Name,
+                                networkId = CurrentOptions.NetworkId,
+                                time = DateTimeOffset.UtcNow
+                            };
+                            await PublishTeleJsonAsync("cassia-settings", bad, CancellationToken.None).ConfigureAwait(false);
+                            return;
+                        }
+
+                        using var doc = JsonDocument.Parse(payload);
+                        var root = doc.RootElement;
+                        if (root.ValueKind != JsonValueKind.Object)
+                            throw new InvalidOperationException("Payload must be a JSON object.");
+
+                        requestId = ReadString(root, "requestId") ?? requestId;
+                        gatewayIp = ReadString(root, "gatewayIp");
+                        username = ReadString(root, "username");
+                        password = ReadString(root, "password");
+                        passwordEncrypted = ReadString(root, "passwordEncrypted");
+
+                        if (root.TryGetProperty("settings", out var settingsEl) && settingsEl.ValueKind == JsonValueKind.Object)
+                        {
+                            settingsPayload = JsonNode.Parse(settingsEl.GetRawText()) as JsonObject;
+                        }
+                        else
+                        {
+                            settingsPayload = JsonNode.Parse(root.GetRawText()) as JsonObject;
+                            if (settingsPayload != null)
+                            {
+                                var metaKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                                {
+                                    "requestId",
+                                    "gatewayIp",
+                                    "username",
+                                    "password",
+                                    "passwordEncrypted",
+                                    "includeCurrent"
+                                };
+
+                                foreach (var key in settingsPayload.Select(p => p.Key).ToList())
+                                {
+                                    if (metaKeys.Contains(key))
+                                        settingsPayload.Remove(key);
+                                }
+                            }
+                        }
+
+                        if (settingsPayload == null || settingsPayload.Count == 0)
+                            throw new InvalidOperationException("No settings object found in payload.");
+
+                        var req = new CassiaWebSettingsRequest(
+                            GatewayIp: gatewayIp,
+                            Username: username,
+                            Password: password,
+                            PasswordEncrypted: passwordEncrypted);
+
+                        var snapshot = await _cassiaWebSettings.SaveSettingsAsync(req, settingsPayload, CancellationToken.None).ConfigureAwait(false);
+
+                        var ok = new
+                        {
+                            success = true,
+                            action = "set",
+                            requestId,
+                            message = "Cassia settings saved.",
+                            cassia = target,
+                            gatewayIp = snapshot.GatewayIp,
+                            csrf = snapshot.Csrf,
+                            settings = snapshot.Settings,
+                            savePayloadTemplate = snapshot.SavePayloadTemplate,
+                            name = CurrentOptions.Name,
+                            networkId = CurrentOptions.NetworkId,
+                            time = DateTimeOffset.UtcNow
+                        };
+
+                        await PublishTeleJsonAsync("cassia-settings", ok, CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        var bad = new
+                        {
+                            success = false,
+                            action = "set",
+                            requestId,
+                            message = $"Failed to save Cassia settings: {ex.Message}",
+                            cassia = target,
+                            name = CurrentOptions.Name,
+                            networkId = CurrentOptions.NetworkId,
+                            time = DateTimeOffset.UtcNow
+                        };
+
+                        await PublishTeleJsonAsync("cassia-settings", bad, CancellationToken.None).ConfigureAwait(false);
+                    }
+
+                    static string? ReadString(JsonElement obj, string propertyName)
+                    {
+                        if (!obj.TryGetProperty(propertyName, out var value))
+                            return null;
+
+                        if (value.ValueKind == JsonValueKind.String)
+                            return value.GetString();
+
+                        if (value.ValueKind == JsonValueKind.Number)
+                            return value.ToString();
+
+                        if (value.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                            return value.GetBoolean() ? "true" : "false";
+
+                        return null;
+                    }
+                });
             }
 
             if (string.Equals(command, "send-upgrade-log", StringComparison.OrdinalIgnoreCase))

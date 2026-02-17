@@ -311,6 +311,12 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        if (kind == "tele" && leaf == "cassia-settings")
+        {
+            HandleCassiaSettingsTele(cassia, payload);
+            return;
+        }
+
         if (kind == "tele" && leaf == "led-range")
         {
             HandleLedRangeTele(cassia, payload);

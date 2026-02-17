@@ -30,6 +30,7 @@ builder.Services.AddSingleton<FirmwareManifestService>();
 builder.Services.AddSingleton<LedRangeLocalStateStore>();
 builder.Services.AddSingleton<AccessAppSelfUpdater>();
 builder.Services.AddSingleton<Modem4GStatusService>();
+builder.Services.AddSingleton<CassiaWebSettingsService>();
 
 // ? Add CORS policy
 builder.Services.AddCors(options =>
