@@ -14,6 +14,7 @@ namespace AccessAppMqttWpf.ViewModels;
 public partial class CassiaSettingsViewModel : ObservableObject
 {
     private const string DefaultEncryptedPassword = "U2FsdGVkX19Z8zcPoszwmXgWFuCY0jVVtUgDtisi/d0=";
+    private static readonly bool ShowAllFields = true;
 
     private static readonly Regex Ipv4Regex = new(
         @"^(\d{1,2}|1\d\d|2[0-4]\d|25[0-5])(\.(\d{1,2}|1\d\d|2[0-4]\d|25[0-5])){3}$",
@@ -189,6 +190,54 @@ public partial class CassiaSettingsViewModel : ObservableObject
         ["bt_antenna_option"] = new(StringComparer.OrdinalIgnoreCase) { ["0"] = "None", ["1"] = "Chip 0", ["2"] = "Chip 1", ["3"] = "Both" }
     };
 
+    private static readonly string[] HtmlDeclaredPaths =
+    {
+        "ac.address","ac.force_network","ac.port","account_expire","adv_relay.adv_intval","adv_relay.filter_data","adv_relay.filter_exclude",
+        "adv_relay.filter_type","adv_relay.gap_time","adv_relay.keep_time","allow-origin","azure.connstr","ble_power",
+        "chip-params","conn_params.chip1.conn_max_intval","conn_params.chip1.conn_min_intval","conn_params.chip1.connect_interval_priority",
+        "conn_params.chip1.data_length_ext","conn_params.chip1.latency","conn_params.chip1.latency_priority","conn_params.chip1.scan_intval",
+        "conn_params.chip1.scan_window","conn_params.chip1.supervision_timeout_priority","conn_params.chip1.supvtimeout","conn_params.chip1.type",
+        "conn_params.conn_max_intval","conn_params.conn_min_intval","conn_params.connect_interval_priority","conn_params.data_length_ext",
+        "conn_params.latency","conn_params.latency_priority","conn_params.scan_intval","conn_params.scan_window","conn_params.supervision_timeout_priority",
+        "conn_params.supvtimeout","conn_params.type","container.ssh-login","control_channel","ac_cert.ca_crt","ac_cert.crt","ac_cert.key","crtconfig",
+        "dongle.apn","dongle.band_select","dongle.defaultroute","dongle.demand","dongle.device","dongle.dialnumber","dongle.dns",
+        "dongle.dongle_recovery","dongle.ifname","dongle.ipv6","dongle.keepalive","dongle.maxwait","dongle.metric","dongle.mtu",
+        "dongle.password","dongle.peerdns","dongle.pincode","dongle.proto","dongle.service","dongle.type","dongle.username",
+        "fat","https","local_btstack","log_level","name","oauth-enable","port1","port2","port3","port4","proto1","proto2","proto3","proto4",
+        "scan.chip1.filter_data","scan.chip1.filter_offset","scan.chip1.filter_rssi","scan.chip1.filter_type","scan.chip1.one_scan_time",
+        "scan.chip1.scan_interval","scan.chip1.scan_window","scan.chip1.type","scan.filter_data","scan.filter_offset","scan.filter_rssi",
+        "scan.filter_type","scan.one_scan_time","scan.scan_interval","scan.scan_window","ssh-login","start.bypass.ca","start.bypass.cache_max",
+        "start.bypass.cert","start.bypass.connection_type","start.bypass.encryption_mode","start.bypass.heartbeat_interval","start.bypass.host",
+        "start.bypass.identity","start.bypass.key","start.bypass.keyfilepassword","start.bypass.keyId","start.bypass.password","start.bypass.port",
+        "start.bypass.psk","start.bypass.qos_of_scan","start.bypass.queueUrl","start.bypass.require_client_certificate","start.bypass.send_interval",
+        "start.bypass.sqskey","start.bypass.topic_of_scan","start.bypass.use","start.bypass.username","start.connection.actions","start.connection.keep_time",
+        "start.connection.period","start.connection.timeout","start.connection.use","start.notification.data_type","start.notification.timestamp",
+        "start.notification.use","start.other.connection_list","start.other.connection_list_interval","start.scanning.chip","start.scanning.data_type",
+        "start.scanning.filter_duplicates","start.scanning.filter_mac","start.scanning.filter_name","start.scanning.filter_rssi","start.scanning.filter_uuid",
+        "start.scanning.filter_value.data","start.scanning.filter_value.offset","start.scanning.report_interval","start.scanning.timestamp","start.scanning.use","stat_interval","timeconf.auto","timeconf.ntp1",
+        "timeconf.ntp2","timezone","tpm-enable","wifi_interference_ch_1","wifi_interference_ch_11","wifi_interference_ch_6","wifi_interference_ch_auto",
+        "wired.dns1","wired.dns2","wired.gateway","wired.ip","wired.netmask","wired.proto","wireless.addnew","wireless.ca_cert","wireless.ca_hidden",
+        "wireless.client_cert","wireless.country","wireless.dns1","wireless.dns2","wireless.eap","wireless.eap_password","wireless.encryption",
+        "wireless.gateway","wireless.identity","wireless.ip","wireless.mode","wireless.netmask","wireless.password","wireless.priv_key","wireless.priv_key_pwd",
+        "wireless.proto","wireless.ssid","wireless_ap.ca_hidden","wireless_ap.disabled","wireless_ap.ip","wireless_ap.netmask","wireless_ap.password",
+        "wireless_ap.ssid","wireless_verify","wireless1.ca_cert","wireless1.client_cert","wireless1.dns1","wireless1.dns2","wireless1.eap",
+        "wireless1.eap_password","wireless1.encryption","wireless1.identity","wireless1.password","wireless1.priv_key","wireless1.priv_key_pwd",
+        "wireless1.proto","wireless1.ssid"
+    };
+
+    private static readonly Dictionary<string, string[]> PathAliases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["container.ssh-login"] = new[] { "container.ssh" },
+        ["start.bypass.identity"] = new[] { "start.bypass.psk-identity" },
+        ["tpm-enable"] = new[] { "tpm_enable" },
+        ["chip-params"] = new[] { "chip" }
+    };
+
+    private static readonly Dictionary<string, int> HtmlPathOrder = HtmlDeclaredPaths
+        .Select((path, index) => new { Path = NormalizePath(path), Index = index })
+        .GroupBy(x => x.Path, StringComparer.OrdinalIgnoreCase)
+        .ToDictionary(g => g.Key, g => g.Min(x => x.Index), StringComparer.OrdinalIgnoreCase);
+
     private static readonly Dictionary<string, string> KnownLabels = new(StringComparer.OrdinalIgnoreCase)
     {
         ["name"] = "Gateway Name",
@@ -200,6 +249,9 @@ public partial class CassiaSettingsViewModel : ObservableObject
         ["ssh-login"] = "Remote Assistance",
         ["wireless_ap.disabled"] = "Enable",
         ["wireless_verify"] = "Verify Before Saving",
+        ["start.connection.actions"] = "Connection Init Actions",
+        ["start.scanning.filter_duplicates"] = "Duplicates Filter",
+        ["start.scanning.report_interval"] = "Device Report Interval",
         ["local_btstack"] = "BLE Connection Mode",
         ["log_level"] = "Log Level",
         ["crtconfig"] = "MQTT Certificate Configuration",
@@ -225,7 +277,9 @@ public partial class CassiaSettingsViewModel : ObservableObject
         "wifi_interference_ch_11",
         "wifi_interference_ch_auto",
         "timeconf.auto",
-        "account_expire"
+        "account_expire",
+        "https",
+        "tpm-enable"
     };
 
     private static readonly HashSet<string> IpLikePaths = new(StringComparer.OrdinalIgnoreCase)
@@ -388,15 +442,23 @@ public partial class CassiaSettingsViewModel : ObservableObject
         _itemsByPath.Clear();
         InitializeTabs();
 
+        var rawPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        FlattenLeafPaths(settings, null, rawPaths);
+        FlattenLeafPaths(saveTemplate, null, rawPaths);
+
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        FlattenLeafPaths(settings, null, paths);
-        FlattenLeafPaths(saveTemplate, null, paths);
+        foreach (var rawPath in rawPaths)
+            paths.Add(NormalizePath(rawPath));
+        foreach (var required in HtmlDeclaredPaths)
+            paths.Add(NormalizePath(required));
 
         foreach (var path in paths
                      .Where(p => !p.Equals("csrf", StringComparison.OrdinalIgnoreCase))
-                     .OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
+                     .OrderBy(p => HtmlPathOrder.TryGetValue(p, out var order) ? 0 : 1)
+                     .ThenBy(p => HtmlPathOrder.TryGetValue(p, out var order) ? order : int.MaxValue)
+                     .ThenBy(p => p, StringComparer.OrdinalIgnoreCase))
         {
-            var node = GetPath(settings, path) ?? GetPath(saveTemplate, path);
+            var node = GetPathWithAliases(settings, path) ?? GetPathWithAliases(saveTemplate, path);
             var (tabKey, section) = MapPathToNavigation(path);
             var selectOptions = GetSelectOptions(path, node);
             var item = new CassiaEditableSettingItem(
@@ -454,9 +516,6 @@ public partial class CassiaSettingsViewModel : ObservableObject
     {
         var chip0 = ReadString(settings, "bt_antenna.chip0") ?? ReadString(saveTemplate, "bt_antenna.chip0");
         var chip1 = ReadString(settings, "bt_antenna.chip1") ?? ReadString(saveTemplate, "bt_antenna.chip1");
-        if (string.IsNullOrWhiteSpace(chip0) && string.IsNullOrWhiteSpace(chip1))
-            return;
-
         var option = BtAntennaToOption(chip0, chip1);
         var options = GetSelectOptions("bt_antenna_option", JsonValue.Create(option));
         var item = new CassiaEditableSettingItem(
@@ -556,6 +615,8 @@ public partial class CassiaSettingsViewModel : ObservableObject
 
             var fat = GetText("fat");
             var model = GetText("model");
+            if (string.IsNullOrWhiteSpace(model))
+                model = GetText("show_model");
             var isStandalone = fat.Equals("1", StringComparison.OrdinalIgnoreCase);
             var isManagedOrStandalone = fat.Equals("0", StringComparison.OrdinalIgnoreCase) || isStandalone;
             var isRepeater = fat.Equals("2", StringComparison.OrdinalIgnoreCase);
@@ -571,10 +632,10 @@ public partial class CassiaSettingsViewModel : ObservableObject
             SetVisible("wireless_verify", isStandalone);
             SetVisibleByPrefix("dongle.", isManagedOrStandalone);
             SetVisibleByPrefix("start.", isStandalone);
-            SetVisible("bt_antenna_option", isX2000Family);
-            SetVisible("bt_antenna.chip0", false);
-            SetVisible("bt_antenna.chip1", false);
-            SetVisible("tpm-enable", isX2000Family);
+            SetVisible("bt_antenna_option", true);
+            SetVisible("tpm-enable", true);
+            SetEnabled("bt_antenna_option", isX2000Family);
+            SetEnabled("tpm-enable", isX2000Family);
 
             var wiredStatic = GetText("wired.proto").Equals("static", StringComparison.OrdinalIgnoreCase);
             SetEnabled("wired.ip", wiredStatic);
@@ -721,6 +782,8 @@ public partial class CassiaSettingsViewModel : ObservableObject
 
         var chipMode = GetText("chip-params");
         var model = GetText("model");
+        if (string.IsNullOrWhiteSpace(model))
+            model = GetText("show_model");
         var isSModel = model.StartsWith("S", StringComparison.OrdinalIgnoreCase);
         SetEnabled("scan.one_scan_time", chipMode.Equals("3", StringComparison.OrdinalIgnoreCase) && isSModel);
         SetEnabled("scan.filter_type", chipMode.Equals("4", StringComparison.OrdinalIgnoreCase));
@@ -738,8 +801,18 @@ public partial class CassiaSettingsViewModel : ObservableObject
 
     private void SetVisible(string path, bool visible)
     {
-        if (_itemsByPath.TryGetValue(path, out var item))
-            item.IsVisible = visible;
+        if (!_itemsByPath.TryGetValue(path, out var item))
+            return;
+
+        if (ShowAllFields)
+        {
+            item.IsVisible = true;
+            if (!visible)
+                item.IsEnabled = false;
+            return;
+        }
+
+        item.IsVisible = visible;
     }
 
     private void SetEnabled(string path, bool enabled)
@@ -757,7 +830,17 @@ public partial class CassiaSettingsViewModel : ObservableObject
             if (!string.IsNullOrWhiteSpace(excludePrefix) &&
                 path.StartsWith(excludePrefix, StringComparison.OrdinalIgnoreCase))
                 continue;
-            item.IsVisible = visible;
+
+            if (ShowAllFields)
+            {
+                item.IsVisible = true;
+                if (!visible)
+                    item.IsEnabled = false;
+            }
+            else
+            {
+                item.IsVisible = visible;
+            }
         }
     }
 
@@ -848,6 +931,19 @@ public partial class CassiaSettingsViewModel : ObservableObject
                 return false;
             }
 
+            if ((item.OriginalNode is JsonObject || item.OriginalNode is JsonArray) && item.IsChanged)
+            {
+                try
+                {
+                    _ = JsonNode.Parse(value);
+                }
+                catch
+                {
+                    error = $"'{item.Label}' must contain valid JSON.";
+                    return false;
+                }
+            }
+
             if (item.IsSelectEditor && item.HasAllowedValues &&
                 !item.AllowedValues.Contains(value, StringComparer.OrdinalIgnoreCase))
             {
@@ -883,6 +979,7 @@ public partial class CassiaSettingsViewModel : ObservableObject
         if (IsReadOnlyPath(path)) return CassiaFieldEditorKind.ReadOnly;
         if (CheckboxPaths.Contains(path)) return CassiaFieldEditorKind.CheckBox;
         if (hasSelectOptions) return CassiaFieldEditorKind.Select;
+        if (node is JsonObject || node is JsonArray) return CassiaFieldEditorKind.TextArea;
         if (path.Contains("password", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".psk", StringComparison.OrdinalIgnoreCase))
             return CassiaFieldEditorKind.Password;
         if (path.EndsWith("cert", StringComparison.OrdinalIgnoreCase) ||
@@ -1048,6 +1145,18 @@ public partial class CassiaSettingsViewModel : ObservableObject
         var raw = text ?? "";
         var value = raw.Trim();
 
+        if (originalNode is JsonObject || originalNode is JsonArray)
+        {
+            try
+            {
+                return JsonNode.Parse(raw);
+            }
+            catch
+            {
+                return raw;
+            }
+        }
+
         if (originalNode is JsonValue original)
         {
             if (original.TryGetValue<string>(out _)) return raw;
@@ -1102,6 +1211,12 @@ public partial class CassiaSettingsViewModel : ObservableObject
     {
         if (node is JsonObject obj)
         {
+            if (obj.Count == 0 && !string.IsNullOrWhiteSpace(prefix))
+            {
+                target.Add(prefix);
+                return;
+            }
+
             foreach (var kv in obj)
             {
                 var childPath = string.IsNullOrWhiteSpace(prefix) ? kv.Key : $"{prefix}.{kv.Key}";
@@ -1110,7 +1225,12 @@ public partial class CassiaSettingsViewModel : ObservableObject
             return;
         }
 
-        if (node is JsonArray) return;
+        if (node is JsonArray)
+        {
+            if (!string.IsNullOrWhiteSpace(prefix))
+                target.Add(prefix);
+            return;
+        }
         if (!string.IsNullOrWhiteSpace(prefix)) target.Add(prefix);
     }
 
@@ -1149,6 +1269,20 @@ public partial class CassiaSettingsViewModel : ObservableObject
         };
     }
 
+    private static string NormalizePath(string path)
+    {
+        var normalized = (path ?? "").Trim();
+        if (normalized.Equals("container.ssh", StringComparison.OrdinalIgnoreCase))
+            return "container.ssh-login";
+        if (normalized.Equals("start.bypass.psk-identity", StringComparison.OrdinalIgnoreCase))
+            return "start.bypass.identity";
+        if (normalized.Equals("tpm_enable", StringComparison.OrdinalIgnoreCase))
+            return "tpm-enable";
+        if (normalized.Equals("chip", StringComparison.OrdinalIgnoreCase))
+            return "chip-params";
+        return normalized;
+    }
+
     private static JsonNode? GetPath(JsonObject root, string path)
     {
         var parts = path.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -1159,6 +1293,26 @@ public partial class CassiaSettingsViewModel : ObservableObject
                 return null;
         }
         return cur;
+    }
+
+    private static JsonNode? GetPathWithAliases(JsonObject root, string path)
+    {
+        var normalized = NormalizePath(path);
+        var node = GetPath(root, normalized);
+        if (node != null)
+            return node;
+
+        if (PathAliases.TryGetValue(normalized, out var aliases))
+        {
+            foreach (var alias in aliases)
+            {
+                node = GetPath(root, alias);
+                if (node != null)
+                    return node;
+            }
+        }
+
+        return null;
     }
 
     private static string? ReadString(JsonObject root, string path)
