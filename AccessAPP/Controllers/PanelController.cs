@@ -72,13 +72,12 @@ public sealed class PanelController : ControllerBase
                 queued = CassiaFirmwareUpgradeService.inQueue,
                 programming = CassiaFirmwareUpgradeService.GetProgrammingCount(),
                 programmingByChip,
-                speedKbps = Math.Round(CassiaFirmwareUpgradeService.totalSpeed, 1),
-                speedAvg10sKbps = Math.Round(CassiaFirmwareUpgradeService.totalSpeedAvg10s, 1)
+                totalSpeedpct = Math.Round(CassiaFirmwareUpgradeService.totalSpeed, 1),
+                totalSpeedAvg10sPct = Math.Round(CassiaFirmwareUpgradeService.totalSpeedAvg10s, 1)
             },
             lte = new
             {
-                bars = modem?.SignalBar ?? 0,
-                rssiDbm = modem?.RssiDbm
+                bars = modem?.SignalBar ?? 0
             },
             health = new
             {
