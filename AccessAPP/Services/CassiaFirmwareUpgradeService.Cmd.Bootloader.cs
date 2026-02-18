@@ -219,6 +219,7 @@ var stage = _ownInstance?._programmingStageByMac.TryGetValue(macContext, out var
                 var msg = string.IsNullOrWhiteSpace(stage) ? "Programming" : $"Programming {stage}";
                 _deviceStorageService.UpdateFirmwareProgress(macContext, 100.0, msg, null);
                 totalSpeed = Math.Round(globalTotalAfterPurge, 2);
+                totalSpeedAvg10s = Math.Round(globalAvgAfterPurge, 2);
                 return;
             }
 
@@ -253,6 +254,7 @@ var stage2 = _ownInstance?._programmingStageByMac.TryGetValue(macContext, out va
             var msg2 = string.IsNullOrWhiteSpace(stage2) ? "Programming" : $"Programming {stage2}";
             _deviceStorageService.UpdateFirmwareProgress(macContext, progress, msg2, ratePerMinThisMac);
             totalSpeed = Math.Round(globalTotalRatePerMin, 2);
+            totalSpeedAvg10s = Math.Round(globalAvgRatePerMin, 2);
 
         }
 

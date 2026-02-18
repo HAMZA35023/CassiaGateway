@@ -22,6 +22,10 @@ public static class AppLog
     public static bool IsVerboseEnabled => MinimumLevel <= LogEventLevel.Verbose;
     public static bool IsDebugEnabled => MinimumLevel <= LogEventLevel.Debug;
 
+    private static readonly object LastErrorGate = new();
+    private static string _lastErrorMessage = "-";
+    private static DateTimeOffset? _lastErrorAtUtc;
+
     // Use a dedicated property to avoid anything else overwriting "SourceFile".
     private const string SourceFileNameProperty = "SourceFileName";
 
@@ -61,9 +65,18 @@ public static class AppLog
         [CallerLineNumber] int line = 0)
         => Write(LogEventLevel.Debug, message, null, file, member, line);
 
+    public static (string Message, DateTimeOffset? AtUtc) GetLastError()
+    {
+        lock (LastErrorGate)
+            return (_lastErrorMessage, _lastErrorAtUtc);
+    }
+
     private static void Write(LogEventLevel level, string message, Exception? ex, string file, string member, int line)
     {
         var fileName = TryGetFileName(file);
+
+        if (level >= LogEventLevel.Error)
+            RecordLastError(message, ex);
 
         // Fast level filter (mainly relevant for non-Serilog fallback).
         if (level < MinimumLevel)
@@ -108,6 +121,19 @@ public static class AppLog
         catch
         {
             return path;
+        }
+    }
+
+    private static void RecordLastError(string message, Exception? ex)
+    {
+        var msg = string.IsNullOrWhiteSpace(message) ? "Unexpected error" : message.Trim();
+        if (ex != null && !string.IsNullOrWhiteSpace(ex.Message))
+            msg = $"{msg} ({ex.Message.Trim()})";
+
+        lock (LastErrorGate)
+        {
+            _lastErrorMessage = msg;
+            _lastErrorAtUtc = DateTimeOffset.UtcNow;
         }
     }
 

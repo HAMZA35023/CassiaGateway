@@ -38,7 +38,7 @@ public partial class CassiaSettingsViewModel : ObservableObject
     private static readonly Dictionary<string, string[]> KnownAllowedValues = new(StringComparer.OrdinalIgnoreCase)
     {
         ["fat"] = new[] { "0", "1", "2" },
-        ["ble_power"] = Enumerable.Range(0, 20).Select(x => x.ToString(CultureInfo.InvariantCulture)).ToArray(),
+        ["ble_power"] = new[] { "3", "8", "11", "15", "19" },
         ["stat_interval"] = new[] { "30", "60", "120", "300" },
         ["control_channel"] = new[] { "capwap", "mqtt" },
         ["ac.port"] = new[] { "5246,5247", "6246,6247" },

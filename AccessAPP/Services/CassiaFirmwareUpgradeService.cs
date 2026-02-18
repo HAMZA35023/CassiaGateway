@@ -37,6 +37,7 @@ namespace AccessAPP.Services
         }
 
         public static double totalSpeed { get; set; } = 0;
+        public static double totalSpeedAvg10s { get; set; } = 0;
 
 
         public static int GlobalnumberOfParallelThreads = 2; // runtime adjustable via MQTT (resets on restart) // Optimal setting with current Cassia Gateway HW (21:43 Min for 3 P48 with actor and sensor firmware update)
