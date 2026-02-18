@@ -1125,6 +1125,39 @@ public partial class MainViewModel : ObservableObject
     }
 
     [RelayCommand]
+    private async Task RebootCassia(string cassiaName)
+    {
+        cassiaName = (cassiaName ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(cassiaName)) return;
+        if (!IsConnected) { ConnectionStatus = "Not connected"; return; }
+
+        var proceed = false;
+        try
+        {
+            var result = MessageBox.Show(
+                $"Reboot Cassia '{cassiaName}'?\n\n" +
+                "This sends MQTT command target='" + cassiaName + "'.",
+                "Reboot Cassia",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            proceed = result == MessageBoxResult.Yes;
+        }
+        catch { }
+
+        if (!proceed) return;
+
+        try
+        {
+            await PublishRebootAsync(cassiaName).ConfigureAwait(false);
+            ConnectionStatus = $"Sent reboot command to {cassiaName}.";
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = "Error: " + ex.Message;
+        }
+    }
+
+    [RelayCommand]
     private async Task RebootAllCassias()
     {
         if (!IsConnected) { ConnectionStatus = "Not connected"; return; }
@@ -1146,20 +1179,25 @@ public partial class MainViewModel : ObservableObject
 
         try
         {
-            var topic = BuildCmdTopic("all", "reboot");
-            var payload = new
-            {
-                requestId = Guid.NewGuid().ToString("N"),
-                delaySeconds = 2
-            };
-
-            await _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+            await PublishRebootAsync("all").ConfigureAwait(false);
             ConnectionStatus = $"Sent reboot command to all Cassias in network '{NetworkId}'.";
         }
         catch (Exception ex)
         {
             ConnectionStatus = "Error: " + ex.Message;
         }
+    }
+
+    private Task PublishRebootAsync(string cassiaName)
+    {
+        var topic = BuildCmdTopic(cassiaName, "reboot");
+        var payload = new
+        {
+            requestId = Guid.NewGuid().ToString("N"),
+            delaySeconds = 2
+        };
+
+        return _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token);
     }
 
     private Task PublishSelfUpdateAsync(string cassiaName)

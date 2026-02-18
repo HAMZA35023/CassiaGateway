@@ -11,6 +11,11 @@
 
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+        <Style x:Key="MenuIconGlyph" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="HorizontalAlignment" Value="Center"/>
+        </Style>
 
         <conv:StatusToBrushConverter x:Key="StatusToBrush"/>
         <SolidColorBrush x:Key="DoneRowBrush" Color="#2A22C55E"/>
@@ -387,41 +392,106 @@
               Background="{DynamicResource CardBrush}"
               Foreground="{DynamicResource TextBrush}">
             <MenuItem Header="Cassia">
-                <MenuItem Header="Speed graph (all)" Command="{Binding OpenSpeedGraphAllCommand}"/>
-                <MenuItem Header="LED range visualizer (all)" Command="{Binding OpenLedRangeVisualizerAllCommand}"/>
+                <MenuItem.Icon>
+                    <TextBlock Text="📡" Style="{StaticResource MenuIconGlyph}"/>
+                </MenuItem.Icon>
+                <MenuItem Header="Speed graph (all)" Command="{Binding OpenSpeedGraphAllCommand}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="📈" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="LED range visualizer (all)" Command="{Binding OpenLedRangeVisualizerAllCommand}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="💡" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
                 <Separator/>
-                <MenuItem Header="Refresh FW manifest (all)" Command="{Binding RefreshFwManifestForAllCassiasCommand}"/>
-                <MenuItem Header="Clear backups (all)" Command="{Binding ClearDeviceSettingsBackupsForAllCassiasCommand}"/>
-                <MenuItem Header="Set MQTT broker (all)..." Command="{Binding SetMqttBrokerForAllCassiasPromptCommand}"/>
+                <MenuItem Header="Refresh FW manifest (all)" Command="{Binding RefreshFwManifestForAllCassiasCommand}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="🔄" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Clear backups (all)" Command="{Binding ClearDeviceSettingsBackupsForAllCassiasCommand}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="🧹" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Set MQTT broker (all)..." Command="{Binding SetMqttBrokerForAllCassiasPromptCommand}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="🌐" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
                 <MenuItem Header="Set runtime variables (all)..."
                           Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"
-                          Command="{Binding OpenRuntimeSettingsAllCommand}"/>
+                          Command="{Binding OpenRuntimeSettingsAllCommand}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="⚙" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
                 <MenuItem Header="Cassia web settings (all)..."
                           Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"
-                          Command="{Binding OpenCassiaSettingsFirstOnlineCommand}"/>
+                          Command="{Binding OpenCassiaSettingsFirstOnlineCommand}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="🛠" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
                 <MenuItem Header="Remote self-update (all)"
                           Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"
-                          Command="{Binding SelfUpdateAllCassiasCommand}"/>
+                          Command="{Binding SelfUpdateAllCassiasCommand}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="⬆" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
                 <MenuItem Header="Reboot all Cassias (all)"
                           Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"
-                          Command="{Binding RebootAllCassiasCommand}"/>
+                          Command="{Binding RebootAllCassiasCommand}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="⏻" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
                 <Separator/>
-                <MenuItem Header="Set parallel (all)" Command="{Binding SetParallelProgrammersForAllCassiasPromptCommand}"/>
-                <MenuItem Header="Get parallel (all)" Command="{Binding GetParallelProgrammersForAllCassiasCommand}"/>
+                <MenuItem Header="Set parallel (all)" Command="{Binding SetParallelProgrammersForAllCassiasPromptCommand}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="⚙" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Get parallel (all)" Command="{Binding GetParallelProgrammersForAllCassiasCommand}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="🔍" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
             </MenuItem>
             <MenuItem Header="Theme">
+                <MenuItem.Icon>
+                    <TextBlock Text="🎨" Style="{StaticResource MenuIconGlyph}"/>
+                </MenuItem.Icon>
                 <MenuItem x:Name="ThemeLightMenuItem"
                           Header="Light"
                           IsCheckable="True"
-                          Click="ThemeLight_Click"/>
+                          Click="ThemeLight_Click">
+                    <MenuItem.Icon>
+                        <TextBlock Text="☀" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
                 <MenuItem x:Name="ThemeDarkMenuItem"
                           Header="Dark"
                           IsCheckable="True"
-                          Click="ThemeDark_Click"/>
+                          Click="ThemeDark_Click">
+                    <MenuItem.Icon>
+                        <TextBlock Text="☾" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
             </MenuItem>
             <MenuItem Header="Devices">
+                <MenuItem.Icon>
+                    <TextBlock Text="🧩" Style="{StaticResource MenuIconGlyph}"/>
+                </MenuItem.Icon>
                 <MenuItem Header="Remove all ignored devices"
-                          Command="{Binding ClearIgnoredDevicesCommand}"/>
+                          Command="{Binding ClearIgnoredDevicesCommand}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="🗑" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
             </MenuItem>
         </Menu>
 
@@ -492,33 +562,73 @@
         <ContextMenu>
             <MenuItem Header="Set Cassia name..."
                       Command="{Binding PlacementTarget.Tag.SetCassiaNameCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                      CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                      CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}">
+                <MenuItem.Icon>
+                    <TextBlock Text="✏" Style="{StaticResource MenuIconGlyph}"/>
+                </MenuItem.Icon>
+            </MenuItem>
             <MenuItem Header="Set identity (name + networkId)..."
                       Command="{Binding PlacementTarget.Tag.SetCassiaIdentityCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                      CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                      CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}">
+                <MenuItem.Icon>
+                    <TextBlock Text="👤" Style="{StaticResource MenuIconGlyph}"/>
+                </MenuItem.Icon>
+            </MenuItem>
             <MenuItem Header="Set MQTT scope (networkId)..."
                       Command="{Binding PlacementTarget.Tag.SetCassiaMqttScopeCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                      CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                      CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}">
+                <MenuItem.Icon>
+                    <TextBlock Text="🧭" Style="{StaticResource MenuIconGlyph}"/>
+                </MenuItem.Icon>
+            </MenuItem>
             <MenuItem Header="Set MQTT broker (host/port/tls)..."
                       Command="{Binding PlacementTarget.Tag.SetCassiaMqttBrokerCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                      CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                      CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}">
+                <MenuItem.Icon>
+                    <TextBlock Text="🌐" Style="{StaticResource MenuIconGlyph}"/>
+                </MenuItem.Icon>
+            </MenuItem>
             <Separator Visibility="{Binding PlacementTarget.Tag.DeveloperModeUnlocked, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}"/>
             <MenuItem Header="Set runtime variables..."
                       Visibility="{Binding PlacementTarget.Tag.DeveloperModeUnlocked, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}"
                       Command="{Binding PlacementTarget.Tag.OpenRuntimeSettingsCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                      CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                      CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}">
+                <MenuItem.Icon>
+                    <TextBlock Text="⚙" Style="{StaticResource MenuIconGlyph}"/>
+                </MenuItem.Icon>
+            </MenuItem>
             <MenuItem Header="Cassia web settings..."
                       Visibility="{Binding PlacementTarget.Tag.DeveloperModeUnlocked, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}"
                       Command="{Binding PlacementTarget.Tag.OpenCassiaSettingsCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                      CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                      CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}">
+                <MenuItem.Icon>
+                    <TextBlock Text="🛠" Style="{StaticResource MenuIconGlyph}"/>
+                </MenuItem.Icon>
+            </MenuItem>
             <MenuItem Header="Remote self-update (restart service)"
                       Visibility="{Binding PlacementTarget.Tag.DeveloperModeUnlocked, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}"
                       Command="{Binding PlacementTarget.Tag.SelfUpdateCassiaCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                      CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                      CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}">
+                <MenuItem.Icon>
+                    <TextBlock Text="⬆" Style="{StaticResource MenuIconGlyph}"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <MenuItem Header="Reboot Cassia"
+                      Visibility="{Binding PlacementTarget.Tag.DeveloperModeUnlocked, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}"
+                      Command="{Binding PlacementTarget.Tag.RebootCassiaCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}">
+                <MenuItem.Icon>
+                    <TextBlock Text="⏻" Style="{StaticResource MenuIconGlyph}"/>
+                </MenuItem.Icon>
+            </MenuItem>
             <MenuItem Header="Set update channel..."
                       Visibility="{Binding PlacementTarget.Tag.DeveloperModeUnlocked, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}"
                       Command="{Binding PlacementTarget.Tag.SetUpdateChannelCassiaCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
-                      CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                      CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}">
+                <MenuItem.Icon>
+                    <TextBlock Text="📶" Style="{StaticResource MenuIconGlyph}"/>
+                </MenuItem.Icon>
+            </MenuItem>
         </ContextMenu>
     </Border.ContextMenu>
 
