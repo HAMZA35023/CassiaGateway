@@ -296,6 +296,16 @@ public static int GetProgrammingCount()
         private static readonly ConcurrentDictionary<string, SlidingRate10s> _macRate10s = new();
         private static readonly ConcurrentDictionary<string, double> _lastInstanceRate = new();
 
+        public static (double TotalPctPerMin, double TotalAvg10sPctPerMin, int WorkersWithSpeed) GetSpeedSnapshot()
+        {
+            double total = 0.0;
+            foreach (var rate in _lastInstanceRate.Values)
+                total += rate;
+
+            var rounded = Math.Round(total, 2);
+            return (rounded, rounded, _lastInstanceRate.Count);
+        }
+
         // Overall / all instances
 
         public CassiaFirmwareUpgradeService(HttpClient httpClient, CassiaConnectService connectService, CassiaPinCodeService cassiaPinCodeService, CassiaNotificationService notificationService, DeviceStorageService deviceStorageService, IConfiguration configuration, IMqttService mqttService)

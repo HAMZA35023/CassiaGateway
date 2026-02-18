@@ -43,6 +43,7 @@ public sealed class PanelController : ControllerBase
 
         var programmingList = CassiaFirmwareUpgradeService.GetProgrammingListSnapshot();
         var programmingByChip = BuildProgrammingByChip(programmingList);
+        var speedSnapshot = CassiaFirmwareUpgradeService.GetSpeedSnapshot();
 
         var (lastErrorMessage, lastErrorAtUtc) = AppLog.GetLastError();
         var hasError = lastErrorAtUtc.HasValue;
@@ -72,8 +73,9 @@ public sealed class PanelController : ControllerBase
                 queued = CassiaFirmwareUpgradeService.inQueue,
                 programming = CassiaFirmwareUpgradeService.GetProgrammingCount(),
                 programmingByChip,
-                totalSpeedpct = Math.Round(CassiaFirmwareUpgradeService.totalSpeed, 1),
-                totalSpeedAvg10sPct = Math.Round(CassiaFirmwareUpgradeService.totalSpeedAvg10s, 1)
+                totalSpeedpct = Math.Round(speedSnapshot.TotalPctPerMin, 1),
+                totalSpeedAvg10sPct = Math.Round(speedSnapshot.TotalAvg10sPctPerMin, 1),
+                workersWithSpeed = speedSnapshot.WorkersWithSpeed
             },
             lte = new
             {

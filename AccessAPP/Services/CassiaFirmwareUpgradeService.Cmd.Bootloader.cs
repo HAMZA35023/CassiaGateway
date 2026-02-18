@@ -213,13 +213,13 @@ return false;
                     $"{Pad("DONE", 6)} | " +
                     $"{Pad("Total:", 8)} {globalTotalAfterPurge,7:F2}%/min | " +
                     $"{Pad("Avg:", 6)} {globalAvgAfterPurge,7:F2}%/min (10s avg)");
-var stage = _ownInstance?._programmingStageByMac.TryGetValue(macContext, out var s1) == true
+                var stage = _ownInstance?._programmingStageByMac.TryGetValue(macContext, out var s1) == true
                     ? s1
                     : "";
                 var msg = string.IsNullOrWhiteSpace(stage) ? "Programming" : $"Programming {stage}";
                 _deviceStorageService.UpdateFirmwareProgress(macContext, 100.0, msg, null);
                 totalSpeed = Math.Round(globalTotalAfterPurge, 2);
-                totalSpeedAvg10s = Math.Round(globalAvgAfterPurge, 2);
+                totalSpeedAvg10s = Math.Round(globalTotalAfterPurge, 2);
                 return;
             }
 
@@ -248,13 +248,13 @@ var stage = _ownInstance?._programmingStageByMac.TryGetValue(macContext, out var
                 $"{Pad($"{ratePerMinThisMac,7:F2}%/min", 14)} | " +
                 $"{Pad("Total:", 8)} {globalTotalRatePerMin,7:F2}%/min | " +
                 $"{Pad("Avg:", 6)} {globalAvgRatePerMin,7:F2}%/min (10s avg)");
-var stage2 = _ownInstance?._programmingStageByMac.TryGetValue(macContext, out var s2) == true
+            var stage2 = _ownInstance?._programmingStageByMac.TryGetValue(macContext, out var s2) == true
                 ? s2
                 : "";
             var msg2 = string.IsNullOrWhiteSpace(stage2) ? "Programming" : $"Programming {stage2}";
             _deviceStorageService.UpdateFirmwareProgress(macContext, progress, msg2, ratePerMinThisMac);
             totalSpeed = Math.Round(globalTotalRatePerMin, 2);
-            totalSpeedAvg10s = Math.Round(globalAvgRatePerMin, 2);
+            totalSpeedAvg10s = Math.Round(globalTotalRatePerMin, 2);
 
         }
 
