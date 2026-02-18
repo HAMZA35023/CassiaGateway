@@ -204,6 +204,39 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+    private void HandleRebootTele(string cassia, string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+            var ok = root.TryGetProperty("success", out var s) && s.ValueKind == JsonValueKind.True;
+            var stage = root.TryGetProperty("stage", out var st) ? (st.GetString() ?? "") : "";
+            var message = root.TryGetProperty("message", out var m) ? (m.GetString() ?? "") : "";
+            var delaySeconds = root.TryGetProperty("delaySeconds", out var d) && d.ValueKind == JsonValueKind.Number
+                ? d.GetInt32()
+                : 0;
+
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                if (!string.IsNullOrWhiteSpace(message))
+                {
+                    ConnectionStatus = $"[{cassia}] {message}";
+                    return;
+                }
+
+                if (ok)
+                    ConnectionStatus = $"[{cassia}] reboot {stage} (delay {delaySeconds}s).";
+                else
+                    ConnectionStatus = $"[{cassia}] reboot failed.";
+            });
+        }
+        catch
+        {
+            // ignore malformed telemetry
+        }
+    }
+
     private void HandleMqttConfigTele(string cassia, string payload)
     {
         try

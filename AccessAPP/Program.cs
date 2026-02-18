@@ -29,6 +29,7 @@ builder.Services.AddScoped<FirmwareUploadService>();
 builder.Services.AddSingleton<FirmwareManifestService>();
 builder.Services.AddSingleton<LedRangeLocalStateStore>();
 builder.Services.AddSingleton<AccessAppSelfUpdater>();
+builder.Services.AddSingleton<SystemRebootService>();
 builder.Services.AddSingleton<Modem4GStatusService>();
 builder.Services.AddSingleton<CassiaWebSettingsService>();
 
@@ -94,6 +95,7 @@ using (var scope = app.Services.CreateScope())
     var deviceStorageService = serviceProvider.GetRequiredService<DeviceStorageService>();
     var manifestSvc = app.Services.GetRequiredService<FirmwareManifestService>();
     var selfUpdater = app.Services.GetRequiredService<AccessAppSelfUpdater>();
+    var rebootService = app.Services.GetRequiredService<SystemRebootService>();
 
     mqttService.StartUpdateRequested += cmd =>
     {
@@ -455,6 +457,42 @@ using (var scope = app.Services.CreateScope())
             channel = result.Channel,
             status = result.Status,
             message = result.Message
+        });
+    };
+
+    mqttService.RebootRequested += async cmd =>
+    {
+        var requestId = string.IsNullOrWhiteSpace(cmd.RequestId) ? Guid.NewGuid().ToString("N") : cmd.RequestId!;
+        var delaySeconds = cmd.DelaySeconds <= 0 ? 2 : cmd.DelaySeconds;
+
+        await mqttService.PublishTeleJsonAsync("reboot", new
+        {
+            success = true,
+            stage = "requested",
+            requestId,
+            name = mqttService.CurrentOptions.Name,
+            networkId = mqttService.CurrentOptions.NetworkId,
+            time = DateTimeOffset.UtcNow,
+            delaySeconds
+        });
+
+        var result = rebootService.QueueReboot(cmd);
+        var success = string.Equals(result.Status, "reboot-queued", StringComparison.OrdinalIgnoreCase);
+
+        await mqttService.PublishTeleJsonAsync("reboot", new
+        {
+            success,
+            stage = success ? "queued" : "failed",
+            requestId,
+            name = mqttService.CurrentOptions.Name,
+            networkId = mqttService.CurrentOptions.NetworkId,
+            time = DateTimeOffset.UtcNow,
+            status = result.Status,
+            message = result.Message,
+            delaySeconds = result.DelaySeconds,
+            exitCode = result.ExitCode,
+            stdout = result.StdOut,
+            stderr = result.StdErr
         });
     };
 

@@ -56,6 +56,9 @@ public interface IMqttService : IAsyncDisposable
 
     // Set updater channel persisted on device.
     event Func<SetUpdateChannelCommand, Task>? SetUpdateChannelRequested;
+
+    // Reboot the host system.
+    event Func<RebootCommand, Task>? RebootRequested;
 }
 
 // New: command DTO for request payload
@@ -128,4 +131,10 @@ public sealed class SetUpdateChannelCommand
     public string? RequestId { get; set; }
     public string? Channel { get; set; }
     public string? ChannelFilePath { get; set; }
+}
+
+public sealed class RebootCommand
+{
+    public string? RequestId { get; set; }
+    public int DelaySeconds { get; set; } = 2;
 }

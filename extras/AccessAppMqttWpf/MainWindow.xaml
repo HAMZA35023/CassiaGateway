@@ -402,6 +402,9 @@
                 <MenuItem Header="Remote self-update (all)"
                           Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"
                           Command="{Binding SelfUpdateAllCassiasCommand}"/>
+                <MenuItem Header="Reboot all Cassias (all)"
+                          Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"
+                          Command="{Binding RebootAllCassiasCommand}"/>
                 <Separator/>
                 <MenuItem Header="Set parallel (all)" Command="{Binding SetParallelProgrammersForAllCassiasPromptCommand}"/>
                 <MenuItem Header="Get parallel (all)" Command="{Binding GetParallelProgrammersForAllCassiasCommand}"/>

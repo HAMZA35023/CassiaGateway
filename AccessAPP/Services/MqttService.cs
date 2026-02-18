@@ -59,6 +59,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     public event Func<GetFirmwareManifestCommand, Task>? GetFirmwareManifestRequested;
     public event Func<SelfUpdateCommand, Task>? SelfUpdateRequested;
     public event Func<SetUpdateChannelCommand, Task>? SetUpdateChannelRequested;
+    public event Func<RebootCommand, Task>? RebootRequested;
 
     public MqttService(
         MqttConfigStore store,
@@ -1432,6 +1433,45 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 }
 
                 return SetUpdateChannelRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "reboot", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "system-reboot", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch reboot");
+                RebootCommand dto;
+
+                try
+                {
+                    dto = string.IsNullOrWhiteSpace(payload)
+                        ? new RebootCommand()
+                        : JsonSerializer.Deserialize<RebootCommand>(payload, JsonOptions) ?? new RebootCommand();
+
+                    if (!string.IsNullOrWhiteSpace(payload))
+                    {
+                        using var doc = JsonDocument.Parse(payload);
+                        if (doc.RootElement.ValueKind == JsonValueKind.Number &&
+                            doc.RootElement.TryGetInt32(out var delayFromNumber))
+                        {
+                            dto.DelaySeconds = delayFromNumber;
+                        }
+                        else if (doc.RootElement.ValueKind == JsonValueKind.Object)
+                        {
+                            if (doc.RootElement.TryGetProperty("delay", out var delayEl) &&
+                                delayEl.ValueKind == JsonValueKind.Number &&
+                                delayEl.TryGetInt32(out var delayFromDelay))
+                            {
+                                dto.DelaySeconds = delayFromDelay;
+                            }
+                        }
+                    }
+                }
+                catch
+                {
+                    dto = new RebootCommand();
+                }
+
+                return RebootRequested?.Invoke(dto) ?? Task.CompletedTask;
             }
 
 

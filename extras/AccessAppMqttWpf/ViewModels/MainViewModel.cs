@@ -1124,6 +1124,44 @@ public partial class MainViewModel : ObservableObject
             : $"Sent self-update to {sent}/{targets.Count} Cassia(s)";
     }
 
+    [RelayCommand]
+    private async Task RebootAllCassias()
+    {
+        if (!IsConnected) { ConnectionStatus = "Not connected"; return; }
+
+        var proceed = false;
+        try
+        {
+            var result = MessageBox.Show(
+                $"Reboot all Cassias on network '{NetworkId}'?\n\n" +
+                "This sends MQTT command target='all' in the current network scope.",
+                "Reboot all Cassias",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            proceed = result == MessageBoxResult.Yes;
+        }
+        catch { }
+
+        if (!proceed) return;
+
+        try
+        {
+            var topic = BuildCmdTopic("all", "reboot");
+            var payload = new
+            {
+                requestId = Guid.NewGuid().ToString("N"),
+                delaySeconds = 2
+            };
+
+            await _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+            ConnectionStatus = $"Sent reboot command to all Cassias in network '{NetworkId}'.";
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = "Error: " + ex.Message;
+        }
+    }
+
     private Task PublishSelfUpdateAsync(string cassiaName)
     {
         var topic = BuildCmdTopic(cassiaName, "self-update");
