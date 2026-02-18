@@ -396,7 +396,7 @@
                 <MenuItem Header="Set runtime variables (all)..."
                           Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"
                           Command="{Binding OpenRuntimeSettingsAllCommand}"/>
-                <MenuItem Header="Cassia web settings (first online)..."
+                <MenuItem Header="Cassia web settings (all)..."
                           Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"
                           Command="{Binding OpenCassiaSettingsFirstOnlineCommand}"/>
                 <MenuItem Header="Remote self-update (all)"

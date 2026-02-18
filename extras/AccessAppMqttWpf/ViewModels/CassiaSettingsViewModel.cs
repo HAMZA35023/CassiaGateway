@@ -373,9 +373,9 @@ public partial class CassiaSettingsViewModel : ObservableObject
                 return;
             }
 
-            StatusText = "Saving cassia settings...";
+            StatusText = "Saving cassia settings to all Cassias in network...";
             var result = await _main.SaveCassiaSettingsAsync(
-                CassiaName,
+                "all",
                 payload,
                 GatewayIp,
                 Username,

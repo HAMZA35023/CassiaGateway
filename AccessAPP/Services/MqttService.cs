@@ -1059,6 +1059,13 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                             }
                         }
 
+                        if (string.Equals(target, "all", StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (!string.IsNullOrWhiteSpace(gatewayIp))
+                                AppLog.Info("get-cassia-settings: target=all, ignoring payload gatewayIp and using local gateway configuration.");
+                            gatewayIp = null;
+                        }
+
                         var req = new CassiaWebSettingsRequest(
                             GatewayIp: gatewayIp,
                             Username: username,
@@ -1194,6 +1201,13 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
                         if (settingsPayload == null || settingsPayload.Count == 0)
                             throw new InvalidOperationException("No settings object found in payload.");
+
+                        if (string.Equals(target, "all", StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (!string.IsNullOrWhiteSpace(gatewayIp))
+                                AppLog.Info("set-cassia-settings: target=all, ignoring payload gatewayIp and using local gateway configuration.");
+                            gatewayIp = null;
+                        }
 
                         var req = new CassiaWebSettingsRequest(
                             GatewayIp: gatewayIp,
