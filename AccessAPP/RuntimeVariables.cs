@@ -39,6 +39,8 @@ namespace AccessAPP
         // BLE scan chip mode for /gap/nodes SSE:
         // -1 = gateway default (no chip query), 0 = chip 0, 1 = chip 1, 2 = both chips.
         public static int BLE_SCAN_CHIP_MODE = 0;
+        // After scan resumes (when scanning was paused under upgrade), delay stale-device (-127) publishes.
+        public static int BLE_STALE_DELAY_AFTER_SCAN_RESUME_MS = 30000;
 
         // Update flow settings
         // Reboot detector after upgrade (typically after actor update).

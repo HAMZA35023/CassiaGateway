@@ -642,7 +642,7 @@
         <Border Grid.Column="0" Background="{Binding StripeBrush}" CornerRadius="10,0,0,10"/>
 
         <!-- Content spacing -->
-        <Border Grid.Column="1" Padding="3" Background="Transparent">
+        <Border Grid.Column="1" Padding="3,1,3,3" Background="Transparent">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -848,12 +848,14 @@
                                        Text="4G:"
                                        Foreground="{DynamicResource MutedBrush}"
                                        FontSize="12"
-                                       Margin="0,2,6,0"/>
+                                       Margin="0,2,6,0"
+                                       Visibility="{Binding HasCellularSummary, Converter={StaticResource BoolToVis}}"/>
                             <TextBlock Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3"
                                        Text="{Binding CellularSummary}"
                                        FontWeight="SemiBold"
                                        FontSize="12"
                                        Margin="0,2,0,0"
+                                       Visibility="{Binding HasCellularSummary, Converter={StaticResource BoolToVis}}"
                                        TextTrimming="CharacterEllipsis"/>
                         </Grid>
 

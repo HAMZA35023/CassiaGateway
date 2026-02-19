@@ -98,6 +98,8 @@ public partial class CassiaGateway : ObservableObject
         }
     }
 
+    public bool HasCellularSummary => !string.IsNullOrWhiteSpace(CellularSummary);
+
     public string LastSeenLocal => LastSeenUtc == DateTimeOffset.MinValue ? "" : LastSeenUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
     public string FwManifestLastSeenLocal => FwManifestLastSeenUtc == DateTimeOffset.MinValue ? "" : FwManifestLastSeenUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
     public string StateLower => (State ?? "").ToLowerInvariant();
@@ -146,14 +148,20 @@ public partial class CassiaGateway : ObservableObject
         OnPropertyChanged(nameof(StatusLine));
         OnPropertyChanged(nameof(StripeBrush));
     }
-    partial void OnCellularStateChanged(string value) => OnPropertyChanged(nameof(CellularSummary));
-    partial void OnCellularNetworkTypeChanged(string value) => OnPropertyChanged(nameof(CellularSummary));
-    partial void OnCellularSignalBarChanged(int? value) => OnPropertyChanged(nameof(CellularSummary));
-    partial void OnCellularRssiDbmChanged(int? value) => OnPropertyChanged(nameof(CellularSummary));
-    partial void OnCellularLteRsrpDbmChanged(int? value) => OnPropertyChanged(nameof(CellularSummary));
-    partial void OnCellularLteRsrqDbChanged(int? value) => OnPropertyChanged(nameof(CellularSummary));
-    partial void OnCellularLteSnrDbChanged(int? value) => OnPropertyChanged(nameof(CellularSummary));
-    partial void OnCellularProviderChanged(string value) => OnPropertyChanged(nameof(CellularSummary));
+    partial void OnCellularStateChanged(string value) => OnCellularSummaryChanged();
+    partial void OnCellularNetworkTypeChanged(string value) => OnCellularSummaryChanged();
+    partial void OnCellularSignalBarChanged(int? value) => OnCellularSummaryChanged();
+    partial void OnCellularRssiDbmChanged(int? value) => OnCellularSummaryChanged();
+    partial void OnCellularLteRsrpDbmChanged(int? value) => OnCellularSummaryChanged();
+    partial void OnCellularLteRsrqDbChanged(int? value) => OnCellularSummaryChanged();
+    partial void OnCellularLteSnrDbChanged(int? value) => OnCellularSummaryChanged();
+    partial void OnCellularProviderChanged(string value) => OnCellularSummaryChanged();
+
+    private void OnCellularSummaryChanged()
+    {
+        OnPropertyChanged(nameof(CellularSummary));
+        OnPropertyChanged(nameof(HasCellularSummary));
+    }
 
     partial void OnParallelProgrammersChanged(int value)
     {

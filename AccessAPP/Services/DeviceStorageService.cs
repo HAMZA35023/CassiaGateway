@@ -36,6 +36,9 @@ namespace AccessAPP.Services
         // After this, the device is removed from the device list entirely (not just marked stale).
         // This prevents "get-device-list" from showing devices that are no longer available.
         private static readonly TimeSpan RemoveAfter = TimeSpan.FromMinutes(10);
+        private readonly object _staleSuppressionGate = new();
+        private bool _scanWasPausedUnderUpgrade;
+        private DateTimeOffset _suppressStaleUntilUtc = DateTimeOffset.MinValue;
 
         private sealed class RssiSample
         {
@@ -279,9 +282,44 @@ namespace AccessAPP.Services
             PruneStaleDevices();
         }
 
+        private static bool IsScanPausedUnderUpgrade()
+            => !RuntimeVariables.BLE_SCAN_UNDER_PROGRAMMING &&
+               CassiaFirmwareUpgradeService.GetProgrammingCount() > 1;
+
+        private static TimeSpan GetStaleAfterScanResumeDelay()
+        {
+            var delayMs = Math.Max(0, RuntimeVariables.BLE_STALE_DELAY_AFTER_SCAN_RESUME_MS);
+            return TimeSpan.FromMilliseconds(delayMs);
+        }
+
+        private bool ShouldSuppressStaleUpdates(DateTimeOffset now)
+        {
+            var scanPaused = IsScanPausedUnderUpgrade();
+
+            lock (_staleSuppressionGate)
+            {
+                if (scanPaused)
+                {
+                    _scanWasPausedUnderUpgrade = true;
+                    return true;
+                }
+
+                if (_scanWasPausedUnderUpgrade)
+                {
+                    var staleAfterScanResumeDelay = GetStaleAfterScanResumeDelay();
+                    _scanWasPausedUnderUpgrade = false;
+                    _suppressStaleUntilUtc = now.Add(staleAfterScanResumeDelay);
+                    AppLog.Info($"[DeviceStorage] Scan resumed. Delaying stale device updates for {staleAfterScanResumeDelay.TotalSeconds:0}s.");
+                }
+
+                return now < _suppressStaleUntilUtc;
+            }
+        }
+
         private void PruneStaleDevices()
         {
             var now = DateTimeOffset.UtcNow;
+            var suppressStaleUpdates = ShouldSuppressStaleUpdates(now);
 
             foreach (var kvp in _deviceList)
             {
@@ -300,7 +338,7 @@ namespace AccessAPP.Services
                     continue;
 
                 // 1) Mark as stale after StaleAfter
-                if ((now - lastSeen) > StaleAfter)
+                if (!suppressStaleUpdates && (now - lastSeen) > StaleAfter)
                 {
                     _deviceList.AddOrUpdate(mac,
                         _ => kvp.Value,
