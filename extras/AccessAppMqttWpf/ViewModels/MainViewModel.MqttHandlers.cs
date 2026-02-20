@@ -237,6 +237,27 @@ public partial class MainViewModel : ObservableObject
             }
         }
 
+        partial void OnProductionUpdateEnabledChanged(bool value)
+        {
+            if (_isInitializing) return;
+
+            try
+            {
+                var s = _store.Load();
+                _store.Save(BuildSettingsSnapshot(s));
+            }
+            catch
+            {
+                // best effort
+            }
+
+            // Only on uncheck: restore default post-upgrade runtime behavior.
+            if (value) return;
+            if (!IsConnected) return;
+
+            _ = SetRuntimeForAllCassiasAsync(BuildProductionUpdateResetPayload());
+        }
+
         public void AssignDeviceToCassia(DiscoveredDevice device, string cassia)
         {
             if (device == null) return;
@@ -754,7 +775,6 @@ public partial class MainViewModel : ObservableObject
                             qi.LastUpdateUtc = now;
                         }
 
-                        UpdateQueueRssiForMac(mac);
                         UpdateQueueRssiForMac(mac);
                         MirrorQueueToDevice(qi);
                     }

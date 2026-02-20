@@ -763,7 +763,7 @@ public partial class MainViewModel : ObservableObject
                         cs.IsUpgradeNoFwRead = isNoFwRead;
 
                         // Completion implies no longer in queue unless queue snapshot says otherwise later.
-                        if (isSuccess || isWarn || isFailed)
+                        if (isSuccess || isWarn || isFailed || isNoFwRead)
                         cs.IsInQueue = false;
 
                         var fwm = LogLineFwRx.Match(line);
@@ -799,7 +799,7 @@ public partial class MainViewModel : ObservableObject
                     dev.IsUpgradeNoFwRead = cs.IsUpgradeNoFwRead;
                     dev.IsUpgradeFailed = cs.IsUpgradeFailed;
 
-                    if (cs.IsUpgradeSuccess || cs.IsUpgradeWarn || cs.IsUpgradeFailed)
+                    if (cs.IsUpgradeSuccess || cs.IsUpgradeWarn || cs.IsUpgradeFailed || cs.IsUpgradeNoFwRead)
                     dev.IsInQueue = false;
                 }
             }
@@ -868,87 +868,48 @@ public partial class MainViewModel : ObservableObject
                 ? (isSuccess ? "Done" : (isNoFwRead ? "No FW" : (isWarn ? "Warn" : (isFailed ? "Failed" : text))))
                 : text;
 
-                Application.Current.Dispatcher.Invoke(() =>
+                lock (_progressBufLock)
                 {
-                    // Update queue row (if exists)
-                    var qi = QueueItems.FirstOrDefault(q => q.Mac.Equals(mac, StringComparison.OrdinalIgnoreCase));
-                    if (qi != null)
+                    var isNew = false;
+                    if (!_progressByMac.TryGetValue(mac, out var bp))
                     {
-                        // Use arrivalUtc for ordering (prevents clock skew dropping new lines)
-                        if (qi.LastUpdateUtc != default && arrivalUtc < qi.LastUpdateUtc)
+                        bp = new BufferedProgress { Mac = mac, HasProgressPercent = false, HasSpeedPctPerMin = false };
+                        _progressByMac[mac] = bp;
+                        isNew = true;
+                    }
+                    else if (bp.TimeUtc != DateTimeOffset.MinValue && arrivalUtc < bp.TimeUtc)
+                    {
                         return;
-
-                        qi.Cassia = cassia;
-                        qi.Status = queueText.Trim();
-                        if (!string.IsNullOrWhiteSpace(chipUsed))
-                        qi.ChipUsed = chipUsed;
-
-                        if (isCompletion)
-                        qi.Progress = 100;
-                        if (isCompletion)
-                        qi.SpeedPctPerMin = null;
-
-                        if (LooksLikeFirmwareVersion(fw))
-                        qi.FirmwareVersion = fw;
-
-                        qi.LastUpdateUtc = arrivalUtc;
-
-                        RequestQueueRefresh();
                     }
 
-                    // Cache + device list mirror (without creating devices from logs)
-                    var cs = GetOrCreateCache(mac);
-                    if (cs.LastUpdateUtc != default && arrivalUtc < cs.LastUpdateUtc)
-                    return;
-
-                    cs.ProcessCassia = cassia;
-                    cs.ProcessStatus = text.Trim();
-                    if (!string.IsNullOrWhiteSpace(chipUsed))
-                    cs.ChipUsed = chipUsed;
-
-                    if (isCompletion)
-                    cs.ProcessProgress = 100;
+                    bp.Cassia = cassia;
+                    bp.Stage = text.Trim();
+                    bp.QueueStatus = queueText.Trim();
+                    bp.ChipUsed = chipUsed;
 
                     if (LooksLikeFirmwareVersion(fw))
-                    cs.ProcessFirmware = fw;
-
-                    // IMMEDIATE completion result flags (this is what drives row color)
-                    if (isCompletion)
-                    {
-                        cs.IsUpgradeSuccess = isSuccess;
-                        cs.IsUpgradeWarn = isWarn;
-                        cs.IsUpgradeFailed = isFailed;
-                        cs.IsUpgradeNoFwRead = isNoFwRead;
-
-                        // completion implies not in queue unless queue snapshot later says otherwise
-                        if (isSuccess || isWarn || isFailed)
-                        cs.IsInQueue = false;
-                    }
-
-                    cs.LastUpdateUtc = arrivalUtc;
-
-                    var dev = FindDiscoveredDevice(mac);
-                    if (dev == null) return;
-
-                    dev.ProcessCassia = cassia;
-                    dev.ProcessStatus = cs.ProcessStatus;
-                    dev.ChipUsed = cs.ChipUsed;
-                    if (!string.IsNullOrWhiteSpace(cs.ProcessFirmware))
-                    dev.ProcessFirmware = cs.ProcessFirmware;
-
-                    dev.ProcessLastUpdateUtc = arrivalUtc;
+                        bp.FirmwareTarget = fw;
 
                     if (isCompletion)
                     {
-                        dev.IsUpgradeSuccess = isSuccess;
-                        dev.IsUpgradeWarn = isWarn;
-                        dev.IsUpgradeFailed = isFailed;
-                        dev.IsUpgradeNoFwRead = isNoFwRead;
-
-                        if (isSuccess || isWarn || isFailed)
-                        dev.IsInQueue = false; // queue snapshot can set back to true (blue)
+                        bp.HasProgressPercent = true;
+                        bp.ProgressPercent = 100;
+                        bp.HasSpeedPctPerMin = true;
+                        bp.SpeedPctPerMin = null;
+                        bp.ClearSpeed = true;
                     }
-                });
+                    else
+                    {
+                        if (isNew)
+                        {
+                            bp.HasProgressPercent = false;
+                            bp.HasSpeedPctPerMin = false;
+                        }
+                        bp.ClearSpeed = false;
+                    }
+
+                    bp.TimeUtc = arrivalUtc;
+                }
             }
             catch
             {

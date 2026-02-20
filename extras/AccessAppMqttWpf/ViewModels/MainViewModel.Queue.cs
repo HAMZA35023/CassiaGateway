@@ -509,7 +509,51 @@ public partial class MainViewModel : ObservableObject
             if (res != MessageBoxResult.Yes)
                 return;
         }
+
+        // In Production Update mode, force scan-under-programming off before each query-selected action.
+        await ApplyProductionRuntimeForSelectedQueryAsync(selected).ConfigureAwait(false);
+
         await SendGetFwVersionAsync(selected);
+    }
+
+    private static Dictionary<string, object?> BuildProductionUpdateRuntimePayload()
+        => new()
+        {
+            ["RebootDetectorAfterUpgrade"] = false,
+            ["Restore102DBAfterUpgrade"] = false,
+            ["RestoreSettingsAfterUpgrade"] = false,
+            ["AutoSetSysFailLevelUnderUpdate"] = false,
+            ["BLE_SCAN_UNDER_PROGRAMMING"] = false
+        };
+
+    private static Dictionary<string, object?> BuildProductionUpdateResetPayload()
+        => new()
+        {
+            ["RebootDetectorAfterUpgrade"] = true,
+            ["Restore102DBAfterUpgrade"] = true,
+            ["RestoreSettingsAfterUpgrade"] = true,
+            ["AutoSetSysFailLevelUnderUpdate"] = true
+        };
+
+    private async Task ApplyProductionRuntimeForSelectedQueryAsync(IEnumerable<DiscoveredDevice> devices)
+    {
+        if (!ProductionUpdateEnabled)
+            return;
+
+        var cassias = (devices ?? Array.Empty<DiscoveredDevice>())
+            .Where(d => d != null)
+            .Select(ResolveCassiaForCommand)
+            .Where(c => !string.IsNullOrWhiteSpace(c))
+            .Select(c => c.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (cassias.Length == 0)
+            return;
+
+        var runtimePayload = BuildProductionUpdateRuntimePayload();
+        foreach (var cassia in cassias)
+            await SetRuntimeForCassiaAsync(cassia, runtimePayload).ConfigureAwait(false);
     }
 
     [RelayCommand]
@@ -1466,13 +1510,7 @@ public partial class MainViewModel : ObservableObject
 
         if (ProductionUpdateEnabled)
         {
-            var runtimePayload = new Dictionary<string, object?>
-            {
-                ["RebootDetectorAfterUpgrade"] = false,
-                ["Restore102DBAfterUpgrade"] = false,
-                ["RestoreSettingsAfterUpgrade"] = false,
-                ["AutoSetSysFailLevelUnderUpdate"] = false
-            };
+            var runtimePayload = BuildProductionUpdateRuntimePayload();
             await SetRuntimeForCassiaAsync(cassia, runtimePayload).ConfigureAwait(false);
         }
 
@@ -1625,9 +1663,17 @@ public partial class MainViewModel : ObservableObject
         // Clear result flags so row coloring always prefers queue state.
         if (dev.IsInQueue)
         {
+            cs.IsUpgradeSuccess = false;
+            cs.IsUpgradeFailed = false;
+            cs.IsUpgradeWarn = false;
+            cs.IsUpgradeNoFwRead = false;
+            cs.LastUpgradeSuccessUtc = null;
+            cs.LastTargetFw = "";
+
             dev.IsUpgradeSuccess = false;
             dev.IsUpgradeFailed = false;
             dev.IsUpgradeWarn = false;
+            dev.IsUpgradeNoFwRead = false;
         }
     }
 

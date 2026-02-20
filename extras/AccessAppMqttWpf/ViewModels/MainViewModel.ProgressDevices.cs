@@ -62,14 +62,15 @@ public partial class MainViewModel : ObservableObject
         public string Cassia { get; set; } = "";
         public string Mac { get; set; } = "";
         public string Stage { get; set; } = "";
+        public string QueueStatus { get; set; } = "";
         public string FirmwareTarget { get; set; } = "";
+        public string ChipUsed { get; set; } = "";
+        public bool HasProgressPercent { get; set; } = true;
         public double ProgressPercent { get; set; }
+        public bool HasSpeedPctPerMin { get; set; }
         public double? SpeedPctPerMin { get; set; }
+        public bool ClearSpeed { get; set; }
         public DateTimeOffset TimeUtc { get; set; } = DateTimeOffset.UtcNow;
-
-        // Throttle per device (avoid repainting 20+ rows every 200ms if value didn't change)
-        public double LastAppliedPercent { get; set; } = double.NaN;
-        public DateTimeOffset LastAppliedUtc { get; set; } = DateTimeOffset.MinValue;
     }
 
     private void InitDeviceFiltering()

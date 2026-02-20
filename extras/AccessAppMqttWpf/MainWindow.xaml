@@ -1547,6 +1547,9 @@
                         <CheckBox Content="Hide queued"
                                   IsChecked="{Binding HostBleHideInQueue, Mode=TwoWay}"
                                   Margin="0,0,16,0"/>
+                        <CheckBox Content="Auto-remove stale rows"
+                                  IsChecked="{Binding HostBleAutoRemoveStaleDevices, Mode=TwoWay}"
+                                  Margin="0,0,16,0"/>
                     </WrapPanel>
                 </Grid>
 

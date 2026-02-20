@@ -339,14 +339,8 @@ if (kind == "tele" && leaf == "progress")
                 using var doc = JsonDocument.Parse(payload);
                 var root = doc.RootElement;
 
+                // Use local arrival time for ordering to avoid gateway clock skew issues.
                 var ts = DateTimeOffset.UtcNow;
-                if (root.TryGetProperty("time", out var tEl))
-                {
-                    if (tEl.ValueKind == JsonValueKind.String && DateTimeOffset.TryParse(tEl.GetString(), out var dto))
-                        ts = dto;
-                    else if (tEl.TryGetDateTimeOffset(out var dto2))
-                        ts = dto2;
-                }
 
                 var mac = root.TryGetProperty("mac", out var macEl) ? (macEl.GetString() ?? "") : "";
                 if (string.IsNullOrWhiteSpace(mac))
@@ -376,11 +370,22 @@ if (kind == "tele" && leaf == "progress")
                         bp = new BufferedProgress { Mac = mac };
                         _progressByMac[mac] = bp;
                     }
+                    else if (bp.TimeUtc != DateTimeOffset.MinValue && ts < bp.TimeUtc)
+                    {
+                        // Ignore stale out-of-order progress samples for this MAC.
+                        return;
+                    }
+
                     bp.Cassia = cassia;
                     bp.Stage = stage;
+                    bp.QueueStatus = "";
                     bp.FirmwareTarget = fwTarget;
+                    bp.HasProgressPercent = true;
                     bp.ProgressPercent = pct;
+                    bp.HasSpeedPctPerMin = true;
                     bp.SpeedPctPerMin = speedPctPerMin;
+                    bp.ClearSpeed = false;
+                    bp.ChipUsed = "";
                     bp.TimeUtc = ts;
                 }
             }

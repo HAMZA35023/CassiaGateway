@@ -62,6 +62,9 @@ public sealed class AccessAppSettings
     // If true, force specific runtime variables to false before every start-update.
     public bool productionUpdate { get; set; } = false;
 
+    // Host BLE tab: if true, remove rows that are no longer present in latest scan snapshot.
+    public bool hostBleAutoRemoveStaleDevices { get; set; } = false;
+
     /// <summary>
     /// Remembers the selected firmware per detector model across app restarts/resync.
     /// Keys are typically "P41", "P42", "P46", "P47", "P48".

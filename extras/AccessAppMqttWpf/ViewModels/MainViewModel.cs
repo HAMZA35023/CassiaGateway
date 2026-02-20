@@ -128,6 +128,7 @@ public partial class MainViewModel : ObservableObject
             if (!string.IsNullOrWhiteSpace(cs.ProcessStatus)) dev.ProcessStatus = cs.ProcessStatus;
             if (!string.IsNullOrWhiteSpace(cs.ProcessCassia)) dev.ProcessCassia = cs.ProcessCassia;
             if (!string.IsNullOrWhiteSpace(cs.ProcessFirmware)) dev.ProcessFirmware = cs.ProcessFirmware;
+            if (!string.IsNullOrWhiteSpace(cs.ChipUsed)) dev.ChipUsed = cs.ChipUsed;
             if (cs.ProcessProgress > 0) dev.ProcessProgress = cs.ProcessProgress;
             if (cacheTs != DateTimeOffset.MinValue) dev.ProcessLastUpdateUtc = cacheTs;
         }
@@ -145,12 +146,10 @@ public partial class MainViewModel : ObservableObject
             dev.IsUpgradeSuccess = true;
             dev.LastUpgradeSuccessUtc = cs.LastUpgradeSuccessUtc ?? dev.LastUpgradeSuccessUtc;
             if (!string.IsNullOrWhiteSpace(cs.LastTargetFw)) dev.LastTargetFw = cs.LastTargetFw;
-            dev.IsInQueue = false;
         }
-        else
-        {
-            dev.IsInQueue = cs.IsInQueue;
-        }
+
+        // Queue state is authoritative for row color precedence.
+        dev.IsInQueue = cs.IsInQueue;
     }
 
 
@@ -315,6 +314,7 @@ public partial class MainViewModel : ObservableObject
         ForceUpdateEnabled = s.accessapp.forceUpdate;
         AutoSetWorkersByModelEnabled = s.accessapp.autoSetWorkersByModel;
         ProductionUpdateEnabled = s.accessapp.productionUpdate;
+        HostBleAutoRemoveStaleDevices = s.accessapp.hostBleAutoRemoveStaleDevices;
 
         // Firmware selections: remember across restarts/resync.
         try
@@ -1386,6 +1386,7 @@ public partial class MainViewModel : ObservableObject
             forceUpdate = ForceUpdateEnabled,
             autoSetWorkersByModel = AutoSetWorkersByModelEnabled,
             productionUpdate = ProductionUpdateEnabled,
+            hostBleAutoRemoveStaleDevices = HostBleAutoRemoveStaleDevices,
             selectedFirmwareByModel = fwMap
         };
 

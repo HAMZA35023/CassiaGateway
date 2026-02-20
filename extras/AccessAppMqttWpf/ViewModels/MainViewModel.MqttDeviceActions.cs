@@ -548,14 +548,21 @@ public partial class MainViewModel : ObservableObject
             _progressByMac.Clear();
         }
 
-        var anyQueueChanged = false;
-
         foreach (var p in batch)
         {
-            var pctRounded = (int)Math.Round(p.ProgressPercent, 0);
-
             // Protect terminal completion state from being overwritten by late/duplicate progress=100 "Programming" updates.
             var cs = GetOrCreateCache(p.Mac);
+            var pctRounded = p.HasProgressPercent
+                ? (int)Math.Round(p.ProgressPercent, 0)
+                : cs.ProcessProgress;
+            var queueStatus = !string.IsNullOrWhiteSpace(p.QueueStatus)
+                ? p.QueueStatus
+                : (!string.IsNullOrWhiteSpace(p.Stage) ? p.Stage : (cs.ProcessStatus ?? ""));
+            var terminalNow = IsTerminalQueueStatus(queueStatus)
+                || (!string.IsNullOrWhiteSpace(p.Stage) && !IsNonTerminalStage(p.Stage) && pctRounded >= 100);
+            var activeNow = LooksLikeActiveQueueStatus(queueStatus)
+                || LooksLikeNewRunStage(p.Stage, pctRounded)
+                || (p.HasProgressPercent && pctRounded > 0 && pctRounded < 100);
 
             if (cs.IsUpgradeSuccess && cs.LastUpgradeSuccessUtc.HasValue)
             {
@@ -567,8 +574,12 @@ public partial class MainViewModel : ObservableObject
                 if (LooksLikeNewRunStage(p.Stage, pctRounded))
                 {
                     cs.IsUpgradeSuccess = false;
+                    cs.IsUpgradeWarn = false;
+                    cs.IsUpgradeFailed = false;
+                    cs.IsUpgradeNoFwRead = false;
                     cs.LastUpgradeSuccessUtc = null;
                     cs.LastTargetFw = "";
+                    cs.IsInQueue = true;
                 }
                 else if (pctRounded >= 100 && IsNonTerminalStage(p.Stage)
                 && string.Equals(cs.ProcessStatus?.Trim(), "Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase))
@@ -588,7 +599,28 @@ public partial class MainViewModel : ObservableObject
             if (!string.IsNullOrWhiteSpace(p.Stage))
                 cs.ProcessStatus = p.Stage;
 
-            cs.ProcessProgress = pctRounded;
+            if (!string.IsNullOrWhiteSpace(p.ChipUsed))
+                cs.ChipUsed = p.ChipUsed;
+
+            if (p.HasProgressPercent)
+                cs.ProcessProgress = pctRounded;
+
+            if (terminalNow)
+            {
+                cs.IsInQueue = false;
+            }
+            else if (activeNow)
+            {
+                // Fresh run activity should reset previous final coloring.
+                cs.IsUpgradeSuccess = false;
+                cs.IsUpgradeWarn = false;
+                cs.IsUpgradeFailed = false;
+                cs.IsUpgradeNoFwRead = false;
+                cs.LastUpgradeSuccessUtc = null;
+                cs.LastTargetFw = "";
+                cs.IsInQueue = true;
+            }
+
             cs.LastUpdateUtc = p.TimeUtc;
 
             // Update discovered device if present (apply cached so timestamp rules are respected)
@@ -601,7 +633,6 @@ public partial class MainViewModel : ObservableObject
             {
                 qi = new QueueItem { Mac = p.Mac };
                 QueueItems.Add(qi);
-                anyQueueChanged = true;
             }
 
             // Only apply if newer than the current queue row
@@ -610,27 +641,68 @@ public partial class MainViewModel : ObservableObject
 
             qi.Cassia = cs.ProcessCassia ?? "";
             qi.FirmwareVersion = LooksLikeFirmwareVersion(cs.ProcessFirmware) ? cs.ProcessFirmware : qi.FirmwareVersion;
+            if (!string.IsNullOrWhiteSpace(cs.ChipUsed))
+                qi.ChipUsed = cs.ChipUsed;
 
             // If we already know the device completed successfully, keep the queue row "Done".
             if (cs.IsUpgradeSuccess && string.Equals(cs.ProcessStatus?.Trim(), "Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase))
             {
                 qi.Status = "Done";
-                qi.Progress = 100;
+                if (qi.Progress < 100 || p.HasProgressPercent)
+                    qi.Progress = 100;
             }
             else
             {
-                qi.Status = cs.ProcessStatus ?? "";
-                qi.Progress = pctRounded;
+                qi.Status = queueStatus;
+                if (p.HasProgressPercent)
+                    qi.Progress = pctRounded;
             }
 
-            qi.SpeedPctPerMin = p.SpeedPctPerMin;
+            if (p.ClearSpeed)
+                qi.SpeedPctPerMin = null;
+            else if (p.HasSpeedPctPerMin)
+                qi.SpeedPctPerMin = p.SpeedPctPerMin;
+
             qi.LastUpdateUtc = p.TimeUtc;
         }
 
-        if (anyQueueChanged)
-            RequestQueueRefresh();
-        else
-            RequestQueueRefresh();
+        RequestQueueRefresh();
+    }
+
+    private static bool IsTerminalQueueStatus(string? status)
+    {
+        if (string.IsNullOrWhiteSpace(status)) return false;
+        var s = status.Trim();
+
+        if (s.Equals("done", StringComparison.OrdinalIgnoreCase)) return true;
+        if (s.Equals("success", StringComparison.OrdinalIgnoreCase)) return true;
+        if (s.Equals("warn", StringComparison.OrdinalIgnoreCase) || s.Equals("warning", StringComparison.OrdinalIgnoreCase)) return true;
+        if (s.Equals("failed", StringComparison.OrdinalIgnoreCase) || s.Equals("fail", StringComparison.OrdinalIgnoreCase)) return true;
+        if (s.Equals("error", StringComparison.OrdinalIgnoreCase)) return true;
+        if (s.Equals("no fw", StringComparison.OrdinalIgnoreCase) || s.Equals("nofwread", StringComparison.OrdinalIgnoreCase)) return true;
+
+        if (s.Contains("complete", StringComparison.OrdinalIgnoreCase)) return true;
+        if (s.Contains("fail", StringComparison.OrdinalIgnoreCase) || s.Contains("error", StringComparison.OrdinalIgnoreCase)) return true;
+        if (s.Contains("no fw", StringComparison.OrdinalIgnoreCase) || s.Contains("nofw", StringComparison.OrdinalIgnoreCase)) return true;
+
+        return false;
+    }
+
+    private static bool LooksLikeActiveQueueStatus(string? status)
+    {
+        if (string.IsNullOrWhiteSpace(status)) return false;
+        var s = status.Trim();
+        if (IsTerminalQueueStatus(s)) return false;
+
+        if (s.Contains("queue", StringComparison.OrdinalIgnoreCase)) return true;
+        if (s.Contains("requested", StringComparison.OrdinalIgnoreCase)) return true;
+        if (s.Contains("program", StringComparison.OrdinalIgnoreCase)) return true;
+        if (s.Contains("upgrad", StringComparison.OrdinalIgnoreCase)) return true;
+        if (s.Contains("process start", StringComparison.OrdinalIgnoreCase)) return true;
+        if (s.Contains("connect", StringComparison.OrdinalIgnoreCase)) return true;
+        if (s.Contains("current fw", StringComparison.OrdinalIgnoreCase)) return true;
+
+        return false;
     }
 
 
