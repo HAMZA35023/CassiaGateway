@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 using AccessAPP;
 using AccessAPP.Services;
 
-public class CassiaReadWriteService : IDisposable
+public class CassiaReadWriteService : AccessAPP.Services.BleAbstractions.IBleReadWriteService
 {
     // IMPORTANT:
     // - Reuse ONE HttpClient for the whole process (keep-alive)

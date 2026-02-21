@@ -79,7 +79,7 @@ namespace AccessAPP.Services
                 string hexData = "0117000700D9E7"; // Command to trigger boot mode check
                 //CassiaReadWriteService cassiaReadWriteService = new CassiaReadWriteService();
 
-                using (var cassiaListener = _notificationService)
+                var cassiaListener = _notificationService;
                 {
                     var bootCheckResultTask = new TaskCompletionSource<bool>();
 
@@ -292,7 +292,7 @@ return false;
 
         }
 
-        public void InitializeNotificationSubscription(string macAddress, CassiaNotificationService cassiaNotificationService)
+        public void InitializeNotificationSubscription(string macAddress, BleAbstractions.IBleNotificationService cassiaNotificationService)
         {
             // Unsubscribe from all previous subscriptions
             //foreach (var subscribedMac in _subscribedMacAddresses)
@@ -347,7 +347,7 @@ return false;
             });
         }
 
-        public void UnsubscribeNotification(string macAddress, CassiaNotificationService cassiaNotificationService)
+        public void UnsubscribeNotification(string macAddress, BleAbstractions.IBleNotificationService cassiaNotificationService)
         {
             // Check if the MAC address is subscribed
             ConcurrentQueue<byte[]> _tmpCheck = null;

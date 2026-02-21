@@ -7,16 +7,17 @@ namespace AccessAPP.Services
     {
         private readonly HttpClient _httpClient;
         private readonly IConfiguration _configuration;
-        private readonly CassiaNotificationService _notificationService;
-        CassiaReadWriteService cassiaReadWrite = new CassiaReadWriteService();
+        private readonly BleAbstractions.IBleNotificationService _notificationService;
+        private readonly BleAbstractions.IBleReadWriteService cassiaReadWrite;
         public int Status { get; set; }
         public object ResponseBody { get; set; }
 
-        public CassiaPinCodeService(HttpClient httpClient, IConfiguration configuration, CassiaNotificationService notificationService, CassiaConnectService connectService)
+        public CassiaPinCodeService(HttpClient httpClient, IConfiguration configuration, BleAbstractions.IBleNotificationService notificationService, BleAbstractions.IBleConnectionService connectService, BleAbstractions.IBleReadWriteService readWriteService)
         {
             _httpClient = httpClient;
             _configuration = configuration;
             _notificationService = notificationService;
+            cassiaReadWrite = readWriteService;
         }
 
         public async Task<PincodeCheckResponseModel> CheckPincode(string gatewayIpAddress, string macAddress, string pincode)

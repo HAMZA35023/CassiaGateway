@@ -202,6 +202,27 @@ namespace AccessAPP
         public static int UPGRADE_ACTOR_UPLOAD_RETRY_DELAY_MS = 3000;
         public static int UPGRADE_ACTOR_WRITE_SLEEP_MS = 1;
 
-        
+        // BLE backend selection.
+        // "cassia"       = use the Cassia gateway REST/SSE API (default).
+        // "linux-native" = use Linux BlueZ via D-Bus (Tmds.DBus) directly.
+        public static string BLE_BACKEND = "cassia";
+
+        // Linux native BLE: HCI adapter name exposed by BlueZ (e.g. "hci0", "hci1").
+        public static string LINUX_BLE_ADAPTER = "hci0";
+
+        // Linux native BLE: MAC address prefix filter for scanning (empty = no filter).
+        public static string LINUX_BLE_MAC_PREFIX = "10:B9:F7";
+
+        // Linux native BLE: characteristic handle used for BLE write/notify operations.
+        // This is the GATT handle number (decimal) of the main control characteristic.
+        public static int LINUX_BLE_CONTROL_HANDLE = 19;
+
+        // Linux native BLE: characteristic handle for enabling sensor notifications (CCCD).
+        public static int LINUX_BLE_NOTIFY_CCCD_SENSOR_HANDLE = 15;
+
+        // Linux native BLE: characteristic handle for enabling actor notifications (CCCD).
+        public static int LINUX_BLE_NOTIFY_CCCD_ACTOR_HANDLE = 16;
+
+
     }
 }

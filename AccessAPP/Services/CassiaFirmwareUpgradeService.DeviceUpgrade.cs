@@ -1155,7 +1155,7 @@ await Task.Delay(3000); // Delay between attempts
         
         
 
-        public bool ProgramDevice(string gatewayIpAddress, string nodeMac, CassiaNotificationService cassiaNotificationService, string DetectorType, string FirmwareVersion, bool bActor, bool isBootloader)
+        public bool ProgramDevice(string gatewayIpAddress, string nodeMac, BleAbstractions.IBleNotificationService cassiaNotificationService, string DetectorType, string FirmwareVersion, bool bActor, bool isBootloader)
         {
             AppLog.Info($"Actor is going to be programmed? : {bActor}");
 try

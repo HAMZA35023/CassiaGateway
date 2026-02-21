@@ -1,9 +1,10 @@
+using AccessAPP;
 using AccessAPP.Services;
+using AccessAPP.Services.BleAbstractions;
+using AccessAPP.Services.LinuxBle;
 using AccessAPP.Models;
 using AccessAPP.Logging;
 using Serilog;
-
-const string VERSION = "0.2.0";
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -18,12 +19,41 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddHttpClient();
 
 // Register services
+
+// ── Cassia BLE backend (concrete classes) ──────────────────────────────────
+builder.Services.AddSingleton<CassiaConnectService>();
+builder.Services.AddSingleton<CassiaNotificationService>();
+builder.Services.AddSingleton<CassiaReadWriteService>();
+
+// ── Linux native BLE backend ───────────────────────────────────────────────
+builder.Services.AddSingleton<LinuxBleConnectionService>();
+builder.Services.AddSingleton<LinuxBleNotificationService>();
+builder.Services.AddSingleton<LinuxBleReadWriteService>();
+builder.Services.AddSingleton<LinuxNativeScanDevice>();
+
+// ── BLE interface → concrete mapping (resolved lazily after runtime.json) ─
+// Factories run on first resolution, which happens AFTER LoadFromDisk() below,
+// so BLE_BACKEND already reflects any override from runtime.json.
+builder.Services.AddSingleton<IBleConnectionService>(sp =>
+    RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase)
+        ? sp.GetRequiredService<LinuxBleConnectionService>()
+        : (IBleConnectionService)sp.GetRequiredService<CassiaConnectService>());
+
+builder.Services.AddSingleton<IBleNotificationService>(sp =>
+    RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase)
+        ? sp.GetRequiredService<LinuxBleNotificationService>()
+        : (IBleNotificationService)sp.GetRequiredService<CassiaNotificationService>());
+
+builder.Services.AddSingleton<IBleReadWriteService>(sp =>
+    RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase)
+        ? sp.GetRequiredService<LinuxBleReadWriteService>()
+        : (IBleReadWriteService)sp.GetRequiredService<CassiaReadWriteService>());
+
+// ── Shared / always-on services ────────────────────────────────────────────
 builder.Services.AddSingleton<CassiaScanService>();
 builder.Services.AddSingleton<ScanBleDevice>();
-builder.Services.AddSingleton<CassiaConnectService>();
 builder.Services.AddSingleton<CassiaPinCodeService>();
 builder.Services.AddSingleton<DeviceStorageService>();
-builder.Services.AddSingleton<CassiaNotificationService>();
 builder.Services.AddSingleton<CassiaFirmwareUpgradeService>();
 builder.Services.AddScoped<FirmwareUploadService>();
 builder.Services.AddSingleton<FirmwareManifestService>();
@@ -81,10 +111,24 @@ using (var scope = app.Services.CreateScope())
     if (loadResult.errors.Count > 0)
         AppLog.Warn($"Runtime variables load errors: {string.Join(", ", loadResult.errors.Select(kv => $"{kv.Key}={kv.Value}"))}");
 
-    var cassiaConnectService = serviceProvider.GetRequiredService<CassiaConnectService>();
-    var cassiaNotificationService = serviceProvider.GetRequiredService<CassiaNotificationService>();
-    cassiaNotificationService.semaphore = cassiaConnectService.semaphore;
-    var scanBleDevice = serviceProvider.GetRequiredService<ScanBleDevice>();
+    // Start the BLE backend chosen by BLE_BACKEND (evaluated after runtime.json is loaded).
+    if (RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase))
+    {
+        AppLog.Info("BLE backend: linux-native (BlueZ D-Bus)");
+        // Constructing the singleton starts the BlueZ scan loop.
+        serviceProvider.GetRequiredService<LinuxNativeScanDevice>();
+    }
+    else
+    {
+        AppLog.Info("BLE backend: cassia (REST/SSE)");
+        // Wire the shared semaphore so the notification SSE listener serialises
+        // against the connect service (original behaviour).
+        var cassiaConnectService = serviceProvider.GetRequiredService<CassiaConnectService>();
+        var cassiaNotificationService = serviceProvider.GetRequiredService<CassiaNotificationService>();
+        cassiaNotificationService.semaphore = cassiaConnectService.semaphore;
+        // Constructing the singleton starts the Cassia SSE scan loops.
+        serviceProvider.GetRequiredService<ScanBleDevice>();
+    }
 
     // Start MQTT service
     var mqttService = serviceProvider.GetRequiredService<IMqttService>();

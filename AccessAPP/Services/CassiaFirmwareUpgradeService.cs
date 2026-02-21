@@ -43,7 +43,7 @@ namespace AccessAPP.Services
         public static int GlobalnumberOfParallelThreads = 2; // runtime adjustable via MQTT (resets on restart) // Optimal setting with current Cassia Gateway HW (21:43 Min for 3 P48 with actor and sensor firmware update)
         
         private readonly HttpClient _httpClient;
-        private readonly CassiaConnectService _connectService;
+        private readonly Services.BleAbstractions.IBleConnectionService _connectService;
         private readonly CassiaPinCodeService _cassiaPinCodeService;
         private static DeviceStorageService _deviceStorageService;
         private readonly IMqttService _mqttService;
@@ -69,7 +69,7 @@ namespace AccessAPP.Services
 	    internal string GatewayIpAddress => _gatewayIpAddress;
 	    internal int GatewayPort => _gatewayPort;
 	    internal IDeviceSettingsBackupService SettingsBackupService => _settingsBackup;
-	    internal CassiaConnectService ConnectService => _connectService;
+	    internal Services.BleAbstractions.IBleConnectionService ConnectService => _connectService;
 
 	    // Wrapper with the SAME parameter order as the original private method.
         internal Task<(bool ok, HttpStatusCode code, string msg)> ConnectOnlyWithRetryAsync_Internal(
@@ -206,10 +206,9 @@ namespace AccessAPP.Services
         private static string NormalizeMac(string? mac)
             => MacUtils.NormalizeMac(mac);
 
-        CassiaReadWriteService cassiaReadWriteService = new CassiaReadWriteService();
+        Services.BleAbstractions.IBleReadWriteService cassiaReadWriteService;
 
-
-        private readonly CassiaNotificationService _notificationService; // ✅ Injected singleton
+        private readonly Services.BleAbstractions.IBleNotificationService _notificationService; // Injected singleton
 
         private static CassiaFirmwareUpgradeService _ownInstance = null;
 
@@ -308,7 +307,7 @@ public static int GetProgrammingCount()
 
         // Overall / all instances
 
-        public CassiaFirmwareUpgradeService(HttpClient httpClient, CassiaConnectService connectService, CassiaPinCodeService cassiaPinCodeService, CassiaNotificationService notificationService, DeviceStorageService deviceStorageService, IConfiguration configuration, IMqttService mqttService)
+        public CassiaFirmwareUpgradeService(HttpClient httpClient, Services.BleAbstractions.IBleConnectionService connectService, CassiaPinCodeService cassiaPinCodeService, Services.BleAbstractions.IBleNotificationService notificationService, DeviceStorageService deviceStorageService, IConfiguration configuration, IMqttService mqttService, Services.BleAbstractions.IBleReadWriteService readWriteService)
         {
             _ownInstance = this;
             _httpClient = httpClient;
@@ -320,6 +319,7 @@ public static int GetProgrammingCount()
             _gatewayIpAddress = _configuration.GetValue<string>("GatewayConfiguration:IpAddress");
             _gatewayPort = _configuration.GetValue<int>("GatewayConfiguration:Port");
             _notificationService = notificationService;
+            cassiaReadWriteService = readWriteService;
             _settingsBackup = new DeviceSettingsBackupService(this);
 
             // Dedicated components (structural refactor; no behavior changes intended)

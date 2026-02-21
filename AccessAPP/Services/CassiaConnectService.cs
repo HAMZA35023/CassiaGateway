@@ -8,12 +8,13 @@ using System.Threading;
 
 namespace AccessAPP.Services
 {
-    public class CassiaConnectService
+    public class CassiaConnectService : BleAbstractions.IBleConnectionService
     {
         private readonly HttpClient _httpClient;
         private readonly IConfiguration _configuration;
         private readonly CassiaNotificationService _notificationService; // ✅ Injected singleton
-        public readonly SemaphoreSlim semaphore = new SemaphoreSlim(1); //this will be used as sync point by all services
+        private readonly SemaphoreSlim _semaphore = new SemaphoreSlim(1); //this will be used as sync point by all services
+        public SemaphoreSlim semaphore => _semaphore;
         CassiaReadWriteService cassiaReadWrite = new CassiaReadWriteService();
 
         public int Status { get; set; }
