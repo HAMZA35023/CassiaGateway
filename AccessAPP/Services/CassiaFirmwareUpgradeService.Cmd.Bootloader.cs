@@ -1,6 +1,7 @@
 using AccessAPP.Logging;
 using AccessAPP.Models;
 using AccessAPP.Services.HelperClasses;
+using AccessAPP.Services.LinuxBle;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Concurrent;
@@ -32,6 +33,9 @@ namespace AccessAPP.Services
 
         public bool CheckIfDeviceInBootMode(string gatewayIpAddress, string nodeMac)
         {
+            if (RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase))
+                return CheckIfDeviceInBootModeLinux(nodeMac);
+
             int chip = GetChipForMac(nodeMac);
             string endpoint = $"http://{gatewayIpAddress}/gatt/nodes/{nodeMac}/characteristics?chip={chip}";
 
@@ -65,6 +69,51 @@ namespace AccessAPP.Services
                 catch (Exception ex)
                 {
                     AppLog.Error($"Error checking boot mode for {nodeMac}", ex);
+                    return false;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Linux-native boot-mode check: queries BlueZ GATT objects for the
+        /// boot-mode characteristic UUID instead of calling the Cassia REST API.
+        /// </summary>
+        private bool CheckIfDeviceInBootModeLinux(string nodeMac)
+        {
+            const string bootUuid = "00060001-f8ce-11e4-abf4-0002a5d5c51b";
+            var devicePath = BlueZHelpers.DevicePath(RuntimeVariables.LINUX_BLE_ADAPTER, nodeMac);
+
+            var maxAttempts = Math.Max(1, RuntimeVariables.BOOTMODE_RETRY_COUNT);
+            var retryDelayMs = Math.Max(0, RuntimeVariables.BOOTMODE_RETRY_DELAY_MS);
+
+            for (int attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                try
+                {
+                    var objMgr = BlueZHelpers.GetObjectManagerAsync().GetAwaiter().GetResult();
+                    var objects = objMgr.GetManagedObjectsAsync().GetAwaiter().GetResult();
+
+                    foreach (var (path, interfaces) in objects)
+                    {
+                        if (!path.ToString().StartsWith(devicePath, StringComparison.OrdinalIgnoreCase)) continue;
+                        if (!interfaces.TryGetValue("org.bluez.GattCharacteristic1", out var charProps)) continue;
+                        if (charProps.TryGetValue("UUID", out var uuidObj) && uuidObj is string uuid &&
+                            uuid.Equals(bootUuid, StringComparison.OrdinalIgnoreCase))
+                            return true;
+                    }
+
+                    return false;
+                }
+                catch (Exception ex) when (attempt < maxAttempts)
+                {
+                    AppLog.Warn($"CheckIfDeviceInBootModeLinux: attempt {attempt} failed for {nodeMac}: {ex.Message}");
+                    if (retryDelayMs > 0) Thread.Sleep(retryDelayMs);
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Error($"Error checking boot mode (linux) for {nodeMac}", ex);
                     return false;
                 }
             }

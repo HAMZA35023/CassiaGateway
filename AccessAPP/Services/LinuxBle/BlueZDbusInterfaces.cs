@@ -29,8 +29,6 @@ public interface IDevice1 : IDBusObject
 {
     Task ConnectAsync();
     Task DisconnectAsync();
-    /// <summary>Trigger GATT service/characteristic discovery on a connected device.</summary>
-    Task DiscoverServicesAsync();
     Task<T> GetAsync<T>(string prop);
     Task<IDictionary<string, object>> GetAllAsync();
     Task SetAsync(string prop, object val);

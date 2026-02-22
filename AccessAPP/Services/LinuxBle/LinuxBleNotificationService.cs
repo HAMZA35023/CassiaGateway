@@ -87,12 +87,25 @@ public class LinuxBleNotificationService : IBleNotificationService
 
             var adapter = RuntimeVariables.LINUX_BLE_ADAPTER;
             var devicePath = BlueZHelpers.DevicePath(adapter, macAddress);
-            var handle = RuntimeVariables.LINUX_BLE_CONTROL_HANDLE;
+            
+// Ensure device is connected and GATT is ready.
+var device = await BlueZHelpers.GetDeviceAsync(devicePath);
+if (!await device.GetAsync<bool>("Connected"))
+{
+    try { await device.ConnectAsync(); } catch { /* ignore */ }
+}
+await BlueZHelpers.WaitForServicesResolvedAsync(devicePath, 2500);
 
-            var characteristic = await BlueZHelpers.GetCharacteristicAsync(devicePath, handle);
+// Detect mode from current GATT and pick correct notify characteristic UUID.
+var mode = await BlueZHelpers.DetectModeByGattAsync(devicePath);
+var notifyUuid = mode == BlueZHelpers.BleGattMode.Bootloader
+    ? BlueZHelpers.BootCharUuid
+    : BlueZHelpers.AppCharUuid;
+
+var characteristic = await BlueZHelpers.GetCharacteristicByUuidAsync(devicePath, notifyUuid);
             if (characteristic == null)
             {
-                _logger.LogWarning("LinuxBLE notifications: characteristic handle {Handle} not found for {Mac}", handle, macAddress);
+                _logger.LogWarning("LinuxBLE notifications: characteristic UUID not found for {Mac}", macAddress);
                 return;
             }
 

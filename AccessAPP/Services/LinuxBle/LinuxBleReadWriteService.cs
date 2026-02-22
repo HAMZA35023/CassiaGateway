@@ -1,4 +1,9 @@
+using System;
 using System.Net;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using System.Threading;
 using AccessAPP.Services.BleAbstractions;
 using Tmds.DBus;
 
@@ -38,51 +43,118 @@ public class LinuxBleReadWriteService : IBleReadWriteService
     }
 
     /// <inheritdoc/>
-    public async Task<HttpResponseMessage> WriteBleMessageAsync(
-        string gatewayIpAddress,
-        string macAddress,
-        int handle,
-        string hexValue,
-        string queryParams,
-        int chip = -1,
-        CancellationToken ct = default)
+    
+/// <inheritdoc/>
+public async Task<HttpResponseMessage> WriteBleMessageAsync(
+    string gatewayIpAddress,
+    string macAddress,
+    int handle,
+    string hexValue,
+    string queryParams,
+    int chip = -1,
+    CancellationToken ct = default)
+{
+    try
     {
+        var adapter = RuntimeVariables.LINUX_BLE_ADAPTER;
+        string devicePath;
         try
         {
-            var adapter = RuntimeVariables.LINUX_BLE_ADAPTER;
-            var devicePath = BlueZHelpers.DevicePath(adapter, macAddress);
-            var characteristic = await BlueZHelpers.GetCharacteristicAsync(devicePath, handle);
-
-            if (characteristic == null)
-            {
-                _logger.LogWarning("LinuxBLE: characteristic handle {Handle} not found for {Mac}", handle, macAddress);
-                return new HttpResponseMessage(HttpStatusCode.NotFound);
-            }
-
-            byte[] data = BlueZHelpers.HexToBytes(hexValue);
-
-            // Use write-without-response ("command") when the Cassia path would use ?noresponse=1.
-            bool noResponse = queryParams?.Contains("noresponse=1", StringComparison.OrdinalIgnoreCase) == true;
-            var options = new Dictionary<string, object>
-            {
-                ["type"] = noResponse ? "command" : "request"
-            };
-
-            await characteristic.WriteValueAsync(data, options);
-            return new HttpResponseMessage(HttpStatusCode.OK);
-        }
-        catch (OperationCanceledException)
-        {
-            return new HttpResponseMessage(HttpStatusCode.RequestTimeout);
+            devicePath = BlueZHelpers.DevicePath(adapter, macAddress);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "LinuxBLE: WriteValue failed for {Mac} handle {Handle}", macAddress, handle);
+            _logger.LogError(ex, "LinuxBLE: invalid adapter/mac. adapter={Adapter} mac={Mac}", adapter, macAddress);
             return new HttpResponseMessage(HttpStatusCode.InternalServerError);
         }
-    }
 
-    /// <inheritdoc/>
+        // Ensure connected (writes fail with org.bluez.Error.Failed: Not connected otherwise)
+        var device = await BlueZHelpers.GetDeviceAsync(devicePath);
+        if (!await device.GetAsync<bool>("Connected"))
+        {
+            try { await device.ConnectAsync(); }
+            catch (Exception ex) { _logger.LogWarning(ex, "LinuxBLE: ConnectAsync failed before write for {Mac}", macAddress); }
+        }
+
+        // Wait for ServicesResolved (there is no Device1.DiscoverServices method in BlueZ)
+        await BlueZHelpers.WaitForServicesResolvedAsync(devicePath, 2500, ct);
+
+        // Detect mode (bootloader vs application) from exposed GATT UUIDs.
+        var mode = await BlueZHelpers.DetectModeByGattAsync(devicePath, ct);
+        string targetCharUuid = mode == BlueZHelpers.BleGattMode.Bootloader
+            ? BlueZHelpers.BootCharUuid
+            : BlueZHelpers.AppCharUuid; // default to app if unknown
+
+        // Resolve characteristic by UUID (more stable than handle) with a short retry window.
+        IGattCharacteristic1? characteristic = null;
+        var deadline = DateTime.UtcNow.AddMilliseconds(Math.Max(500, RuntimeVariables.LINUX_BLE_WRITE_FIND_CHAR_TIMEOUT_MS));
+        while (!ct.IsCancellationRequested && DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                characteristic = await BlueZHelpers.GetCharacteristicByUuidAsync(devicePath, targetCharUuid, ct);
+            }
+            catch (ArgumentNullException ex)
+            {
+                _logger.LogWarning(ex, "LinuxBLE: transient ObjectPath decode error while resolving UUID {Uuid} for {Mac}; clearing cache and retrying", targetCharUuid, macAddress);
+                BlueZHelpers.ClearDeviceCache(devicePath);
+                characteristic = null;
+            }
+
+            if (characteristic != null) break;
+            await Task.Delay(100, ct);
+        }
+
+        if (characteristic == null)
+        {
+            _logger.LogWarning("LinuxBLE: characteristic UUID {Uuid} not found for {Mac} (handle was {Handle})", targetCharUuid, macAddress, handle);
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }
+
+        // Determine supported write mode from Flags to avoid org.bluez.Error.NotSupported.
+        string[] flags = Array.Empty<string>();
+        try
+        {
+            flags = await characteristic.GetAsync<string[]>("Flags");
+        }
+        catch { /* ignore */ }
+
+        bool supportsWriteReq = flags.Any(f => string.Equals(f, "write", StringComparison.OrdinalIgnoreCase));
+        bool supportsWriteCmd = flags.Any(f => string.Equals(f, "write-without-response", StringComparison.OrdinalIgnoreCase));
+
+        bool requestedNoResponse = queryParams?.Contains("noresponse=1", StringComparison.OrdinalIgnoreCase) == true;
+
+        string? writeType = null;
+        if (requestedNoResponse && supportsWriteCmd) writeType = "command";
+        else if (!requestedNoResponse && supportsWriteReq) writeType = "request";
+        else if (supportsWriteCmd) writeType = "command";
+        else if (supportsWriteReq) writeType = "request";
+
+        if (writeType == null)
+        {
+            _logger.LogError("LinuxBLE: characteristic {Uuid} for {Mac} is not writable. Flags=[{Flags}]", targetCharUuid, macAddress, string.Join(",", flags));
+            return new HttpResponseMessage(HttpStatusCode.BadRequest);
+        }
+
+        byte[] data = BlueZHelpers.HexToBytes(hexValue);
+
+        var options = new Dictionary<string, object> { ["type"] = writeType };
+        await characteristic.WriteValueAsync(data, options);
+
+        return new HttpResponseMessage(HttpStatusCode.OK);
+    }
+    catch (OperationCanceledException)
+    {
+        return new HttpResponseMessage(HttpStatusCode.RequestTimeout);
+    }
+    catch (Exception ex)
+    {
+        _logger.LogError(ex, "LinuxBLE: WriteValue failed for {Mac} handle {Handle}", macAddress, handle);
+        return new HttpResponseMessage(HttpStatusCode.InternalServerError);
+    }
+}
+
+/// <inheritdoc/>
     public Task<HttpResponseMessage> WriteBleMessage(string gatewayIpAddress, string macAddress, int handle, string hexValue, string queryParams, int chip = -1, CancellationToken ct = default)
         => WriteBleMessageAsync(gatewayIpAddress, macAddress, handle, hexValue, queryParams, chip, ct);
 

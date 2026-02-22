@@ -223,6 +223,8 @@ namespace AccessAPP
         // Linux native BLE: characteristic handle for enabling actor notifications (CCCD).
         public static int LINUX_BLE_NOTIFY_CCCD_ACTOR_HANDLE = 16;
 
+        // Linux native BLE: when writing, how long to wait for the characteristic handle to appear after connect (ms).
+        public static int LINUX_BLE_WRITE_FIND_CHAR_TIMEOUT_MS = 1500;
 
     }
 }

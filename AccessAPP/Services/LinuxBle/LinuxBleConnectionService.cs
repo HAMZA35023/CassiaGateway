@@ -46,6 +46,21 @@ public class LinuxBleConnectionService : IBleConnectionService
 
             await device.ConnectAsync();
 
+            // Wait for BlueZ to report Connected=true and services resolved; otherwise writes may fail with Not connected.
+            var connectedDeadline = DateTime.UtcNow.AddMilliseconds(Math.Max(500, 1500));
+            while (!ct.IsCancellationRequested && DateTime.UtcNow < connectedDeadline)
+            {
+                try
+                {
+                    if (await device.GetAsync<bool>("Connected")) break;
+                }
+                catch { /* ignore */ }
+                await Task.Delay(100, ct);
+            }
+
+            // ServicesResolved is the supported way to ensure GATT is ready in BlueZ (there is no DiscoverServices method).
+            await BlueZHelpers.WaitForServicesResolvedAsync(devicePath, 2500, ct);
+
             // Invalidate stale characteristic cache from a previous session.
             BlueZHelpers.InvalidateCharCache(devicePath);
 
