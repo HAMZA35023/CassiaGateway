@@ -83,7 +83,7 @@ namespace AccessAPP.Services
         private bool CheckIfDeviceInBootModeLinux(string nodeMac)
         {
             const string bootUuid = "00060001-f8ce-11e4-abf4-0002a5d5c51b";
-            var devicePath = BlueZHelpers.DevicePath(RuntimeVariables.LINUX_BLE_ADAPTER, nodeMac);
+            var devicePath = BlueZHelpers.DevicePath(BlueZHelpers.GetDeviceAdapter(nodeMac), nodeMac);
 
             var maxAttempts = Math.Max(1, RuntimeVariables.BOOTMODE_RETRY_COUNT);
             var retryDelayMs = Math.Max(0, RuntimeVariables.BOOTMODE_RETRY_DELAY_MS);
@@ -110,14 +110,10 @@ namespace AccessAPP.Services
 
                     if (found) return true;
 
-                    // UUID not visible yet — BlueZ may still be discovering services after
-                    // the device rebooted into bootloader mode.  Retry rather than return false
-                    // immediately (previously we only retried on exception, not on not-found).
-                    if (attempt < maxAttempts)
-                    {
-                        AppLog.Debug($"CheckIfDeviceInBootModeLinux: boot UUID not yet visible for {nodeMac} (attempt {attempt}/{maxAttempts}), retrying in {retryDelayMs}ms");
-                        if (retryDelayMs > 0) Thread.Sleep(retryDelayMs);
-                    }
+                    // Boot UUID not found — device is in application mode (not bootloader).
+                    // Return immediately; the outer loop in DeviceUpgrade.cs handles waiting
+                    // between JumpToBootloader and the next check.
+                    return false;
                 }
                 catch (Exception ex) when (attempt < maxAttempts)
                 {

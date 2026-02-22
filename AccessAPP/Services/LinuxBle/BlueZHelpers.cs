@@ -61,16 +61,40 @@ internal static class BlueZHelpers
 
     /// <summary>
     /// Record which HCI adapter last saw a given MAC (called from the scanner).
+    /// Does not override an adapter that was pinned by an active connection.
     /// </summary>
     public static void RegisterDeviceAdapter(string mac, string adapter) =>
         _macToAdapter[mac] = adapter;
 
+    // Adapters pinned by an active connection: MAC → adapter used for ConnectAsync.
+    // While an entry exists here, GetDeviceAdapter() returns this value regardless
+    // of what the scanner has most recently written to _macToAdapter.
+    private static readonly ConcurrentDictionary<string, string> _connectedAdapters =
+        new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>
-    /// Return the HCI adapter that last observed <paramref name="mac"/>,
-    /// or <see cref="RuntimeVariables.LINUX_BLE_ADAPTER"/> as a fallback.
+    /// Pin the HCI adapter for a device that is now actively connected.
+    /// Call this immediately after a successful ConnectAsync so that the
+    /// scanner cannot race and overwrite the mapping while the session is live.
+    /// </summary>
+    public static void SetConnectedAdapter(string mac, string adapter) =>
+        _connectedAdapters[mac] = adapter;
+
+    /// <summary>
+    /// Release the pinned adapter for a device (call after DisconnectAsync).
+    /// </summary>
+    public static void ClearConnectedAdapter(string mac) =>
+        _connectedAdapters.TryRemove(mac, out _);
+
+    /// <summary>
+    /// Return the HCI adapter to use for <paramref name="mac"/>.
+    /// Prefers the connection-pinned adapter (set by <see cref="SetConnectedAdapter"/>),
+    /// then the last-scanned adapter, then <see cref="RuntimeVariables.LINUX_BLE_ADAPTER"/>.
     /// </summary>
     public static string GetDeviceAdapter(string mac) =>
-        _macToAdapter.TryGetValue(mac, out var a) ? a : RuntimeVariables.LINUX_BLE_ADAPTER;
+        _connectedAdapters.TryGetValue(mac, out var pinned) ? pinned :
+        _macToAdapter.TryGetValue(mac, out var scanned) ? scanned :
+        RuntimeVariables.LINUX_BLE_ADAPTER;
 
     /// <summary>
     /// Return the cached IAdapter1 proxy for the given HCI adapter name.
@@ -831,7 +855,7 @@ public static async Task TryRequestShortConnectionIntervalAsync(
             {
                 var lecupResult = await RunProcessAsync(
                     "hcitool",
-                    $"-i {adapter} lecup {connHandle} --min {intervalMin} --max {intervalMax} --latency {latency} --timeout {supervisionTimeout}",
+                    $"-i {adapter} lecup {connHandle} {intervalMin} {intervalMax} {latency} {supervisionTimeout}",
                     timeoutMs: 3000);
                 logger?.LogDebug("LinuxBLE: CI update via hcitool lecup handle={H} for {Mac}: {R}",
                     connHandle, macAddress, lecupResult.Trim());

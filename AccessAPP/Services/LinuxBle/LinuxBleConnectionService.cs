@@ -77,6 +77,10 @@ public class LinuxBleConnectionService : IBleConnectionService
             if (!resolved)
                 _logger.LogWarning("LinuxBLE: ServicesResolved timed out for {Mac} — writes may fail", macAddress);
 
+            // Pin this adapter for the active connection so the scanner cannot race
+            // and overwrite _macToAdapter while notification/write services are running.
+            BlueZHelpers.SetConnectedAdapter(macAddress, bleAdapter);
+
             // Invalidate stale characteristic cache from a previous session.
             BlueZHelpers.InvalidateCharCache(devicePath);
 
@@ -99,10 +103,12 @@ public class LinuxBleConnectionService : IBleConnectionService
         }
         catch (OperationCanceledException)
         {
+            BlueZHelpers.ClearConnectedAdapter(macAddress);
             return new ResponseModel { MacAddress = macAddress, Status = HttpStatusCode.RequestTimeout, Data = "Connect canceled" };
         }
         catch (Exception ex)
         {
+            BlueZHelpers.ClearConnectedAdapter(macAddress);
             _logger.LogError(ex, "LinuxBLE: ConnectToBleDevice failed for {Mac}", macAddress);
             return new ResponseModel
             {
@@ -119,11 +125,13 @@ public class LinuxBleConnectionService : IBleConnectionService
     {
         try
         {
-            var devicePath = BlueZHelpers.DevicePath(BlueZHelpers.GetDeviceAdapter(macAddress), macAddress);
+            var bleAdapter = BlueZHelpers.GetDeviceAdapter(macAddress);
+            var devicePath = BlueZHelpers.DevicePath(bleAdapter, macAddress);
             var device = await BlueZHelpers.GetDeviceAsync(devicePath);
 
             await device.DisconnectAsync();
 
+            BlueZHelpers.ClearConnectedAdapter(macAddress);
             BlueZHelpers.InvalidateCharCache(devicePath);
             _notificationService.Unsubscribe(macAddress);
 
