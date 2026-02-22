@@ -44,9 +44,21 @@ public class LinuxBleConnectionService : IBleConnectionService
             var devicePath = BlueZHelpers.DevicePath(RuntimeVariables.LINUX_BLE_ADAPTER, macAddress);
             var device = await BlueZHelpers.GetDeviceAsync(devicePath);
 
-            await device.ConnectAsync();
+            try
+            {
+                await device.ConnectAsync();
+            }
+            catch (Tmds.DBus.DBusException ex) when (
+                ex.ErrorName == "org.bluez.Error.Failed" &&
+                ex.Message.Contains("Software caused connection abort", StringComparison.OrdinalIgnoreCase))
+            {
+                // BlueZ fires this when the OS-level link is being torn down and re-established
+                // concurrently (e.g. previous session still cleaning up). The connection usually
+                // completes anyway — fall through and verify Connected + ServicesResolved below.
+                _logger.LogDebug("LinuxBLE: ConnectAsync 'Software caused connection abort' for {Mac} — verifying state", macAddress);
+            }
 
-            // Wait for BlueZ to report Connected=true and services resolved; otherwise writes may fail with Not connected.
+            // Wait for BlueZ to report Connected=true; otherwise writes may fail with Not connected.
             var connectedDeadline = DateTime.UtcNow.AddMilliseconds(Math.Max(500, 1500));
             while (!ct.IsCancellationRequested && DateTime.UtcNow < connectedDeadline)
             {
@@ -59,7 +71,10 @@ public class LinuxBleConnectionService : IBleConnectionService
             }
 
             // ServicesResolved is the supported way to ensure GATT is ready in BlueZ (there is no DiscoverServices method).
-            await BlueZHelpers.WaitForServicesResolvedAsync(devicePath, 2500,  100, ct);
+            // Use a generous timeout — after "Software caused connection abort" re-discovery can be slow.
+            var resolved = await BlueZHelpers.WaitForServicesResolvedAsync(devicePath, 8000, 100, ct);
+            if (!resolved)
+                _logger.LogWarning("LinuxBLE: ServicesResolved timed out for {Mac} — writes may fail", macAddress);
 
             // Invalidate stale characteristic cache from a previous session.
             BlueZHelpers.InvalidateCharCache(devicePath);
