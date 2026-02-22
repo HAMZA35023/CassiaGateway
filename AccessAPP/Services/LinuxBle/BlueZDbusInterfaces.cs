@@ -29,6 +29,8 @@ public interface IDevice1 : IDBusObject
 {
     Task ConnectAsync();
     Task DisconnectAsync();
+    // NOTE: BlueZ does NOT expose a Device1.DiscoverServices method.
+    // GATT discovery is automatic; wait for the Device1.ServicesResolved property instead.
     Task<T> GetAsync<T>(string prop);
     Task<IDictionary<string, object>> GetAllAsync();
     Task SetAsync(string prop, object val);

@@ -9,7 +9,8 @@ namespace AccessAPP.Services.LinuxBle;
 /// IBleNotificationService implementation using BlueZ D-Bus (Linux native BLE).
 ///
 /// For each MAC that is subscribed, the service:
-///   1. Finds the notify characteristic by handle (LINUX_BLE_CONTROL_HANDLE, default 19).
+///   1. Detects app vs bootloader by looking at the exposed GATT services (UUIDs).
+///   2. Finds the notify characteristic by UUID.
 ///   2. Calls StartNotify on first subscriber.
 ///   3. Watches PropertiesChanged to receive Value updates and dispatches them to handlers.
 ///   4. Calls StopNotify when the last subscriber for a MAC unsubscribes.
@@ -30,6 +31,7 @@ public class LinuxBleNotificationService : IBleNotificationService
 
     // D-Bus notification subscription per mac (one per mac, covers the notify characteristic)
     private readonly ConcurrentDictionary<string, IDisposable> _notifySubscriptions = new();
+    private readonly ConcurrentDictionary<string, IGattCharacteristic1> _notifyCharacteristics = new();
     private readonly SemaphoreSlim _subLock = new(1, 1);
 
     public LinuxBleNotificationService(ILogger<LinuxBleNotificationService> logger)
@@ -87,25 +89,25 @@ public class LinuxBleNotificationService : IBleNotificationService
 
             var adapter = RuntimeVariables.LINUX_BLE_ADAPTER;
             var devicePath = BlueZHelpers.DevicePath(adapter, macAddress);
-            
-// Ensure device is connected and GATT is ready.
-var device = await BlueZHelpers.GetDeviceAsync(devicePath);
-if (!await device.GetAsync<bool>("Connected"))
-{
-    try { await device.ConnectAsync(); } catch { /* ignore */ }
-}
-await BlueZHelpers.WaitForServicesResolvedAsync(devicePath, 2500);
 
-// Detect mode from current GATT and pick correct notify characteristic UUID.
-var mode = await BlueZHelpers.DetectModeByGattAsync(devicePath);
-var notifyUuid = mode == BlueZHelpers.BleGattMode.Bootloader
-    ? BlueZHelpers.BootCharUuid
-    : BlueZHelpers.AppCharUuid;
+            var mode = await BlueZHelpers.DetectModeByGattAsync(devicePath);
+            string serviceUuid;
+            string notifyUuid;
+            if (mode == BlueZHelpers.BleMode.Bootloader)
+            {
+                serviceUuid = BlueZHelpers.BootServiceUuid;
+                notifyUuid = BlueZHelpers.BootNotifyUuid;
+            }
+            else
+            {
+                serviceUuid = BlueZHelpers.AppServiceUuid;
+                notifyUuid = BlueZHelpers.AppNotifyUuid;
+            }
 
-var characteristic = await BlueZHelpers.GetCharacteristicByUuidAsync(devicePath, notifyUuid);
+            var (characteristic, flags) = await BlueZHelpers.GetCharacteristicByUuidAsync(devicePath, serviceUuid, notifyUuid);
             if (characteristic == null)
             {
-                _logger.LogWarning("LinuxBLE notifications: characteristic UUID not found for {Mac}", macAddress);
+                _logger.LogWarning("LinuxBLE notifications: notify characteristic {Uuid} not found for {Mac} (mode={Mode})", notifyUuid, macAddress, mode);
                 return;
             }
 
@@ -134,6 +136,7 @@ var characteristic = await BlueZHelpers.GetCharacteristicByUuidAsync(devicePath,
             }
 
             _notifySubscriptions[macAddress] = sub;
+            _notifyCharacteristics[macAddress] = characteristic;
         }
         finally
         {
@@ -147,11 +150,22 @@ var characteristic = await BlueZHelpers.GetCharacteristicByUuidAsync(devicePath,
 
         sub.Dispose();
 
+        _notifyCharacteristics.TryRemove(macAddress, out var cachedChr);
+
         try
         {
-            var adapter = RuntimeVariables.LINUX_BLE_ADAPTER;
-            var devicePath = BlueZHelpers.DevicePath(adapter, macAddress);
-            var characteristic = await BlueZHelpers.GetCharacteristicAsync(devicePath, RuntimeVariables.LINUX_BLE_CONTROL_HANDLE);
+            // Prefer cached proxy (no enumeration). If missing, attempt UUID lookup.
+            var characteristic = cachedChr;
+            if (characteristic == null)
+            {
+                var adapter = RuntimeVariables.LINUX_BLE_ADAPTER;
+                var devicePath = BlueZHelpers.DevicePath(adapter, macAddress);
+                var mode = await BlueZHelpers.DetectModeByGattAsync(devicePath);
+                var serviceUuid = mode == BlueZHelpers.BleMode.Bootloader ? BlueZHelpers.BootServiceUuid : BlueZHelpers.AppServiceUuid;
+                var notifyUuid = mode == BlueZHelpers.BleMode.Bootloader ? BlueZHelpers.BootNotifyUuid : BlueZHelpers.AppNotifyUuid;
+                (characteristic, _) = await BlueZHelpers.GetCharacteristicByUuidAsync(devicePath, serviceUuid, notifyUuid);
+            }
+
             if (characteristic != null)
                 await characteristic.StopNotifyAsync();
         }

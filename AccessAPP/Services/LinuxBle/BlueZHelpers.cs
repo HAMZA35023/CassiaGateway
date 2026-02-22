@@ -50,6 +50,9 @@ internal static class BlueZHelpers
     private static IObjectManager? _objectManagerProxy;
     private static readonly SemaphoreSlim _proxySem = new(1, 1);
 
+    // Serialize GetManagedObjectsAsync to reduce transient decode issues under load.
+    private static readonly SemaphoreSlim _managedObjectsSem = new(1, 1);
+
     /// <summary>
     /// Return the cached IAdapter1 proxy for the configured HCI adapter.
     /// Created once; CreateProxy is never called a second time for this interface.
@@ -85,6 +88,26 @@ internal static class BlueZHelpers
             return _objectManagerProxy;
         }
         finally { _proxySem.Release(); }
+    }
+
+    /// <summary>
+    /// Safely fetch a snapshot of BlueZ managed objects.
+    /// This call is expensive; we serialize it to avoid transient decode corruption
+    /// when multiple threads query the object tree concurrently.
+    /// </summary>
+    public static async Task<IDictionary<ObjectPath, IDictionary<string, IDictionary<string, object>>>>
+        GetManagedObjectsSafeAsync(CancellationToken ct = default)
+    {
+        var objMgr = await GetObjectManagerAsync();
+        await _managedObjectsSem.WaitAsync(ct);
+        try
+        {
+            return await objMgr.GetManagedObjectsAsync();
+        }
+        finally
+        {
+            _managedObjectsSem.Release();
+        }
     }
 
     // ── Per-device proxy cache ────────────────────────────────────────────────
@@ -135,7 +158,7 @@ internal static class BlueZHelpers
             attempt++;
             try
             {
-                objects = await objMgr.GetManagedObjectsAsync();
+                objects = await GetManagedObjectsSafeAsync();
                 break;
             }
             catch (ArgumentNullException ex) when (attempt < maxAttempts)
@@ -201,6 +224,143 @@ internal static class BlueZHelpers
                 _charProxies.TryRemove(objPath.ToString(), out _);
         }
         _deviceProxies.TryRemove(devicePath, out _);
+    }
+
+    /// <summary>
+    /// Backwards compatible alias used by some call sites.
+    /// </summary>
+
+    // ── UUID based GATT helpers ─────────────────────────────────────────────
+
+    public const string AppServiceUuid = "0003cdd0-0000-1000-8000-00805f9b0131";
+    public const string AppNotifyUuid  = "0003cdd1-0000-1000-8000-00805f9b0131";
+    public const string AppWriteUuid   = "0003cdd2-0000-1000-8000-00805f9b0131";
+
+    public const string BootServiceUuid = "00060000-f8ce-11e4-abf4-0002a5d5c51b";
+    public const string BootNotifyUuid  = "00060001-f8ce-11e4-abf4-0002a5d5c51b";
+    public const string BootWriteUuid   = "00060002-f8ce-11e4-abf4-0002a5d5c51b"; // best-effort guess
+
+    public enum BleMode
+    {
+        Unknown = 0,
+        Application = 1,
+        Bootloader = 2
+    }
+
+    public static async Task<BleMode> DetectModeByGattAsync(string devicePath, CancellationToken ct = default)
+    {
+        var objects = await GetManagedObjectsSafeAsync(ct);
+        bool hasApp = false;
+        bool hasBoot = false;
+
+        foreach (var (objPath, ifaces) in objects)
+        {
+            var p = objPath.ToString();
+            if (!p.StartsWith(devicePath, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            if (ifaces.TryGetValue("org.bluez.GattService1", out var svc) &&
+                svc.TryGetValue("UUID", out var uuidObj) && uuidObj is string uuid)
+            {
+                if (uuid.Equals(AppServiceUuid, StringComparison.OrdinalIgnoreCase)) hasApp = true;
+                if (uuid.Equals(BootServiceUuid, StringComparison.OrdinalIgnoreCase)) hasBoot = true;
+            }
+        }
+
+        if (hasBoot) return BleMode.Bootloader;
+        if (hasApp) return BleMode.Application;
+        return BleMode.Unknown;
+    }
+
+    private static readonly ConcurrentDictionary<(string devicePath, string charUuid), (ObjectPath path, string[] flags)> _uuidCharPathCache = new();
+
+    public static async Task<(ObjectPath? path, string[]? flags)> FindCharacteristicByUuidAsync(
+        string devicePath,
+        string serviceUuid,
+        string charUuid,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(devicePath)) return (null, null);
+        if (string.IsNullOrWhiteSpace(serviceUuid) || string.IsNullOrWhiteSpace(charUuid)) return (null, null);
+
+        serviceUuid = serviceUuid.ToLowerInvariant();
+        charUuid = charUuid.ToLowerInvariant();
+
+        if (_uuidCharPathCache.TryGetValue((devicePath, charUuid), out var cached))
+            return (cached.path, cached.flags);
+
+        const int maxAttempts = 6;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            IDictionary<ObjectPath, IDictionary<string, IDictionary<string, object>>> objects;
+            try
+            {
+                objects = await GetManagedObjectsSafeAsync(ct);
+            }
+            catch (ArgumentNullException)
+            {
+                ClearDeviceCache(devicePath);
+                await Task.Delay(100, ct);
+                continue;
+            }
+
+            ObjectPath? svcPath = null;
+            foreach (var (objPath, ifaces) in objects)
+            {
+                var p = objPath.ToString();
+                if (!p.StartsWith(devicePath, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!ifaces.TryGetValue("org.bluez.GattService1", out var svcProps)) continue;
+                if (svcProps.TryGetValue("UUID", out var uuidObj) && uuidObj is string uuid &&
+                    uuid.Equals(serviceUuid, StringComparison.OrdinalIgnoreCase))
+                {
+                    svcPath = objPath;
+                    break;
+                }
+            }
+
+            if (svcPath == null)
+            {
+                await Task.Delay(150, ct);
+                continue;
+            }
+
+            foreach (var (objPath, ifaces) in objects)
+            {
+                var p = objPath.ToString();
+                if (!p.StartsWith(svcPath.Value.ToString(), StringComparison.OrdinalIgnoreCase)) continue;
+                if (!ifaces.TryGetValue("org.bluez.GattCharacteristic1", out var chrProps)) continue;
+                if (chrProps.TryGetValue("UUID", out var uuidObj) && uuidObj is string uuid &&
+                    uuid.Equals(charUuid, StringComparison.OrdinalIgnoreCase))
+                {
+                    string[]? flags = null;
+                    if (chrProps.TryGetValue("Flags", out var flagsObj) && flagsObj is string[] arr)
+                        flags = arr;
+
+                    _uuidCharPathCache[(devicePath, charUuid)] = (objPath, flags ?? []);
+                    return (objPath, flags);
+                }
+            }
+
+            await Task.Delay(150, ct);
+        }
+
+        return (null, null);
+    }
+
+    public static async Task<(IGattCharacteristic1? characteristic, string[]? flags)> GetCharacteristicByUuidAsync(
+        string devicePath,
+        string serviceUuid,
+        string charUuid,
+        CancellationToken ct = default)
+    {
+        var (path, flags) = await FindCharacteristicByUuidAsync(devicePath, serviceUuid, charUuid, ct);
+        if (path == null) return (null, flags);
+
+        var conn = await GetConnectionAsync();
+        var proxy = conn.CreateProxy<IGattCharacteristic1>("org.bluez", path.Value);
+        return (proxy, flags);
     }
 
     // ── MAC / path helpers ────────────────────────────────────────────────────
@@ -284,195 +444,205 @@ internal static class BlueZHelpers
     }
 
     /// <summary>
-
-
-// ── GATT enumeration / UUID helpers ────────────────────────────────────────
-
-// These UUIDs come from the Windows reference implementation.
-public const string AppServiceUuid = "0003cdd0-0000-1000-8000-00805f9b0131";
-public const string AppCharUuid    = "0003cdd1-0000-1000-8000-00805f9b0131";
-public const string BootServiceUuid = "00060000-f8ce-11e4-abf4-0002a5d5c51b";
-public const string BootCharUuid    = "00060001-f8ce-11e4-abf4-0002a5d5c51b";
-
-// BlueZ ObjectManager decoding can glitch if called concurrently while the object tree is changing.
-// Serialize it process-wide.
-private static readonly SemaphoreSlim _getManagedObjectsSem = new(1, 1);
-
-public sealed record GattSnapshot(HashSet<string> ServiceUuids, HashSet<string> CharacteristicUuids);
-
-/// <summary>
-/// Enumerate GATT services/characteristics currently exposed under a device path and return UUID sets.
-/// This lets us detect Application vs Bootloader mode per MAC without relying on unstable handles.
-/// </summary>
-public static async Task<GattSnapshot> GetGattSnapshotAsync(string devicePath, CancellationToken ct = default)
+    /// Clear cached proxies and characteristic-handle mappings for a given device path.
+    /// Useful if BlueZ is mid-update and ObjectManager results become inconsistent.
+    /// </summary>
+public static void ClearDeviceCache(string devicePath)
 {
-    var svc = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-    var chr = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    if (string.IsNullOrWhiteSpace(devicePath))
+        return;
 
-    var objMgr = await GetObjectManagerAsync();
+    // Remove handle->ObjectPath cache for this device
+    _charCache.TryRemove(devicePath, out _);
 
-    await _getManagedObjectsSem.WaitAsync(ct);
-    try
+    // Remove cached characteristic proxies under this device subtree
+    // (keys are full object paths like /org/bluez/hci0/dev_XX/.../charYYYY)
+    foreach (var key in _charProxies.Keys)
     {
-        // Retry a few times in case BlueZ is mid-update and ObjectPath decoding fails.
-        const int maxAttempts = 5;
-        for (int attempt = 1; attempt <= maxAttempts; attempt++)
-        {
-            try
-            {
-                var objects = await objMgr.GetManagedObjectsAsync();
-                foreach (var (objPath, ifaces) in objects)
-                {
-                    var pathStr = objPath.ToString();
-                    if (!pathStr.StartsWith(devicePath, StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    if (ifaces.TryGetValue("org.bluez.GattService1", out var sprops) &&
-                        sprops.TryGetValue("UUID", out var su) && su is string ss && ss.Length > 0)
-                    {
-                        svc.Add(ss);
-                    }
-
-                    if (ifaces.TryGetValue("org.bluez.GattCharacteristic1", out var cprops) &&
-                        cprops.TryGetValue("UUID", out var cu) && cu is string cs && cs.Length > 0)
-                    {
-                        chr.Add(cs);
-                    }
-                }
-                break;
-            }
-            catch (ArgumentNullException) when (attempt < maxAttempts)
-            {
-                ClearDeviceCache(devicePath);
-                await Task.Delay(100, ct);
-            }
-        }
-    }
-    finally
-    {
-        _getManagedObjectsSem.Release();
+        if (key.StartsWith(devicePath, StringComparison.Ordinal))
+            _charProxies.TryRemove(key, out _);
     }
 
-    return new GattSnapshot(svc, chr);
+    // Optional: also drop cached IDevice1 proxy to avoid stale object paths
+    _deviceProxies.TryRemove(devicePath, out _);
 }
-
-public enum BleGattMode
+public static async Task<bool> WaitForServicesResolvedAsync(
+    string devicePath,
+    int timeoutMs,
+    int pollMs,
+    CancellationToken ct)
 {
-    Unknown = 0,
-    Application = 1,
-    Bootloader = 2
-}
+    if (string.IsNullOrWhiteSpace(devicePath))
+        return false;
 
-public static async Task<BleGattMode> DetectModeByGattAsync(string devicePath, CancellationToken ct = default)
-{
-    var snap = await GetGattSnapshotAsync(devicePath, ct);
-    if (snap.ServiceUuids.Contains(BootServiceUuid) || snap.CharacteristicUuids.Contains(BootCharUuid))
-        return BleGattMode.Bootloader;
-    if (snap.ServiceUuids.Contains(AppServiceUuid) || snap.CharacteristicUuids.Contains(AppCharUuid))
-        return BleGattMode.Application;
-    return BleGattMode.Unknown;
-}
+    timeoutMs = Math.Max(200, timeoutMs);
+    pollMs = Math.Clamp(pollMs, 50, 1000);
 
-/// <summary>
-/// Find a characteristic object path by UUID under a specific device path. Returns null if not found.
-/// </summary>
-public static async Task<ObjectPath?> FindCharacteristicByUuidAsync(string devicePath, string characteristicUuid, CancellationToken ct = default)
-{
-    if (string.IsNullOrWhiteSpace(devicePath) || string.IsNullOrWhiteSpace(characteristicUuid))
-        return null;
-
-    characteristicUuid = characteristicUuid.Trim().ToLowerInvariant();
-
-    var objMgr = await GetObjectManagerAsync();
-    await _getManagedObjectsSem.WaitAsync(ct);
-    try
-    {
-        const int maxAttempts = 5;
-        for (int attempt = 1; attempt <= maxAttempts; attempt++)
-        {
-            try
-            {
-                var objects = await objMgr.GetManagedObjectsAsync();
-                foreach (var (objPath, ifaces) in objects)
-                {
-                    var pathStr = objPath.ToString();
-                    if (!pathStr.StartsWith(devicePath, StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    if (ifaces.TryGetValue("org.bluez.GattCharacteristic1", out var props) &&
-                        props.TryGetValue("UUID", out var uo) && uo is string uuid &&
-                        uuid.Equals(characteristicUuid, StringComparison.OrdinalIgnoreCase))
-                    {
-                        return objPath;
-                    }
-                }
-                return null;
-            }
-            catch (ArgumentNullException) when (attempt < maxAttempts)
-            {
-                ClearDeviceCache(devicePath);
-                await Task.Delay(100, ct);
-            }
-        }
-        return null;
-    }
-    finally
-    {
-        _getManagedObjectsSem.Release();
-    }
-}
-
-public static async Task<IGattCharacteristic1?> GetCharacteristicByUuidAsync(string devicePath, string characteristicUuid, CancellationToken ct = default)
-{
-    var p = await FindCharacteristicByUuidAsync(devicePath, characteristicUuid, ct);
-    if (p == null) return null;
-    var conn = await GetConnectionAsync();
-    return conn.CreateProxy<IGattCharacteristic1>("org.bluez", p.Value);
-}
-
-public static async Task<bool> IsConnectedAsync(string devicePath, CancellationToken ct = default)
-{
-    try
-    {
-        var dev = await GetDeviceAsync(devicePath);
-        return await dev.GetAsync<bool>("Connected");
-    }
-    catch { return false; }
-}
-
-public static async Task<bool> WaitForServicesResolvedAsync(string devicePath, int timeoutMs, CancellationToken ct = default)
-{
     var dev = await GetDeviceAsync(devicePath);
-    var deadline = DateTime.UtcNow.AddMilliseconds(Math.Max(250, timeoutMs));
+    var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+
     while (!ct.IsCancellationRequested && DateTime.UtcNow < deadline)
     {
         try
         {
-            if (await dev.GetAsync<bool>("ServicesResolved"))
+            // BlueZ Device1 properties queried via Properties.Get
+            var connected = await dev.GetAsync<bool>("Connected");
+            var resolved = await dev.GetAsync<bool>("ServicesResolved");
+
+            if (connected && resolved)
                 return true;
         }
-        catch { /* ignore */ }
-        await Task.Delay(100, ct);
+        catch
+        {
+            // Device can disappear mid-poll; keep waiting
+        }
+
+        await Task.Delay(pollMs, ct);
     }
+
     return false;
 }
-    /// Clear cached proxies and characteristic-handle mappings for a given device path.
-    /// Useful if BlueZ is mid-update and ObjectManager results become inconsistent.
-    /// </summary>
-    public static void ClearDeviceCache(string devicePath)
+
+public static async Task<string> DumpGattAsync(string devicePath, CancellationToken ct = default)
+{
+    if (string.IsNullOrWhiteSpace(devicePath))
+        return "<devicePath is null/empty>";
+
+    // Serialize ObjectManager reads (important on your platform)
+    try
     {
-        if (string.IsNullOrWhiteSpace(devicePath)) return;
+        var conn = await GetConnectionAsync();
+        var objMgr = await GetObjectManagerAsync();
 
-        _charCache.TryRemove(devicePath, out _);
-        _deviceProxies.TryRemove(devicePath, out _);
+        var objects = await objMgr.GetManagedObjectsAsync();
 
-        // Remove characteristic proxies that belong to this device path.
-        foreach (var key in _charProxies.Keys)
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"GATT dump for devicePath={devicePath}");
+        sb.AppendLine($"Objects total={objects.Count}");
+
+        // Only things under the device
+        var underDevice = objects
+            .Where(kvp => kvp.Key.ToString().StartsWith(devicePath, StringComparison.Ordinal))
+            .ToList();
+
+        sb.AppendLine($"Objects under device={underDevice.Count}");
+
+        // Services first
+        var services = underDevice
+            .Where(o => o.Value.ContainsKey("org.bluez.GattService1"))
+            .Select(o =>
+            {
+                var props = o.Value["org.bluez.GattService1"];
+                props.TryGetValue("UUID", out var uuidObj);
+                var uuid = uuidObj as string ?? "<no-uuid>";
+                props.TryGetValue("Primary", out var primaryObj);
+                var primary = primaryObj is bool b && b;
+                return new { Path = o.Key.ToString(), Uuid = uuid, Primary = primary };
+            })
+            .OrderBy(s => s.Path, StringComparer.Ordinal)
+            .ToList();
+
+        sb.AppendLine($"Services found={services.Count}");
+        foreach (var s in services)
         {
-            if (key.StartsWith(devicePath, StringComparison.OrdinalIgnoreCase))
-                _charProxies.TryRemove(key, out _);
-        }
-    }
+            sb.AppendLine($"  [Service] UUID={s.Uuid} Primary={s.Primary} Path={s.Path}");
 
+            // Characteristics below that service path
+            var chars = underDevice
+                .Where(o => o.Value.ContainsKey("org.bluez.GattCharacteristic1") &&
+                            o.Key.ToString().StartsWith(s.Path, StringComparison.Ordinal))
+                .Select(o =>
+                {
+                    var props = o.Value["org.bluez.GattCharacteristic1"];
+
+                    props.TryGetValue("UUID", out var uuidObj);
+                    var uuid = uuidObj as string ?? "<no-uuid>";
+
+                    // Flags is usually string[]
+                    string flagsStr = "";
+                    if (props.TryGetValue("Flags", out var flagsObj))
+                    {
+                        if (flagsObj is string[] arr) flagsStr = string.Join(",", arr);
+                        else if (flagsObj is IEnumerable<string> ie) flagsStr = string.Join(",", ie);
+                        else flagsStr = flagsObj?.ToString() ?? "";
+                    }
+
+                    // Handle is usually UInt16
+                    string handleStr = "";
+                    if (props.TryGetValue("Handle", out var handleObj))
+                    {
+                        if (handleObj is ushort us) handleStr = us.ToString();
+                        else if (handleObj is UInt16 u16) handleStr = u16.ToString();
+                        else handleStr = handleObj?.ToString() ?? "";
+                    }
+
+                    string notifyingStr = "";
+                    if (props.TryGetValue("Notifying", out var nObj))
+                        notifyingStr = (nObj is bool nb) ? nb.ToString() : (nObj?.ToString() ?? "");
+
+                    return new
+                    {
+                        Path = o.Key.ToString(),
+                        Uuid = uuid,
+                        Flags = flagsStr,
+                        Handle = handleStr,
+                        Notifying = notifyingStr
+                    };
+                })
+                .OrderBy(c => c.Path, StringComparer.Ordinal)
+                .ToList();
+
+            sb.AppendLine($"    Characteristics={chars.Count}");
+            foreach (var c in chars)
+            {
+                sb.AppendLine($"      [Char] UUID={c.Uuid} Handle={c.Handle} Flags=[{c.Flags}] Notifying={c.Notifying} Path={c.Path}");
+            }
+        }
+
+        // If no services, still show any characteristics directly under device
+        if (services.Count == 0)
+        {
+            var chars = underDevice
+                .Where(o => o.Value.ContainsKey("org.bluez.GattCharacteristic1"))
+                .Select(o =>
+                {
+                    var props = o.Value["org.bluez.GattCharacteristic1"];
+                    props.TryGetValue("UUID", out var uuidObj);
+                    var uuid = uuidObj as string ?? "<no-uuid>";
+
+                    string flagsStr = "";
+                    if (props.TryGetValue("Flags", out var flagsObj))
+                    {
+                        if (flagsObj is string[] arr) flagsStr = string.Join(",", arr);
+                        else flagsStr = flagsObj?.ToString() ?? "";
+                    }
+
+                    string handleStr = "";
+                    if (props.TryGetValue("Handle", out var handleObj))
+                    {
+                        if (handleObj is ushort us) handleStr = us.ToString();
+                        else handleStr = handleObj?.ToString() ?? "";
+                    }
+
+                    return new { Path = o.Key.ToString(), Uuid = uuid, Flags = flagsStr, Handle = handleStr };
+                })
+                .OrderBy(c => c.Path, StringComparer.Ordinal)
+                .ToList();
+
+            sb.AppendLine($"Chars under device (no services found)={chars.Count}");
+            foreach (var c in chars)
+                sb.AppendLine($"  [Char] UUID={c.Uuid} Handle={c.Handle} Flags=[{c.Flags}] Path={c.Path}");
+        }
+
+        return sb.ToString();
+    }
+    catch (Exception ex)
+    {
+        return $"GATT dump failed for devicePath={devicePath}: {ex}";
+    }
+    finally
+    {
+    }
+}
 
 }

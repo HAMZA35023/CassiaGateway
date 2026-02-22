@@ -59,10 +59,14 @@ public class LinuxBleConnectionService : IBleConnectionService
             }
 
             // ServicesResolved is the supported way to ensure GATT is ready in BlueZ (there is no DiscoverServices method).
-            await BlueZHelpers.WaitForServicesResolvedAsync(devicePath, 2500, ct);
+            await BlueZHelpers.WaitForServicesResolvedAsync(devicePath, 2500,  100, ct);
 
             // Invalidate stale characteristic cache from a previous session.
             BlueZHelpers.InvalidateCharCache(devicePath);
+
+            // Dump GATT table at debug level so we can see what's exposed after connect.
+            var gattDump = await BlueZHelpers.DumpGattAsync(devicePath, ct);
+            _logger.LogDebug("LinuxBLE: GATT on connect for {Mac}:\n{Dump}", macAddress, gattDump);
 
             return new ResponseModel
             {
