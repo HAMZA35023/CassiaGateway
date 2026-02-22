@@ -90,6 +90,19 @@ public class LinuxBleNotificationService : IBleNotificationService
             var devicePath = BlueZHelpers.DevicePath(BlueZHelpers.GetDeviceAdapter(macAddress), macAddress);
 
             var mode = await BlueZHelpers.DetectModeByGattAsync(devicePath);
+            if (mode == BlueZHelpers.BleMode.Unknown)
+            {
+                // ServicesResolved is not yet true — wait for GATT re-discovery to finish
+                // (common after a firmware reboot or mode switch) before choosing the UUIDs.
+                var servicesReady = await BlueZHelpers.WaitForServicesResolvedAsync(
+                    devicePath, 5000, 200, CancellationToken.None);
+                if (servicesReady)
+                    mode = await BlueZHelpers.DetectModeByGattAsync(devicePath);
+
+                if (mode == BlueZHelpers.BleMode.Unknown)
+                    _logger.LogWarning("LinuxBLE: GATT mode still unknown for {Mac} after wait — defaulting to application mode", macAddress);
+            }
+
             string serviceUuid;
             string notifyUuid;
             if (mode == BlueZHelpers.BleMode.Bootloader)

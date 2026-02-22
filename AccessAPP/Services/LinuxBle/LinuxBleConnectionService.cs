@@ -72,8 +72,10 @@ public class LinuxBleConnectionService : IBleConnectionService
             }
 
             // ServicesResolved is the supported way to ensure GATT is ready in BlueZ (there is no DiscoverServices method).
-            // Use a generous timeout — after "Software caused connection abort" re-discovery can be slow.
-            var resolved = await BlueZHelpers.WaitForServicesResolvedAsync(devicePath, 8000, 100, ct);
+            // After a firmware reboot the device re-advertises in app mode but BlueZ needs extra time to
+            // re-discover the new GATT table — use the configurable timeout (default 20 s).
+            var resolved = await BlueZHelpers.WaitForServicesResolvedAsync(
+                devicePath, RuntimeVariables.LINUX_BLE_SERVICES_RESOLVED_TIMEOUT_MS, 100, ct);
             if (!resolved)
                 _logger.LogWarning("LinuxBLE: ServicesResolved timed out for {Mac} — writes may fail", macAddress);
 
