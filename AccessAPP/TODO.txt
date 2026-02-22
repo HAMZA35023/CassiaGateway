@@ -2,11 +2,17 @@ AccessApp Cassia backend:
 
 CRITICAL:
 linux native and cassia has to use 2 differet libBootloaderUtilMultiThread.so files (arm and linux-64 versions)
+-> libBootloaderUtilMultiThread_linux-x64.so
+-> libBootloaderUtilMultiThread_arm.so
+
+There is still some issus with connecting / loggin in (see attached logfile)
+-> The log also shows publish errors on the mqtt
 
 
 MAJOR:
 Implement linux native support for multiple bluetooth hci0, hci1, hci2, etc. 
 Choise whay device is used for scanning (hci0 or hci1, etc)
 
+Parsing adverticements from sensors without name, does not show product-number but unknown (model is correct), so we are clearly parsing the data correct.
 
 MINOR:
