@@ -122,6 +122,13 @@ public class LinuxBleReadWriteService : IBleReadWriteService
             bool canWriteReq = Array.Exists(f, s => s.Equals("write", StringComparison.OrdinalIgnoreCase));
             bool canWriteCmd = Array.Exists(f, s => s.Equals("write-without-response", StringComparison.OrdinalIgnoreCase));
 
+            // BlueZ enforces GATT properties: if the characteristic doesn't advertise
+            // write-without-response, every 'command' attempt will be rejected before it
+            // even reaches the device.  Pre-mark so we skip that wasted D-Bus round-trip
+            // for every write in this session/mode rather than discovering it on the first call.
+            if (!canWriteCmd && !BlueZHelpers.IsCommandRejected(devicePath))
+                BlueZHelpers.MarkCommandRejected(devicePath);
+
             // Cassia path uses ?noresponse=1 to prefer command (write-without-response).
             bool preferNoResponse = queryParams?.Contains("noresponse=1", StringComparison.OrdinalIgnoreCase) == true;
 

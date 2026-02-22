@@ -1,53 +1,12 @@
 AccessApp Cassia backend:
 
 CRITICAL:
--> If parralel workers is set to 4, and we only queue 2, we dont use both chips in the cassia.
-
--> Between this there should be no need to disconnect and connect again???
-2026-02-12 22.31.51	Settings backup saved	v02.38	Success
-2026-02-12 22.31.50	DALI SysFail Level set failed	v02.38	Warn
-2026-02-12 22.29.49	DALI SysFail Level original read failed	v02.38	Warn
-2026-02-12 22.27.49	LoggedIn	v02.38	Success
-2026-02-12 22.27.49	Connected	v02.38	Success
-2026-02-12 22.27.49	Connect+Login attempt 1/10 (timeout 12s)	v02.38	Info
-2026-02-12 22.27.49	Device Name	v02.38	353-651421
-2026-02-12 22.27.49	LoggedIn (probe)	v02.38	Success (attempt 1/3)
-2026-02-12 22.27.47	Device in application mode, checking FW version	v02.38	Info
-
--> Here we need to restart with both bootloader, and sensor firmware, so we can get the sensor into application mode again:
-2026-02-12 22.38.38	Retry result: 409 - Actor upgrade failed again after sensor application completed: Sensor is already in boot mode. It needs to be in Application mode.		Failed
-2026-02-12 22.38.38	Disconnected at the end of upgrade process	v02.38	Info
-2026-02-12 22.38.33	Disconnected as sensor is in bootmode		Info
-2026-02-12 22.38.33	Sensor BootMode		Detected
-2026-02-12 22.38.33	Connected	v02.38	Success (attempt 1/10)
-2026-02-12 22.38.33	Process Start Actor Upgrade		Success
-2026-02-12 22.38.33	Settings restore skipped (no FW step executed in this attempt)	v02.38	Info
-2026-02-12 22.38.33	Pre-actor skipped (sensor already in boot mode)	v02.38	Info
-2026-02-12 22.38.33	Device in boot mode, skipping FW version check	v02.38	Info
-2026-02-12 22.38.33	Using Chip 1		info
-2026-02-12 22.38.29	Process Start Device Async	v02.38	Success
-2026-02-12 22.38.19	Retry result: 409 - Actor upgrade failed again after sensor application completed: Sensor is already in boot mode. It needs to be in Application mode.		Failed
-2026-02-12 22.38.19	Disconnected at the end of upgrade process	v02.38	Info
-2026-02-12 22.38.14	Sensor BootMode		Detected
-2026-02-12 22.38.14	Disconnected as sensor is in bootmode		Info
-2026-02-12 22.38.14	Connected	v02.38	Success (attempt 1/10)
-2026-02-12 22.38.14	Process Start Actor Upgrade		Success
-2026-02-12 22.38.14	Settings restore skipped (no FW step executed in this attempt)	v02.38	Info
-2026-02-12 22.38.14	Pre-actor skipped (sensor already in boot mode)	v02.38	Info
-2026-02-12 22.38.14	Device in boot mode, skipping FW version check	v02.38	Info
-2026-02-12 22.38.14	Using Chip 1		info
-2026-02-12 22.38.09	Connected (probe)	v02.38	Failed (attempt 1/10)
-2026-02-12 22.38.05	Process Start Device Async	v02.38	Success
-2026-02-12 22.37.55	Disconnected at the end of upgrade process	v02.38	Info
-2026-02-12 22.37.50	Disconnected as sensor is in bootmode		Info
-2026-02-12 22.37.50	Sensor BootMode		Detected
-2026-02-12 22.37.50	Connected	v02.38	Success (attempt 2/10)
-2026-02-12 22.37.45	Connected	v02.38	Failed (attempt 1/10)
-2026-02-12 22.37.41	Process Start Actor Upgrade		Success
+linux native and cassia has to use 2 differet libBootloaderUtilMultiThread.so files (arm and linux-64 versions)
 
 
 MAJOR:
-
+Implement linux native support for multiple bluetooth hci0, hci1, hci2, etc. 
+Choise whay device is used for scanning (hci0 or hci1, etc)
 
 
 MINOR:

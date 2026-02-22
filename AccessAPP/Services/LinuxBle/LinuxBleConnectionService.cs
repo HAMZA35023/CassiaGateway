@@ -83,6 +83,11 @@ public class LinuxBleConnectionService : IBleConnectionService
             var gattDump = await BlueZHelpers.DumpGattAsync(devicePath, ct);
             _logger.LogDebug("LinuxBLE: GATT on connect for {Mac}:\n{Dump}", macAddress, gattDump);
 
+            // Request shorter connection interval to reduce per-round-trip latency during writes.
+            // Uses btmgmt or hcitool; silently ignored if neither is available or lacks permissions.
+            await BlueZHelpers.TryRequestShortConnectionIntervalAsync(
+                RuntimeVariables.LINUX_BLE_ADAPTER, macAddress, _logger);
+
             return new ResponseModel
             {
                 MacAddress = macAddress,

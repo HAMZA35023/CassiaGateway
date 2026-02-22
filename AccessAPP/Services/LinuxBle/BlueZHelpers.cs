@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Threading;
+using System.Diagnostics;
 using System.Threading.Tasks;
 using Tmds.DBus;
 
@@ -665,13 +664,21 @@ public static async Task<string> DumpGattAsync(string devicePath, CancellationTo
                     if (props.TryGetValue("Notifying", out var nObj))
                         notifyingStr = (nObj is bool nb) ? nb.ToString() : (nObj?.ToString() ?? "");
 
+                    // MTU property (BlueZ 5.62+): tells us the negotiated ATT MTU for this connection.
+                    // With MTU=N the largest single-packet write is (N-3) bytes; anything larger
+                    // triggers the Long Write (PrepareWrite) procedure.
+                    string mtuStr = "";
+                    if (props.TryGetValue("MTU", out var mtuObj))
+                        mtuStr = mtuObj is ushort mtuVal ? mtuVal.ToString() : (mtuObj?.ToString() ?? "");
+
                     return new
                     {
                         Path = o.Key.ToString(),
                         Uuid = uuid,
                         Flags = flagsStr,
                         Handle = handleStr,
-                        Notifying = notifyingStr
+                        Notifying = notifyingStr,
+                        Mtu = mtuStr
                     };
                 })
                 .OrderBy(c => c.Path, StringComparer.Ordinal)
@@ -680,7 +687,8 @@ public static async Task<string> DumpGattAsync(string devicePath, CancellationTo
             sb.AppendLine($"    Characteristics={chars.Count}");
             foreach (var c in chars)
             {
-                sb.AppendLine($"      [Char] UUID={c.Uuid} Handle={c.Handle} Flags=[{c.Flags}] Notifying={c.Notifying} Path={c.Path}");
+                var mtuPart = string.IsNullOrEmpty(c.Mtu) ? "" : $" MTU={c.Mtu}";
+                sb.AppendLine($"      [Char] UUID={c.Uuid} Handle={c.Handle} Flags=[{c.Flags}] Notifying={c.Notifying}{mtuPart} Path={c.Path}");
             }
         }
 
@@ -728,6 +736,106 @@ public static async Task<string> DumpGattAsync(string devicePath, CancellationTo
     finally
     {
     }
+}
+
+/// <summary>
+/// Best-effort request for a shorter BLE connection interval after connecting.
+/// Tries btmgmt conn-update first (modern), then falls back to hcitool lecup.
+/// Both commands require CAP_NET_RAW / root; failure is silently ignored.
+///
+/// Units: BLE connection interval unit = 1.25 ms.
+///   intervalMin = 12  → 15 ms
+///   intervalMax = 24  → 30 ms
+/// Reducing CI from the default ~45 ms to 15-30 ms cuts multi-packet write
+/// latency (Long Write PrepareWrite round-trips) proportionally.
+/// </summary>
+public static async Task TryRequestShortConnectionIntervalAsync(
+    string adapter, string macAddress, ILogger? logger = null,
+    int intervalMin = 12, int intervalMax = 24,
+    int latency = 0, int supervisionTimeout = 400)
+{
+    if (!int.TryParse(adapter.Replace("hci", ""), out var hciIndex))
+        hciIndex = 0;
+
+    // ── 1. Try btmgmt conn-update (doesn't need connection handle) ──────────
+    // Address type: 1 = LE Public, 2 = LE Random.  Try both; one will match.
+    foreach (var addrType in new[] { "1", "2" })
+    {
+        try
+        {
+            var result = await RunProcessAsync(
+                "btmgmt",
+                $"--index {hciIndex} conn-update {macAddress} {addrType} {intervalMin} {intervalMax} {latency} {supervisionTimeout}",
+                timeoutMs: 3000);
+
+            bool ok = !string.IsNullOrWhiteSpace(result)
+                      && !result.Contains("failed", StringComparison.OrdinalIgnoreCase)
+                      && !result.Contains("error", StringComparison.OrdinalIgnoreCase)
+                      && !result.Contains("not found", StringComparison.OrdinalIgnoreCase);
+            if (ok)
+            {
+                logger?.LogDebug("LinuxBLE: CI update via btmgmt (type={T}) for {Mac}: {R}",
+                    addrType, macAddress, result.Trim());
+                return;
+            }
+        }
+        catch { /* btmgmt not available */ }
+    }
+
+    // ── 2. Fallback: hcitool lecup (deprecated but still available) ─────────
+    // hcitool lecup requires the ACL connection handle, not the MAC address.
+    try
+    {
+        var conOutput = await RunProcessAsync("hcitool", $"-i {adapter} con", timeoutMs: 2000);
+        // Example line: "  < LE 10:B9:F7:10:00:9F handle 72 state 1 lm MASTER"
+        var handleLine = conOutput
+            .Split('\n')
+            .FirstOrDefault(l => l.Contains(macAddress, StringComparison.OrdinalIgnoreCase)
+                              && l.Contains("LE", StringComparison.OrdinalIgnoreCase));
+
+        if (handleLine != null)
+        {
+            var parts = handleLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var hi = Array.IndexOf(parts, "handle");
+            if (hi >= 0 && hi + 1 < parts.Length && int.TryParse(parts[hi + 1], out var connHandle))
+            {
+                var lecupResult = await RunProcessAsync(
+                    "hcitool",
+                    $"-i {adapter} lecup {connHandle} --min {intervalMin} --max {intervalMax} --latency {latency} --timeout {supervisionTimeout}",
+                    timeoutMs: 3000);
+                logger?.LogDebug("LinuxBLE: CI update via hcitool lecup handle={H} for {Mac}: {R}",
+                    connHandle, macAddress, lecupResult.Trim());
+                return;
+            }
+        }
+    }
+    catch (Exception ex)
+    {
+        logger?.LogDebug(ex, "LinuxBLE: hcitool lecup fallback failed for {Mac}", macAddress);
+    }
+
+    logger?.LogDebug("LinuxBLE: Could not update connection interval for {Mac} — using device default", macAddress);
+}
+
+private static async Task<string> RunProcessAsync(string command, string args, int timeoutMs = 5000)
+{
+    using var proc = new Process();
+    proc.StartInfo = new ProcessStartInfo(command, args)
+    {
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        UseShellExecute = false,
+        CreateNoWindow = true
+    };
+    proc.Start();
+    var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+    var stderrTask = proc.StandardError.ReadToEndAsync();
+
+    using var cts = new CancellationTokenSource(timeoutMs);
+    try { await proc.WaitForExitAsync(cts.Token); }
+    catch (OperationCanceledException) { try { proc.Kill(); } catch { } }
+
+    return await stdoutTask + await stderrTask;
 }
 
 }
