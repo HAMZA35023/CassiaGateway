@@ -22,5 +22,8 @@
         public string DetectorMountDescription { get; set; } = string.Empty;
         public string LockedHex { get; set; }
         public bool? IsLocked { get; set; }
+
+        // Linux native: HCI adapter that last observed this device (e.g. "hci0", "hci1").
+        public string Adapter { get; set; }
     }
 }

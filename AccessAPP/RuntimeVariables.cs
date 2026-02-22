@@ -208,7 +208,22 @@ namespace AccessAPP
         public static string BLE_BACKEND = "cassia";
 
         // Linux native BLE: HCI adapter name exposed by BlueZ (e.g. "hci0", "hci1").
-        public static string LINUX_BLE_ADAPTER = "hci0";
+        // Used as the default adapter for connections and as the fallback when LINUX_BLE_ADAPTERS is empty.
+        public static string LINUX_BLE_ADAPTER = "hci1";
+
+        // Linux native BLE: comma-separated list of HCI adapters to scan simultaneously (e.g. "hci0,hci1").
+        // When non-empty this overrides LINUX_BLE_ADAPTER for scanning; LINUX_BLE_ADAPTER is still used
+        // as the fallback for connection if no per-device adapter has been recorded by the scanner.
+        public static string LINUX_BLE_ADAPTERS = "hci1,hci2";
+
+        /// <summary>
+        /// Returns the effective HCI adapter list for scanning.
+        /// Uses LINUX_BLE_ADAPTERS (comma-separated) when set; falls back to LINUX_BLE_ADAPTER.
+        /// </summary>
+        public static string[] GetLinuxBleAdapterList() =>
+            !string.IsNullOrWhiteSpace(LINUX_BLE_ADAPTERS)
+                ? LINUX_BLE_ADAPTERS.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                : [LINUX_BLE_ADAPTER];
 
         // Linux native BLE: MAC address prefix filter for scanning (empty = no filter).
         public static string LINUX_BLE_MAC_PREFIX = "10:B9:F7";

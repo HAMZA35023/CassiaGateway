@@ -53,15 +53,14 @@ public class LinuxBleReadWriteService : IBleReadWriteService
     {
         try
         {
-            var adapter = RuntimeVariables.LINUX_BLE_ADAPTER;
             string devicePath;
             try
             {
-                devicePath = BlueZHelpers.DevicePath(adapter, macAddress);
+                devicePath = BlueZHelpers.DevicePath(BlueZHelpers.GetDeviceAdapter(macAddress), macAddress);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "LinuxBLE: invalid adapter/mac. adapter={Adapter} mac={Mac}", adapter, macAddress);
+                _logger.LogError(ex, "LinuxBLE: invalid mac. mac={Mac}", macAddress);
                 return new HttpResponseMessage(HttpStatusCode.InternalServerError);
             }
 

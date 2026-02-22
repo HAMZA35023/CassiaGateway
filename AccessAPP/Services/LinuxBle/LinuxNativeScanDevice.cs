@@ -36,67 +36,77 @@ public class LinuxNativeScanDevice : IDisposable
 
         _macPrefix = RuntimeVariables.LINUX_BLE_MAC_PREFIX;
 
-        _ = Task.Run(RunScanLoopAsync);
+        var adapters = RuntimeVariables.GetLinuxBleAdapterList();
+        foreach (var a in adapters)
+            _ = Task.Run(() => RunAdapterScanLoopAsync(a));
     }
 
     // ── Main scan loop ───────────────────────────────────────────────────────
 
-    private async Task RunScanLoopAsync()
+    private async Task RunAdapterScanLoopAsync(string adapter)
     {
         while (!_disposed)
         {
             try
             {
-                await ScanAsync();
+                await ScanAsync(adapter);
             }
             catch (Exception ex) when (!_disposed)
             {
-                _logger.LogError(ex, "LinuxBLE scan: error in scan loop, retrying in 5s");
+                _logger.LogError(ex, "LinuxBLE scan: error in scan loop for {Adapter}, retrying in 5s", adapter);
                 await Task.Delay(5000);
             }
         }
     }
 
-    private async Task ScanAsync()
+    private async Task ScanAsync(string adapter)
     {
-        var adapter = await BlueZHelpers.GetAdapterAsync();
+        var adapterObj = await BlueZHelpers.GetAdapterAsync(adapter);
         var objMgr = await BlueZHelpers.GetObjectManagerAsync();
 
+        // The BlueZ adapter path prefix used to filter devices belonging to this adapter.
+        var adapterPath = $"/org/bluez/{adapter}/";
+
         // Set BLE-only discovery filter.
-        await adapter.SetDiscoveryFilterAsync(new Dictionary<string, object>
+        await adapterObj.SetDiscoveryFilterAsync(new Dictionary<string, object>
         {
             ["Transport"] = "le",
             ["DuplicateData"] = true // receive updates for already-known devices
         });
 
-        await adapter.StartDiscoveryAsync();
-        _logger.LogInformation("LinuxBLE scan: discovery started on {Adapter}", RuntimeVariables.LINUX_BLE_ADAPTER);
+        await adapterObj.StartDiscoveryAsync();
+        _logger.LogInformation("LinuxBLE scan: discovery started on {Adapter}", adapter);
 
         // Process devices that were already cached in BlueZ from prior scans.
         var existing = await objMgr.GetManagedObjectsAsync();
         foreach (var (path, interfaces) in existing)
         {
+            var pathStr = path.ToString();
+            if (!pathStr.StartsWith(adapterPath, StringComparison.OrdinalIgnoreCase)) continue;
             if (interfaces.TryGetValue("org.bluez.Device1", out var props))
-                TryProcessDevice(path.ToString(), props);
+                TryProcessDevice(pathStr, props, adapter);
         }
 
-        // Watch for new devices.
+        // Watch for new devices — filter to this adapter's path prefix.
         using var addedSub = await objMgr.WatchInterfacesAddedAsync(
             args =>
             {
                 var (path, interfaces) = args;
+                var pathStr = path.ToString();
+                if (!pathStr.StartsWith(adapterPath, StringComparison.OrdinalIgnoreCase)) return;
                 if (interfaces.TryGetValue("org.bluez.Device1", out var props))
-                    TryProcessDevice(path.ToString(), props);
+                    TryProcessDevice(pathStr, props, adapter);
             },
-            ex => _logger.LogError(ex, "LinuxBLE scan: InterfacesAdded error"));
+            ex => _logger.LogError(ex, "LinuxBLE scan: InterfacesAdded error on {Adapter}", adapter));
 
         // Also watch PropertiesChanged on all Device1 objects so we pick up RSSI and ad updates.
         var deviceWatchers = new List<IDisposable>();
         foreach (var (path, interfaces) in existing)
         {
+            var pathStr = path.ToString();
+            if (!pathStr.StartsWith(adapterPath, StringComparison.OrdinalIgnoreCase)) continue;
             if (!interfaces.ContainsKey("org.bluez.Device1")) continue;
 
-            var pathStr = path.ToString();
             var dev = await BlueZHelpers.GetDeviceAsync(pathStr);
 
             var sub = await dev.WatchPropertiesAsync(
@@ -104,7 +114,7 @@ public class LinuxNativeScanDevice : IDisposable
                 {
                     // PropertiesChanged only carries the changed fields (no "Address").
                     var updatedProps = changes.Changed.ToDictionary(kv => kv.Key, kv => kv.Value);
-                    TryProcessDevice(pathStr, updatedProps);
+                    TryProcessDevice(pathStr, updatedProps, adapter);
                 },
                 ex => _logger.LogDebug(ex, "LinuxBLE scan: PropertiesChanged error on {Path}", pathStr));
 
@@ -125,12 +135,12 @@ public class LinuxNativeScanDevice : IDisposable
 
         // Cleanup.
         foreach (var w in deviceWatchers) w.Dispose();
-        try { await adapter.StopDiscoveryAsync(); } catch { /* best-effort */ }
+        try { await adapterObj.StopDiscoveryAsync(); } catch { /* best-effort */ }
     }
 
     // ── Device processing ────────────────────────────────────────────────────
 
-    private void TryProcessDevice(string devicePath, IDictionary<string, object> props)
+    private void TryProcessDevice(string devicePath, IDictionary<string, object> props, string adapter)
     {
         try
         {
@@ -141,6 +151,10 @@ public class LinuxNativeScanDevice : IDisposable
                 : MacFromPath(devicePath);
 
             if (string.IsNullOrEmpty(mac)) return;
+
+            // Record which adapter last saw this device so the connection service can
+            // build the correct BlueZ object path (/org/bluez/<adapter>/dev_...).
+            BlueZHelpers.RegisterDeviceAdapter(mac, adapter);
 
             // Apply MAC prefix filter.
             if (!string.IsNullOrEmpty(_macPrefix) &&
@@ -215,7 +229,8 @@ public class LinuxNativeScanDevice : IDisposable
                 Range = meta.Range,
                 DetectorMountDescription = meta.DetectorMountDescription,
                 LockedHex = lockedHex,
-                IsLocked = isLocked
+                IsLocked = isLocked,
+                Adapter = adapter
             };
 
             _deviceStorageService.AddOrUpdateDevice(device, rssi);

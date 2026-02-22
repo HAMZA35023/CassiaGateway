@@ -87,8 +87,7 @@ public class LinuxBleNotificationService : IBleNotificationService
         {
             if (_notifySubscriptions.ContainsKey(macAddress)) return;
 
-            var adapter = RuntimeVariables.LINUX_BLE_ADAPTER;
-            var devicePath = BlueZHelpers.DevicePath(adapter, macAddress);
+            var devicePath = BlueZHelpers.DevicePath(BlueZHelpers.GetDeviceAdapter(macAddress), macAddress);
 
             var mode = await BlueZHelpers.DetectModeByGattAsync(devicePath);
             string serviceUuid;
@@ -158,8 +157,7 @@ public class LinuxBleNotificationService : IBleNotificationService
             var characteristic = cachedChr;
             if (characteristic == null)
             {
-                var adapter = RuntimeVariables.LINUX_BLE_ADAPTER;
-                var devicePath = BlueZHelpers.DevicePath(adapter, macAddress);
+                    var devicePath = BlueZHelpers.DevicePath(BlueZHelpers.GetDeviceAdapter(macAddress), macAddress);
                 var mode = await BlueZHelpers.DetectModeByGattAsync(devicePath);
                 var serviceUuid = mode == BlueZHelpers.BleMode.Bootloader ? BlueZHelpers.BootServiceUuid : BlueZHelpers.AppServiceUuid;
                 var notifyUuid = mode == BlueZHelpers.BleMode.Bootloader ? BlueZHelpers.BootNotifyUuid : BlueZHelpers.AppNotifyUuid;

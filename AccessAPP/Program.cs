@@ -2,9 +2,50 @@ using AccessAPP;
 using AccessAPP.Services;
 using AccessAPP.Services.BleAbstractions;
 using AccessAPP.Services.LinuxBle;
+using AccessAPP.Services.HelperClasses;
 using AccessAPP.Models;
 using AccessAPP.Logging;
 using Serilog;
+using System.Runtime.InteropServices;
+
+// ── Native library resolver ────────────────────────────────────────────────
+// DllImport("BootloaderUtilMultiThread") targets platform-specific binaries:
+//   Windows : BootloaderUtilMultiThread.dll   (found automatically by the CLR)
+//   Linux x64: libBootloaderUtilMultiThread_linux-x64.so
+//   Linux ARM : libBootloaderUtilMultiThread_arm.so
+// SetDllImportResolver must be called from within the assembly that owns
+// the DllImport (AccessAPP), which is also the executing assembly here.
+NativeLibrary.SetDllImportResolver(typeof(Bootloader_Utils).Assembly,
+    (libraryName, assembly, searchPath) =>
+    {
+        if (!libraryName.Equals("BootloaderUtilMultiThread", StringComparison.OrdinalIgnoreCase))
+            return IntPtr.Zero; // let default logic handle everything else
+
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            return IntPtr.Zero; // Windows: CLR finds BootloaderUtilMultiThread.dll automatically
+
+        var arch = RuntimeInformation.ProcessArchitecture;
+        var suffix = (arch == Architecture.Arm || arch == Architecture.Arm64) ? "arm" : "linux-x64";
+        var soName = $"libBootloaderUtilMultiThread_{suffix}.so";
+
+        if (NativeLibrary.TryLoad(soName, assembly, searchPath, out var handle))
+        {
+            AppLog.Info($"Native library loaded: {soName} (arch={arch})");
+            return handle;
+        }
+
+        AppLog.Warn($"Native library not found: {soName} (arch={arch}) — trying generic fallback");
+
+        // Last-resort fallback: try a non-arch-suffixed name
+        if (NativeLibrary.TryLoad("libBootloaderUtilMultiThread.so", assembly, searchPath, out handle))
+        {
+            AppLog.Info("Native library loaded: libBootloaderUtilMultiThread.so (generic fallback)");
+            return handle;
+        }
+
+        AppLog.Error("Native library load failed: neither arch-specific nor generic libBootloaderUtilMultiThread.so found. Deploy directory is missing the .so file.");
+        return IntPtr.Zero;
+    });
 
 var builder = WebApplication.CreateBuilder(args);
 

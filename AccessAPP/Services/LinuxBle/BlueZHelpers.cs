@@ -45,28 +45,51 @@ internal static class BlueZHelpers
 
     // ── Cached top-level proxies ──────────────────────────────────────────────
 
-    private static IAdapter1? _adapterProxy;
+    // Per-adapter proxy cache: adapter name (e.g. "hci0") → IAdapter1 proxy.
+    private static readonly ConcurrentDictionary<string, IAdapter1> _adapterProxies = new();
     private static IObjectManager? _objectManagerProxy;
     private static readonly SemaphoreSlim _proxySem = new(1, 1);
 
     // Serialize GetManagedObjectsAsync to reduce transient decode issues under load.
     private static readonly SemaphoreSlim _managedObjectsSem = new(1, 1);
 
+    // ── MAC → adapter tracking ────────────────────────────────────────────────
+    // Updated by the scanner whenever a device advertisement is received.
+    // Read by the connection service to determine the correct device object path.
+    private static readonly ConcurrentDictionary<string, string> _macToAdapter =
+        new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>
-    /// Return the cached IAdapter1 proxy for the configured HCI adapter.
-    /// Created once; CreateProxy is never called a second time for this interface.
+    /// Record which HCI adapter last saw a given MAC (called from the scanner).
     /// </summary>
-    public static async Task<IAdapter1> GetAdapterAsync()
+    public static void RegisterDeviceAdapter(string mac, string adapter) =>
+        _macToAdapter[mac] = adapter;
+
+    /// <summary>
+    /// Return the HCI adapter that last observed <paramref name="mac"/>,
+    /// or <see cref="RuntimeVariables.LINUX_BLE_ADAPTER"/> as a fallback.
+    /// </summary>
+    public static string GetDeviceAdapter(string mac) =>
+        _macToAdapter.TryGetValue(mac, out var a) ? a : RuntimeVariables.LINUX_BLE_ADAPTER;
+
+    /// <summary>
+    /// Return the cached IAdapter1 proxy for the given HCI adapter name.
+    /// Omit <paramref name="adapter"/> to use <see cref="RuntimeVariables.LINUX_BLE_ADAPTER"/>.
+    /// Created once per adapter name; CreateProxy is never called a second time.
+    /// </summary>
+    public static async Task<IAdapter1> GetAdapterAsync(string adapter = null)
     {
-        if (_adapterProxy != null) return _adapterProxy;
+        adapter ??= RuntimeVariables.LINUX_BLE_ADAPTER;
+        if (_adapterProxies.TryGetValue(adapter, out var cached)) return cached;
         await _proxySem.WaitAsync();
         try
         {
-            if (_adapterProxy != null) return _adapterProxy;
+            if (_adapterProxies.TryGetValue(adapter, out cached)) return cached;
             var conn = await GetConnectionAsync();
-            var adapterPath = new ObjectPath($"/org/bluez/{RuntimeVariables.LINUX_BLE_ADAPTER}");
-            _adapterProxy = conn.CreateProxy<IAdapter1>("org.bluez", adapterPath);
-            return _adapterProxy;
+            var adapterPath = new ObjectPath($"/org/bluez/{adapter}");
+            var proxy = conn.CreateProxy<IAdapter1>("org.bluez", adapterPath);
+            _adapterProxies[adapter] = proxy;
+            return proxy;
         }
         finally { _proxySem.Release(); }
     }
@@ -768,16 +791,23 @@ public static async Task TryRequestShortConnectionIntervalAsync(
                 $"--index {hciIndex} conn-update {macAddress} {addrType} {intervalMin} {intervalMax} {latency} {supervisionTimeout}",
                 timeoutMs: 3000);
 
+            // Check for explicit failure strings.  "Invalid command" means this
+            // btmgmt build does not support conn-update — fall through to hcitool.
             bool ok = !string.IsNullOrWhiteSpace(result)
+                      && !result.Contains("Invalid command", StringComparison.OrdinalIgnoreCase)
+                      && !result.Contains("invalid", StringComparison.OrdinalIgnoreCase)
                       && !result.Contains("failed", StringComparison.OrdinalIgnoreCase)
                       && !result.Contains("error", StringComparison.OrdinalIgnoreCase)
-                      && !result.Contains("not found", StringComparison.OrdinalIgnoreCase);
+                      && !result.Contains("not found", StringComparison.OrdinalIgnoreCase)
+                      && !result.Contains("not supported", StringComparison.OrdinalIgnoreCase);
             if (ok)
             {
                 logger?.LogDebug("LinuxBLE: CI update via btmgmt (type={T}) for {Mac}: {R}",
                     addrType, macAddress, result.Trim());
                 return;
             }
+            logger?.LogDebug("LinuxBLE: btmgmt conn-update (type={T}) not usable for {Mac}: {R}",
+                addrType, macAddress, result.Trim());
         }
         catch { /* btmgmt not available */ }
     }

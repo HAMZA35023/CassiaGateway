@@ -294,6 +294,12 @@
 		<None Update="libBootloaderUtilMultiThread.so">
 		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
 		</None>
+		<None Update="libBootloaderUtilMultiThread_linux-x64.so">
+		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+		</None>
+		<None Update="libBootloaderUtilMultiThread_arm.so">
+		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+		</None>
 	</ItemGroup>
 
 	<ItemGroup>

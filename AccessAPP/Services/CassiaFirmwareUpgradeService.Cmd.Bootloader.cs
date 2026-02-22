@@ -95,16 +95,29 @@ namespace AccessAPP.Services
                     var objMgr = BlueZHelpers.GetObjectManagerAsync().GetAwaiter().GetResult();
                     var objects = objMgr.GetManagedObjectsAsync().GetAwaiter().GetResult();
 
+                    bool found = false;
                     foreach (var (path, interfaces) in objects)
                     {
                         if (!path.ToString().StartsWith(devicePath, StringComparison.OrdinalIgnoreCase)) continue;
                         if (!interfaces.TryGetValue("org.bluez.GattCharacteristic1", out var charProps)) continue;
                         if (charProps.TryGetValue("UUID", out var uuidObj) && uuidObj is string uuid &&
                             uuid.Equals(bootUuid, StringComparison.OrdinalIgnoreCase))
-                            return true;
+                        {
+                            found = true;
+                            break;
+                        }
                     }
 
-                    return false;
+                    if (found) return true;
+
+                    // UUID not visible yet — BlueZ may still be discovering services after
+                    // the device rebooted into bootloader mode.  Retry rather than return false
+                    // immediately (previously we only retried on exception, not on not-found).
+                    if (attempt < maxAttempts)
+                    {
+                        AppLog.Debug($"CheckIfDeviceInBootModeLinux: boot UUID not yet visible for {nodeMac} (attempt {attempt}/{maxAttempts}), retrying in {retryDelayMs}ms");
+                        if (retryDelayMs > 0) Thread.Sleep(retryDelayMs);
+                    }
                 }
                 catch (Exception ex) when (attempt < maxAttempts)
                 {

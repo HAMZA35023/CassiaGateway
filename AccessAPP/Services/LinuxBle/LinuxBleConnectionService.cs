@@ -41,7 +41,8 @@ public class LinuxBleConnectionService : IBleConnectionService
     {
         try
         {
-            var devicePath = BlueZHelpers.DevicePath(RuntimeVariables.LINUX_BLE_ADAPTER, macAddress);
+            var bleAdapter = BlueZHelpers.GetDeviceAdapter(macAddress);
+            var devicePath = BlueZHelpers.DevicePath(bleAdapter, macAddress);
             var device = await BlueZHelpers.GetDeviceAsync(devicePath);
 
             try
@@ -86,7 +87,7 @@ public class LinuxBleConnectionService : IBleConnectionService
             // Request shorter connection interval to reduce per-round-trip latency during writes.
             // Uses btmgmt or hcitool; silently ignored if neither is available or lacks permissions.
             await BlueZHelpers.TryRequestShortConnectionIntervalAsync(
-                RuntimeVariables.LINUX_BLE_ADAPTER, macAddress, _logger);
+                bleAdapter, macAddress, _logger);
 
             return new ResponseModel
             {
@@ -118,7 +119,7 @@ public class LinuxBleConnectionService : IBleConnectionService
     {
         try
         {
-            var devicePath = BlueZHelpers.DevicePath(RuntimeVariables.LINUX_BLE_ADAPTER, macAddress);
+            var devicePath = BlueZHelpers.DevicePath(BlueZHelpers.GetDeviceAdapter(macAddress), macAddress);
             var device = await BlueZHelpers.GetDeviceAsync(devicePath);
 
             await device.DisconnectAsync();
