@@ -318,6 +318,22 @@ internal static class BlueZHelpers
         if (_modeCache.TryGetValue(devicePath, out var cached))
             return cached;
 
+        // Guard: if BlueZ has not finished service discovery, the ObjectManager may still expose
+        // GATT objects from the *previous* connection session (e.g. stale bootloader services after
+        // a firmware upload and reboot). Only trust the GATT tree once ServicesResolved=true;
+        // otherwise return Unknown so the caller retries without caching the wrong mode.
+        try
+        {
+            var dev = await GetDeviceAsync(devicePath);
+            if (!await dev.GetAsync<bool>("ServicesResolved"))
+                return BleMode.Unknown;
+        }
+        catch
+        {
+            // Device gone or D-Bus error — cannot determine mode safely.
+            return BleMode.Unknown;
+        }
+
         var objects = await GetManagedObjectsSafeAsync(ct);
         bool hasApp = false;
         bool hasBoot = false;

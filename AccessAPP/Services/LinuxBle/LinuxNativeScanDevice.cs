@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text;
 using AccessAPP.Models;
 using AccessAPP.Services.HelperClasses;
@@ -176,6 +177,17 @@ public class LinuxNativeScanDevice : IDisposable
 
             // Prefer direct parsing of Cassia manufacturer payload when present + valid.
             byte[] mfBytes = ExtractManufacturerDataBytes(props);
+
+            if (mfBytes != null &&mfBytes.Length >= 3 && (mfBytes[0] != 0x10 || mfBytes[1] != 0xB9 || mfBytes[2] != 0xF7))
+            {
+
+                //_logger.LogInformation("LinuxBLE scan: skipping non-Cassia manufacturer data for {Mac} on {Adapter}, MfData={Hex}",
+                //    mac, adapter, Convert.ToHexString(mfBytes));
+
+                return;
+
+            }
+
             if (mfBytes != null)
             {
                 TryParseManufacturerData(
@@ -188,6 +200,14 @@ public class LinuxNativeScanDevice : IDisposable
                     out meta);
             }
 
+            // Log raw manufacturer data when product number is still unknown for a Cassia-OUI device —
+            // helps diagnose payload format issues. Skip non-Cassia devices (different OUI).
+            if (string.IsNullOrEmpty(productNumber) && mfBytes != null)
+                {
+                _logger.LogInformation("LinuxBLE scan: unknown product for {Mac}, MfData={Hex}",
+                    mac, Convert.ToHexString(mfBytes));
+                    return;
+                }
             // If direct parsing didn't yield anything useful, fall back to ScanDataParser on TLV-wrapped hex.
             if ((string.IsNullOrEmpty(productNumber) && string.IsNullOrEmpty(name)) && !string.IsNullOrEmpty(scanData))
             {
@@ -206,6 +226,9 @@ public class LinuxNativeScanDevice : IDisposable
                 if (!string.IsNullOrEmpty(productNumber) && string.IsNullOrEmpty(meta.DetectorType))
                     meta = ScanDataParser.GetDetectorMeta(productNumber);
             }
+
+            if (productNumber == "Unknown")
+                return;
 
             // Normalize: if still empty name but we do have product number, show it.
             if (string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(productNumber))
@@ -324,6 +347,9 @@ private static void TryParseManufacturerData(
 
     byte typeOrProductFirst = bytes[6];
 
+    // Discriminate variants by byte[6]:
+    //   == 0x33 ('3') → product-number-only: bytes[6..20] = 15-byte ASCII product number starting with '3'
+    //   anything else → named-sensor: byte[6] = type code, bytes[7..20] = 14-byte ASCII sensor name
     if (typeOrProductFirst == 0x33)
     {
         // Product-number-only variant:
@@ -332,30 +358,26 @@ private static void TryParseManufacturerData(
         if (!string.IsNullOrWhiteSpace(pn))
         {
             productNumber = pn;
-            name = pn; // no custom name in this variant
+            if (string.IsNullOrWhiteSpace(name)) name = pn; // no custom name in this variant
             meta = ScanDataParser.GetDetectorMeta(productNumber);
         }
         return;
     }
 
     // Named-sensor variant:
-    // [6] = typeIndex
-    // [7..21] = 15-byte ASCII name
-    byte typeIndex = typeOrProductFirst;
+    // [6] = type code → look up product number in DetectorMetaData.NumberToMetadata
+    // [7..20] = 14-byte ASCII sensor name
+    byte typeIndex = bytes[6];
 
-    var parsedName = Encoding.ASCII.GetString(bytes, 7, 15).TrimEnd('\0').Trim();
+    var parsedName = Encoding.ASCII.GetString(bytes, 7, 14).TrimEnd('\0').Trim();
     if (!string.IsNullOrWhiteSpace(parsedName))
         name = parsedName;
 
-    // Product/meta from mapping (but DO NOT force productNumber to "unknown" if mapping fails)
     if (DetectorMetaData.NumberToMetadata.TryGetValue(typeIndex, out var m))
     {
         meta = m;
         productNumber = meta.Name;
     }
-
-    if (!string.IsNullOrEmpty(productNumber) && string.IsNullOrEmpty(meta.DetectorType))
-        meta = ScanDataParser.GetDetectorMeta(productNumber);
 }
 
  /// <summary>
