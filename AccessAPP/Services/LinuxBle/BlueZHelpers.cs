@@ -225,14 +225,24 @@ internal static class BlueZHelpers
         }
         _deviceProxies.TryRemove(devicePath, out _);
 
-        // Clear UUID→path, mode, and command-rejected caches so a mode switch (App↔Bootloader)
-        // forces a fresh GATT discovery instead of reusing stale object paths/mode.
+        // Clear UUID→path, mode, command-rejected, and negative-result caches so a mode switch
+        // (App↔Bootloader) forces fresh GATT discovery instead of reusing stale data.
         _modeCache.TryRemove(devicePath, out _);
         _commandRejected.TryRemove(devicePath, out _);
         foreach (var key in _uuidCharPathCache.Keys)
         {
             if (key.devicePath == devicePath)
                 _uuidCharPathCache.TryRemove(key, out _);
+        }
+        foreach (var key in _notFoundUuids.Keys)
+        {
+            if (key.devicePath == devicePath)
+                _notFoundUuids.TryRemove(key, out _);
+        }
+        foreach (var key in _uuidCharProxyCache.Keys)
+        {
+            if (key.devicePath == devicePath)
+                _uuidCharProxyCache.TryRemove(key, out _);
         }
     }
 
@@ -290,6 +300,13 @@ internal static class BlueZHelpers
     private static readonly ConcurrentDictionary<string, BleMode> _modeCache = new();
     private static readonly ConcurrentDictionary<(string devicePath, string charUuid), (ObjectPath path, string[] flags)> _uuidCharPathCache = new();
 
+    // Negative-result cache: UUIDs that were not found after a full scan.
+    // Avoids repeated expensive GetManagedObjectsSafeAsync calls for non-existent characteristics.
+    private static readonly ConcurrentDictionary<(string devicePath, string charUuid), bool> _notFoundUuids = new();
+
+    // Cached characteristic proxies keyed by (devicePath, charUuid) – avoids CreateProxy on every write.
+    private static readonly ConcurrentDictionary<(string devicePath, string charUuid), IGattCharacteristic1> _uuidCharProxyCache = new();
+
     // Tracks devices where BlueZ rejected write-without-response (type=command) so we stop
     // trying command mode and go straight to type=request for the rest of the session.
     private static readonly ConcurrentDictionary<string, bool> _commandRejected = new();
@@ -312,8 +329,17 @@ internal static class BlueZHelpers
         serviceUuid = serviceUuid.ToLowerInvariant();
         charUuid = charUuid.ToLowerInvariant();
 
+        // Fast path: positive result cached.
         if (_uuidCharPathCache.TryGetValue((devicePath, charUuid), out var cached))
             return (cached.path, cached.flags);
+
+        // Fast path: negative result cached (e.g. BootWriteUuid that doesn't exist on device).
+        // Avoids the expensive GetManagedObjectsSafeAsync scan on every subsequent call.
+        if (_notFoundUuids.ContainsKey((devicePath, charUuid)))
+        {
+            Console.WriteLine($"[BlueZHelpers] UUID {charUuid} not-found cache hit for {devicePath} — skipping scan");
+            return (null, null);
+        }
 
         const int maxAttempts = 6;
         for (int attempt = 1; attempt <= maxAttempts; attempt++)
@@ -372,6 +398,8 @@ internal static class BlueZHelpers
             await Task.Delay(150, ct);
         }
 
+        // Cache the negative result so the next call returns instantly without scanning.
+        _notFoundUuids[(devicePath, charUuid)] = true;
         return (null, null);
     }
 
@@ -381,11 +409,22 @@ internal static class BlueZHelpers
         string charUuid,
         CancellationToken ct = default)
     {
+        charUuid = charUuid.ToLowerInvariant();
+        var cacheKey = (devicePath, charUuid);
+
+        // Return cached proxy if available (avoids CreateProxy on every write call).
+        if (_uuidCharProxyCache.TryGetValue(cacheKey, out var cachedProxy))
+        {
+            _uuidCharPathCache.TryGetValue(cacheKey, out var cachedEntry);
+            return (cachedProxy, cachedEntry.flags);
+        }
+
         var (path, flags) = await FindCharacteristicByUuidAsync(devicePath, serviceUuid, charUuid, ct);
         if (path == null) return (null, flags);
 
         var conn = await GetConnectionAsync();
         var proxy = conn.CreateProxy<IGattCharacteristic1>("org.bluez", path.Value);
+        _uuidCharProxyCache[cacheKey] = proxy;
         return (proxy, flags);
     }
 
@@ -492,13 +531,24 @@ public static void ClearDeviceCache(string devicePath)
     // Optional: also drop cached IDevice1 proxy to avoid stale object paths
     _deviceProxies.TryRemove(devicePath, out _);
 
-    // Also clear mode, command-rejected, and UUID→path caches so a mode switch forces fresh GATT discovery.
+    // Also clear mode, command-rejected, UUID→path, negative-result, and proxy caches
+    // so a mode switch forces fresh GATT discovery.
     _modeCache.TryRemove(devicePath, out _);
     _commandRejected.TryRemove(devicePath, out _);
     foreach (var key in _uuidCharPathCache.Keys)
     {
         if (key.devicePath == devicePath)
             _uuidCharPathCache.TryRemove(key, out _);
+    }
+    foreach (var key in _notFoundUuids.Keys)
+    {
+        if (key.devicePath == devicePath)
+            _notFoundUuids.TryRemove(key, out _);
+    }
+    foreach (var key in _uuidCharProxyCache.Keys)
+    {
+        if (key.devicePath == devicePath)
+            _uuidCharProxyCache.TryRemove(key, out _);
     }
 }
 public static async Task<bool> WaitForServicesResolvedAsync(

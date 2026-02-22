@@ -34,7 +34,11 @@ namespace AccessAPP.Services
                             //   }
                             //}
 
-                            if (!_notificationEvent.WaitOne(TimeSpan.FromSeconds(20)))
+                            var _readSw = System.Diagnostics.Stopwatch.StartNew();
+                            bool _readSignaled = _notificationEvent.WaitOne(TimeSpan.FromSeconds(20));
+                            _readSw.Stop();
+                            AppLog.Debug($"[TIMING] ReadData notification wait: {_readSw.ElapsedMilliseconds}ms | signaled={_readSignaled} | mac={macContext}");
+                            if (!_readSignaled)
                             {
                                 AppLog.Warn("ReadData timeout waiting for notification");
         //byte[] lastReadNotif = null;
