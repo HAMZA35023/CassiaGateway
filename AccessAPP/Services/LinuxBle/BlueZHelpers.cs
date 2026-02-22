@@ -224,6 +224,16 @@ internal static class BlueZHelpers
                 _charProxies.TryRemove(objPath.ToString(), out _);
         }
         _deviceProxies.TryRemove(devicePath, out _);
+
+        // Clear UUID→path, mode, and command-rejected caches so a mode switch (App↔Bootloader)
+        // forces a fresh GATT discovery instead of reusing stale object paths/mode.
+        _modeCache.TryRemove(devicePath, out _);
+        _commandRejected.TryRemove(devicePath, out _);
+        foreach (var key in _uuidCharPathCache.Keys)
+        {
+            if (key.devicePath == devicePath)
+                _uuidCharPathCache.TryRemove(key, out _);
+        }
     }
 
     /// <summary>
@@ -249,6 +259,9 @@ internal static class BlueZHelpers
 
     public static async Task<BleMode> DetectModeByGattAsync(string devicePath, CancellationToken ct = default)
     {
+        if (_modeCache.TryGetValue(devicePath, out var cached))
+            return cached;
+
         var objects = await GetManagedObjectsSafeAsync(ct);
         bool hasApp = false;
         bool hasBoot = false;
@@ -267,12 +280,25 @@ internal static class BlueZHelpers
             }
         }
 
-        if (hasBoot) return BleMode.Bootloader;
-        if (hasApp) return BleMode.Application;
-        return BleMode.Unknown;
+        var mode = hasBoot ? BleMode.Bootloader : hasApp ? BleMode.Application : BleMode.Unknown;
+        // Only cache a definitive result — Unknown means GATT isn't ready yet and should be re-checked.
+        if (mode != BleMode.Unknown)
+            _modeCache[devicePath] = mode;
+        return mode;
     }
 
+    private static readonly ConcurrentDictionary<string, BleMode> _modeCache = new();
     private static readonly ConcurrentDictionary<(string devicePath, string charUuid), (ObjectPath path, string[] flags)> _uuidCharPathCache = new();
+
+    // Tracks devices where BlueZ rejected write-without-response (type=command) so we stop
+    // trying command mode and go straight to type=request for the rest of the session.
+    private static readonly ConcurrentDictionary<string, bool> _commandRejected = new();
+
+    public static bool IsCommandRejected(string devicePath) =>
+        _commandRejected.ContainsKey(devicePath);
+
+    public static void MarkCommandRejected(string devicePath) =>
+        _commandRejected[devicePath] = true;
 
     public static async Task<(ObjectPath? path, string[]? flags)> FindCharacteristicByUuidAsync(
         string devicePath,
@@ -465,6 +491,15 @@ public static void ClearDeviceCache(string devicePath)
 
     // Optional: also drop cached IDevice1 proxy to avoid stale object paths
     _deviceProxies.TryRemove(devicePath, out _);
+
+    // Also clear mode, command-rejected, and UUID→path caches so a mode switch forces fresh GATT discovery.
+    _modeCache.TryRemove(devicePath, out _);
+    _commandRejected.TryRemove(devicePath, out _);
+    foreach (var key in _uuidCharPathCache.Keys)
+    {
+        if (key.devicePath == devicePath)
+            _uuidCharPathCache.TryRemove(key, out _);
+    }
 }
 public static async Task<bool> WaitForServicesResolvedAsync(
     string devicePath,

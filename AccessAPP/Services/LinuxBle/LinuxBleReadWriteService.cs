@@ -118,19 +118,27 @@ public class LinuxBleReadWriteService : IBleReadWriteService
             }
 
             // Determine write type from Flags.
-            // BlueZ will return org.bluez.Error.NotSupported if we use the wrong type.
-            string writeType;
             var f = flags ?? Array.Empty<string>();
             bool canWriteReq = Array.Exists(f, s => s.Equals("write", StringComparison.OrdinalIgnoreCase));
             bool canWriteCmd = Array.Exists(f, s => s.Equals("write-without-response", StringComparison.OrdinalIgnoreCase));
 
-            // Cassia path uses ?noresponse=1 to prefer command.
+            // Cassia path uses ?noresponse=1 to prefer command (write-without-response).
             bool preferNoResponse = queryParams?.Contains("noresponse=1", StringComparison.OrdinalIgnoreCase) == true;
 
-            if (preferNoResponse && canWriteCmd)
+            string writeType;
+            if (canWriteCmd && (preferNoResponse || !canWriteReq))
                 writeType = "command";
             else if (canWriteReq)
-                writeType = "request";
+            {
+                // When the caller wants noresponse and the characteristic doesn't advertise
+                // write-without-response, try command anyway — the Cassia REST path always
+                // sends noresponse=1 for bulk/bootloader writes and the device firmware
+                // typically accepts ATT_WRITE_CMD regardless of the GATT property.
+                // If BlueZ rejects it we fall back to request (cached per-device so we only pay once).
+                writeType = (preferNoResponse && !BlueZHelpers.IsCommandRejected(devicePath))
+                    ? "command"
+                    : "request";
+            }
             else if (canWriteCmd)
                 writeType = "command";
             else
@@ -148,7 +156,28 @@ public class LinuxBleReadWriteService : IBleReadWriteService
 
             var options = new Dictionary<string, object> { ["type"] = writeType };
 
-            await characteristic.WriteValueAsync(data, options);
+            try
+            {
+                await characteristic.WriteValueAsync(data, options);
+            }
+            catch (DBusException ex) when (
+                writeType == "command" && !canWriteCmd &&
+                (ex.ErrorName is "org.bluez.Error.NotSupported"
+                              or "org.bluez.Error.NotPermitted"
+                              or "org.bluez.Error.InvalidArguments"))
+            {
+                // BlueZ enforces GATT properties and rejected command mode.
+                // Remember this for all subsequent writes in this session so we stop trying.
+                BlueZHelpers.MarkCommandRejected(devicePath);
+                _logger.LogDebug("LinuxBLE: command write rejected by BlueZ for {Mac} — switching to request for this session", macAddress);
+
+                if (!canWriteReq)
+                    return new HttpResponseMessage(HttpStatusCode.BadRequest);
+
+                var fallback = new Dictionary<string, object> { ["type"] = "request" };
+                await characteristic.WriteValueAsync(data, fallback);
+            }
+
             return new HttpResponseMessage(HttpStatusCode.OK);
         }
         catch (OperationCanceledException)

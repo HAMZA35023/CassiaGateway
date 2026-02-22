@@ -443,7 +443,7 @@ namespace AccessAPP.Services
                     // AppLog.Verbose($"Data Sent: {hexData} | macContext: {macContext}");
 // AppLog.Verbose($"size of buffer: {size}");
 //SendMessage(data);
-					_ownInstance.cassiaReadWriteService.WriteBleMessageSync(_ownInstance._gatewayIpAddress, macContext, 14, hexData, "", chip: _ownInstance.GetChipForMac(macContext));
+					_ownInstance.cassiaReadWriteService.WriteBleMessageSync(_ownInstance._gatewayIpAddress, macContext, 14, hexData, "?noresponse=1", chip: _ownInstance.GetChipForMac(macContext));
                     SleepWithDynamicWriteDelay(macContext, ResolveActorWriteDelayMs());
 
                     status = true;
@@ -464,7 +464,7 @@ namespace AccessAPP.Services
 // AppLog.Verbose($"size of buffer: {size}");
 //SendMessage(data);
                         AppLog.Info($"Trying again... (waited)");
-_ownInstance.cassiaReadWriteService.WriteBleMessageSync(_ownInstance._gatewayIpAddress, macContext, 14, hexData, "", chip: _ownInstance.GetChipForMac(macContext));
+_ownInstance.cassiaReadWriteService.WriteBleMessageSync(_ownInstance._gatewayIpAddress, macContext, 14, hexData, "?noresponse=1", chip: _ownInstance.GetChipForMac(macContext));
                         SleepWithDynamicWriteDelay(macContext, ResolveActorWriteDelayMs());
 
                         status = true;
