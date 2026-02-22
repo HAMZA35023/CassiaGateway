@@ -88,7 +88,7 @@ public sealed class Modem4GStatusService : IDisposable
         catch (Exception ex)
         {
             _lastPollUtc = DateTimeOffset.UtcNow;
-            AppLog.Warn($"4G modem poll failed: {ex.Message}");
+            AppLog.Verbose($"4G modem poll failed: {ex.Message}");
             return _lastSnapshot;
         }
         finally
