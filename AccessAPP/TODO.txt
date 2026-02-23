@@ -3,9 +3,7 @@ AccessApp Cassia backend:
 CRITICAL:
 
 
-
 MAJOR:
-Using multiple workers / parralel upgrades, should be spread across the devices (if multiple is specified) - not use the one with highest rssi
 
 
 MINOR:

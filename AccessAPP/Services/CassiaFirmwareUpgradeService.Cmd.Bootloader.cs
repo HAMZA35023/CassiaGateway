@@ -92,8 +92,14 @@ namespace AccessAPP.Services
             {
                 try
                 {
-                    var objMgr = BlueZHelpers.GetObjectManagerAsync().GetAwaiter().GetResult();
-                    var objects = objMgr.GetManagedObjectsAsync().GetAwaiter().GetResult();
+                    // GetManagedObjectsAsync() can hang indefinitely when BlueZ is busy
+                    // (post-firmware-reboot, cold start). Since this method is called
+                    // synchronously from ConnectAndLoginWithRetryAsync, the outer
+                    // CancellationToken cannot interrupt a blocking .GetAwaiter().GetResult().
+                    // Cap the D-Bus call at 5 seconds so the retry loop can proceed.
+                    using var bootCheckCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    var objects = BlueZHelpers.GetManagedObjectsSafeAsync(bootCheckCts.Token)
+                        .WaitAsync(bootCheckCts.Token).GetAwaiter().GetResult();
 
                     bool found = false;
                     foreach (var (path, interfaces) in objects)
