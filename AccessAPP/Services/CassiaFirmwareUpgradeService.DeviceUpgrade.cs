@@ -135,14 +135,14 @@ try
                                     // best-effort disconnect before reconnect flow
                                 }
 
-                                dev.CurrentFirmwareVersion = await GetFwVersion(mac, dev.Pincode, disconnect_on_finish: true).ConfigureAwait(false);
+                                dev.CurrentFirmwareVersion = await GetFwVersion(mac, dev.Pincode, disconnect_on_finish: true, logId: logId, firmwareVersion: dev.FirmwareVersion).ConfigureAwait(false);
                                 precheckSessionAlive = false;
                             }
                         }
                         else
                         {
                             // Fallback only when probe connect was not available.
-                            dev.CurrentFirmwareVersion = await GetFwVersion(mac, dev.Pincode, disconnect_on_finish: true).ConfigureAwait(false);
+                            dev.CurrentFirmwareVersion = await GetFwVersion(mac, dev.Pincode, disconnect_on_finish: true, logId: logId, firmwareVersion: dev.FirmwareVersion).ConfigureAwait(false);
                             precheckSessionAlive = false;
                         }
                         if (!string.IsNullOrWhiteSpace(dev.CurrentFirmwareVersion))
@@ -762,7 +762,9 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                     postFw = await GetFwVersion(
                         mac,
                         dev.Pincode,
-                        disconnect_on_finish: !reuseExistingConnection).ConfigureAwait(false);
+                        disconnect_on_finish: !reuseExistingConnection,
+                        logId: logId,
+                        firmwareVersion: dev.FirmwareVersion).ConfigureAwait(false);
                 }
 
                 dev.PostFirmwareVersion = postFw;

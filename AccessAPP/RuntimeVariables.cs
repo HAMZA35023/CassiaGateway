@@ -64,8 +64,9 @@ namespace AccessAPP
         // Extra delay added after a failed connect (in addition to backoff).
         public static int UPGRADE_DELAY_AFTER_FAILED_CONNECT_MS = 1500;
         // Timeout per connect attempt.
-        // After a firmware reboot, service re-discovery alone can take 15-20 s.
-        // Keep this well above LINUX_BLE_SERVICES_RESOLVED_TIMEOUT_MS + login time.
+        // Must exceed: pre-disconnect wait (6 s) + ConnectAsync (5 s) + Connected poll (1.5 s)
+        // + LINUX_BLE_SERVICES_RESOLVED_TIMEOUT_MS (10 s) + stabilize (1.2 s) + login (8 s) = ~32 s.
+        // 35 s gives a comfortable margin.
         public static int UPGRADE_CONNECT_ATTEMPT_TIMEOUT_MS = 35000;
         // Delay after connect before login (session stabilization).
         public static int UPGRADE_CONNECT_STABILIZATION_DELAY_MS = 1200;
@@ -231,9 +232,10 @@ namespace AccessAPP
         public static string LINUX_BLE_MAC_PREFIX = "10:B9:F7";
 
         // Linux native BLE: how long to wait for BlueZ ServicesResolved=true after connect (ms).
-        // After a firmware reboot the device re-advertises in app mode but BlueZ needs time to
-        // re-discover the new GATT table.  8 s is too short; 20 s covers post-firmware boot.
-        public static int LINUX_BLE_SERVICES_RESOLVED_TIMEOUT_MS = 20000;
+        // In normal conditions GATT discovery finishes within 5-10 s.  Post-firmware-boot can
+        // take longer, but the connect+login retry loop now handles that via bootModeIsRetryable.
+        // 10 s is a balanced default; raise if devices in your environment are consistently slow.
+        public static int LINUX_BLE_SERVICES_RESOLVED_TIMEOUT_MS = 10000;
 
         // Linux native BLE: characteristic handle used for BLE write/notify operations.
         // This is the GATT handle number (decimal) of the main control characteristic.

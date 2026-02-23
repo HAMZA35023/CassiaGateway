@@ -96,6 +96,42 @@ internal static class BlueZHelpers
         _macToAdapter.TryGetValue(mac, out var scanned) ? scanned :
         RuntimeVariables.LINUX_BLE_ADAPTER;
 
+    // Round-robin counter for spreading parallel connect attempts across HCI adapters.
+    private static int _connectRoundRobin = -1;
+
+    /// <summary>
+    /// Select the HCI adapter for a new outgoing connect request.
+    /// <para>
+    /// Priority:
+    /// <list type="number">
+    ///   <item>Active-connection pin (<see cref="SetConnectedAdapter"/>) — never disturb a live session.</item>
+    ///   <item>Round-robin across all adapters in <see cref="RuntimeVariables.LINUX_BLE_ADAPTERS"/>
+    ///         when more than one adapter is configured.  Each call advances the counter so that
+    ///         parallel upgrade workers are spread evenly across adapters.</item>
+    ///   <item>Last-scanned adapter (<c>_macToAdapter</c>) / global default — single-adapter fallback.</item>
+    /// </list>
+    /// </para>
+    /// </summary>
+    public static string GetNextConnectAdapter(string mac)
+    {
+        // Never change the adapter for a device that is already connected.
+        if (_connectedAdapters.TryGetValue(mac, out var pinned))
+            return pinned;
+
+        var adapters = RuntimeVariables.GetLinuxBleAdapterList();
+        if (adapters.Length <= 1)
+        {
+            // Single-adapter config: keep existing behaviour (last-scanned or default).
+            return _macToAdapter.TryGetValue(mac, out var scanned)
+                ? scanned
+                : RuntimeVariables.LINUX_BLE_ADAPTER;
+        }
+
+        // Round-robin across all configured adapters to spread parallel workers.
+        var idx = (uint)Interlocked.Increment(ref _connectRoundRobin) % (uint)adapters.Length;
+        return adapters[(int)idx];
+    }
+
     /// <summary>
     /// Return the cached IAdapter1 proxy for the given HCI adapter name.
     /// Omit <paramref name="adapter"/> to use <see cref="RuntimeVariables.LINUX_BLE_ADAPTER"/>.
@@ -378,6 +414,17 @@ internal static class BlueZHelpers
 
     public static void MarkCommandRejected(string devicePath) =>
         _commandRejected[devicePath] = true;
+
+    /// <summary>
+    /// Remove a specific UUID from the negative-result (not-found) cache for a device.
+    /// Call this before retrying a UUID lookup after a mode switch or GATT update so the
+    /// scan is not short-circuited by a stale "not found" entry from an earlier session.
+    /// </summary>
+    public static void ClearNotFoundUuidCache(string devicePath, string charUuid)
+    {
+        if (string.IsNullOrWhiteSpace(devicePath) || string.IsNullOrWhiteSpace(charUuid)) return;
+        _notFoundUuids.TryRemove((devicePath, charUuid.ToLowerInvariant()), out _);
+    }
 
     public static async Task<(ObjectPath? path, string[]? flags)> FindCharacteristicByUuidAsync(
         string devicePath,

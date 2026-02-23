@@ -95,7 +95,7 @@ public class LinuxBleNotificationService : IBleNotificationService
                 // ServicesResolved is not yet true — wait for GATT re-discovery to finish
                 // (common after a firmware reboot or mode switch) before choosing the UUIDs.
                 var servicesReady = await BlueZHelpers.WaitForServicesResolvedAsync(
-                    devicePath, 5000, 200, CancellationToken.None);
+                    devicePath, RuntimeVariables.LINUX_BLE_SERVICES_RESOLVED_TIMEOUT_MS, 200, CancellationToken.None);
                 if (servicesReady)
                     mode = await BlueZHelpers.DetectModeByGattAsync(devicePath);
 

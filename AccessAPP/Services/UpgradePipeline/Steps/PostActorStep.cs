@@ -61,7 +61,8 @@ internal sealed class PostActorStep : IDeviceUpgradeStep
                 var cl = await svc.ConnectAndLoginWithRetryForPipelineAsync(
                     svc.GatewayIpAddress, 80, ctx.MacAddress, ctx.Pincode, ctx.LogId, ctx.FirmwareVersion,
                     maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
-                    delayBetweenAttemptsMs: 6000).ConfigureAwait(false);
+                    delayBetweenAttemptsMs: 6000,
+                    bootModeIsRetryable: true).ConfigureAwait(false);
 
                 if (!cl.Success)
                 {

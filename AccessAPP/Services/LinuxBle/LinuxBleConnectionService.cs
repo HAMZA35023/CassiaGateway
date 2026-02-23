@@ -41,13 +41,43 @@ public class LinuxBleConnectionService : IBleConnectionService
     {
         try
         {
-            var bleAdapter = BlueZHelpers.GetDeviceAdapter(macAddress);
+            // Round-robin across configured HCI adapters so that parallel upgrade workers
+            // are spread evenly instead of all piling onto the same adapter.
+            var bleAdapter = BlueZHelpers.GetNextConnectAdapter(macAddress);
             var devicePath = BlueZHelpers.DevicePath(bleAdapter, macAddress);
             var device = await BlueZHelpers.GetDeviceAsync(devicePath);
 
+            // ── Guard: wait for BlueZ to finish any in-progress disconnect ──────────────
+            // When a connect attempt immediately follows a disconnect (precheck or retry),
+            // BlueZ finalises the BLE link tear-down asynchronously.  Calling ConnectAsync
+            // while the device still reports Connected=true causes BlueZ to take 20–30 s
+            // to complete the re-connection.  Waiting for Connected=false here keeps the
+            // ConnectAsync path fast (2–5 s instead of 20–30 s).
             try
             {
-                await device.ConnectAsync();
+                if (await device.GetAsync<bool>("Connected"))
+                {
+                    _logger.LogDebug(
+                        "LinuxBLE: {Mac} Connected=true before ConnectAsync — disconnecting first to clear stale BlueZ state",
+                        macAddress);
+                    try { await device.DisconnectAsync().WaitAsync(ct); } catch { /* ignore — we just want BlueZ to start the teardown */ }
+
+                    var teardownEnd = DateTime.UtcNow.AddMilliseconds(6000);
+                    while (DateTime.UtcNow < teardownEnd && !ct.IsCancellationRequested)
+                    {
+                        try { if (!await device.GetAsync<bool>("Connected")) break; } catch { break; }
+                        await Task.Delay(150, ct);
+                    }
+                    _logger.LogDebug("LinuxBLE: {Mac} Connected=false — proceeding with ConnectAsync", macAddress);
+                }
+            }
+            catch { /* ignore — proceed to ConnectAsync regardless */ }
+
+            try
+            {
+                // WaitAsync propagates the outer CancellationToken so a timed-out connect attempt
+                // doesn't leave the calling thread blocked until BlueZ times out internally.
+                await device.ConnectAsync().WaitAsync(ct);
             }
             catch (Tmds.DBus.DBusException ex) when (
                 ex.ErrorName == "org.bluez.Error.Failed" &&
@@ -73,7 +103,7 @@ public class LinuxBleConnectionService : IBleConnectionService
 
             // ServicesResolved is the supported way to ensure GATT is ready in BlueZ (there is no DiscoverServices method).
             // After a firmware reboot the device re-advertises in app mode but BlueZ needs extra time to
-            // re-discover the new GATT table — use the configurable timeout (default 20 s).
+            // re-discover the new GATT table — use the configurable timeout (default 10 s).
             var resolved = await BlueZHelpers.WaitForServicesResolvedAsync(
                 devicePath, RuntimeVariables.LINUX_BLE_SERVICES_RESOLVED_TIMEOUT_MS, 100, ct);
             if (!resolved)
@@ -89,6 +119,42 @@ public class LinuxBleConnectionService : IBleConnectionService
             // Dump GATT table at debug level so we can see what's exposed after connect.
             var gattDump = await BlueZHelpers.DumpGattAsync(devicePath, ct);
             _logger.LogDebug("LinuxBLE: GATT on connect for {Mac}:\n{Dump}", macAddress, gattDump);
+
+            // ── Pre-warm GATT mode + notify characteristic cache ─────────────────────────
+            // EnsureNotifyingAsync is fired as a background task (fire-and-forget) from
+            // Subscribe(), which is called inside AttemptLoginAsync() roughly 800 ms before
+            // the first BLE write.  If EnsureNotifyingAsync has not yet called StartNotify by
+            // the time the device replies to the login write, the notification is lost and
+            // login times out ("status=Canceled").
+            //
+            // By detecting the mode and pre-scanning the notify characteristic here (while we
+            // are already waiting for the GATT table), both _modeCache and the characteristic
+            // proxy cache are populated before ConnectToBleDevice returns.  EnsureNotifyingAsync
+            // then gets instant cache hits and finishes in <10 ms — well before the first write.
+            if (resolved)
+            {
+                try
+                {
+                    var mode = await BlueZHelpers.DetectModeByGattAsync(devicePath, ct);
+                    if (mode != BlueZHelpers.BleMode.Unknown)
+                    {
+                        var svcUuid = mode == BlueZHelpers.BleMode.Bootloader
+                            ? BlueZHelpers.BootServiceUuid : BlueZHelpers.AppServiceUuid;
+                        var notifyUuid = mode == BlueZHelpers.BleMode.Bootloader
+                            ? BlueZHelpers.BootNotifyUuid : BlueZHelpers.AppNotifyUuid;
+                        await BlueZHelpers.GetCharacteristicByUuidAsync(devicePath, svcUuid, notifyUuid, ct);
+                        _logger.LogDebug("LinuxBLE: pre-warmed GATT cache for {Mac} mode={Mode}", macAddress, mode);
+                    }
+                    else
+                    {
+                        _logger.LogDebug("LinuxBLE: GATT mode unknown for {Mac} after connect — EnsureNotifyingAsync will detect on first subscribe", macAddress);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "LinuxBLE: GATT pre-warm failed for {Mac} (non-fatal)", macAddress);
+                }
+            }
 
             // Request shorter connection interval to reduce per-round-trip latency during writes.
             // Uses btmgmt or hcitool; silently ignored if neither is available or lacks permissions.

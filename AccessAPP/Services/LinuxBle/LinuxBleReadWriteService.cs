@@ -85,10 +85,36 @@ public class LinuxBleReadWriteService : IBleReadWriteService
                         // Best-effort: try BootWriteUuid first; if missing we fall back to BootNotifyUuid.
                         writeUuid = BlueZHelpers.BootWriteUuid;
                     }
-                    else
+                    else if (mode == BlueZHelpers.BleMode.Application)
                     {
                         serviceUuid = BlueZHelpers.AppServiceUuid;
-                        writeUuid = BlueZHelpers.AppWriteUuid; // provided by you
+                        writeUuid = BlueZHelpers.AppWriteUuid;
+                    }
+                    else
+                    {
+                        // ServicesResolved=false: GATT is in flux (mode switch in progress).
+                        // Clear negative-cache for all candidate write UUIDs so each iteration
+                        // does a live scan instead of short-circuiting on a stale "not found"
+                        // result from the previous mode.  Try bootloader first (most common after
+                        // JumpToBootloader), then app mode as fallback.
+                        BlueZHelpers.ClearNotFoundUuidCache(devicePath, BlueZHelpers.BootWriteUuid);
+                        BlueZHelpers.ClearNotFoundUuidCache(devicePath, BlueZHelpers.BootNotifyUuid);
+                        BlueZHelpers.ClearNotFoundUuidCache(devicePath, BlueZHelpers.AppWriteUuid);
+
+                        (characteristic, flags) = await BlueZHelpers.GetCharacteristicByUuidAsync(
+                            devicePath, BlueZHelpers.BootServiceUuid, BlueZHelpers.BootWriteUuid, ct);
+                        if (characteristic == null)
+                            (characteristic, flags) = await BlueZHelpers.GetCharacteristicByUuidAsync(
+                                devicePath, BlueZHelpers.BootServiceUuid, BlueZHelpers.BootNotifyUuid, ct);
+                        if (characteristic == null)
+                            (characteristic, flags) = await BlueZHelpers.GetCharacteristicByUuidAsync(
+                                devicePath, BlueZHelpers.AppServiceUuid, BlueZHelpers.AppWriteUuid, ct);
+
+                        if (characteristic != null)
+                            break;
+
+                        await Task.Delay(80, ct);
+                        continue;
                     }
 
                     (characteristic, flags) = await BlueZHelpers.GetCharacteristicByUuidAsync(devicePath, serviceUuid, writeUuid, ct);

@@ -92,25 +92,6 @@ namespace AccessAPP.Services
             {
                 try
                 {
-                    // Guard: only trust the GATT tree once ServicesResolved=true.
-                    // After a boot-mode→app-mode transition (e.g. post-firmware reboot) the
-                    // BlueZ ObjectManager may still expose stale bootloader GATT objects until
-                    // service re-discovery completes. Reading the object tree before that point
-                    // would cause a false-positive boot-mode detection and abort post-upgrade login.
-                    bool servicesResolved = false;
-                    try
-                    {
-                        var dev = BlueZHelpers.GetDeviceAsync(devicePath).GetAwaiter().GetResult();
-                        servicesResolved = dev.GetAsync<bool>("ServicesResolved").GetAwaiter().GetResult();
-                    }
-                    catch { /* device temporarily unreachable; treat as unresolved */ }
-
-                    if (!servicesResolved)
-                    {
-                        AppLog.Debug($"CheckIfDeviceInBootModeLinux: ServicesResolved=false for {nodeMac} — GATT not yet ready, assuming application mode");
-                        return false;
-                    }
-
                     var objMgr = BlueZHelpers.GetObjectManagerAsync().GetAwaiter().GetResult();
                     var objects = objMgr.GetManagedObjectsAsync().GetAwaiter().GetResult();
 

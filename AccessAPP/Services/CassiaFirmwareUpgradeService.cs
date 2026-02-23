@@ -91,9 +91,10 @@ namespace AccessAPP.Services
 	        string? logId,
 	        string? firmwareVersion,
 	        int maxAttempts,
-	        int delayBetweenAttemptsMs)
+	        int delayBetweenAttemptsMs,
+	        bool bootModeIsRetryable = false)
 	    {
-	        var r = await ConnectAndLoginWithRetryAsync(gatewayIpAddress, gatewayPort, macAddress, pincode, logId, firmwareVersion, maxAttempts, delayBetweenAttemptsMs)
+	        var r = await ConnectAndLoginWithRetryAsync(gatewayIpAddress, gatewayPort, macAddress, pincode, logId, firmwareVersion, maxAttempts, delayBetweenAttemptsMs, bootModeIsRetryable)
 	            .ConfigureAwait(false);
 	        return (r.Success, r.StatusCode, r.Message ?? "");
 	    }
