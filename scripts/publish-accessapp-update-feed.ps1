@@ -186,7 +186,8 @@ function Invoke-PublishAndPackage {
             }
 
             Write-Log "Publishing AccessAPP for channel '$TargetChannel' runtime '$rid'..."
-            & dotnet @publishArgs
+            $dotnetOut = & dotnet @publishArgs 2>&1
+            if ($dotnetOut) { $dotnetOut | ForEach-Object { Write-Host $_ } }
             if ($LASTEXITCODE -ne 0) {
                 throw "dotnet publish failed with exit code $LASTEXITCODE"
             }
@@ -196,7 +197,7 @@ function Invoke-PublishAndPackage {
         }
 
         Write-Log "Creating zip + manifest for channel '$TargetChannel' runtime '$runtimeTag' in: $channelOutputDir"
-        & $packScript `
+        $packOut = & $packScript `
             -PublishDir $publishDir `
             -Version $effectiveVersion `
             -BaseUrl $channelBaseUrl `
@@ -206,9 +207,8 @@ function Invoke-PublishAndPackage {
             -Channel $TargetChannel `
             -ManifestFileName $ManifestFileName `
             -CompressionLevel $CompressionLevel `
-            -StripSymbols:$StripSymbols `
-            -SevenZipPath $SevenZipPath
-
+            -StripSymbols:$StripSymbols `            -SevenZipPath $SevenZipPath 2>&1
+        if ($packOut) { $packOut | ForEach-Object { Write-Host $_ } }
         if ($LASTEXITCODE -ne 0) {
             throw "create-update-package.ps1 failed with exit code $LASTEXITCODE"
         }
