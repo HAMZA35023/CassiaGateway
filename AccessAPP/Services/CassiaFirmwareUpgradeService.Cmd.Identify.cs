@@ -440,7 +440,7 @@ namespace AccessAPP.Services
                 try
                 {
                     var _writeSw = Stopwatch.StartNew();
-					_ownInstance.cassiaReadWriteService.WriteBleMessageSync(_ownInstance._gatewayIpAddress, macContext, 14, hexData, "?noresponse=1", chip: _ownInstance.GetChipForMac(macContext));
+					_ownInstance.cassiaReadWriteService.WriteBleMessageSync(_ownInstance._gatewayIpAddress, macContext, 14, hexData, "", chip: _ownInstance.GetChipForMac(macContext));
                     _writeSw.Stop();
                     AppLog.Debug($"[TIMING] WriteSensorData BLE write: {_writeSw.ElapsedMilliseconds}ms | mac={macContext} | size={size}");
                     SleepWithDynamicWriteDelay(macContext, ResolveActorWriteDelayMs());
@@ -463,7 +463,7 @@ namespace AccessAPP.Services
 // AppLog.Verbose($"size of buffer: {size}");
 //SendMessage(data);
                         AppLog.Info($"Trying again... (waited)");
-_ownInstance.cassiaReadWriteService.WriteBleMessageSync(_ownInstance._gatewayIpAddress, macContext, 14, hexData, "?noresponse=1", chip: _ownInstance.GetChipForMac(macContext));
+_ownInstance.cassiaReadWriteService.WriteBleMessageSync(_ownInstance._gatewayIpAddress, macContext, 14, hexData, "", chip: _ownInstance.GetChipForMac(macContext));
                         SleepWithDynamicWriteDelay(macContext, ResolveActorWriteDelayMs());
 
                         status = true;
