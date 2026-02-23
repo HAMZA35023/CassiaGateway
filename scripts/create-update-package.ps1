@@ -135,7 +135,10 @@ try {
     $trimmedBase = $BaseUrl.TrimEnd("/")
     $zipUrl = "$trimmedBase/$zipName"
 
-    $artifact = [ordered]@{
+    # IMPORTANT: Use plain hashtables (not [ordered]) to avoid duplicate-key
+    # exceptions on some PowerShell/.NET combinations when keys differ only by case
+    # (e.g. legacy manifests created with 'Version' vs 'version').
+    $artifact = @{
             runtime = $RuntimeTag
             url = $zipUrl
             sha256 = $hash
@@ -179,11 +182,11 @@ try {
     }
 
     if (-not $manifest) {
-        $manifest = [ordered]@{
+        $manifest = @{
             app = $AppName
             channel = $Channel
             generatedAtUtc = $publishedAt
-            latest = [ordered]@{
+            latest = @{
                 version = $Version
                 channel = $Channel
                 # Legacy fields (for older updaters). We keep linux-arm here when available.
@@ -191,7 +194,7 @@ try {
                 sha256 = $hash
                 sizeBytes = $size
                 publishedAtUtc = $publishedAt
-                builds = [ordered]@{ }
+                builds = @{}
             }
             releases = @()
         }
@@ -199,19 +202,19 @@ try {
 
     # Ensure latest exists
     if (-not $manifest.Contains("latest") -or -not $manifest.latest) {
-        $manifest.latest = [ordered]@{
+        $manifest.latest = @{
             version = $Version
             channel = $Channel
-            builds = [ordered]@{ }
+            builds = @{}
         }
     }
 
     # Normalize legacy manifest into builds (assume linux-arm when only legacy fields exist)
     if (-not $manifest.latest.Contains("builds") -or -not $manifest.latest.builds) {
-        $manifest.latest.builds = [ordered]@{ }
+        $manifest.latest.builds = @{}
     }
     if ($manifest.latest.Contains("url") -and -not $manifest.latest.builds.Contains("linux-arm")) {
-        $manifest.latest.builds["linux-arm"] = [ordered]@{
+        $manifest.latest.builds["linux-arm"] = @{
             runtime = "linux-arm"
             url = $manifest.latest.url
             sha256 = $manifest.latest.sha256
@@ -250,21 +253,21 @@ try {
         if ($r.version -eq $Version) { $release = $r; break }
     }
     if (-not $release) {
-        $release = [ordered]@{
+        $release = @{
             version = $Version
             channel = $Channel
             publishedAtUtc = $publishedAt
             url = $zipUrl
             sha256 = $hash
             sizeBytes = $size
-            builds = [ordered]@{ }
+            builds = @{}
         }
         $manifest.releases += $release
     }
 
-    if (-not $release.Contains("builds") -or -not $release.builds) { $release.builds = [ordered]@{ } }
+    if (-not $release.Contains("builds") -or -not $release.builds) { $release.builds = @{} }
     if ($release.Contains("url") -and -not $release.builds.Contains("linux-arm")) {
-        $release.builds["linux-arm"] = [ordered]@{
+        $release.builds["linux-arm"] = @{
             runtime = "linux-arm"
             url = $release.url
             sha256 = $release.sha256
