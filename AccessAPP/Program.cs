@@ -49,10 +49,10 @@ NativeLibrary.SetDllImportResolver(typeof(Bootloader_Utils).Assembly,
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Migrate persistent files from old base-directory location to /etc/accessapp/ on first run after update.
-MigrateToEtc(Path.Combine(builder.Environment.ContentRootPath, "mqtt.json"), "/etc/accessapp/mqtt.json");
-MigrateToEtc(Path.Combine(builder.Environment.ContentRootPath, "runtime.json"), "/etc/accessapp/runtime.json");
-MigrateToEtc(Path.Combine(builder.Environment.ContentRootPath, "Logs", "upgrade_logs.txt"), "/etc/accessapp/logs/upgrade_logs.txt");
+// Migrate persistent files from old base-directory location to the state directory on first run after update.
+MigrateToStateDir(Path.Combine(builder.Environment.ContentRootPath, "mqtt.json"),            AccessAppPaths.MqttConfig);
+MigrateToStateDir(Path.Combine(builder.Environment.ContentRootPath, "runtime.json"),         AccessAppPaths.RuntimeConfig);
+MigrateToStateDir(Path.Combine(builder.Environment.ContentRootPath, "Logs", "upgrade_logs.txt"), AccessAppPaths.UpgradeLog);
 
 LoggingBootstrapper.TryConfigureSerilog(builder);
 
@@ -126,10 +126,9 @@ builder.Services.AddSingleton<MqttConfigStore>(sp =>
     var cfg = sp.GetRequiredService<IConfiguration>();
     var env = sp.GetRequiredService<IHostEnvironment>();
 
-    // Put in appsettings.json if you want, fallback is fine on Cassia
     var path = cfg.GetValue<string>("Mqtt:ConfigPath");
     if (string.IsNullOrWhiteSpace(path))
-        path = "mqtt.json";
+        path = AccessAppPaths.MqttConfig;
     if (!Path.IsPathRooted(path))
         path = Path.Combine(env.ContentRootPath, path);
 
@@ -621,7 +620,7 @@ app.Lifetime.ApplicationStopping.Register(() =>
 
 app.Run();
 
-static void MigrateToEtc(string oldPath, string newPath)
+static void MigrateToStateDir(string oldPath, string newPath)
 {
     if (!File.Exists(oldPath) || File.Exists(newPath))
         return;

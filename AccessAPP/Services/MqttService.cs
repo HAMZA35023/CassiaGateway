@@ -1795,7 +1795,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 if (string.Equals(command, "clear-upgrade-log", StringComparison.OrdinalIgnoreCase))
             {
                 AppLog.Debug("HandleCommandAsync: dispatch clear-upgrade-log");
-                var logPath = "/etc/accessapp/logs/upgrade_logs.txt";
+                var logPath = AccessAppPaths.UpgradeLog;
 
                 if (!System.IO.File.Exists(logPath))
                 {

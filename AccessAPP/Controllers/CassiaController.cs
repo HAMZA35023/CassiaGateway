@@ -880,7 +880,7 @@ await Task.Delay(500); // Small delay before retrying
         {
             try
             {
-                var logPath = "/etc/accessapp/logs/upgrade_logs.txt";
+                var logPath = AccessAppPaths.UpgradeLog;
 
                 if (!System.IO.File.Exists(logPath))
                 {

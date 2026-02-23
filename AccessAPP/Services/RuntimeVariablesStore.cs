@@ -35,19 +35,19 @@ public sealed class RuntimeVariablesStore
 
     public RuntimeVariablesStore()
     {
-        FilePath = "runtime.json";
+        FilePath = AccessAppPaths.RuntimeConfig;
     }
 
     public RuntimeVariablesStore(string filePath)
     {
-        FilePath = string.IsNullOrWhiteSpace(filePath) ? "runtime.json" : filePath;
+        FilePath = string.IsNullOrWhiteSpace(filePath) ? AccessAppPaths.RuntimeConfig : filePath;
     }
 
     public RuntimeVariablesStore(IConfiguration cfg, IHostEnvironment env)
     {
         var path = cfg.GetValue<string>("RuntimeVariables:ConfigPath");
         if (string.IsNullOrWhiteSpace(path))
-            path = "runtime.json";
+            path = AccessAppPaths.RuntimeConfig;
         if (!Path.IsPathRooted(path))
             path = Path.Combine(env.ContentRootPath, path);
 
