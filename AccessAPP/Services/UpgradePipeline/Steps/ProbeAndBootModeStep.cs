@@ -72,8 +72,11 @@ internal sealed class ProbeAndBootModeStep : IDeviceUpgradeStep
         }
 
         ctx.ChipId = svc.GetChipForMac(ctx.MacAddress);
-        UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, $"Using Chip {ctx.ChipId}", "info");
-        AppLog.Info($"Using ChipID {ctx.ChipId} for {ctx.MacAddress}");
+        string chipOrAdapter = RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase)
+            ? AccessAPP.Services.LinuxBle.BlueZHelpers.GetDeviceAdapter(ctx.MacAddress)
+            : $"Chip {ctx.ChipId}";
+        UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, $"Using {chipOrAdapter}", "info");
+        AppLog.Info($"Using {chipOrAdapter} for {ctx.MacAddress}");
 
         // NOTE: if CheckIfDeviceInBootMode relies on Cassia state, this is now safer.
         ctx.IsInBoot = false;

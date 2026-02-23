@@ -1,4 +1,4 @@
-using AccessAPP.Logging;
+﻿using AccessAPP.Logging;
 using AccessAPP.Services.HelperClasses;
 using System;
 using System.Net;
@@ -393,10 +393,10 @@ namespace AccessAPP.Services
                     }
 
                     UpgradeLogger.Log(logId, macAddress,
-                        $"Connect+Login attempt {attempt}/{maxAttempts} (timeout {timeoutMs / 1000}s, {ChipLabel(chip, macAddress)})",
+                        $"Connect+Login attempt {attempt}/{maxAttempts} (timeout {timeoutMs / 1000}s)",
                         "Info", firmwareVersion);
 
-                    AppLog.Info($" Connect+Login attempt {attempt}/{maxAttempts} for {macAddress} [{ChipLabel(chip, macAddress)}]");
+                    AppLog.Info($" Connect+Login attempt {attempt}/{maxAttempts} for {macAddress}");
 
                     // 1) Connect
                     bool connected = false;
@@ -415,7 +415,7 @@ namespace AccessAPP.Services
                         connectStatus = connectionResult.Status;
                         lastAttemptStatus = connectStatus;
                         string connectResponseData = LimitLogText(connectionResult.Data);
-                        AppLog.Debug($"Connect+Login connect response for {macAddress} [{ChipLabel(chip, macAddress)}]: HTTP {(int)connectStatus} {connectStatus} (attempt {attempt}/{maxAttempts}, try {connectTry}/{transient500Retries}). Body='{connectResponseData}'.");
+                        AppLog.Debug($"Connect+Login connect response for {macAddress} chip {chip}: HTTP {(int)connectStatus} {connectStatus} (attempt {attempt}/{maxAttempts}, try {connectTry}/{transient500Retries}). Body='{connectResponseData}'.");
                         connected = connectionResult.Status == HttpStatusCode.OK;
                         if (!connected)
                         {
@@ -431,7 +431,7 @@ namespace AccessAPP.Services
                                 UpgradeLogger.Log(logId, macAddress, "Connected",
                                     $"Recovered via gateway state (attempt {attempt}/{maxAttempts})",
                                     firmwareVersion);
-                                AppLog.Info($"Connect returned {connectionResult.Status} for {macAddress}, but gateway reports connected on {ChipLabel(chip, macAddress)}. Continuing.");
+                                AppLog.Info($"Connect returned {connectionResult.Status} for {macAddress}, but gateway reports connected on chip {chip}. Continuing.");
                             }
                         }
 
@@ -463,7 +463,7 @@ namespace AccessAPP.Services
                         else if (touchedGateway && skipDisconnect)
                             AppLog.Debug($"Connect+Login connect failure for {macAddress}: skipping per-attempt disconnect because status={(int)connectStatus} {connectStatus}.");
 
-                        string disconnectText = skipDisconnect ? "Skipped disconnect" : $"Disconnected {ChipLabel(chip, macAddress)}";
+                        string disconnectText = skipDisconnect ? "Skipped disconnect" : $"Disconnected chip {chip}";
                         UpgradeLogger.Log(logId, macAddress,
                             $"Connect+Login failed on attempt {attempt}/{maxAttempts}. {disconnectText}. Retrying after {RetryDelayText(retryDelayMs)}.",
                             "Warn", firmwareVersion);
@@ -474,7 +474,7 @@ namespace AccessAPP.Services
                         int stabilizeMs = GetConnectStabilizationDelayMs();
                         if (stabilizeMs > 0)
                         {
-                            AppLog.Debug($"Connect+Login connected for {macAddress} on {ChipLabel(chip, macAddress)}. Waiting {stabilizeMs}ms before login.");
+                            AppLog.Debug($"Connect+Login connected for {macAddress} on chip {chip}. Waiting {stabilizeMs}ms before login.");
                             await Task.Delay(stabilizeMs, cts.Token).ConfigureAwait(false);
                         }
 
@@ -553,9 +553,9 @@ namespace AccessAPP.Services
                                     await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, chip).ConfigureAwait(false);
 
                                 UpgradeLogger.Log(logId, macAddress,
-                                    $"Connect+Login failed on attempt {attempt}/{maxAttempts}. Disconnected {ChipLabel(chip, macAddress)}. Retrying after {RetryDelayText(retryDelayMs)}.",
+                                    $"Connect+Login failed on attempt {attempt}/{maxAttempts}. Disconnected chip {chip}. Retrying after {RetryDelayText(retryDelayMs)}.",
                                     "Warn", firmwareVersion);
-                                AppLog.Info($"Connect+Login failed for {macAddress} (attempt {attempt}/{maxAttempts}). Login detail: {loginResult.Message}. Disconnected {ChipLabel(chip, macAddress)}; retrying after {RetryDelayText(retryDelayMs)}.");
+                                AppLog.Info($"Connect+Login failed for {macAddress} (attempt {attempt}/{maxAttempts}). Login detail: {loginResult.Message}. Disconnected chip {chip}; retrying after {RetryDelayText(retryDelayMs)}.");
                             }
                             else
                             {
@@ -587,9 +587,9 @@ namespace AccessAPP.Services
                         await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, chip).ConfigureAwait(false);
 
                         UpgradeLogger.Log(logId, macAddress,
-                            $"Connect+Login timeout on attempt {attempt}/{maxAttempts}. Disconnected {ChipLabel(chip, macAddress)}. Retrying after {RetryDelayText(retryDelayMs)}.",
+                            $"Connect+Login timeout on attempt {attempt}/{maxAttempts}. Disconnected chip {chip}. Retrying after {RetryDelayText(retryDelayMs)}.",
                             "Warn", firmwareVersion);
-                        AppLog.Info($"Connect+Login timeout for {macAddress} (attempt {attempt}/{maxAttempts}). Disconnected {ChipLabel(chip, macAddress)}; retrying after {RetryDelayText(retryDelayMs)}.");
+                        AppLog.Info($"Connect+Login timeout for {macAddress} (attempt {attempt}/{maxAttempts}). Disconnected chip {chip}; retrying after {RetryDelayText(retryDelayMs)}.");
                     }
                     else
                     {
@@ -615,9 +615,9 @@ namespace AccessAPP.Services
                     if (touchedGateway)
                     {
                         UpgradeLogger.Log(logId, macAddress,
-                            $"Connect+Login exception on attempt {attempt}/{maxAttempts}. Disconnected {ChipLabel(chip, macAddress)}. Retrying after {RetryDelayText(retryDelayMs)}.",
+                            $"Connect+Login exception on attempt {attempt}/{maxAttempts}. Disconnected chip {chip}. Retrying after {RetryDelayText(retryDelayMs)}.",
                             "Warn", firmwareVersion);
-                        AppLog.Info($"Connect+Login exception for {macAddress} (attempt {attempt}/{maxAttempts}). Disconnected {ChipLabel(chip, macAddress)}; retrying after {RetryDelayText(retryDelayMs)}.");
+                        AppLog.Info($"Connect+Login exception for {macAddress} (attempt {attempt}/{maxAttempts}). Disconnected chip {chip}; retrying after {RetryDelayText(retryDelayMs)}.");
                     }
                     else
                     {
@@ -644,9 +644,9 @@ namespace AccessAPP.Services
             await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, finalChip).ConfigureAwait(false);
 
             UpgradeLogger.Log(logId, macAddress,
-                $"All Connect+Login attempts failed. Disconnected {ChipLabel(finalChip, macAddress)}.",
+                $"All Connect+Login attempts failed. Disconnected chip {finalChip}.",
                 "Warn", firmwareVersion);
-            AppLog.Info($"All Connect+Login attempts failed for {macAddress}. Disconnected {ChipLabel(finalChip, macAddress)}.");
+            AppLog.Info($"All Connect+Login attempts failed for {macAddress}. Disconnected chip {finalChip}.");
 
             return new ConnectLoginResult
             {
@@ -802,16 +802,6 @@ namespace AccessAPP.Services
 
             return (false, last, lastMsg);
         }
-
-        /// <summary>
-        /// Returns a log-friendly label for the BLE interface used for <paramref name="macAddress"/>.
-        /// Cassia backend: "chip 1" (gateway chip index).
-        /// Linux-native backend: the HCI adapter name, e.g. "hci1".
-        /// </summary>
-        private static string ChipLabel(int chip, string macAddress) =>
-            RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase)
-                ? LinuxBle.BlueZHelpers.GetDeviceAdapter(macAddress)
-                : $"chip {chip}";
 
     }
 }
