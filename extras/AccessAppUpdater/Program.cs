@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using static System.Net.WebRequestMethods;
+using File = System.IO.File;
 
 internal static class Program
 {
@@ -144,7 +145,7 @@ internal static class Program
         InstallInitDScript(cfg, configPath);
 
         Log("Setup completed.");
-        Log("Next: /etc/init.d/AccessApp start");
+        Log("Next: /etc/init.d/accessapp start");
         return cfg;
     }
 
@@ -164,7 +165,7 @@ internal static class Program
         // Write /etc/init.d/AccessApp script that:
         // - On first start (AccessAPP missing), runs updater then starts AccessAPP.
         // - On subsequent starts, just starts AccessAPP.
-        var initPath = "/etc/init.d/AccessApp";
+        var initPath = "/etc/init.d/accessapp";
         var updaterPath = Environment.ProcessPath ?? "/usr/local/bin/AccessAppUpdater";
         var appPath = Path.Combine(cfg.InstallDir, cfg.ExecutableName);
 
@@ -224,7 +225,7 @@ case ""$1"" in
     status_app
     ;;
   *)
-    echo ""Usage: /etc/init.d/AccessApp {{start|stop|restart|status}}""
+    echo ""Usage: /etc/init.d/accessapp {{start|stop|restart|status}}""
     exit 1
     ;;
 esac
@@ -235,7 +236,7 @@ exit 0
         TryChmodX(initPath);
 
         // Enable autostart (Debian/Ubuntu). Ignore errors if unavailable.
-        TryRun("update-rc.d", "AccessApp defaults");
+        TryRun("update-rc.d", "accessapp defaults");
         TryRun("systemctl", "daemon-reload");
         Log($"Installed init.d script: {initPath}");
     }

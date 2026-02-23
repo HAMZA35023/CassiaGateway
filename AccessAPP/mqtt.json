@@ -5,7 +5,7 @@
   "port": 8883,
   "useTls": true,
   "username": "accessapp",
-  "password": "Niko1234",
+  "password": "Niko1234!",
   "baseTopic": "accessapp",
   "keepAliveSeconds": 30,
   "reconnectDelaySeconds": 10,
