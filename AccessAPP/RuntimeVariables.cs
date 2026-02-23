@@ -212,12 +212,12 @@ namespace AccessAPP
 
         // Linux native BLE: HCI adapter name exposed by BlueZ (e.g. "hci0", "hci1").
         // Used as the default adapter for connections and as the fallback when LINUX_BLE_ADAPTERS is empty.
-        public static string LINUX_BLE_ADAPTER = "hci1";
+        public static string LINUX_BLE_ADAPTER = "hci0";
 
         // Linux native BLE: comma-separated list of HCI adapters to scan simultaneously (e.g. "hci0,hci1").
         // When non-empty this overrides LINUX_BLE_ADAPTER for scanning; LINUX_BLE_ADAPTER is still used
         // as the fallback for connection if no per-device adapter has been recorded by the scanner.
-        public static string LINUX_BLE_ADAPTERS = "hci1,hci2";
+        public static string LINUX_BLE_ADAPTERS = "hci0";
 
         /// <summary>
         /// Returns the effective HCI adapter list for scanning.
