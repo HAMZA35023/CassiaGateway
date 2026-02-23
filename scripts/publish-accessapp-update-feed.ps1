@@ -367,6 +367,7 @@ try {
         Write-Log "Update feed published successfully."
         Write-Log "Version: $resultVersion"
         Write-Log "Manifest: $(Join-Path (Join-Path $WebRoot $Channel) $ManifestFileName)"
+        $resultVersion = $resultVersion | Select-Object -First 1
         Send-SmsNotification -Message ("Build {0} {1} published" -f $Channel, $resultVersion)
         Send-CompletionNotification -Message ("Build {0} {1} published" -f $Channel, $resultVersion)
         $scriptExitCode = 0
@@ -461,6 +462,7 @@ try {
                     $built.Add("$branch->$targetChannel ($builtVersion)") | Out-Null
                     Write-Log "Build completed for '$branch' -> '$targetChannel'."
                     if (-not $SmsSummaryOnly) {
+                        $builtVersion = $builtVersion | Select-Object -First 1
                         Send-SmsNotification -Message ("Build {0} {1} published" -f $branch, $builtVersion)
                     }
                 }
