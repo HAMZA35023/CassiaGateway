@@ -162,21 +162,22 @@ internal static class Program
 
     private static void InstallInitDScript(UpdaterConfig cfg, string configPath)
     {
-        // Write /etc/init.d/AccessApp script that:
-        // - On first start (AccessAPP missing), runs updater then starts AccessAPP.
-        // - On subsequent starts, just starts AccessAPP.
+        // Write /etc/init.d/accessapp script that:
+        // - Always runs updater before starting AccessAPP (so service restarts/boots can update too).
+        // - Uses an explicit PATH so start-stop-daemon is found even with a restricted root PATH.
         var initPath = "/etc/init.d/accessapp";
         var updaterPath = Environment.ProcessPath ?? "/usr/local/bin/AccessAppUpdater";
         var appPath = Path.Combine(cfg.InstallDir, cfg.ExecutableName);
 
         var script = $@"#!/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ### BEGIN INIT INFO
 # Provides:          AccessApp
 # Required-Start:    $remote_fs $syslog $network
 # Required-Stop:     $remote_fs $syslog $network
 # Default-Start:     2 3 4 5
 # Default-Stop:      0 1 6
-# Short-Description: AccessAPP with first-run auto-update
+# Short-Description: AccessAPP with auto-update before start
 ### END INIT INFO
 
 NAME=AccessApp
@@ -186,10 +187,8 @@ CONFIG=""{configPath}""
 PIDFILE=/var/run/accessapp.pid
 
 start_app() {{
-  if [ ! -x ""$APP"" ]; then
-    echo ""[init] AccessAPP not found. Running updater...""
-    ""$UPDATER"" --config ""$CONFIG"" || exit 1
-  fi
+  echo ""[init] Running updater...""
+  ""$UPDATER"" --config ""$CONFIG"" || exit 1
 
   echo ""[init] Starting AccessAPP...""
   start-stop-daemon --start --background --make-pidfile --pidfile ""$PIDFILE"" --chdir ""{cfg.InstallDir}"" --exec ""$APP""
