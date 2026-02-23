@@ -213,6 +213,27 @@ public class LinuxBleNotificationService : IBleNotificationService
                 startSw.Stop();
                 _logger.LogWarning("LinuxBLE Notify: EnsureNotifying {Mac} — StartNotify timed out after {Ms}ms (10 s limit) — proceeding without notify; will retry on next connect", macAddress, startSw.ElapsedMilliseconds);
             }
+            catch (Tmds.DBus.DBusException dbex) when (dbex.ErrorName == "org.bluez.Error.InProgress")
+            {
+                // BlueZ still has Notifying=True from a previous session where the device
+                // disconnected before StopNotifyAsync() could clear CCCD on the device side.
+                // The device reset its CCCD on disconnect, so BlueZ's state is stale.
+                // Cycle StopNotify→StartNotify to resync so CCCD is re-written to the device.
+                startSw.Stop();
+                _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — StartNotify InProgress after {Ms}ms; cycling StopNotify→StartNotify to reset stale CCCD", macAddress, startSw.ElapsedMilliseconds);
+                try
+                {
+                    using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                    await characteristic.StopNotifyAsync().WaitAsync(stopCts.Token).ConfigureAwait(false);
+                    using var restartCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                    await characteristic.StartNotifyAsync().WaitAsync(restartCts.Token).ConfigureAwait(false);
+                    _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — StopNotify→StartNotify cycle OK", macAddress);
+                }
+                catch (Exception cycleEx)
+                {
+                    _logger.LogWarning(cycleEx, "LinuxBLE Notify: EnsureNotifying {Mac} — StopNotify→StartNotify cycle failed; notifications may not arrive", macAddress);
+                }
+            }
             catch (Exception ex)
             {
                 startSw.Stop();

@@ -82,7 +82,6 @@ namespace AccessAPP.Services
         /// </summary>
         private bool CheckIfDeviceInBootModeLinux(string nodeMac)
         {
-            const string bootUuid = "00060001-f8ce-11e4-abf4-0002a5d5c51b";
             var devicePath = BlueZHelpers.DevicePath(BlueZHelpers.GetDeviceAdapter(nodeMac), nodeMac);
 
             var maxAttempts = Math.Max(1, RuntimeVariables.BOOTMODE_RETRY_COUNT);
@@ -92,34 +91,17 @@ namespace AccessAPP.Services
             {
                 try
                 {
-                    // GetManagedObjectsAsync() can hang indefinitely when BlueZ is busy
-                    // (post-firmware-reboot, cold start). Since this method is called
-                    // synchronously from ConnectAndLoginWithRetryAsync, the outer
-                    // CancellationToken cannot interrupt a blocking .GetAwaiter().GetResult().
-                    // Cap the D-Bus call at 5 seconds so the retry loop can proceed.
+                    // Use DetectModeByGattAsync which checks _modeCache first.
+                    // ConnectToBleDevice pre-warms _modeCache with DetectModeByGattAsync
+                    // before returning, so on the common path this is an instant cache hit
+                    // with zero D-Bus calls — no delay between connect and login.
+                    // On cache miss (e.g. ServicesResolved timed out during connect) it
+                    // falls back to a full GATT scan bounded by a 5-second timeout.
                     using var bootCheckCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                    var objects = BlueZHelpers.GetManagedObjectsSafeAsync(bootCheckCts.Token)
+                    var mode = BlueZHelpers.DetectModeByGattAsync(devicePath, bootCheckCts.Token)
                         .WaitAsync(bootCheckCts.Token).GetAwaiter().GetResult();
 
-                    bool found = false;
-                    foreach (var (path, interfaces) in objects)
-                    {
-                        if (!path.ToString().StartsWith(devicePath, StringComparison.OrdinalIgnoreCase)) continue;
-                        if (!interfaces.TryGetValue("org.bluez.GattCharacteristic1", out var charProps)) continue;
-                        if (charProps.TryGetValue("UUID", out var uuidObj) && uuidObj is string uuid &&
-                            uuid.Equals(bootUuid, StringComparison.OrdinalIgnoreCase))
-                        {
-                            found = true;
-                            break;
-                        }
-                    }
-
-                    if (found) return true;
-
-                    // Boot UUID not found — device is in application mode (not bootloader).
-                    // Return immediately; the outer loop in DeviceUpgrade.cs handles waiting
-                    // between JumpToBootloader and the next check.
-                    return false;
+                    return mode == BlueZHelpers.BleMode.Bootloader;
                 }
                 catch (Exception ex) when (attempt < maxAttempts)
                 {
