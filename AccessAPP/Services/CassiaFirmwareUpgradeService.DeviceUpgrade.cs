@@ -921,31 +921,39 @@ foreach (var s in ordered)
             string DetectorType,
             string FirmwareVersion,
             string logId,
-            string? pincode = null) // should be moved to firmware services
+            string? pincode = null, // should be moved to firmware services
+            bool skipInitialConnect = false)
         {
             AppLog.Info($"Processing Sensor Upgrade started->{nodeMac}");
 var response = new ServiceResponse();
 
-            var connProbe = await ConnectOnlyWithRetryAsync(
-                maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
-                delayMs: 5000,
-                stageName: "Connected (ProcessingSensorUpgrade probe)",
-                logSuccess: false,
-                macAddress: nodeMac,
-                FirmwareVersion: FirmwareVersion,
-                logId: logId,
-                discoverGattOverride: RuntimeVariables.UPGRADE_CONNECT_DISCOVER_GATT_AFTER_BOOT_JUMP < 0
-                    ? null
-                    : (RuntimeVariables.UPGRADE_CONNECT_DISCOVER_GATT_AFTER_BOOT_JUMP <= 0 ? 0 : 1)
-                ).ConfigureAwait(false);
-
-            if (!connProbe.ok)
+            if (!skipInitialConnect)
             {
-                UpgradeLogger.Log(logId, nodeMac, "Connected", "Failed", FirmwareVersion);
-                response.Success = false;
-                response.StatusCode = (int)(connProbe.code == 0 ? HttpStatusCode.ServiceUnavailable : connProbe.code);
-                response.Message = "Failed to connect to device.";
-                return response;
+                var connProbe = await ConnectOnlyWithRetryAsync(
+                    maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
+                    delayMs: 5000,
+                    stageName: "Connected (ProcessingSensorUpgrade probe)",
+                    logSuccess: false,
+                    macAddress: nodeMac,
+                    FirmwareVersion: FirmwareVersion,
+                    logId: logId,
+                    discoverGattOverride: RuntimeVariables.UPGRADE_CONNECT_DISCOVER_GATT_AFTER_BOOT_JUMP < 0
+                        ? null
+                        : (RuntimeVariables.UPGRADE_CONNECT_DISCOVER_GATT_AFTER_BOOT_JUMP <= 0 ? 0 : 1)
+                    ).ConfigureAwait(false);
+
+                if (!connProbe.ok)
+                {
+                    UpgradeLogger.Log(logId, nodeMac, "Connected", "Failed", FirmwareVersion);
+                    response.Success = false;
+                    response.StatusCode = (int)(connProbe.code == 0 ? HttpStatusCode.ServiceUnavailable : connProbe.code);
+                    response.Message = "Failed to connect to device.";
+                    return response;
+                }
+            }
+            else
+            {
+                AppLog.Info($"ProcessingSensorUpgrade: skipping connect probe for {nodeMac} (already connected from caller).");
             }
 
 

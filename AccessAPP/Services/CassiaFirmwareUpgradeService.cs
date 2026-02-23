@@ -856,7 +856,11 @@ return true;
 UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
                 await Task.Delay(3000);
 
-                return await ProcessingSensorUpgrade(nodeMac, bActor, isBootloader, DetectorType, FirmwareVersion, logId, pincode);
+                // Device is already connected by the caller above — skip the redundant reconnect
+                // inside ProcessingSensorUpgrade. Reconnecting would disconnect the working
+                // BlueZ link and then fail to re-establish it (bootloader device not immediately
+                // ready for a new connection attempt).
+                return await ProcessingSensorUpgrade(nodeMac, bActor, isBootloader, DetectorType, FirmwareVersion, logId, pincode, skipInitialConnect: true);
             }
 
             // ----------------------------
