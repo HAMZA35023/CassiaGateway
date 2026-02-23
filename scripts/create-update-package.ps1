@@ -21,30 +21,6 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-function New-BuildInfo {
-    param(
-        [Parameter(Mandatory=$true)][string]$Url,
-        [Parameter(Mandatory=$true)][string]$Sha256,
-        [Parameter(Mandatory=$true)][long]$SizeBytes,
-        [Parameter(Mandatory=$true)][string]$PublishedAtUtc
-    )
-    return @{
-        url = $Url
-        sha256 = $Sha256
-        sizeBytes = $SizeBytes
-        publishedAtUtc = $PublishedAtUtc
-    }
-}
-
-function Ensure-Hashtable([object]$obj) {
-    if ($null -eq $obj) { return @{} }
-    if ($obj -is [hashtable]) { return $obj }
-    # Convert PSCustomObject / OrderedDictionary -> hashtable
-    $ht = @{}
-    foreach ($p in $obj.PSObject.Properties) { $ht[$p.Name] = $p.Value }
-    return $ht
-}
-
 if (-not (Test-Path $PublishDir)) {
     throw "PublishDir not found: $PublishDir"
 }
@@ -53,7 +29,6 @@ $publishFull = (Resolve-Path $PublishDir).Path
 $outputFull = [System.IO.Path]::GetFullPath($OutputDir)
 New-Item -ItemType Directory -Path $outputFull -Force | Out-Null
 
-# Keep ARM naming identical for backwards compatibility
 $zipName = "$AppName-$Version-$RuntimeTag.zip"
 $zipPath = Join-Path $outputFull $zipName
 
@@ -88,7 +63,10 @@ try {
         if ([string]::IsNullOrWhiteSpace($candidate)) {
             foreach ($name in @("7z", "7za", "7zz")) {
                 $cmd = Get-Command $name -ErrorAction SilentlyContinue
-                if ($cmd) { $candidate = $cmd.Source; break }
+                if ($cmd) {
+                    $candidate = $cmd.Source
+                    break
+                }
             }
         }
         if ([string]::IsNullOrWhiteSpace($candidate)) {
@@ -96,7 +74,12 @@ try {
                 "C:\Program Files\7-Zip\7z.exe",
                 "C:\Program Files (x86)\7-Zip\7z.exe"
             )
-            foreach ($p in $common7z) { if (Test-Path $p) { $candidate = $p; break } }
+            foreach ($p in $common7z) {
+                if (Test-Path $p) {
+                    $candidate = $p
+                    break
+                }
+            }
         }
 
         if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path $candidate)) {
@@ -116,32 +99,33 @@ try {
         Push-Location $tempRoot
         try {
             $zipTarget = [System.IO.Path]::GetFullPath($zipPath)
+            # Use standard ZIP + Deflate for maximum compatibility with Linux/.NET unzip.
             & $SevenZipPath a -tzip -mm=Deflate -mx=9 -mfb=258 -mpass=15 $zipTarget ".\*" | Out-Host
-            if ($LASTEXITCODE -ne 0) { throw "7-Zip failed with exit code $LASTEXITCODE" }
+            if ($LASTEXITCODE -ne 0) {
+                throw "7-Zip failed with exit code $LASTEXITCODE"
+            }
         }
-        finally { Pop-Location }
+        finally {
+            Pop-Location
+        }
     }
     else {
         $zipStream = [System.IO.File]::Open($zipPath, [System.IO.FileMode]::CreateNew)
         try {
-            $archive = New-Object System.IO.Compression.ZipArchive($zipStream, [System.IO.Compression.ZipArchiveMode]::Create, $false)
+            $archive = [System.IO.Compression.ZipArchive]::new($zipStream, [System.IO.Compression.ZipArchiveMode]::Create, $false)
             try {
-                $files = Get-ChildItem -Path $tempRoot -Recurse -File
-                foreach ($file in $files) {
-                    $rel = $file.FullName.Substring($tempRoot.Length).TrimStart("\","/")
-                    $entry = $archive.CreateEntry($rel, $resolvedCompression)
-                    $inStream = [System.IO.File]::OpenRead($file.FullName)
-                    try {
-                        $outStream = $entry.Open()
-                        try { $inStream.CopyTo($outStream) }
-                        finally { $outStream.Dispose() }
-                    }
-                    finally { $inStream.Dispose() }
+                Get-ChildItem -Path $tempRoot -Recurse -File | ForEach-Object {
+                    $entryName = $_.FullName.Substring($tempRoot.Length).TrimStart('\', '/') -replace '\\', '/'
+                    [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $_.FullName, $entryName, $resolvedCompression) | Out-Null
                 }
             }
-            finally { $archive.Dispose() }
+            finally {
+                $archive.Dispose()
+            }
         }
-        finally { $zipStream.Dispose() }
+        finally {
+            $zipStream.Dispose()
+        }
     }
 
     $hash = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -151,103 +135,176 @@ try {
     $trimmedBase = $BaseUrl.TrimEnd("/")
     $zipUrl = "$trimmedBase/$zipName"
 
-    # Load existing manifest (so we can merge multi-arch builds)
+    # IMPORTANT: Use plain hashtables (not [ordered]) to avoid duplicate-key
+    # exceptions on some PowerShell/.NET combinations when keys differ only by case
+    # (e.g. legacy manifests created with 'Version' vs 'version').
+    $artifact = @{
+            runtime = $RuntimeTag
+            url = $zipUrl
+            sha256 = $hash
+            sizeBytes = $size
+            publishedAtUtc = $publishedAt
+        }
+
     $manifestPath = Join-Path $outputFull $ManifestFileName
+
+    function ConvertTo-HashtableDeep {
+        param([object]$Obj)
+        if ($null -eq $Obj) { return $null }
+        if ($Obj -is [System.Collections.IDictionary]) {
+            $h = @{}
+            foreach ($k in $Obj.Keys) { $h[$k] = ConvertTo-HashtableDeep $Obj[$k] }
+            return $h
+        }
+        if ($Obj -is [System.Collections.IEnumerable] -and -not ($Obj -is [string])) {
+            $list = @()
+            foreach ($item in $Obj) { $list += ,(ConvertTo-HashtableDeep $item) }
+            return $list
+        }
+        if ($Obj -is [pscustomobject]) {
+            $h = @{}
+            foreach ($p in $Obj.PSObject.Properties) { $h[$p.Name] = ConvertTo-HashtableDeep $p.Value }
+            return $h
+        }
+        return $Obj
+    }
+
     $manifest = $null
     if (Test-Path $manifestPath) {
-        try { $manifest = Get-Content -Raw -Path $manifestPath | ConvertFrom-Json -ErrorAction Stop }
-        catch { $manifest = $null }
-    }
-
-    $m = @{}
-    if ($null -ne $manifest) { $m = Ensure-Hashtable $manifest }
-    if (-not $m.ContainsKey("app")) { $m["app"] = $AppName }
-    $m["channel"] = $Channel
-    $m["generatedAtUtc"] = $publishedAt
-
-    # latest
-    $latest = Ensure-Hashtable $m["latest"]
-    $latest["version"] = $Version
-    $latest["channel"] = $Channel
-    $latest["publishedAtUtc"] = $publishedAt
-
-    # Backwards compatibility fields (ARM only)
-    if ($RuntimeTag -eq "linux-arm") {
-        $latest["url"] = $zipUrl
-        $latest["sha256"] = $hash
-        $latest["sizeBytes"] = [long]$size
-    }
-    elseif (-not $latest.ContainsKey("url")) {
-        # Do not overwrite legacy url/sha256/sizeBytes from ARM publish
-    }
-
-    # builds
-    $builds = Ensure-Hashtable $latest["builds"]
-    $builds[$RuntimeTag] = (New-BuildInfo -Url $zipUrl -Sha256 $hash -SizeBytes ([long]$size) -PublishedAtUtc $publishedAt)
-    $latest["builds"] = $builds
-    $m["latest"] = $latest
-
-    # releases
-    $releases = @()
-    if ($m.ContainsKey("releases") -and $null -ne $m["releases"]) {
-        $releases = @($m["releases"])
-    }
-
-    $found = $false
-    for ($i=0; $i -lt $releases.Count; $i++) {
-        $r = $releases[$i]
-        $rh = Ensure-Hashtable $r
-        if ($rh["version"] -eq $Version) {
-            $rh["channel"] = $Channel
-            if (-not $rh.ContainsKey("publishedAtUtc")) { $rh["publishedAtUtc"] = $publishedAt }
-
-            if ($RuntimeTag -eq "linux-arm") {
-                $rh["url"] = $zipUrl
-                $rh["sha256"] = $hash
-                $rh["sizeBytes"] = [long]$size
-            }
-
-            $rb = Ensure-Hashtable $rh["builds"]
-            $rb[$RuntimeTag] = (New-BuildInfo -Url $zipUrl -Sha256 $hash -SizeBytes ([long]$size) -PublishedAtUtc $publishedAt)
-            $rh["builds"] = $rb
-
-            $releases[$i] = $rh
-            $found = $true
-            break
+        try {
+            $existingObj = Get-Content -Path $manifestPath -Raw | ConvertFrom-Json
+            $manifest = ConvertTo-HashtableDeep $existingObj
+        }
+        catch {
+            Write-Warning "Existing manifest could not be parsed. It will be overwritten: $manifestPath"
+            $manifest = $null
         }
     }
 
-    if (-not $found) {
-        $rh = @{
+    if (-not $manifest) {
+        $manifest = @{
+            app = $AppName
+            channel = $Channel
+            generatedAtUtc = $publishedAt
+            latest = @{
+                version = $Version
+                channel = $Channel
+                # Legacy fields (for older updaters). We keep linux-arm here when available.
+                url = $zipUrl
+                sha256 = $hash
+                sizeBytes = $size
+                publishedAtUtc = $publishedAt
+                builds = @{}
+            }
+            releases = @()
+        }
+    }
+
+    # Ensure latest exists
+    if (-not $manifest.Contains("latest") -or -not $manifest.latest) {
+        $manifest.latest = @{
+            version = $Version
+            channel = $Channel
+            builds = @{}
+        }
+    }
+
+    # Normalize legacy manifest into builds (assume linux-arm when only legacy fields exist)
+    if (-not $manifest.latest.Contains("builds") -or -not $manifest.latest.builds) {
+        $manifest.latest.builds = @{}
+    }
+    if ($manifest.latest.Contains("url") -and -not $manifest.latest.builds.Contains("linux-arm")) {
+        $manifest.latest.builds["linux-arm"] = @{
+            runtime = "linux-arm"
+            url = $manifest.latest.url
+            sha256 = $manifest.latest.sha256
+            sizeBytes = $manifest.latest.sizeBytes
+            publishedAtUtc = $manifest.latest.publishedAtUtc
+        }
+    }
+
+    $manifest.app = $AppName
+    $manifest.channel = $Channel
+    $manifest.generatedAtUtc = $publishedAt
+
+    # Update latest
+    $manifest.latest.version = $Version
+    $manifest.latest.channel = $Channel
+    $manifest.latest.publishedAtUtc = $publishedAt
+    $manifest.latest.builds[$RuntimeTag] = $artifact
+
+    # Keep legacy top-level latest fields pointing to linux-arm if available, otherwise current runtime.
+    $legacyKey = "linux-arm"
+    if (-not $manifest.latest.builds.Contains($legacyKey)) {
+        $legacyKey = $RuntimeTag
+    }
+    $legacy = $manifest.latest.builds[$legacyKey]
+    $manifest.latest.url = $legacy.url
+    $manifest.latest.sha256 = $legacy.sha256
+    $manifest.latest.sizeBytes = $legacy.sizeBytes
+
+    # Update releases
+    if (-not $manifest.Contains("releases") -or -not $manifest.releases) {
+        $manifest.releases = @()
+    }
+
+    $release = $null
+    foreach ($r in $manifest.releases) {
+        if ($r.version -eq $Version) { $release = $r; break }
+    }
+    if (-not $release) {
+        $release = @{
             version = $Version
             channel = $Channel
             publishedAtUtc = $publishedAt
-            builds = @{
-                $RuntimeTag = (New-BuildInfo -Url $zipUrl -Sha256 $hash -SizeBytes ([long]$size) -PublishedAtUtc $publishedAt)
-            }
+            url = $zipUrl
+            sha256 = $hash
+            sizeBytes = $size
+            builds = @{}
         }
-        if ($RuntimeTag -eq "linux-arm") {
-            $rh["url"] = $zipUrl
-            $rh["sha256"] = $hash
-            $rh["sizeBytes"] = [long]$size
-        }
-        $releases = @($rh) + @($releases)
+        $manifest.releases += $release
     }
 
-    $m["releases"] = $releases
+    if (-not $release.Contains("builds") -or -not $release.builds) { $release.builds = @{} }
+    if ($release.Contains("url") -and -not $release.builds.Contains("linux-arm")) {
+        $release.builds["linux-arm"] = @{
+            runtime = "linux-arm"
+            url = $release.url
+            sha256 = $release.sha256
+            sizeBytes = $release.sizeBytes
+            publishedAtUtc = $release.publishedAtUtc
+        }
+    }
+    $release.channel = $Channel
+    $release.publishedAtUtc = $publishedAt
+    $release.builds[$RuntimeTag] = $artifact
 
-    $m | ConvertTo-Json -Depth 20 | Set-Content -Path $manifestPath -Encoding UTF8
+    # Keep legacy fields for the release as linux-arm if available.
+    $legacyKey2 = "linux-arm"
+    if (-not $release.builds.Contains($legacyKey2)) { $legacyKey2 = $RuntimeTag }
+    $legacy2 = $release.builds[$legacyKey2]
+    $release.url = $legacy2.url
+    $release.sha256 = $legacy2.sha256
+    $release.sizeBytes = $legacy2.sizeBytes
+
+    # Sort releases newest first
+    $manifest.releases = @(
+        $manifest.releases | Sort-Object -Property @{Expression = { $_.version }; Descending = $true}, @{Expression = { $_.publishedAtUtc }; Descending = $true}
+    )
+
+    $manifest | ConvertTo-Json -Depth 20 | Set-Content -Path $manifestPath -Encoding UTF8
 
     Write-Host "Update package created:"
     Write-Host "  Zip      : $zipPath"
     Write-Host "  Manifest : $manifestPath"
     Write-Host "  Version  : $Version"
-    Write-Host "  Runtime  : $RuntimeTag"
     Write-Host "  Compress : $CompressionLevel"
     Write-Host "  Symbols  : $(if ($StripSymbols) { 'stripped' } else { 'kept' })"
     Write-Host "  SHA256   : $hash"
     Write-Host "  URL      : $zipUrl"
 }
 finally {
-    if (Test-Path $tempRoot) { Remove-Item -Path $tempRoot -Recurse -Force }
+    if (Test-Path $tempRoot) {
+        Remove-Item -Path $tempRoot -Recurse -Force
+    }
 }
