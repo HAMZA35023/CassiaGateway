@@ -24,7 +24,7 @@ public static class UpgradeLogger
     private const int UpgradeLogQos = 1; // deliver-at-least-once for upgrade-log messages
 
     private static readonly object _lock = new object();
-    private static readonly string LogDir = Path.Combine(AppContext.BaseDirectory, "Logs");
+    private static readonly string LogDir = "/etc/accessapp/logs";
     private static readonly string LogFilePath = Path.Combine(LogDir, "upgrade_logs.txt");
 
     // ---- MQTT wiring (set these from your app at startup) ----

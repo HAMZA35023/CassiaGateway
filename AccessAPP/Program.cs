@@ -49,6 +49,11 @@ NativeLibrary.SetDllImportResolver(typeof(Bootloader_Utils).Assembly,
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Migrate persistent files from old base-directory location to /etc/accessapp/ on first run after update.
+MigrateToEtc(Path.Combine(builder.Environment.ContentRootPath, "mqtt.json"), "/etc/accessapp/mqtt.json");
+MigrateToEtc(Path.Combine(builder.Environment.ContentRootPath, "runtime.json"), "/etc/accessapp/runtime.json");
+MigrateToEtc(Path.Combine(builder.Environment.ContentRootPath, "Logs", "upgrade_logs.txt"), "/etc/accessapp/logs/upgrade_logs.txt");
+
 LoggingBootstrapper.TryConfigureSerilog(builder);
 
 // Add services to the container.
@@ -616,4 +621,19 @@ app.Lifetime.ApplicationStopping.Register(() =>
 
 app.Run();
 
+static void MigrateToEtc(string oldPath, string newPath)
+{
+    if (!File.Exists(oldPath) || File.Exists(newPath))
+        return;
+    try
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(newPath)!);
+        File.Move(oldPath, newPath);
+        Console.WriteLine($"[info] Migrated {oldPath} -> {newPath}");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[warn] Could not migrate {oldPath}: {ex.Message}");
+    }
+}
 

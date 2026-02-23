@@ -880,9 +880,7 @@ await Task.Delay(500); // Small delay before retrying
         {
             try
             {
-                var currentDir = Directory.GetCurrentDirectory();
-                AppLog.Debug("Current Directory: " + currentDir);
-var logPath = Path.Combine(currentDir, "Logs", "upgrade_logs.txt");
+                var logPath = "/etc/accessapp/logs/upgrade_logs.txt";
 
                 if (!System.IO.File.Exists(logPath))
                 {

@@ -709,7 +709,7 @@ internal sealed class UpdaterConfig
 
     public int HttpTimeoutSeconds { get; set; } = 600;
 
-    public List<string> PreserveFiles { get; set; } = new() { "mqtt.json" };
+    public List<string> PreserveFiles { get; set; } = new();
 
     public List<string> ExecutableRelativePathsToChmodX { get; set; } = new() { "AccessAPP", "libBootloaderUtilMultiThread.so" };
 }

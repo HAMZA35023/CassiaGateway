@@ -1795,9 +1795,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 if (string.Equals(command, "clear-upgrade-log", StringComparison.OrdinalIgnoreCase))
             {
                 AppLog.Debug("HandleCommandAsync: dispatch clear-upgrade-log");
-                var currentDir = Directory.GetCurrentDirectory();
-                AppLog.Debug("Current Directory: " + currentDir);
-var logPath = Path.Combine(currentDir, "Logs", "upgrade_logs.txt");
+                var logPath = "/etc/accessapp/logs/upgrade_logs.txt";
 
                 if (!System.IO.File.Exists(logPath))
                 {
