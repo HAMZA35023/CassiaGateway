@@ -80,8 +80,35 @@ public class LinuxBleNotificationService : IBleNotificationService
     public void Unsubscribe(string macAddress)
     {
         _handlers.TryRemove(macAddress, out _);
-        _logger.LogDebug("LinuxBLE Notify: Unsubscribe(all) {Mac} — calling StopNotify", macAddress);
-        _ = StopNotifyingAsync(macAddress);
+        _logger.LogDebug("LinuxBLE Notify: Unsubscribe(all) {Mac} — clearing handlers and D-Bus subscription", macAddress);
+
+        // IMPORTANT: Dispose the D-Bus WatchProperties subscription SYNCHRONOUSLY here.
+        //
+        // Background: InitializeNotificationSubscription (firmware upload) calls:
+        //   1. Unsubscribe(mac)      ← clears old state
+        //   2. Subscribe(mac, handler) ← registers new handler, fires EnsureNotifyingAsync
+        //
+        // If we fire StopNotifyingAsync as a background task (fire-and-forget), there is a
+        // race with EnsureNotifyingAsync:
+        //   - EnsureNotifyingAsync sees _notifySubscriptions.ContainsKey(mac) = true (stale
+        //     entry from a prior session, e.g. actor firmware upload) and returns early.
+        //   - StopNotifyingAsync then runs, calls sub.Dispose() — killing the D-Bus
+        //     WatchPropertiesAsync callback that was still being used for the new session.
+        //   - Result: the FIRST firmware notification arrives (before Dispose), all subsequent
+        //     notifications are silently dropped → firmware upload hangs after chunk 1.
+        //
+        // Fix: remove and dispose synchronously so EnsureNotifyingAsync always sees
+        // ContainsKey = false and re-creates the subscription cleanly.
+        //
+        // StopNotifyAsync() (BlueZ CCCD disable) is intentionally skipped: on device
+        // disconnect BlueZ tears down CCCD automatically; on re-subscribe EnsureNotifyingAsync
+        // will call StartNotifyAsync() again.
+        if (_notifySubscriptions.TryRemove(macAddress, out var sub))
+        {
+            _notifyCharacteristics.TryRemove(macAddress, out _);
+            try { sub.Dispose(); } catch { /* ignore — subscription may already be gone */ }
+            _logger.LogDebug("LinuxBLE Notify: Unsubscribe(all) {Mac} — D-Bus WatchProperties disposed synchronously", macAddress);
+        }
     }
 
     // ── Notify management ───────────────────────────────────────────────────

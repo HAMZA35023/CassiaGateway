@@ -290,6 +290,25 @@ public static int GetProgrammingCount()
             return inst is null ? 0 : inst._queue.RemoveFromUpgradeQueue(mac);
         }
 
+        /// <summary>
+        /// Force-remove a MAC from the active in-progress set.
+        /// Use when a previous upgrade task became stuck (e.g. due to a hung D-Bus call before
+        /// the per-call timeout fixes) and the process was not restarted.  Removing the MAC
+        /// here allows a fresh start-update request to proceed.  If the old task eventually
+        /// wakes up it will call TryRemove on a key that no longer exists — which is a safe no-op.
+        /// </summary>
+        public static bool ForceRemoveFromInProgress(string mac)
+        {
+            mac = MacUtils.NormalizeMac(mac);
+            if (string.IsNullOrWhiteSpace(mac)) return false;
+            var inst = _ownInstance;
+            if (inst is null) return false;
+            bool removed = inst._macsInProgress.TryRemove(mac, out _);
+            if (removed)
+                AppLog.Info($"[UPGRADE QUEUE] Force-removed '{mac}' from in-progress set (was stuck).");
+            return removed;
+        }
+
 
 
         private static readonly ConcurrentDictionary<string, object> _macLocks = new();
