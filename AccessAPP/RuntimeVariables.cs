@@ -250,5 +250,12 @@ namespace AccessAPP
         // Linux native BLE: when writing, how long to wait for the characteristic handle to appear after connect (ms).
         public static int LINUX_BLE_WRITE_FIND_CHAR_TIMEOUT_MS = 1500;
 
+        // Linux native BLE: request a shorter BLE connection interval after connecting using btmgmt/hcitool.
+        // Reduces per-packet write latency from ~45 ms to 15–30 ms at the cost of slightly higher radio duty cycle.
+        // WARNING: some device firmware disconnects when it receives a connection parameter update request it does
+        //          not expect (especially during the upgrade login phase).  Disabled by default; enable only after
+        //          confirming the target firmware handles conn-update correctly.
+        public static bool LINUX_BLE_ENABLE_CI_UPDATE = false;
+
     }
 }

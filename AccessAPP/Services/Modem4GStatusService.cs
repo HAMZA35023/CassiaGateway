@@ -81,7 +81,7 @@ public sealed class Modem4GStatusService : IDisposable
             _lastPollUtc = now;
             return _lastSnapshot;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
         }

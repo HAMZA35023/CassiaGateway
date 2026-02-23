@@ -157,9 +157,37 @@ public class LinuxBleConnectionService : IBleConnectionService
             }
 
             // Request shorter connection interval to reduce per-round-trip latency during writes.
-            // Uses btmgmt or hcitool; silently ignored if neither is available or lacks permissions.
-            await BlueZHelpers.TryRequestShortConnectionIntervalAsync(
-                bleAdapter, macAddress, _logger);
+            // Disabled by default (LINUX_BLE_ENABLE_CI_UPDATE=false): btmgmt conn-update can cause
+            // some device firmware to disconnect immediately after receiving the L2CAP/LLCP request.
+            // Enable only after confirming the target firmware handles conn-update without disconnecting.
+            if (RuntimeVariables.LINUX_BLE_ENABLE_CI_UPDATE)
+            {
+                await BlueZHelpers.TryRequestShortConnectionIntervalAsync(
+                    bleAdapter, macAddress, _logger);
+            }
+
+            // Final sanity check: verify the device is still connected before returning success.
+            // btmgmt conn-update and other post-connect operations can trigger an asynchronous
+            // disconnection; catching it here means the caller gets a 503 and can retry cleanly
+            // instead of proceeding into a login that will fail with "Not connected".
+            try
+            {
+                if (!await device.GetAsync<bool>("Connected"))
+                {
+                    _logger.LogWarning(
+                        "LinuxBLE: {Mac} disconnected during post-connect setup — returning error so caller can retry",
+                        macAddress);
+                    BlueZHelpers.ClearConnectedAdapter(macAddress);
+                    return new ResponseModel
+                    {
+                        MacAddress = macAddress,
+                        Status = System.Net.HttpStatusCode.ServiceUnavailable,
+                        Data = "Device disconnected after connect",
+                        Time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                    };
+                }
+            }
+            catch { /* ignore — proceed; write will fail immediately if not connected */ }
 
             return new ResponseModel
             {
@@ -262,6 +290,15 @@ public class LinuxBleConnectionService : IBleConnectionService
                 RuntimeVariables.LINUX_BLE_CONTROL_HANDLE,
                 hexLoginValue, "?noresponse=1", ct: ct);
             writeStatus = writeResp.StatusCode;
+
+            // Fast-fail: if the write returned ServiceUnavailable (org.bluez.Error.Failed: Not connected)
+            // the device has already disconnected.  Return immediately instead of burning the full 8-second
+            // login timeout waiting for a notification that will never arrive.
+            if (writeStatus == HttpStatusCode.ServiceUnavailable)
+            {
+                _logger.LogWarning("LinuxBLE: login write returned Not Connected for {Mac} — aborting login early", macAddress);
+                return MakeLoginTimeout(macAddress, "Login write failed: device not connected.", HttpStatusCode.RequestTimeout, "Canceled");
+            }
 
             using var reg = ct.Register(() => loginResultTask.TrySetCanceled(ct));
 
