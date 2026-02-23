@@ -493,7 +493,8 @@ namespace AccessAPP.Services
                                 var _dp = LinuxBle.BlueZHelpers.DevicePath(
                                     LinuxBle.BlueZHelpers.GetDeviceAdapter(macAddress), macAddress);
                                 var _dev = await LinuxBle.BlueZHelpers.GetDeviceAsync(_dp).ConfigureAwait(false);
-                                servicesReadyForBootCheck = await _dev.GetAsync<bool>("ServicesResolved").ConfigureAwait(false);
+                                using var srCheckCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                                servicesReadyForBootCheck = await _dev.GetAsync<bool>("ServicesResolved").WaitAsync(srCheckCts.Token).ConfigureAwait(false);
                             }
                             catch { servicesReadyForBootCheck = false; }
 

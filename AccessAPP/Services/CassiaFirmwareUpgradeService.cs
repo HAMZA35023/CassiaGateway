@@ -1137,6 +1137,7 @@ await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chi
                 UpgradeLogger.Log(logId, macAddress, "Disconnected at the end of upgrade process", "Info", FirmwareVersion);
                 if (RuntimeVariables.UPGRADE_DELAY_AFTER_END_DISCONNECT_MS > 0)
                     await Task.Delay(RuntimeVariables.UPGRADE_DELAY_AFTER_END_DISCONNECT_MS).ConfigureAwait(false);
+    
             }
         }
 

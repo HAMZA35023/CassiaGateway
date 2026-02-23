@@ -70,6 +70,8 @@ public class LinuxBleReadWriteService : IBleReadWriteService
 
             var timeoutMs = Math.Max(250, RuntimeVariables.LINUX_BLE_WRITE_FIND_CHAR_TIMEOUT_MS);
             var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+            _logger.LogDebug("LinuxBLE Write: {Mac} resolving write char (timeout={Timeout}ms, data={Bytes}b)",
+                macAddress, timeoutMs, hexValue.Length / 2);
 
             while (!ct.IsCancellationRequested && DateTime.UtcNow < deadline)
             {
@@ -84,11 +86,13 @@ public class LinuxBleReadWriteService : IBleReadWriteService
                         serviceUuid = BlueZHelpers.BootServiceUuid;
                         // Best-effort: try BootWriteUuid first; if missing we fall back to BootNotifyUuid.
                         writeUuid = BlueZHelpers.BootWriteUuid;
+                        _logger.LogDebug("LinuxBLE Write: {Mac} mode=Bootloader — using BootWrite UUID", macAddress);
                     }
                     else if (mode == BlueZHelpers.BleMode.Application)
                     {
                         serviceUuid = BlueZHelpers.AppServiceUuid;
                         writeUuid = BlueZHelpers.AppWriteUuid;
+                        _logger.LogDebug("LinuxBLE Write: {Mac} mode=Application — using AppWrite UUID", macAddress);
                     }
                     else
                     {
@@ -97,6 +101,7 @@ public class LinuxBleReadWriteService : IBleReadWriteService
                         // does a live scan instead of short-circuiting on a stale "not found"
                         // result from the previous mode.  Try bootloader first (most common after
                         // JumpToBootloader), then app mode as fallback.
+                        _logger.LogDebug("LinuxBLE Write: {Mac} mode=Unknown (ServicesResolved=false) — probing all write UUIDs", macAddress);
                         BlueZHelpers.ClearNotFoundUuidCache(devicePath, BlueZHelpers.BootWriteUuid);
                         BlueZHelpers.ClearNotFoundUuidCache(devicePath, BlueZHelpers.BootNotifyUuid);
                         BlueZHelpers.ClearNotFoundUuidCache(devicePath, BlueZHelpers.AppWriteUuid);
@@ -111,7 +116,10 @@ public class LinuxBleReadWriteService : IBleReadWriteService
                                 devicePath, BlueZHelpers.AppServiceUuid, BlueZHelpers.AppWriteUuid, ct);
 
                         if (characteristic != null)
+                        {
+                            _logger.LogDebug("LinuxBLE Write: {Mac} mode=Unknown — found char via probe, proceeding", macAddress);
                             break;
+                        }
 
                         await Task.Delay(80, ct);
                         continue;
@@ -121,6 +129,7 @@ public class LinuxBleReadWriteService : IBleReadWriteService
                     if (characteristic == null && mode == BlueZHelpers.BleMode.Bootloader)
                     {
                         // Fallback: some bootloaders use the notify characteristic for write too.
+                        _logger.LogDebug("LinuxBLE Write: {Mac} BootWrite UUID not found — falling back to BootNotify UUID", macAddress);
                         (characteristic, flags) = await BlueZHelpers.GetCharacteristicByUuidAsync(devicePath, serviceUuid, BlueZHelpers.BootNotifyUuid, ct);
                     }
 
@@ -157,6 +166,9 @@ public class LinuxBleReadWriteService : IBleReadWriteService
             // Cassia path uses ?noresponse=1 to prefer command (write-without-response).
             bool preferNoResponse = queryParams?.Contains("noresponse=1", StringComparison.OrdinalIgnoreCase) == true;
 
+            _logger.LogDebug("LinuxBLE Write: {Mac} flags=[{Flags}] canWriteReq={Req} canWriteCmd={Cmd} preferNoResponse={NoResp} commandRejected={Rejected}",
+                macAddress, string.Join(",", f), canWriteReq, canWriteCmd, preferNoResponse, BlueZHelpers.IsCommandRejected(devicePath));
+
             string writeType;
             if (canWriteCmd && (preferNoResponse || !canWriteReq))
                 writeType = "command";
@@ -186,11 +198,21 @@ public class LinuxBleReadWriteService : IBleReadWriteService
 
             byte[] data = BlueZHelpers.HexToBytes(hexValue);
 
+            _logger.LogDebug("LinuxBLE Write: {Mac} → WriteValueAsync type={WriteType} bytes={Bytes} preferNoResponse={NoResp} canCmd={Cmd} canReq={Req}",
+                macAddress, writeType, data.Length, preferNoResponse, canWriteCmd, canWriteReq);
+
             var options = new Dictionary<string, object> { ["type"] = writeType };
 
+            var writeSw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
-                await characteristic.WriteValueAsync(data, options);
+                // WaitAsync propagates the CancellationToken so a hung D-Bus call (BlueZ
+                // unresponsive after rapid connect/disconnect cycles) does not block the
+                // caller forever — the login timeout (8 s) or outer attempt timeout (35 s)
+                // will cancel it and allow the retry loop to reconnect.
+                await characteristic.WriteValueAsync(data, options).WaitAsync(ct);
+                writeSw.Stop();
+                _logger.LogDebug("LinuxBLE Write: {Mac} WriteValueAsync OK ({Ms}ms)", macAddress, writeSw.ElapsedMilliseconds);
             }
             catch (DBusException ex) when (
                 writeType == "command" && !canWriteCmd &&
@@ -207,13 +229,17 @@ public class LinuxBleReadWriteService : IBleReadWriteService
                     return new HttpResponseMessage(HttpStatusCode.BadRequest);
 
                 var fallback = new Dictionary<string, object> { ["type"] = "request" };
-                await characteristic.WriteValueAsync(data, fallback);
+                writeSw.Restart();
+                await characteristic.WriteValueAsync(data, fallback).WaitAsync(ct);
+                writeSw.Stop();
+                _logger.LogDebug("LinuxBLE Write: {Mac} WriteValueAsync fallback(request) OK ({Ms}ms)", macAddress, writeSw.ElapsedMilliseconds);
             }
 
             return new HttpResponseMessage(HttpStatusCode.OK);
         }
         catch (OperationCanceledException)
         {
+            _logger.LogWarning("LinuxBLE Write: {Mac} WriteValueAsync canceled/timed-out — returning 408", macAddress);
             return new HttpResponseMessage(HttpStatusCode.RequestTimeout);
         }
         catch (DBusException ex) when (ex.ErrorName == "org.bluez.Error.Failed" && ex.Message.Contains("Operation already in progress", StringComparison.OrdinalIgnoreCase))

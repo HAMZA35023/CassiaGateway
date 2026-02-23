@@ -679,16 +679,22 @@ public static async Task<bool> WaitForServicesResolvedAsync(
     {
         try
         {
-            // BlueZ Device1 properties queried via Properties.Get
-            var connected = await dev.GetAsync<bool>("Connected");
-            var resolved = await dev.GetAsync<bool>("ServicesResolved");
+            // Wrap each D-Bus property-get in a 2-second per-call timeout.
+            // After a connection abort (e.g. le-connection-abort-by-local) BlueZ can
+            // become temporarily unresponsive and these calls would otherwise hang
+            // forever, holding _subLock in EnsureNotifyingAsync and blocking the
+            // entire notification/login pipeline for 10+ minutes.
+            using var pollCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            var connected = await dev.GetAsync<bool>("Connected").WaitAsync(pollCts.Token);
+            var resolved = await dev.GetAsync<bool>("ServicesResolved").WaitAsync(pollCts.Token);
 
             if (connected && resolved)
                 return true;
         }
         catch
         {
-            // Device can disappear mid-poll; keep waiting
+            // Device can disappear mid-poll, or the 2-second per-call timeout fired;
+            // either way keep waiting until the outer deadline expires.
         }
 
         await Task.Delay(pollMs, ct);

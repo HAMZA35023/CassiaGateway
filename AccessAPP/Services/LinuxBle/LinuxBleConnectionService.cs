@@ -53,9 +53,16 @@ public class LinuxBleConnectionService : IBleConnectionService
             // while the device still reports Connected=true causes BlueZ to take 20–30 s
             // to complete the re-connection.  Waiting for Connected=false here keeps the
             // ConnectAsync path fast (2–5 s instead of 20–30 s).
+            //
+            // NOTE: All device.GetAsync<bool>() calls here use a 2-second per-call timeout
+            // via .WaitAsync().  After a firmware reboot or rapid BLE state changes, BlueZ
+            // can become temporarily unresponsive and the raw D-Bus property-get would hang
+            // indefinitely — the outer CancellationToken cannot interrupt it because it is
+            // not threaded through to GetAsync.
             try
             {
-                if (await device.GetAsync<bool>("Connected"))
+                using var connGuardCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                if (await device.GetAsync<bool>("Connected").WaitAsync(connGuardCts.Token))
                 {
                     _logger.LogDebug(
                         "LinuxBLE: {Mac} Connected=true before ConnectAsync — disconnecting first to clear stale BlueZ state",
@@ -65,7 +72,12 @@ public class LinuxBleConnectionService : IBleConnectionService
                     var teardownEnd = DateTime.UtcNow.AddMilliseconds(6000);
                     while (DateTime.UtcNow < teardownEnd && !ct.IsCancellationRequested)
                     {
-                        try { if (!await device.GetAsync<bool>("Connected")) break; } catch { break; }
+                        try
+                        {
+                            using var teardownPollCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                            if (!await device.GetAsync<bool>("Connected").WaitAsync(teardownPollCts.Token)) break;
+                        }
+                        catch { break; }
                         await Task.Delay(150, ct);
                     }
                     _logger.LogDebug("LinuxBLE: {Mac} Connected=false — proceeding with ConnectAsync", macAddress);
@@ -81,12 +93,15 @@ public class LinuxBleConnectionService : IBleConnectionService
             }
             catch (Tmds.DBus.DBusException ex) when (
                 ex.ErrorName == "org.bluez.Error.Failed" &&
-                ex.Message.Contains("Software caused connection abort", StringComparison.OrdinalIgnoreCase))
+                (ex.Message.Contains("Software caused connection abort", StringComparison.OrdinalIgnoreCase) ||
+                 ex.Message.Contains("le-connection-abort-by-local", StringComparison.OrdinalIgnoreCase)))
             {
-                // BlueZ fires this when the OS-level link is being torn down and re-established
-                // concurrently (e.g. previous session still cleaning up). The connection usually
-                // completes anyway — fall through and verify Connected + ServicesResolved below.
-                _logger.LogDebug("LinuxBLE: ConnectAsync 'Software caused connection abort' for {Mac} — verifying state", macAddress);
+                // BlueZ fires these errors when the local BLE stack aborts a connection attempt,
+                // typically because a previous session is still being torn down or the HCI
+                // controller rejected the request.  The device often remains connected from
+                // the prior session — fall through and verify Connected + ServicesResolved below
+                // instead of returning 503 early and losing all post-connect GATT setup.
+                _logger.LogDebug("LinuxBLE: ConnectAsync '{Error}' for {Mac} — verifying Connected state", ex.Message, macAddress);
             }
 
             // Wait for BlueZ to report Connected=true; otherwise writes may fail with Not connected.
@@ -95,7 +110,8 @@ public class LinuxBleConnectionService : IBleConnectionService
             {
                 try
                 {
-                    if (await device.GetAsync<bool>("Connected")) break;
+                    using var connPollCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                    if (await device.GetAsync<bool>("Connected").WaitAsync(connPollCts.Token)) break;
                 }
                 catch { /* ignore */ }
                 await Task.Delay(100, ct);
@@ -172,7 +188,8 @@ public class LinuxBleConnectionService : IBleConnectionService
             // instead of proceeding into a login that will fail with "Not connected".
             try
             {
-                if (!await device.GetAsync<bool>("Connected"))
+                using var finalConnCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                if (!await device.GetAsync<bool>("Connected").WaitAsync(finalConnCts.Token))
                 {
                     _logger.LogWarning(
                         "LinuxBLE: {Mac} disconnected during post-connect setup — returning error so caller can retry",
@@ -225,7 +242,12 @@ public class LinuxBleConnectionService : IBleConnectionService
             var devicePath = BlueZHelpers.DevicePath(bleAdapter, macAddress);
             var device = await BlueZHelpers.GetDeviceAsync(devicePath);
 
-            await device.DisconnectAsync();
+            // Guard against a hung D-Bus call — BlueZ can be unresponsive after a firmware
+            // reboot or rapid BLE state changes.  Five seconds is more than enough for a
+            // normal disconnect; if it times out the caller catches the exception and treats
+            // the disconnect as attempted (device will drop on its own shortly after).
+            using var disconnectCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await device.DisconnectAsync().WaitAsync(disconnectCts.Token);
 
             BlueZHelpers.ClearConnectedAdapter(macAddress);
             BlueZHelpers.InvalidateCharCache(devicePath);
@@ -256,14 +278,21 @@ public class LinuxBleConnectionService : IBleConnectionService
         try
         {
             int delayMs = Math.Max(0, RuntimeVariables.UPGRADE_LOGIN_DELAY_AFTER_CONNECT_MS);
-            if (delayMs > 0) await Task.Delay(delayMs, ct);
+            _logger.LogDebug("LinuxBLE Login: {Mac} — start (delayMs={Delay})", macAddress, delayMs);
+            if (delayMs > 0)
+            {
+                _logger.LogDebug("LinuxBLE Login: {Mac} — waiting {Delay}ms before login write", macAddress, delayMs);
+                await Task.Delay(delayMs, ct);
+            }
 
             string hexLoginValue = new LoginTelegram().Create();
             HttpStatusCode writeStatus = HttpStatusCode.OK;
 
+            _logger.LogDebug("LinuxBLE Login: {Mac} — subscribing for notification", macAddress);
             subToken = _notificationService.Subscribe(macAddress, (sender, data) =>
             {
                 var loginReply = new LoginTelegramReply(data);
+                _logger.LogDebug("LinuxBLE Login: {Mac} — notification received telegram={Type}", macAddress, loginReply.TelegramType);
                 if (loginReply.TelegramType == "1100")
                 {
                     var result = loginReply.GetResult();
@@ -285,11 +314,15 @@ public class LinuxBleConnectionService : IBleConnectionService
             var rw = new LinuxBleReadWriteService(
                 _logger.CreateLogger<LinuxBleReadWriteService>());
 
+            _logger.LogDebug("LinuxBLE Login: {Mac} — writing login telegram ({Bytes}b)", macAddress, hexLoginValue.Length / 2);
+            var loginWriteSw = System.Diagnostics.Stopwatch.StartNew();
             using var writeResp = await rw.WriteBleMessageAsync(
                 gatewayIpAddress, macAddress,
                 RuntimeVariables.LINUX_BLE_CONTROL_HANDLE,
                 hexLoginValue, "?noresponse=1", ct: ct);
+            loginWriteSw.Stop();
             writeStatus = writeResp.StatusCode;
+            _logger.LogDebug("LinuxBLE Login: {Mac} — write result={Status} ({Ms}ms)", macAddress, writeStatus, loginWriteSw.ElapsedMilliseconds);
 
             // Fast-fail: if the write returned ServiceUnavailable (org.bluez.Error.Failed: Not connected)
             // the device has already disconnected.  Return immediately instead of burning the full 8-second
@@ -300,14 +333,19 @@ public class LinuxBleConnectionService : IBleConnectionService
                 return MakeLoginTimeout(macAddress, "Login write failed: device not connected.", HttpStatusCode.RequestTimeout, "Canceled");
             }
 
+            _logger.LogDebug("LinuxBLE Login: {Mac} — waiting for login notification (timeout=120s, ct.CanBeCanceled={CanCancel})", macAddress, ct.CanBeCanceled);
             using var reg = ct.Register(() => loginResultTask.TrySetCanceled(ct));
 
             var completed = await Task.WhenAny(loginResultTask.Task,
                 Task.Delay(TimeSpan.FromSeconds(120), ct));
 
             if (completed == loginResultTask.Task)
+            {
+                _logger.LogDebug("LinuxBLE Login: {Mac} — notification received, login complete", macAddress);
                 return await loginResultTask.Task;
+            }
 
+            _logger.LogDebug("LinuxBLE Login: {Mac} — timed out waiting for notification (ct.IsCancellationRequested={Canceled})", macAddress, ct.IsCancellationRequested);
             return ct.IsCancellationRequested
                 ? MakeLoginTimeout(macAddress, "Login canceled by timeout.", HttpStatusCode.RequestTimeout, "Canceled")
                 : MakeLoginTimeout(macAddress, "Login response timeout.", HttpStatusCode.RequestTimeout, "Timeout");

@@ -51,6 +51,10 @@ public class LinuxBleNotificationService : IBleNotificationService
         var map = _handlers.GetOrAdd(macAddress, _ => new ConcurrentDictionary<Guid, EventHandler<string>>());
         map[token] = handler;
 
+        bool alreadyNotifying = _notifySubscriptions.ContainsKey(macAddress);
+        _logger.LogDebug("LinuxBLE Notify: Subscribe {Mac} token={Token} handlers={Count} alreadyNotifying={Already}",
+            macAddress, token.ToString()[..8], map.Count, alreadyNotifying);
+
         // Ensure we are listening for notifications on this device.
         _ = EnsureNotifyingAsync(macAddress);
 
@@ -62,9 +66,12 @@ public class LinuxBleNotificationService : IBleNotificationService
         if (_handlers.TryGetValue(macAddress, out var map))
         {
             map.TryRemove(token, out _);
+            _logger.LogDebug("LinuxBLE Notify: Unsubscribe(token) {Mac} token={Token} remainingHandlers={Count}",
+                macAddress, token.ToString()[..8], map.Count);
             if (map.IsEmpty)
             {
                 _handlers.TryRemove(macAddress, out _);
+                _logger.LogDebug("LinuxBLE Notify: last handler removed for {Mac} — calling StopNotify", macAddress);
                 _ = StopNotifyingAsync(macAddress);
             }
         }
@@ -73,6 +80,7 @@ public class LinuxBleNotificationService : IBleNotificationService
     public void Unsubscribe(string macAddress)
     {
         _handlers.TryRemove(macAddress, out _);
+        _logger.LogDebug("LinuxBLE Notify: Unsubscribe(all) {Mac} — calling StopNotify", macAddress);
         _ = StopNotifyingAsync(macAddress);
     }
 
@@ -80,27 +88,44 @@ public class LinuxBleNotificationService : IBleNotificationService
 
     private async Task EnsureNotifyingAsync(string macAddress)
     {
-        if (_notifySubscriptions.ContainsKey(macAddress)) return;
+        if (_notifySubscriptions.ContainsKey(macAddress))
+        {
+            _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — already subscribed, skipping", macAddress);
+            return;
+        }
 
+        _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — acquiring _subLock", macAddress);
+        var lockSw = System.Diagnostics.Stopwatch.StartNew();
         await _subLock.WaitAsync();
+        lockSw.Stop();
+        _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — _subLock acquired after {Ms}ms", macAddress, lockSw.ElapsedMilliseconds);
         try
         {
-            if (_notifySubscriptions.ContainsKey(macAddress)) return;
+            if (_notifySubscriptions.ContainsKey(macAddress))
+            {
+                _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — already subscribed (race), releasing lock", macAddress);
+                return;
+            }
 
             var devicePath = BlueZHelpers.DevicePath(BlueZHelpers.GetDeviceAdapter(macAddress), macAddress);
 
             var mode = await BlueZHelpers.DetectModeByGattAsync(devicePath);
+            _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — mode={Mode}", macAddress, mode);
+
             if (mode == BlueZHelpers.BleMode.Unknown)
             {
                 // ServicesResolved is not yet true — wait for GATT re-discovery to finish
                 // (common after a firmware reboot or mode switch) before choosing the UUIDs.
+                _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — mode Unknown, waiting for ServicesResolved (max {Timeout}ms)", macAddress, RuntimeVariables.LINUX_BLE_SERVICES_RESOLVED_TIMEOUT_MS);
                 var servicesReady = await BlueZHelpers.WaitForServicesResolvedAsync(
                     devicePath, RuntimeVariables.LINUX_BLE_SERVICES_RESOLVED_TIMEOUT_MS, 200, CancellationToken.None);
                 if (servicesReady)
                     mode = await BlueZHelpers.DetectModeByGattAsync(devicePath);
 
                 if (mode == BlueZHelpers.BleMode.Unknown)
-                    _logger.LogWarning("LinuxBLE: GATT mode still unknown for {Mac} after wait — defaulting to application mode", macAddress);
+                    _logger.LogWarning("LinuxBLE Notify: EnsureNotifying {Mac} — GATT mode still Unknown after wait — defaulting to Application", macAddress);
+                else
+                    _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — mode resolved to {Mode} after ServicesResolved wait", macAddress, mode);
             }
 
             string serviceUuid;
@@ -116,14 +141,16 @@ public class LinuxBleNotificationService : IBleNotificationService
                 notifyUuid = BlueZHelpers.AppNotifyUuid;
             }
 
+            _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — looking up notify char {Uuid} (mode={Mode})", macAddress, notifyUuid[..8], mode);
             var (characteristic, flags) = await BlueZHelpers.GetCharacteristicByUuidAsync(devicePath, serviceUuid, notifyUuid);
             if (characteristic == null)
             {
-                _logger.LogWarning("LinuxBLE notifications: notify characteristic {Uuid} not found for {Mac} (mode={Mode})", notifyUuid, macAddress, mode);
+                _logger.LogWarning("LinuxBLE Notify: EnsureNotifying {Mac} — notify char {Uuid} not found (mode={Mode})", macAddress, notifyUuid, mode);
                 return;
             }
 
             // Subscribe to PropertiesChanged before calling StartNotify so we don't miss the first event.
+            _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — registering WatchProperties", macAddress);
             var sub = await characteristic.WatchPropertiesAsync(
                 changes =>
                 {
@@ -132,34 +159,59 @@ public class LinuxBleNotificationService : IBleNotificationService
                         if (key == "Value" && val is byte[] bytes)
                         {
                             var hexValue = BlueZHelpers.BytesToHex(bytes);
+                            _logger.LogDebug("LinuxBLE Notify: PropertiesChanged Value for {Mac} ({Bytes} bytes)", macAddress, bytes.Length);
                             DispatchHandlers(macAddress, hexValue);
                         }
                     }
                 },
                 ex => _logger.LogError(ex, "LinuxBLE notification error for {Mac}", macAddress));
 
+            _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — calling StartNotify (mode={Mode})", macAddress, mode);
+            var startSw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
-                await characteristic.StartNotifyAsync();
+                // Guard against an indefinite D-Bus hang: if BlueZ is unresponsive (e.g. after
+                // rapid connect/disconnect cycles during firmware upgrade), StartNotifyAsync can
+                // block forever while holding _subLock.  That would prevent every subsequent
+                // EnsureNotifyingAsync call from acquiring the lock, silently breaking
+                // notifications for all future login attempts.  A 10-second ceiling releases the
+                // lock in the worst case and lets the retry loop reconnect cleanly.
+                using var startNotifyCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await characteristic.StartNotifyAsync().WaitAsync(startNotifyCts.Token);
+                startSw.Stop();
+                _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — StartNotify OK ({Ms}ms)", macAddress, startSw.ElapsedMilliseconds);
+            }
+            catch (OperationCanceledException)
+            {
+                startSw.Stop();
+                _logger.LogWarning("LinuxBLE Notify: EnsureNotifying {Mac} — StartNotify timed out after {Ms}ms (10 s limit) — proceeding without notify; will retry on next connect", macAddress, startSw.ElapsedMilliseconds);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "LinuxBLE: StartNotify failed for {Mac} (may already be notifying)", macAddress);
+                startSw.Stop();
+                _logger.LogWarning(ex, "LinuxBLE Notify: EnsureNotifying {Mac} — StartNotify failed after {Ms}ms (may already be notifying)", macAddress, startSw.ElapsedMilliseconds);
             }
 
             _notifySubscriptions[macAddress] = sub;
             _notifyCharacteristics[macAddress] = characteristic;
+            _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — subscription registered OK", macAddress);
         }
         finally
         {
             _subLock.Release();
+            _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — _subLock released", macAddress);
         }
     }
 
     private async Task StopNotifyingAsync(string macAddress)
     {
-        if (!_notifySubscriptions.TryRemove(macAddress, out var sub)) return;
+        if (!_notifySubscriptions.TryRemove(macAddress, out var sub))
+        {
+            _logger.LogDebug("LinuxBLE Notify: StopNotify {Mac} — no active subscription, nothing to stop", macAddress);
+            return;
+        }
 
+        _logger.LogDebug("LinuxBLE Notify: StopNotify {Mac} — disposing PropertiesChanged subscription", macAddress);
         sub.Dispose();
 
         _notifyCharacteristics.TryRemove(macAddress, out var cachedChr);
@@ -178,7 +230,10 @@ public class LinuxBleNotificationService : IBleNotificationService
             }
 
             if (characteristic != null)
-                await characteristic.StopNotifyAsync();
+            {
+                using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await characteristic.StopNotifyAsync().WaitAsync(stopCts.Token);
+            }
         }
         catch (Exception ex)
         {
