@@ -198,7 +198,7 @@ try {
     }
 
     # Ensure latest exists
-    if (-not $manifest.ContainsKey("latest") -or -not $manifest.latest) {
+    if (-not $manifest.Contains("latest") -or -not $manifest.latest) {
         $manifest.latest = [ordered]@{
             version = $Version
             channel = $Channel
@@ -207,10 +207,10 @@ try {
     }
 
     # Normalize legacy manifest into builds (assume linux-arm when only legacy fields exist)
-    if (-not $manifest.latest.ContainsKey("builds") -or -not $manifest.latest.builds) {
+    if (-not $manifest.latest.Contains("builds") -or -not $manifest.latest.builds) {
         $manifest.latest.builds = [ordered]@{ }
     }
-    if ($manifest.latest.ContainsKey("url") -and -not $manifest.latest.builds.ContainsKey("linux-arm")) {
+    if ($manifest.latest.Contains("url") -and -not $manifest.latest.builds.Contains("linux-arm")) {
         $manifest.latest.builds["linux-arm"] = [ordered]@{
             runtime = "linux-arm"
             url = $manifest.latest.url
@@ -232,7 +232,7 @@ try {
 
     # Keep legacy top-level latest fields pointing to linux-arm if available, otherwise current runtime.
     $legacyKey = "linux-arm"
-    if (-not $manifest.latest.builds.ContainsKey($legacyKey)) {
+    if (-not $manifest.latest.builds.Contains($legacyKey)) {
         $legacyKey = $RuntimeTag
     }
     $legacy = $manifest.latest.builds[$legacyKey]
@@ -241,7 +241,7 @@ try {
     $manifest.latest.sizeBytes = $legacy.sizeBytes
 
     # Update releases
-    if (-not $manifest.ContainsKey("releases") -or -not $manifest.releases) {
+    if (-not $manifest.Contains("releases") -or -not $manifest.releases) {
         $manifest.releases = @()
     }
 
@@ -262,8 +262,8 @@ try {
         $manifest.releases += $release
     }
 
-    if (-not $release.ContainsKey("builds") -or -not $release.builds) { $release.builds = [ordered]@{ } }
-    if ($release.ContainsKey("url") -and -not $release.builds.ContainsKey("linux-arm")) {
+    if (-not $release.Contains("builds") -or -not $release.builds) { $release.builds = [ordered]@{ } }
+    if ($release.Contains("url") -and -not $release.builds.Contains("linux-arm")) {
         $release.builds["linux-arm"] = [ordered]@{
             runtime = "linux-arm"
             url = $release.url
@@ -278,7 +278,7 @@ try {
 
     # Keep legacy fields for the release as linux-arm if available.
     $legacyKey2 = "linux-arm"
-    if (-not $release.builds.ContainsKey($legacyKey2)) { $legacyKey2 = $RuntimeTag }
+    if (-not $release.builds.Contains($legacyKey2)) { $legacyKey2 = $RuntimeTag }
     $legacy2 = $release.builds[$legacyKey2]
     $release.url = $legacy2.url
     $release.sha256 = $legacy2.sha256
