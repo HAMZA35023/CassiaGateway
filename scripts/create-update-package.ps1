@@ -135,32 +135,161 @@ try {
     $trimmedBase = $BaseUrl.TrimEnd("/")
     $zipUrl = "$trimmedBase/$zipName"
 
-    $manifest = [ordered]@{
-        app = $AppName
-        channel = $Channel
-        generatedAtUtc = $publishedAt
-        latest = [ordered]@{
-            version = $Version
-            channel = $Channel
+    $artifact = [ordered]@{
+            runtime = $RuntimeTag
             url = $zipUrl
             sha256 = $hash
             sizeBytes = $size
             publishedAtUtc = $publishedAt
         }
-        releases = @(
-            [ordered]@{
+
+    $manifestPath = Join-Path $outputFull $ManifestFileName
+
+    function ConvertTo-HashtableDeep {
+        param([object]$Obj)
+        if ($null -eq $Obj) { return $null }
+        if ($Obj -is [System.Collections.IDictionary]) {
+            $h = @{}
+            foreach ($k in $Obj.Keys) { $h[$k] = ConvertTo-HashtableDeep $Obj[$k] }
+            return $h
+        }
+        if ($Obj -is [System.Collections.IEnumerable] -and -not ($Obj -is [string])) {
+            $list = @()
+            foreach ($item in $Obj) { $list += ,(ConvertTo-HashtableDeep $item) }
+            return $list
+        }
+        if ($Obj -is [pscustomobject]) {
+            $h = @{}
+            foreach ($p in $Obj.PSObject.Properties) { $h[$p.Name] = ConvertTo-HashtableDeep $p.Value }
+            return $h
+        }
+        return $Obj
+    }
+
+    $manifest = $null
+    if (Test-Path $manifestPath) {
+        try {
+            $existingObj = Get-Content -Path $manifestPath -Raw | ConvertFrom-Json
+            $manifest = ConvertTo-HashtableDeep $existingObj
+        }
+        catch {
+            Write-Warning "Existing manifest could not be parsed. It will be overwritten: $manifestPath"
+            $manifest = $null
+        }
+    }
+
+    if (-not $manifest) {
+        $manifest = [ordered]@{
+            app = $AppName
+            channel = $Channel
+            generatedAtUtc = $publishedAt
+            latest = [ordered]@{
                 version = $Version
                 channel = $Channel
+                # Legacy fields (for older updaters). We keep linux-arm here when available.
                 url = $zipUrl
                 sha256 = $hash
                 sizeBytes = $size
                 publishedAtUtc = $publishedAt
+                builds = [ordered]@{ }
             }
-        )
+            releases = @()
+        }
     }
 
-    $manifestPath = Join-Path $outputFull $ManifestFileName
-    $manifest | ConvertTo-Json -Depth 10 | Set-Content -Path $manifestPath -Encoding UTF8
+    # Ensure latest exists
+    if (-not $manifest.ContainsKey("latest") -or -not $manifest.latest) {
+        $manifest.latest = [ordered]@{
+            version = $Version
+            channel = $Channel
+            builds = [ordered]@{ }
+        }
+    }
+
+    # Normalize legacy manifest into builds (assume linux-arm when only legacy fields exist)
+    if (-not $manifest.latest.ContainsKey("builds") -or -not $manifest.latest.builds) {
+        $manifest.latest.builds = [ordered]@{ }
+    }
+    if ($manifest.latest.ContainsKey("url") -and -not $manifest.latest.builds.ContainsKey("linux-arm")) {
+        $manifest.latest.builds["linux-arm"] = [ordered]@{
+            runtime = "linux-arm"
+            url = $manifest.latest.url
+            sha256 = $manifest.latest.sha256
+            sizeBytes = $manifest.latest.sizeBytes
+            publishedAtUtc = $manifest.latest.publishedAtUtc
+        }
+    }
+
+    $manifest.app = $AppName
+    $manifest.channel = $Channel
+    $manifest.generatedAtUtc = $publishedAt
+
+    # Update latest
+    $manifest.latest.version = $Version
+    $manifest.latest.channel = $Channel
+    $manifest.latest.publishedAtUtc = $publishedAt
+    $manifest.latest.builds[$RuntimeTag] = $artifact
+
+    # Keep legacy top-level latest fields pointing to linux-arm if available, otherwise current runtime.
+    $legacyKey = "linux-arm"
+    if (-not $manifest.latest.builds.ContainsKey($legacyKey)) {
+        $legacyKey = $RuntimeTag
+    }
+    $legacy = $manifest.latest.builds[$legacyKey]
+    $manifest.latest.url = $legacy.url
+    $manifest.latest.sha256 = $legacy.sha256
+    $manifest.latest.sizeBytes = $legacy.sizeBytes
+
+    # Update releases
+    if (-not $manifest.ContainsKey("releases") -or -not $manifest.releases) {
+        $manifest.releases = @()
+    }
+
+    $release = $null
+    foreach ($r in $manifest.releases) {
+        if ($r.version -eq $Version) { $release = $r; break }
+    }
+    if (-not $release) {
+        $release = [ordered]@{
+            version = $Version
+            channel = $Channel
+            publishedAtUtc = $publishedAt
+            url = $zipUrl
+            sha256 = $hash
+            sizeBytes = $size
+            builds = [ordered]@{ }
+        }
+        $manifest.releases += $release
+    }
+
+    if (-not $release.ContainsKey("builds") -or -not $release.builds) { $release.builds = [ordered]@{ } }
+    if ($release.ContainsKey("url") -and -not $release.builds.ContainsKey("linux-arm")) {
+        $release.builds["linux-arm"] = [ordered]@{
+            runtime = "linux-arm"
+            url = $release.url
+            sha256 = $release.sha256
+            sizeBytes = $release.sizeBytes
+            publishedAtUtc = $release.publishedAtUtc
+        }
+    }
+    $release.channel = $Channel
+    $release.publishedAtUtc = $publishedAt
+    $release.builds[$RuntimeTag] = $artifact
+
+    # Keep legacy fields for the release as linux-arm if available.
+    $legacyKey2 = "linux-arm"
+    if (-not $release.builds.ContainsKey($legacyKey2)) { $legacyKey2 = $RuntimeTag }
+    $legacy2 = $release.builds[$legacyKey2]
+    $release.url = $legacy2.url
+    $release.sha256 = $legacy2.sha256
+    $release.sizeBytes = $legacy2.sizeBytes
+
+    # Sort releases newest first
+    $manifest.releases = @(
+        $manifest.releases | Sort-Object -Property @{Expression = { $_.version }; Descending = $true}, @{Expression = { $_.publishedAtUtc }; Descending = $true}
+    )
+
+    $manifest | ConvertTo-Json -Depth 20 | Set-Content -Path $manifestPath -Encoding UTF8
 
     Write-Host "Update package created:"
     Write-Host "  Zip      : $zipPath"
