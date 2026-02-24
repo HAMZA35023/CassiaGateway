@@ -243,9 +243,16 @@ namespace AccessAPP.Services.UpgradeCore
 
                         ChipAllocationManager.ChipLease lease;
                         if (RuntimeVariables.USE_BOTH_CASSIA_CHIPS && maxThreads >= 2)
+                        {
+                            // Always use allocator balancing in dual-chip mode.
+                            // Preferring DEFAULT_CASSIA_CHIP on "single-active" starts can bias
+                            // assignments toward one chip when devices are enqueued incrementally.
                             lease = await _chip.AcquireAsync().ConfigureAwait(false);
+                        }
                         else
+                        {
                             lease = ChipAllocationManager.Fixed(RuntimeVariables.DEFAULT_CASSIA_CHIP);
+                        }
 
                         running.Add(_owner.ProcessSingleDeviceUpgradeAsync(dev, lease, summaries, ms => Interlocked.Add(ref totalDeviceMs, ms)));
                         CassiaFirmwareUpgradeService.inQueue = _upgradeQueue.Count;

@@ -1,0 +1,87 @@
+<app-tabs></app-tabs>
+
+<div class="loader-overlay" *ngIf="isLoading">
+  <div class="dots-loader">
+    <span></span><span></span><span></span>
+  </div>
+</div>
+
+<div class="dashboard-wrapper">
+  <h1 class="dashboard-title">Settings</h1>
+  <p class="subtitle">Edit MQTT client settings (stored in <code>mqtt.json</code> on the backend).</p>
+
+  <div class="status" *ngIf="statusText" [class.ok]="statusKind==='ok'" [class.error]="statusKind==='error'">
+    {{ statusText }}
+  </div>
+
+  <div class="form-grid">
+    <div class="form-group">
+      <label>Device name</label>
+      <input class="input" [(ngModel)]="config.name" placeholder="cassia-01" />
+      <div class="hint">Used as the MQTT client/device identity.</div>
+    </div>
+
+    <div class="form-group">
+      <label>Network ID</label>
+      <input class="input" [(ngModel)]="config.networkId" placeholder="dk-lab" />
+      <div class="hint">Used in topics: <code>{{config.baseTopic}}/{{config.networkId}}/...</code></div>
+    </div>
+
+    <div class="form-group">
+      <label>Host</label>
+      <input class="input" [(ngModel)]="config.host" placeholder="prod.statistics.niko-test.nu" />
+    </div>
+
+    <div class="form-group">
+      <label>Port</label>
+      <input class="input" type="number" [(ngModel)]="config.port" />
+    </div>
+
+    <div class="form-group checkbox">
+      <label>
+        <input type="checkbox" [(ngModel)]="config.useTls" />
+        Use TLS
+      </label>
+      <div class="hint">If enabled, make sure broker supports TLS on the chosen port.</div>
+    </div>
+
+    <div class="form-group">
+      <label>Username</label>
+      <input class="input" [(ngModel)]="config.username" />
+    </div>
+
+    <div class="form-group">
+      <label>Password</label>
+      <input class="input" type="password" [(ngModel)]="config.password" />
+      <div class="hint">Stored as plain text in <code>mqtt.json</code>.</div>
+    </div>
+
+    <div class="form-group">
+      <label>Base topic</label>
+      <input class="input" [(ngModel)]="config.baseTopic" placeholder="accessapp" />
+    </div>
+
+    <div class="form-group">
+      <label>Keep alive (seconds)</label>
+      <input class="input" type="number" [(ngModel)]="config.keepAliveSeconds" />
+    </div>
+
+    <div class="form-group">
+      <label>Reconnect delay (seconds)</label>
+      <input class="input" type="number" [(ngModel)]="config.reconnectDelaySeconds" />
+    </div>
+
+    <div class="form-group checkbox">
+      <label>
+        <input type="checkbox" [(ngModel)]="config.subscribeToAllTarget" />
+        Subscribe to all targets
+      </label>
+      <div class="hint">If enabled, the client subscribes broadly instead of only its own name.</div>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button class="btn secondary" (click)="load()">Reload</button>
+    <button class="btn primary" (click)="save()">Save (Required reboot to take affect)</button>
+  </div>
+</div>

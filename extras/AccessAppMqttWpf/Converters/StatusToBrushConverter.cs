@@ -18,6 +18,7 @@ namespace AccessAppMqttWpf.Converters
             var good = FromKey("GoodBrush", Brushes.LimeGreen);
             var bad = FromKey("BadBrush", Brushes.IndianRed);
             var warn = FromKey("WarnBrush", Brushes.Orange);
+            var noFw = FromKey("NoFwBrush", Brushes.DeepSkyBlue);
             var muted = FromKey("MutedBrush", Brushes.Gray);
             var accent = FromKey("AccentBrush", Brushes.DodgerBlue);
 
@@ -28,6 +29,9 @@ namespace AccessAppMqttWpf.Converters
 
             if (s.Contains("requested update") || s.Contains("requested"))
                 return accent;
+
+            if (s.Contains("nofwread") || s.Contains("no fw"))
+                return noFw;
 
             if (s.Contains("done") || s.Contains("success") || s.Contains("ok") || s.Contains("completed"))
                 return good;

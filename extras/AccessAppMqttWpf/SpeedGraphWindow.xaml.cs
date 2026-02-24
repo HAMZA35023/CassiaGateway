@@ -92,6 +92,7 @@ public partial class SpeedGraphWindow : Window
         if (Vm == null) return;
 
         Vm.PropertyChanged += Vm_PropertyChanged;
+        Vm.CassiaGateways.CollectionChanged += CassiaGateways_CollectionChanged;
         HookHistory();
 
         BuildGatewayOptions();
@@ -104,6 +105,7 @@ public partial class SpeedGraphWindow : Window
         if (Vm == null) return;
 
         Vm.PropertyChanged -= Vm_PropertyChanged;
+        Vm.CassiaGateways.CollectionChanged -= CassiaGateways_CollectionChanged;
         UnhookHistory();
     }
 
@@ -111,6 +113,30 @@ public partial class SpeedGraphWindow : Window
     {
         // If your VM replaces CassiaGateways list at runtime (rare), you can rebuild options here.
         // For typical use, speed history updates are enough.
+    }
+
+    private void CassiaGateways_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (Vm == null) return;
+
+        if (e.Action == NotifyCollectionChangedAction.Reset)
+        {
+            UnhookHistory();
+            HookHistory();
+        }
+        else
+        {
+            if (e.OldItems != null)
+                foreach (CassiaGateway gw in e.OldItems)
+                    gw.SpeedHistory.CollectionChanged -= SpeedHistory_CollectionChanged;
+
+            if (e.NewItems != null)
+                foreach (CassiaGateway gw in e.NewItems)
+                    gw.SpeedHistory.CollectionChanged += SpeedHistory_CollectionChanged;
+        }
+
+        BuildGatewayOptions();
+        Redraw();
     }
 
     private void BuildGatewayOptions()

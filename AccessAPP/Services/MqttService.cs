@@ -7,12 +7,14 @@ using System.Buffers;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace AccessAPP.Services;
 
 public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 {
     private readonly MqttConfigStore _store;
+    private readonly RuntimeVariablesStore _runtimeStore;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     // Publish resilience (prevents one stalled publish from freezing all telemetry)
@@ -22,7 +24,9 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     private int _reconnectRequested;
     private DateTime _lastReconnectAttemptUtc = DateTime.MinValue;
 
-    private static readonly TimeSpan StatusHeartbeatInterval = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan DefaultStatusHeartbeatInterval = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan MinStatusHeartbeatInterval = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan MaxStatusHeartbeatInterval = TimeSpan.FromSeconds(3600);
 
     private MQTTnet.IMqttClient? _client;
     private CancellationTokenSource? _runCts;
@@ -37,6 +41,8 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     };
 
     public MqttOptions CurrentOptions { get; private set; }
+    private readonly Modem4GStatusService _modem4G;
+    private readonly CassiaWebSettingsService _cassiaWebSettings;
 
     public event Func<StartUpdateCommand, Task>? StartUpdateRequested;
     public event Func<GetFwVersionCommand, Task>? GetFwVersionRequested;
@@ -45,12 +51,26 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     // Identify device (connect/login/wait/disconnect)
     public event Func<IdentifyCommand, Task>? IdentifyRequested;
 
+    // LED range visualization
+    public event Func<LedRangeVisualizeCommand, Task>? LedRangeVisualizeRequested;
+    public event Func<LedRangeDisconnectCommand, Task>? LedRangeDisconnectRequested;
+
     // NEW
     public event Func<GetFirmwareManifestCommand, Task>? GetFirmwareManifestRequested;
+    public event Func<SelfUpdateCommand, Task>? SelfUpdateRequested;
+    public event Func<SetUpdateChannelCommand, Task>? SetUpdateChannelRequested;
+    public event Func<RebootCommand, Task>? RebootRequested;
 
-    public MqttService(MqttConfigStore store)
+    public MqttService(
+        MqttConfigStore store,
+        RuntimeVariablesStore runtimeStore,
+        Modem4GStatusService modem4G,
+        CassiaWebSettingsService cassiaWebSettings)
     {
         _store = store;
+        _runtimeStore = runtimeStore;
+        _modem4G = modem4G;
+        _cassiaWebSettings = cassiaWebSettings;
         CurrentOptions = _store.LoadOrCreateDefault();
     }
 
@@ -239,6 +259,14 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
         await PublishJsonAsync(TeleTopic(leaf), payload, retain: false, ct).ConfigureAwait(false);
     }
 
+    private async Task PublishTeleJsonAsync(string leaf, object payload, string? networkIdOverride, string? nameOverride, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(leaf))
+            leaf = "resp";
+        await PublishJsonAsync(TeleTopic(leaf, networkIdOverride, nameOverride), payload, retain: false, ct).ConfigureAwait(false);
+    }
+
+
     public async ValueTask DisposeAsync()
     {
         await StopAsync().ConfigureAwait(false);
@@ -270,43 +298,25 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 AppLog.Debug($"Ensuring connection to {CurrentOptions.Host}:{CurrentOptions.Port} (clientId={CurrentOptions.ClientId}, network={CurrentOptions.NetworkId})");
                 await EnsureConnectedAndSubscribedAsync(ct).ConfigureAwait(false);
 
-                // retained online status
-                var online = new StatusMessage
-                {
-                    Name = CurrentOptions.Name,
-                    NetworkId = CurrentOptions.NetworkId,
-                    Time = DateTimeOffset.UtcNow,
-                    State = "online",
-                    queue = CassiaFirmwareUpgradeService.inQueue,
-                    programming = CassiaFirmwareUpgradeService.GetProgrammingCount(),
-                    totalSpeedpct = CassiaFirmwareUpgradeService.totalSpeed
-
-                };
+                var now = DateTimeOffset.UtcNow;
+                var online = await BuildStatusMessageAsync(now, ct).ConfigureAwait(false);
                 await PublishJsonAsync(TeleTopic("status"), online, retain: false, ct).ConfigureAwait(false);
                 AppLog.Info("Published retained online status");
-                var nextHeartbeat = DateTimeOffset.UtcNow + StatusHeartbeatInterval;
+                var lastStatusPublishAt = now;
 
                 while (!ct.IsCancellationRequested && _client is not null && _client.IsConnected)
                 {
-                    var now = DateTimeOffset.UtcNow;
+                    now = DateTimeOffset.UtcNow;
+                    var heartbeatInterval = GetStatusHeartbeatInterval();
 
-                    if (now >= nextHeartbeat)
+                    if ((now - lastStatusPublishAt) >= heartbeatInterval)
                     {
-                        var heartbeat = new StatusMessage
-                        {
-                            Name = CurrentOptions.Name,
-                            NetworkId = CurrentOptions.NetworkId,
-                            Time = now,
-                            State = "online",
-                            queue = CassiaFirmwareUpgradeService.inQueue,
-                    programming = CassiaFirmwareUpgradeService.GetProgrammingCount(),
-                            totalSpeedpct = CassiaFirmwareUpgradeService.totalSpeed
-                        };
+                        var heartbeat = await BuildStatusMessageAsync(now, ct).ConfigureAwait(false);
 
                         await PublishJsonAsync(TeleTopic("status"), heartbeat, retain: false, ct)
                             .ConfigureAwait(false);
 
-                        nextHeartbeat = now + StatusHeartbeatInterval;
+                        lastStatusPublishAt = now;
                     }
 
                     await Task.Delay(500, ct).ConfigureAwait(false);
@@ -331,6 +341,53 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
         }
 
         AppLog.Debug("Run loop exited");
+    }
+
+    private static TimeSpan GetStatusHeartbeatInterval()
+    {
+        var seconds = RuntimeVariables.MQTT_STATUS_HEARTBEAT_SECONDS;
+        if (seconds <= 0)
+            return DefaultStatusHeartbeatInterval;
+
+        return TimeSpan.FromSeconds(Math.Clamp(seconds, (int)MinStatusHeartbeatInterval.TotalSeconds, (int)MaxStatusHeartbeatInterval.TotalSeconds));
+    }
+
+    private async Task<StatusMessage> BuildStatusMessageAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        Modem4GSnapshot? modem = null;
+        try
+        {
+            modem = await _modem4G.GetLatestAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn($"Failed to read 4G status: {ex.Message}");
+        }
+
+        return new StatusMessage
+        {
+            Name = CurrentOptions.Name,
+            NetworkId = CurrentOptions.NetworkId,
+            Time = now,
+            State = "online",
+            queue = CassiaFirmwareUpgradeService.inQueue,
+            programming = CassiaFirmwareUpgradeService.GetProgrammingCount(),
+            totalSpeedpct = CassiaFirmwareUpgradeService.totalSpeed,
+            uptimeSeconds = Math.Max(0, Environment.TickCount64 / 1000),
+            cellularState = modem?.State,
+            cellularNetworkType = modem?.NetworkType,
+            cellularSignalBar = modem?.SignalBar,
+            cellularRssiDbm = modem?.RssiDbm,
+            cellularLteRsrpDbm = modem?.LteRsrpDbm,
+            cellularLteRsrqDb = modem?.LteRsrqDb,
+            cellularLteSnrDb = modem?.LteSnrDb,
+            cellularProvider = modem?.Provider,
+            cellularPolledAtUtc = modem?.PolledAtUtc
+        };
     }
 
     private async Task EnsureConnectedAndSubscribedAsync(CancellationToken ct)
@@ -390,7 +447,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     {
         public string? LogId { get; set; }          // optional filter
         public int MaxLines { get; set; } = 20000;   // last N lines (after filter)
-        public int ChunkLines { get; set; } = 300;  // lines per MQTT message
+        public bool Compressed { get; set; } = true;
     }
 
     private Task HandleCommandAsync(string topic, string payload)
@@ -513,6 +570,51 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 return IdentifyRequested?.Invoke(dto) ?? Task.CompletedTask;
             }
 
+            if (string.Equals(command, "led-range-visualize", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "led-range-start", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch led-range-visualize");
+                LedRangeVisualizeCommand dto;
+                try
+                {
+                    if (string.IsNullOrWhiteSpace(payload))
+                    {
+                        dto = new LedRangeVisualizeCommand();
+                    }
+                    else
+                    {
+                        dto = JsonSerializer.Deserialize<LedRangeVisualizeCommand>(payload, JsonOptions) ?? new LedRangeVisualizeCommand();
+                    }
+                }
+                catch
+                {
+                    dto = new LedRangeVisualizeCommand();
+                }
+
+                return LedRangeVisualizeRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "led-range-disconnect", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch led-range-disconnect");
+                LedRangeDisconnectCommand dto;
+                try
+                {
+                    if (string.IsNullOrWhiteSpace(payload))
+                        dto = new LedRangeDisconnectCommand();
+                    else if (payload.TrimStart().StartsWith("["))
+                        dto = new LedRangeDisconnectCommand { Sensors = JsonSerializer.Deserialize<List<string>>(payload, JsonOptions) ?? new List<string>() };
+                    else
+                        dto = JsonSerializer.Deserialize<LedRangeDisconnectCommand>(payload, JsonOptions) ?? new LedRangeDisconnectCommand();
+                }
+                catch
+                {
+                    dto = new LedRangeDisconnectCommand();
+                }
+
+                return LedRangeDisconnectRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
             if (string.Equals(command, "disconnect-devices", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(command, "disconnect", StringComparison.OrdinalIgnoreCase))
             {
@@ -543,6 +645,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 string.Equals(command, "set-mqtt-scope", StringComparison.OrdinalIgnoreCase))
             {
                 AppLog.Debug("HandleCommandAsync: dispatch set-scope");
+
                 SetMqttScopeCommand dto;
                 try
                 {
@@ -567,31 +670,606 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                     return PublishTeleJsonAsync("scope", bad, CancellationToken.None);
                 }
 
-                try
+                // Publish ACK on the *old* scope so the sender definitely sees it.
+                var oldNetworkId = CurrentOptions.NetworkId;
+                var oldName = CurrentOptions.Name;
+
+                return Task.Run(async () =>
                 {
-                    UpdateScopeAsync(dto.NetworkId!, persist: true, ct: CancellationToken.None).ConfigureAwait(false);
-
-                    var ok = new
+                    try
                     {
-                        success = true,
-                        message = "NetworkId updated.",
-                        networkId = CurrentOptions.NetworkId,
-                        name = CurrentOptions.Name
-                    };
+                        // Update + persist without immediately restarting (so we can ACK first).
+                        await _gate.WaitAsync().ConfigureAwait(false);
+                        try
+                        {
+                            CurrentOptions.NetworkId = dto.NetworkId!.Trim();
+                            _store.Save(CurrentOptions);
+                            UpgradeLogger.NetworkId = CurrentOptions.NetworkId;
+                        }
+                        finally
+                        {
+                            _gate.Release();
+                        }
 
-                    return PublishTeleJsonAsync("scope", ok, CancellationToken.None);
-                }
-                catch (Exception ex)
+                        var ok = new
+                        {
+                            success = true,
+                            message = "NetworkId updated. Restarting MQTT connection...",
+                            previousNetworkId = oldNetworkId,
+                            networkId = CurrentOptions.NetworkId,
+                            name = CurrentOptions.Name
+                        };
+
+                        await PublishTeleJsonAsync("scope", ok, networkIdOverride: oldNetworkId, nameOverride: oldName, ct: CancellationToken.None).ConfigureAwait(false);
+
+                        await RestartAsync(CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        var bad = new
+                        {
+                            success = false,
+                            message = $"Failed to update networkId: {ex.Message}",
+                            networkId = CurrentOptions.NetworkId,
+                            name = CurrentOptions.Name
+                        };
+
+                        await PublishTeleJsonAsync("scope", bad, networkIdOverride: oldNetworkId, nameOverride: oldName, ct: CancellationToken.None).ConfigureAwait(false);
+                    }
+                });
+            }
+
+            if (string.Equals(command, "set-mqtt-broker", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "set-mqtt-config", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch set-mqtt-broker");
+
+                if (string.IsNullOrWhiteSpace(payload))
                 {
                     var bad = new
                     {
                         success = false,
-                        message = $"Failed to update networkId: {ex.Message}",
+                        message = "Missing payload. Send e.g. {\"host\":\"broker\", \"port\":1883, \"useTls\":true}.",
+                        applyAfterRestart = true
+                    };
+                    return PublishTeleJsonAsync("mqtt-config", bad, CancellationToken.None);
+                }
+
+                return Task.Run(async () =>
+                {
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(payload);
+                        var root = doc.RootElement;
+                        if (root.ValueKind != JsonValueKind.Object)
+                        {
+                            var bad = new
+                            {
+                                success = false,
+                                message = "Expected a JSON object payload.",
+                                applyAfterRestart = true
+                            };
+                            await PublishTeleJsonAsync("mqtt-config", bad, CancellationToken.None).ConfigureAwait(false);
+                            return;
+                        }
+
+                        string? host = null;
+                        int? port = null;
+                        bool? useTls = null;
+
+                        if (root.TryGetProperty("host", out var hostEl) && hostEl.ValueKind == JsonValueKind.String)
+                            host = hostEl.GetString();
+
+                        if (root.TryGetProperty("port", out var portEl))
+                        {
+                            if (portEl.ValueKind == JsonValueKind.Number && portEl.TryGetInt32(out var p))
+                                port = p;
+                            else if (portEl.ValueKind == JsonValueKind.String && int.TryParse(portEl.GetString(), out var p2))
+                                port = p2;
+                        }
+
+                        if (root.TryGetProperty("useTls", out var tlsEl) || root.TryGetProperty("tls", out tlsEl))
+                        {
+                            if (tlsEl.ValueKind == JsonValueKind.True) useTls = true;
+                            else if (tlsEl.ValueKind == JsonValueKind.False) useTls = false;
+                            else if (tlsEl.ValueKind == JsonValueKind.String && bool.TryParse(tlsEl.GetString(), out var b))
+                                useTls = b;
+                        }
+
+                        if (string.IsNullOrWhiteSpace(host) && port == null && useTls == null)
+                        {
+                            var bad = new
+                            {
+                                success = false,
+                                message = "No changes provided. Include host, port, and/or useTls.",
+                                applyAfterRestart = true
+                            };
+                            await PublishTeleJsonAsync("mqtt-config", bad, CancellationToken.None).ConfigureAwait(false);
+                            return;
+                        }
+
+                        if (port.HasValue && (port.Value <= 0 || port.Value > 65535))
+                        {
+                            var bad = new
+                            {
+                                success = false,
+                                message = $"Invalid port '{port}'. Must be 1-65535.",
+                                applyAfterRestart = true
+                            };
+                            await PublishTeleJsonAsync("mqtt-config", bad, CancellationToken.None).ConfigureAwait(false);
+                            return;
+                        }
+
+                        var opts = _store.LoadOrCreateDefault();
+                        if (!string.IsNullOrWhiteSpace(host)) opts.Host = host.Trim();
+                        if (port.HasValue) opts.Port = port.Value;
+                        if (useTls.HasValue) opts.UseTls = useTls.Value;
+                        _store.Save(opts);
+
+                        var ok = new
+                        {
+                            success = true,
+                            message = "mqtt.json saved. Changes apply after restart/reboot.",
+                            host = opts.Host,
+                            port = opts.Port,
+                            useTls = opts.UseTls,
+                            applyAfterRestart = true
+                        };
+
+                        await PublishTeleJsonAsync("mqtt-config", ok, CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        var bad = new
+                        {
+                            success = false,
+                            message = $"Failed to update mqtt.json: {ex.Message}",
+                            applyAfterRestart = true
+                        };
+                        await PublishTeleJsonAsync("mqtt-config", bad, CancellationToken.None).ConfigureAwait(false);
+                    }
+                });
+            }
+
+            // NEW: Set gateway/cassia name via MQTT (persisted)
+            if (string.Equals(command, "set-name", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "set-cassia-name", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "set-gateway-name", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch set-name");
+
+                string? newName = null;
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(payload))
+                    {
+                        var p = payload.Trim();
+                        if (p.StartsWith("\""))
+                        {
+                            newName = JsonSerializer.Deserialize<string>(payload, JsonOptions);
+                        }
+                        else
+                        {
+                            using var doc = JsonDocument.Parse(payload);
+                            if (doc.RootElement.ValueKind == JsonValueKind.Object &&
+                                doc.RootElement.TryGetProperty("name", out var n) &&
+                                n.ValueKind == JsonValueKind.String)
+                            {
+                                newName = n.GetString();
+                            }
+                        }
+                    }
+                }
+                catch { /* ignored */ }
+
+                if (string.IsNullOrWhiteSpace(newName))
+                {
+                    var bad = new
+                    {
+                        success = false,
+                        message = "Missing name. Send payload like {\"name\":\"cassia-01\"} (or a raw JSON string).",
                         networkId = CurrentOptions.NetworkId,
                         name = CurrentOptions.Name
                     };
-                    return PublishTeleJsonAsync("scope", bad, CancellationToken.None);
+                    return PublishTeleJsonAsync("identity", bad, CancellationToken.None);
                 }
+
+                var oldNetworkId = CurrentOptions.NetworkId;
+                var oldName = CurrentOptions.Name;
+
+                return Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _gate.WaitAsync().ConfigureAwait(false);
+                        try
+                        {
+                            CurrentOptions.Name = newName!.Trim();
+                            _store.Save(CurrentOptions);
+                            UpgradeLogger.NetworkId = CurrentOptions.NetworkId;
+                        }
+                        finally
+                        {
+                            _gate.Release();
+                        }
+
+                        var ok = new
+                        {
+                            success = true,
+                            message = "Name updated. Restarting MQTT connection...",
+                            previousName = oldName,
+                            name = CurrentOptions.Name,
+                            networkId = CurrentOptions.NetworkId
+                        };
+
+                        await PublishTeleJsonAsync("identity", ok, networkIdOverride: oldNetworkId, nameOverride: oldName, ct: CancellationToken.None).ConfigureAwait(false);
+
+                        await RestartAsync(CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        var bad = new
+                        {
+                            success = false,
+                            message = $"Failed to update name: {ex.Message}",
+                            networkId = CurrentOptions.NetworkId,
+                            name = CurrentOptions.Name
+                        };
+
+                        await PublishTeleJsonAsync("identity", bad, networkIdOverride: oldNetworkId, nameOverride: oldName, ct: CancellationToken.None).ConfigureAwait(false);
+                    }
+                });
+            }
+
+            // NEW: Set one or more runtime variables via MQTT (persist to runtime.json by default)
+            if (string.Equals(command, "set-runtime", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "set-runtime-variables", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "set-runtime-vars", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "set-var", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "set-vars", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch set-runtime-vars");
+
+                if (string.IsNullOrWhiteSpace(payload))
+                {
+                    var bad = new
+                    {
+                        success = false,
+                        message = "Missing payload. Send e.g. {\"WRITE_SLEEP_MS\":50,\"USE_BOTH_CASSIA_CHIPS\":true} or {\"name\":\"WRITE_SLEEP_MS\",\"value\":50}. Optional: {\"persist\":true}.",
+                        variables = _runtimeStore.GetAll()
+                    };
+                    return PublishTeleJsonAsync("runtime", bad, CancellationToken.None);
+                }
+
+                return Task.Run(async () =>
+                {
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(payload);
+                        var root = doc.RootElement;
+
+                        int applied = 0;
+                        List<string> errors = new();
+                        bool persist = true;
+                        bool persisted = false;
+
+                        if (root.ValueKind == JsonValueKind.Object &&
+                            root.TryGetProperty("persist", out var persistEl))
+                        {
+                            if (persistEl.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                                persist = persistEl.GetBoolean();
+                            else if (persistEl.ValueKind == JsonValueKind.String &&
+                                     bool.TryParse(persistEl.GetString(), out var p))
+                                persist = p;
+                        }
+
+                        // Shape A: {"name":"X","value":...}
+                        if (root.ValueKind == JsonValueKind.Object &&
+                            root.TryGetProperty("name", out var n) &&
+                            n.ValueKind == JsonValueKind.String &&
+                            root.TryGetProperty("value", out var v))
+                        {
+                            if (_runtimeStore.SetSingle(n.GetString() ?? "", v, out var err))
+                                applied = 1;
+                            else if (!string.IsNullOrWhiteSpace(err))
+                                errors.Add(err);
+                        }
+                        else
+                        {
+                            // Shape B: {"X":..., "Y":...}
+                            var ignore = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "persist" };
+                            var (appliedNames, errorMap) = _runtimeStore.SetFromJsonObject(root, ignore);
+                            applied = appliedNames.Count;
+                            foreach (var kv in errorMap)
+                                errors.Add($"{kv.Key}: {kv.Value}");
+                        }
+
+                        if (persist && applied > 0)
+                            persisted = _runtimeStore.SaveToDisk();
+
+                        var resp = new
+                        {
+                            success = applied > 0 && errors.Count == 0,
+                            applied,
+                            errors,
+                            persisted,
+                            persistPath = _runtimeStore.FilePath,
+                            variables = _runtimeStore.GetAll()
+                        };
+
+                        await PublishTeleJsonAsync("runtime", resp, CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        var bad = new
+                        {
+                            success = false,
+                            message = $"Failed to set runtime variables: {ex.Message}",
+                            persisted = false,
+                            persistPath = _runtimeStore.FilePath,
+                            variables = _runtimeStore.GetAll()
+                        };
+
+                        await PublishTeleJsonAsync("runtime", bad, CancellationToken.None).ConfigureAwait(false);
+                    }
+                });
+            }
+
+            // NEW: Get all runtime variables (current values)
+            if (string.Equals(command, "get-runtime", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "get-runtime-variables", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "get-runtime-vars", StringComparison.OrdinalIgnoreCase))
+            {
+                var resp = new
+                {
+                    success = true,
+                    variables = _runtimeStore.GetAll(),
+                    name = CurrentOptions.Name,
+                    networkId = CurrentOptions.NetworkId,
+                    time = DateTimeOffset.UtcNow
+                };
+                return PublishTeleJsonAsync("runtime", resp, CancellationToken.None);
+            }
+
+            if (string.Equals(command, "get-cassia-settings", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "get-gateway-settings", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch get-cassia-settings");
+
+                return Task.Run(async () =>
+                {
+                    string requestId = Guid.NewGuid().ToString("N");
+                    string? gatewayIp = null;
+                    string? username = null;
+                    string? password = null;
+                    string? passwordEncrypted = null;
+
+                    try
+                    {
+                        if (!string.IsNullOrWhiteSpace(payload))
+                        {
+                            using var doc = JsonDocument.Parse(payload);
+                            var root = doc.RootElement;
+                            if (root.ValueKind == JsonValueKind.Object)
+                            {
+                                requestId = ReadString(root, "requestId") ?? requestId;
+                                gatewayIp = ReadString(root, "gatewayIp");
+                                username = ReadString(root, "username");
+                                password = ReadString(root, "password");
+                                passwordEncrypted = ReadString(root, "passwordEncrypted");
+                            }
+                        }
+
+                        if (string.Equals(target, "all", StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (!string.IsNullOrWhiteSpace(gatewayIp))
+                                AppLog.Info("get-cassia-settings: target=all, ignoring payload gatewayIp and using local gateway configuration.");
+                            gatewayIp = null;
+                        }
+
+                        var req = new CassiaWebSettingsRequest(
+                            GatewayIp: gatewayIp,
+                            Username: username,
+                            Password: password,
+                            PasswordEncrypted: passwordEncrypted);
+
+                        var snapshot = await _cassiaWebSettings.GetSettingsAsync(req, CancellationToken.None).ConfigureAwait(false);
+
+                        var ok = new
+                        {
+                            success = true,
+                            action = "get",
+                            requestId,
+                            message = "Cassia settings loaded.",
+                            cassia = target,
+                            gatewayIp = snapshot.GatewayIp,
+                            csrf = snapshot.Csrf,
+                            settings = snapshot.Settings,
+                            savePayloadTemplate = snapshot.SavePayloadTemplate,
+                            name = CurrentOptions.Name,
+                            networkId = CurrentOptions.NetworkId,
+                            time = DateTimeOffset.UtcNow
+                        };
+
+                        await PublishTeleJsonAsync("cassia-settings", ok, CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        var bad = new
+                        {
+                            success = false,
+                            action = "get",
+                            requestId,
+                            message = $"Failed to load Cassia settings: {ex.Message}",
+                            cassia = target,
+                            name = CurrentOptions.Name,
+                            networkId = CurrentOptions.NetworkId,
+                            time = DateTimeOffset.UtcNow
+                        };
+
+                        await PublishTeleJsonAsync("cassia-settings", bad, CancellationToken.None).ConfigureAwait(false);
+                    }
+
+                    static string? ReadString(JsonElement obj, string propertyName)
+                    {
+                        if (!obj.TryGetProperty(propertyName, out var value))
+                            return null;
+
+                        if (value.ValueKind == JsonValueKind.String)
+                            return value.GetString();
+
+                        if (value.ValueKind == JsonValueKind.Number)
+                            return value.ToString();
+
+                        if (value.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                            return value.GetBoolean() ? "true" : "false";
+
+                        return null;
+                    }
+                });
+            }
+
+            if (string.Equals(command, "set-cassia-settings", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "save-cassia-settings", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch set-cassia-settings");
+
+                return Task.Run(async () =>
+                {
+                    string requestId = Guid.NewGuid().ToString("N");
+                    string? gatewayIp = null;
+                    string? username = null;
+                    string? password = null;
+                    string? passwordEncrypted = null;
+                    JsonObject? settingsPayload = null;
+
+                    try
+                    {
+                        if (string.IsNullOrWhiteSpace(payload))
+                        {
+                            var bad = new
+                            {
+                                success = false,
+                                action = "set",
+                                requestId,
+                                message = "Missing payload. Send {\"settings\":{...}}.",
+                                cassia = target,
+                                name = CurrentOptions.Name,
+                                networkId = CurrentOptions.NetworkId,
+                                time = DateTimeOffset.UtcNow
+                            };
+                            await PublishTeleJsonAsync("cassia-settings", bad, CancellationToken.None).ConfigureAwait(false);
+                            return;
+                        }
+
+                        using var doc = JsonDocument.Parse(payload);
+                        var root = doc.RootElement;
+                        if (root.ValueKind != JsonValueKind.Object)
+                            throw new InvalidOperationException("Payload must be a JSON object.");
+
+                        requestId = ReadString(root, "requestId") ?? requestId;
+                        gatewayIp = ReadString(root, "gatewayIp");
+                        username = ReadString(root, "username");
+                        password = ReadString(root, "password");
+                        passwordEncrypted = ReadString(root, "passwordEncrypted");
+
+                        if (root.TryGetProperty("settings", out var settingsEl) && settingsEl.ValueKind == JsonValueKind.Object)
+                        {
+                            settingsPayload = JsonNode.Parse(settingsEl.GetRawText()) as JsonObject;
+                        }
+                        else
+                        {
+                            settingsPayload = JsonNode.Parse(root.GetRawText()) as JsonObject;
+                            if (settingsPayload != null)
+                            {
+                                var metaKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                                {
+                                    "requestId",
+                                    "gatewayIp",
+                                    "username",
+                                    "password",
+                                    "passwordEncrypted",
+                                    "includeCurrent"
+                                };
+
+                                foreach (var key in settingsPayload.Select(p => p.Key).ToList())
+                                {
+                                    if (metaKeys.Contains(key))
+                                        settingsPayload.Remove(key);
+                                }
+                            }
+                        }
+
+                        if (settingsPayload == null || settingsPayload.Count == 0)
+                            throw new InvalidOperationException("No settings object found in payload.");
+
+                        if (string.Equals(target, "all", StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (!string.IsNullOrWhiteSpace(gatewayIp))
+                                AppLog.Info("set-cassia-settings: target=all, ignoring payload gatewayIp and using local gateway configuration.");
+                            gatewayIp = null;
+                        }
+
+                        var req = new CassiaWebSettingsRequest(
+                            GatewayIp: gatewayIp,
+                            Username: username,
+                            Password: password,
+                            PasswordEncrypted: passwordEncrypted);
+
+                        var snapshot = await _cassiaWebSettings.SaveSettingsAsync(req, settingsPayload, CancellationToken.None).ConfigureAwait(false);
+
+                        var ok = new
+                        {
+                            success = true,
+                            action = "set",
+                            requestId,
+                            message = "Cassia settings saved.",
+                            cassia = target,
+                            gatewayIp = snapshot.GatewayIp,
+                            csrf = snapshot.Csrf,
+                            settings = snapshot.Settings,
+                            savePayloadTemplate = snapshot.SavePayloadTemplate,
+                            name = CurrentOptions.Name,
+                            networkId = CurrentOptions.NetworkId,
+                            time = DateTimeOffset.UtcNow
+                        };
+
+                        await PublishTeleJsonAsync("cassia-settings", ok, CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        var bad = new
+                        {
+                            success = false,
+                            action = "set",
+                            requestId,
+                            message = $"Failed to save Cassia settings: {ex.Message}",
+                            cassia = target,
+                            name = CurrentOptions.Name,
+                            networkId = CurrentOptions.NetworkId,
+                            time = DateTimeOffset.UtcNow
+                        };
+
+                        await PublishTeleJsonAsync("cassia-settings", bad, CancellationToken.None).ConfigureAwait(false);
+                    }
+
+                    static string? ReadString(JsonElement obj, string propertyName)
+                    {
+                        if (!obj.TryGetProperty(propertyName, out var value))
+                            return null;
+
+                        if (value.ValueKind == JsonValueKind.String)
+                            return value.GetString();
+
+                        if (value.ValueKind == JsonValueKind.Number)
+                            return value.ToString();
+
+                        if (value.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                            return value.GetBoolean() ? "true" : "false";
+
+                        return null;
+                    }
+                });
             }
 
             if (string.Equals(command, "send-upgrade-log", StringComparison.OrdinalIgnoreCase))
@@ -614,7 +1292,6 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 return UpgradeLogger.PublishSavedLogAsync(
                     logIdFilter: dto.LogId,
                     maxLines: dto.MaxLines <= 0 ? 5000 : dto.MaxLines,
-                    chunkLines: dto.ChunkLines <= 0 ? 100 : dto.ChunkLines,
                     ct: CancellationToken.None
                 );
             }
@@ -702,6 +1379,99 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 }
 
                 return GetFirmwareManifestRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "self-update", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "app-self-update", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch self-update");
+                SelfUpdateCommand dto;
+
+                try
+                {
+                    dto = string.IsNullOrWhiteSpace(payload)
+                        ? new SelfUpdateCommand()
+                        : JsonSerializer.Deserialize<SelfUpdateCommand>(payload, JsonOptions) ?? new SelfUpdateCommand();
+                }
+                catch
+                {
+                    dto = new SelfUpdateCommand();
+                }
+
+                return SelfUpdateRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "set-update-channel", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "set-channel", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch set-update-channel");
+                SetUpdateChannelCommand dto;
+
+                try
+                {
+                    dto = string.IsNullOrWhiteSpace(payload)
+                        ? new SetUpdateChannelCommand()
+                        : JsonSerializer.Deserialize<SetUpdateChannelCommand>(payload, JsonOptions) ?? new SetUpdateChannelCommand();
+
+                    if (string.IsNullOrWhiteSpace(dto.Channel) && !string.IsNullOrWhiteSpace(payload))
+                    {
+                        using var doc = JsonDocument.Parse(payload);
+                        if (doc.RootElement.ValueKind == JsonValueKind.String)
+                        {
+                            dto.Channel = doc.RootElement.GetString();
+                        }
+                        else if (doc.RootElement.ValueKind == JsonValueKind.Object)
+                        {
+                            if (doc.RootElement.TryGetProperty("value", out var chEl) && chEl.ValueKind == JsonValueKind.String)
+                                dto.Channel = chEl.GetString();
+                        }
+                    }
+                }
+                catch
+                {
+                    dto = new SetUpdateChannelCommand();
+                }
+
+                return SetUpdateChannelRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "reboot", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "system-reboot", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch reboot");
+                RebootCommand dto;
+
+                try
+                {
+                    dto = string.IsNullOrWhiteSpace(payload)
+                        ? new RebootCommand()
+                        : JsonSerializer.Deserialize<RebootCommand>(payload, JsonOptions) ?? new RebootCommand();
+
+                    if (!string.IsNullOrWhiteSpace(payload))
+                    {
+                        using var doc = JsonDocument.Parse(payload);
+                        if (doc.RootElement.ValueKind == JsonValueKind.Number &&
+                            doc.RootElement.TryGetInt32(out var delayFromNumber))
+                        {
+                            dto.DelaySeconds = delayFromNumber;
+                        }
+                        else if (doc.RootElement.ValueKind == JsonValueKind.Object)
+                        {
+                            if (doc.RootElement.TryGetProperty("delay", out var delayEl) &&
+                                delayEl.ValueKind == JsonValueKind.Number &&
+                                delayEl.TryGetInt32(out var delayFromDelay))
+                            {
+                                dto.DelaySeconds = delayFromDelay;
+                            }
+                        }
+                    }
+                }
+                catch
+                {
+                    dto = new RebootCommand();
+                }
+
+                return RebootRequested?.Invoke(dto) ?? Task.CompletedTask;
             }
 
 
@@ -813,6 +1583,39 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 return PublishJsonAsync(TeleTopic("device-list"), resp, retain: false, CancellationToken.None);
             }
 
+            if (string.Equals(command, "clear-device-list", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch clear-device-list");
+                string? requestId = null;
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(payload))
+                    {
+                        using var doc = JsonDocument.Parse(payload);
+                        if (doc.RootElement.ValueKind == JsonValueKind.Object &&
+                            doc.RootElement.TryGetProperty("requestId", out var rid) &&
+                            rid.ValueKind == JsonValueKind.String)
+                            requestId = rid.GetString();
+                    }
+                }
+                catch { /* ignore */ }
+
+                var removed = DeviceStorageService.ClearAllDevices();
+
+                var resp = new
+                {
+                    success = true,
+                    message = "Device list cleared successfully.",
+                    requestId,
+                    name = CurrentOptions.Name,
+                    networkId = CurrentOptions.NetworkId,
+                    time = DateTimeOffset.UtcNow,
+                    removed
+                };
+
+                return PublishJsonAsync(TeleTopic("clear-device-list"), resp, retain: false, CancellationToken.None);
+            }
+
             if (string.Equals(command, "remove-from-queue", StringComparison.OrdinalIgnoreCase))
             {
                 AppLog.Debug("HandleCommandAsync: dispatch remove-from-queue");
@@ -898,18 +1701,28 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                     .ToList();
 
                 int removed = 0;
+                int removedInProgress = 0;
                 foreach (var m in macs)
+                {
                     removed += CassiaFirmwareUpgradeService.RemoveFromUpgradeQueuePending(m);
+                    // Also force-clear from the active in-progress set so that a device stuck
+                    // in a previous (hung) upgrade task can be re-queued without restarting.
+                    if (CassiaFirmwareUpgradeService.ForceRemoveFromInProgress(m))
+                        removedInProgress++;
+                }
 
                 var resp = new
                 {
                     success = true,
-                    message = removed > 0 ? "Removed device(s) from pending queue." : "No matching pending devices found in queue.",
+                    message = (removed + removedInProgress) > 0
+                        ? $"Removed device(s): {removed} from pending queue, {removedInProgress} forced from in-progress."
+                        : "No matching devices found in queue or in-progress.",
                     name = CurrentOptions.Name,
                     networkId = CurrentOptions.NetworkId,
                     time = DateTimeOffset.UtcNow,
                     requested = macs,
-                    removed
+                    removed,
+                    removedInProgress
                 };
 
                 return PublishJsonAsync(TeleTopic("queue-remove"), resp, retain: false, CancellationToken.None);
@@ -982,9 +1795,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 if (string.Equals(command, "clear-upgrade-log", StringComparison.OrdinalIgnoreCase))
             {
                 AppLog.Debug("HandleCommandAsync: dispatch clear-upgrade-log");
-                var currentDir = Directory.GetCurrentDirectory();
-                AppLog.Debug("Current Directory: " + currentDir);
-var logPath = Path.Combine(currentDir, "Logs", "upgrade_logs.txt");
+                var logPath = AccessAppPaths.UpgradeLog;
 
                 if (!System.IO.File.Exists(logPath))
                 {
@@ -1236,8 +2047,8 @@ var logPath = Path.Combine(currentDir, "Logs", "upgrade_logs.txt");
 
     // ---------------- Topic helpers ----------------
 
-    private string TeleTopic(string leaf)
-        => $"{CurrentOptions.BaseTopic}/{CurrentOptions.NetworkId}/tele/{CurrentOptions.Name}/{leaf}";
+    private string TeleTopic(string leaf, string? networkIdOverride = null, string? nameOverride = null)
+        => $"{CurrentOptions.BaseTopic}/{(networkIdOverride ?? CurrentOptions.NetworkId)}/tele/{(nameOverride ?? CurrentOptions.Name)}/{leaf}";
 
     private string CmdTopic(string target, string leaf)
         => $"{CurrentOptions.BaseTopic}/{CurrentOptions.NetworkId}/cmd/{target}/{leaf}";
@@ -1272,13 +2083,16 @@ var logPath = Path.Combine(currentDir, "Logs", "upgrade_logs.txt");
                   ?? throw new InvalidOperationException("Failed to create TCP options instance.");
         AppLog.Info("TCP options props: " + string.Join(", ", tcp.GetType().GetProperties().Select(p => p.Name)));
         ApplyTcpEndpoint(tcp, o.Host, o.Port);
+        ApplyTlsIfAvailable(options, tcp, o.UseTls, o.Host);
 
         if (!TrySetProp(options, "ChannelOptions", tcp))
             TrySetProp(options, "TransportOptions", tcp);
 
-        if (!string.IsNullOrWhiteSpace(o.Username))
+        var username = o.Username?.Trim();
+        AppLog.Info($"MQTT connect config: host={o.Host}, port={o.Port}, useTls={o.UseTls}, usernameSet={!string.IsNullOrWhiteSpace(username)}");
+        if (!string.IsNullOrWhiteSpace(username))
         {
-            ApplyCredentialsProvider(options, o.Username!, o.Password ?? "");
+            ApplyCredentialsProvider(options, username!, o.Password ?? "");
         }
 
         return options;
@@ -1293,36 +2107,75 @@ var logPath = Path.Combine(currentDir, "Logs", "upgrade_logs.txt");
         {
             if (typeof(System.Net.EndPoint).IsAssignableFrom(pRemote.PropertyType))
             {
-                System.Net.IPAddress? ip = null;
-                if (!System.Net.IPAddress.TryParse(host, out var parsedIp))
-                {
-                    try
-                    {
-                        var addrs = System.Net.Dns.GetHostAddresses(host);
-                        ip = addrs.FirstOrDefault(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
-                             ?? addrs.FirstOrDefault();
-                    }
-                    catch
-                    {
-                        ip = null;
-                    }
-                }
-                else
-                {
-                    ip = parsedIp;
-                }
-
-                if (ip == null)
-                    throw new InvalidOperationException($"Cannot resolve MQTT broker host '{host}' to an IP address.");
-
-                var ep = new System.Net.IPEndPoint(ip, port);
+                System.Net.EndPoint ep = System.Net.IPAddress.TryParse(host, out var parsedIp)
+                    ? new System.Net.IPEndPoint(parsedIp, port)
+                    : new System.Net.DnsEndPoint(host, port);
                 pRemote.SetValue(tcpOptions, ep);
                 return;
             }
         }
 
+        if (TrySetProp(tcpOptions, "Server", host))
+        {
+            TrySetProp(tcpOptions, "Port", port);
+            return;
+        }
+
+        if (TrySetProp(tcpOptions, "Host", host))
+        {
+            TrySetProp(tcpOptions, "Port", port);
+            return;
+        }
+
         TrySetProp(tcpOptions, "RemoteEndPoint", $"{host}:{port}");
         TrySetProp(tcpOptions, "Endpoint", $"{host}:{port}");
+    }
+
+    private static void ApplyTlsIfAvailable(object options, object tcpOptions, bool useTls, string host)
+    {
+        var tlsConfigured = false;
+
+        // MQTTnet v5 usually exposes TlsOptions on TCP options.
+        tlsConfigured |= TryConfigureTlsOptionsObject(tcpOptions, useTls, host);
+
+        // Some versions expose TLS options at the root options level.
+        tlsConfigured |= TryConfigureTlsOptionsObject(options, useTls, host);
+
+        if (useTls && !tlsConfigured)
+        {
+            AppLog.Warn("UseTls=true, but no writable TLS options were found on MQTT options object.");
+        }
+    }
+
+    private static bool TryConfigureTlsOptionsObject(object container, bool useTls, string host)
+    {
+        var prop = container.GetType().GetProperty("TlsOptions", BindingFlags.Instance | BindingFlags.Public);
+        if (prop == null || !prop.CanWrite) return false;
+
+        var tls = prop.GetValue(container);
+        if (tls == null)
+        {
+            try
+            {
+                tls = Activator.CreateInstance(prop.PropertyType);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        if (tls == null) return false;
+
+        var changed = false;
+        changed |= TrySetProp(tls, "UseTls", useTls);
+        if (useTls)
+        {
+            changed |= TrySetProp(tls, "TargetHost", host);
+        }
+
+        prop.SetValue(container, tls);
+        return changed;
     }
 
     private static void ApplyCredentialsProvider(object options, string username, string password)

@@ -3,9 +3,13 @@
 // Supports: systemd, OpenRC, SysV init. Uses password-based sudo (no SSH keys needed).
 
 using Renci.SshNet;
+using Renci.SshNet.Common;
 using Renci.SshNet.Sftp;
 using System.Diagnostics;
+using System.Net.Sockets;
+using System.Text.RegularExpressions;
 using System.Text;
+using System.Text.Json;
 
 namespace CassiaDeployerLib;
 
@@ -80,11 +84,13 @@ public sealed class SshCassiaDeployer
     private enum InitKind { Systemd, OpenRc, SysV, Unknown }
 
     private string ServiceUnitName => $"{_opt.ServiceName}.service";
+    private string StartupUpdaterExecStartPre =>
+        $"{_opt.UpdaterRemoteExePath} --config {_opt.UpdaterRemoteConfigPath}";
 
     public void Run()
     {
-        // Build/publish once, then deploy to one or many targets.
-        BuildAndPublish();
+        // Build/publish all artifacts once, then deploy to one or many targets.
+        BuildAllArtifacts();
 
         if (_opt.BulkWifiDeploy)
         {
@@ -95,7 +101,15 @@ public sealed class SshCassiaDeployer
         DeployToTarget(_opt.Host, _opt.Port, _opt.User, _opt.Password, label: _opt.Host);
     }
 
-    private void DeployToTarget(string host, int port, string user, string password, string label)
+    private void DeployToTarget(
+        string host,
+        int port,
+        string user,
+        string password,
+        string label,
+        string? expectedWifiSsid = null,
+        string? wifiPassword = null,
+        bool wifiAutoCreateProfile = true)
     {
         // IMPORTANT:
         // Many operations (service stop/start, sshd hardening, chown, etc.) use RunSudo(),
@@ -122,6 +136,9 @@ public sealed class SshCassiaDeployer
             retryDelayMs: Math.Max(0, _opt.SshConnectRetryDelayMs));
         _log.Info("Connected.");
 
+        InitKind init = InitKind.Unknown;
+        var serviceRestartNeeded = false;
+
         try
         {
             // Provision SSH public-key login (so future logins/deploys can be password-less)
@@ -140,18 +157,27 @@ public sealed class SshCassiaDeployer
 
             EnsureRemoteDirWritable(ssh);
 
-            var init = DetectInit(ssh);
+            init = DetectInit(ssh);
             _log.Info($"Init system detected: {init}");
+
+            if (_opt.ManageService && _opt.InstallServiceIfMissing)
+                EnsureServiceInstalled(ssh, init);
 
             if (_opt.ManageService)
             {
-                if (_opt.InstallServiceIfMissing)
-                    EnsureServiceInstalled(ssh, init);
-
                 StopService(ssh, init);
+                serviceRestartNeeded = true;
             }
 
-            UploadDirectorySftpWithManifest(ssh, sftp, _opt.LocalPublishDir, _opt.RemoteDir, _opt.RemoteManifestPath);
+            UploadDirectorySftpWithManifest(
+                ssh,
+                sftp,
+                _opt.LocalPublishDir,
+                _opt.RemoteDir,
+                _opt.RemoteManifestPath,
+                expectedWifiSsid,
+                wifiPassword,
+                wifiAutoCreateProfile);
 
             // Ensure executable bit on main app
             var remoteExe = CombineRemote(_opt.RemoteDir, _opt.RemoteExeName);
@@ -163,11 +189,43 @@ public sealed class SshCassiaDeployer
                 RunCommand(ssh, $"if [ -f {ShEscape(_opt.ExtraChmod755Path)} ]; then chmod 755 {ShEscape(_opt.ExtraChmod755Path)}; fi");
             }
 
+            if (_opt.InstallStartupUpdater)
+            {
+                try
+                {
+                    InstallStartupUpdater(ssh, sftp, expectedWifiSsid, wifiPassword, wifiAutoCreateProfile);
+                    EnsureSelfUpdateSudoers(ssh);
+                }
+                catch (Exception ex)
+                {
+                    // Do not leave the device down if updater installation hits a transient error.
+                    _log.Warn($"Startup updater installation failed (continuing): {ex.Message}");
+                }
+            }
+
             if (_opt.ManageService)
             {
                 StartService(ssh, init);
+                serviceRestartNeeded = false;
                 ShowServiceStatus(ssh, init);
             }
+        }
+        catch
+        {
+            if (_opt.ManageService && serviceRestartNeeded)
+            {
+                try
+                {
+                    _log.Warn("Deployment failed after service stop; attempting to restart service.");
+                    StartService(ssh, init);
+                }
+                catch (Exception startEx)
+                {
+                    _log.Error($"Failed to restart service after deployment error: {startEx.Message}");
+                }
+            }
+
+            throw;
         }
         finally
         {
@@ -272,7 +330,19 @@ public sealed class SshCassiaDeployer
                 var pwd = string.IsNullOrWhiteSpace(_opt.Password) ? ssidPasswordLower : _opt.Password;
 
                 _log.Info($"=== [{ssid}] Deploying to {_opt.Host}:{_opt.Port} ===");
-                DeployToTarget(_opt.Host, _opt.Port, _opt.User, pwd, label: ssid);
+                DeployToTargetWithRetry(
+                    host: _opt.Host,
+                    port: _opt.Port,
+                    user: _opt.User,
+                    password: pwd,
+                    ssid: ssid,
+                    attempts: Math.Max(1, _opt.BulkWifiDeployAttemptsPerTarget),
+                    retryDelayMs: Math.Max(0, _opt.BulkWifiDeployRetryDelayMs),
+                    connectTimeoutSeconds: _opt.BulkWifiConnectTimeoutSeconds,
+                    connectAttempts: Math.Max(1, _opt.BulkWifiConnectAttempts),
+                    connectRetryDelayMs: Math.Max(0, _opt.BulkWifiConnectRetryDelayMs),
+                    autoCreateProfile: _opt.BulkWifiAutoCreateProfile,
+                    wifiPassword: ssidPasswordLower);
                 ok++;
             }
             catch (Exception ex)
@@ -284,6 +354,59 @@ public sealed class SshCassiaDeployer
 
         _log.Info("");
         _log.Info($"Bulk deploy finished. Success={ok}, Failed={fail}");
+    }
+
+    private void DeployToTargetWithRetry(
+        string host,
+        int port,
+        string user,
+        string password,
+        string ssid,
+        int attempts,
+        int retryDelayMs,
+        int connectTimeoutSeconds,
+        int connectAttempts,
+        int connectRetryDelayMs,
+        bool autoCreateProfile,
+        string wifiPassword)
+    {
+        Exception? lastEx = null;
+        for (int attempt = 1; attempt <= attempts; attempt++)
+        {
+            try
+            {
+                if (attempt > 1)
+                {
+                    _log.Warn($"[{ssid}] Full deploy retry {attempt}/{attempts}...");
+                    ConnectWifiWithRetry(
+                        ssid,
+                        password: wifiPassword,
+                        autoCreateProfile: autoCreateProfile,
+                        timeoutSeconds: connectTimeoutSeconds,
+                        attempts: connectAttempts,
+                        retryDelayMs: connectRetryDelayMs);
+                }
+
+                DeployToTarget(
+                    host,
+                    port,
+                    user,
+                    password,
+                    label: ssid,
+                    expectedWifiSsid: ssid,
+                    wifiPassword: wifiPassword,
+                    wifiAutoCreateProfile: autoCreateProfile);
+                return;
+            }
+            catch (Exception ex)
+            {
+                lastEx = ex;
+                if (attempt < attempts && retryDelayMs > 0)
+                    Thread.Sleep(retryDelayMs);
+            }
+        }
+
+        throw new InvalidOperationException($"[{ssid}] Deployment failed after {attempts} attempt(s).", lastEx);
     }
 
     private static List<string> ListWifiSsids()
@@ -334,6 +457,7 @@ public sealed class SshCassiaDeployer
         {
             try
             {
+                _log.Info($"Wi-Fi scan pass {pass}/{scanPasses}...");
                 // netsh triggers a scan; repeating it increases discovery reliability.
                 var ssids = ListWifiSsids();
                 foreach (var s in ssids)
@@ -579,7 +703,19 @@ public sealed class SshCassiaDeployer
     // ------------------------------------------------------------
     // BUILD
     // ------------------------------------------------------------
-    private void BuildAndPublish()
+    private void BuildAllArtifacts()
+    {
+        _log.Info("Preparing deploy artifacts...");
+
+        BuildAndPublishAccessApp();
+
+        if (_opt.InstallStartupUpdater)
+            BuildAndPublishUpdater();
+
+        _log.Info("All deploy artifacts are ready.");
+    }
+
+    private void BuildAndPublishAccessApp()
     {
         _log.Info("Building and publishing AccessAPP...");
 
@@ -589,12 +725,14 @@ public sealed class SshCassiaDeployer
             Directory.Delete(_opt.LocalPublishDir, recursive: true);
 
         var selfContainedArg = _opt.SelfContained ? "--self-contained" : "--no-self-contained";
+        var skipClientBuildArg = _opt.SkipClientAppBuild ? "-p:SkipClientAppBuild=true" : "";
 
         var args =
             $"publish \"{projectFile}\" " +
             $"-c {_opt.PublishConfiguration} " +
             $"-r {_opt.PublishRuntime} " +
             $"{selfContainedArg} " +
+            $"{skipClientBuildArg} " +
             $"--output \"{_opt.LocalPublishDir}\"";
 
         _log.Info($"dotnet {args}");
@@ -625,7 +763,59 @@ public sealed class SshCassiaDeployer
         if (!Directory.Exists(_opt.LocalPublishDir))
             throw new InvalidOperationException($"Publish output folder not created: {_opt.LocalPublishDir}");
 
+        WriteVersionFileIfAvailable(_opt.LocalPublishDir);
+
         _log.Info("Publish completed.");
+    }
+
+    private void BuildAndPublishUpdater()
+    {
+        _log.Info("Building and publishing startup updater...");
+
+        if (Directory.Exists(_opt.LocalUpdaterPublishDir))
+            Directory.Delete(_opt.LocalUpdaterPublishDir, recursive: true);
+
+        var updaterProjectFile = ResolveUpdaterProjectFile();
+        var selfContainedArg = _opt.UpdaterSelfContained ? "--self-contained" : "--no-self-contained";
+        var singleFileArg = _opt.UpdaterSingleFile ? "-p:PublishSingleFile=true" : "";
+
+        var args =
+            $"publish \"{updaterProjectFile}\" " +
+            $"-c {_opt.PublishConfiguration} " +
+            $"-r {_opt.UpdaterPublishRuntime} " +
+            $"{selfContainedArg} " +
+            $"{singleFileArg} " +
+            $"--output \"{_opt.LocalUpdaterPublishDir}\"";
+
+        _log.Info($"dotnet {args}");
+        _log.Info($"WorkingDirectory: {_opt.UpdaterProjectDir}");
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = "dotnet",
+            Arguments = args,
+            WorkingDirectory = _opt.UpdaterProjectDir,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+
+        using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start updater dotnet publish");
+
+        proc.OutputDataReceived += (_, e) => { if (e.Data != null) _log.Info(e.Data); };
+        proc.ErrorDataReceived += (_, e) => { if (e.Data != null) _log.Error(e.Data); };
+        proc.BeginOutputReadLine();
+        proc.BeginErrorReadLine();
+
+        proc.WaitForExit();
+
+        if (proc.ExitCode != 0)
+            throw new InvalidOperationException($"updater dotnet publish failed (exit {proc.ExitCode})");
+
+        if (!Directory.Exists(_opt.LocalUpdaterPublishDir))
+            throw new InvalidOperationException($"Updater publish output folder not created: {_opt.LocalUpdaterPublishDir}");
+
+        _log.Info("Startup updater publish completed.");
     }
 
     private string ResolveProjectFile()
@@ -651,6 +841,65 @@ public sealed class SshCassiaDeployer
         return csprojs[0];
     }
 
+    private string ResolveUpdaterProjectFile()
+    {
+        if (!string.IsNullOrWhiteSpace(_opt.UpdaterProjectFile))
+        {
+            if (!File.Exists(_opt.UpdaterProjectFile))
+                throw new FileNotFoundException($"UpdaterProjectFile not found: {_opt.UpdaterProjectFile}");
+            return _opt.UpdaterProjectFile;
+        }
+
+        if (string.IsNullOrWhiteSpace(_opt.UpdaterProjectDir) || !Directory.Exists(_opt.UpdaterProjectDir))
+            throw new DirectoryNotFoundException($"UpdaterProjectDir not found: {_opt.UpdaterProjectDir}");
+
+        var csprojs = Directory.GetFiles(_opt.UpdaterProjectDir, "*.csproj", SearchOption.TopDirectoryOnly);
+        if (csprojs.Length == 0)
+            throw new InvalidOperationException($"No updater .csproj found in UpdaterProjectDir: {_opt.UpdaterProjectDir}");
+        if (csprojs.Length > 1)
+            throw new InvalidOperationException(
+                $"Multiple updater .csproj found in UpdaterProjectDir. Set DeployOptions.UpdaterProjectFile explicitly.\n" +
+                string.Join("\n", csprojs));
+
+        return csprojs[0];
+    }
+
+    private void WriteVersionFileIfAvailable(string publishDir)
+    {
+        try
+        {
+            var versionCs = Path.Combine(_opt.ProjectDir, "Version.cs");
+            if (!File.Exists(versionCs))
+            {
+                _log.Warn($"Version source file not found, skipping version.txt write: {versionCs}");
+                return;
+            }
+
+            var text = File.ReadAllText(versionCs);
+            var match = Regex.Match(text, "AppVersion\\s*=\\s*\"([^\"]+)\"");
+            if (!match.Success)
+            {
+                _log.Warn("Could not parse AppVersion from Version.cs, skipping version.txt write.");
+                return;
+            }
+
+            var version = match.Groups[1].Value.Trim();
+            if (string.IsNullOrWhiteSpace(version))
+            {
+                _log.Warn("Parsed AppVersion was empty, skipping version.txt write.");
+                return;
+            }
+
+            var versionFilePath = Path.Combine(publishDir, "version.txt");
+            File.WriteAllText(versionFilePath, version + Environment.NewLine);
+            _log.Info($"Wrote publish version file: {versionFilePath} ({version})");
+        }
+        catch (Exception ex)
+        {
+            _log.Warn($"Failed to write publish version.txt (deployment continues): {ex.Message}");
+        }
+    }
+
     // ------------------------------------------------------------
     // INIT DETECTION
     // ------------------------------------------------------------
@@ -674,6 +923,160 @@ public sealed class SshCassiaDeployer
         if (hasInitD) return InitKind.SysV;
 
         return InitKind.Unknown;
+    }
+
+    private void InstallStartupUpdater(
+        SshClient ssh,
+        SftpClient sftp,
+        string? expectedWifiSsid,
+        string? wifiPassword,
+        bool wifiAutoCreateProfile)
+    {
+        var localUpdaterExe = Path.Combine(_opt.LocalUpdaterPublishDir, "AccessAppUpdater");
+        if (!File.Exists(localUpdaterExe))
+            throw new FileNotFoundException($"Updater binary not found: {localUpdaterExe}");
+
+        _log.Info("Installing startup updater on target...");
+
+        var remoteTmpPath = CombineRemote(_opt.RemoteDir, ".accessapp_updater_tmp");
+        UploadStreamSftpWithRetry(
+            ssh,
+            sftp,
+            () => File.OpenRead(localUpdaterExe),
+            remoteTmpPath,
+            expectedWifiSsid,
+            wifiPassword,
+            wifiAutoCreateProfile);
+
+        RunSudo(ssh, $"mkdir -p {ShEscape(GetRemoteParentDir(_opt.UpdaterRemoteExePath))}");
+        RunSudo(ssh, $"install -m 755 {ShEscape(remoteTmpPath)} {ShEscape(_opt.UpdaterRemoteExePath)}");
+        RunCommand(ssh, $"rm -f {ShEscape(remoteTmpPath)} || true");
+
+        var updaterConfig = BuildUpdaterConfigJson();
+        var configB64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(updaterConfig));
+
+        RunSudo(ssh, $"mkdir -p {ShEscape(GetRemoteParentDir(_opt.UpdaterRemoteConfigPath))}");
+        RunSudo(ssh, $"echo '{configB64}' | base64 -d > {ShEscape(_opt.UpdaterRemoteConfigPath)}");
+        RunSudo(ssh, $"chmod 644 {ShEscape(_opt.UpdaterRemoteConfigPath)}");
+        RunSudo(ssh, $"chown {_opt.User}:{_opt.User} {ShEscape(_opt.UpdaterRemoteConfigPath)} || true");
+        EnsureUpdaterChannelFile(ssh);
+        EnsureUpdaterWorkDirWritable(ssh);
+
+        _log.Info($"Startup updater installed: {_opt.UpdaterRemoteExePath}");
+        _log.Info($"Startup updater config updated: {_opt.UpdaterRemoteConfigPath}");
+    }
+
+    private void EnsureUpdaterChannelFile(SshClient ssh)
+    {
+        var channelFilePath = string.IsNullOrWhiteSpace(_opt.UpdaterChannelFilePath)
+            ? "/etc/accessapp-updater.channel"
+            : _opt.UpdaterChannelFilePath.Trim();
+        var channel = NormalizeUpdaterChannel(_opt.UpdaterChannel);
+        _log.Info($"Ensuring updater channel file: {channelFilePath} ({channel})");
+
+        RunSudo(ssh, $"mkdir -p {ShEscape(GetRemoteParentDir(channelFilePath))}");
+        RunSudo(ssh, $"printf '%s\\n' {ShEscape(channel)} > {ShEscape(channelFilePath)}");
+        RunSudo(ssh, $"chmod 644 {ShEscape(channelFilePath)}");
+        RunSudo(ssh, $"chown {_opt.User}:{_opt.User} {ShEscape(channelFilePath)} || true");
+    }
+
+    private void EnsureUpdaterWorkDirWritable(SshClient ssh)
+    {
+        if (string.IsNullOrWhiteSpace(_opt.UpdaterWorkDir))
+            return;
+
+        var dir = _opt.UpdaterWorkDir.Trim();
+        _log.Info($"Ensuring updater work dir is writable: {dir}");
+
+        // Make sure the directory exists and cassia user can write there.
+        RunSudo(ssh, $"mkdir -p {ShEscape(dir)}");
+        RunSudo(ssh, $"chown -R {_opt.User}:{_opt.User} {ShEscape(dir)} || true");
+        RunSudo(ssh, $"chmod -R u+rwX {ShEscape(dir)} || true");
+    }
+
+    private void EnsureSelfUpdateSudoers(SshClient ssh)
+    {
+        var service = _opt.ServiceName.Replace("'", "");
+        var user = _opt.User.Replace("'", "");
+        var sudoersPath = $"/etc/sudoers.d/{service}-self-update";
+
+        // Keep entries short and LF-only; some target visudo builds are sensitive to very long lines/CRLF.
+        var sudoersLines = new[]
+        {
+            $"Defaults:{user} !requiretty",
+            $"{user} ALL=(root) NOPASSWD: /bin/systemctl start {service}",
+            $"{user} ALL=(root) NOPASSWD: /bin/systemctl stop {service}",
+            $"{user} ALL=(root) NOPASSWD: /bin/systemctl restart {service}",
+            $"{user} ALL=(root) NOPASSWD: /usr/bin/systemctl start {service}",
+            $"{user} ALL=(root) NOPASSWD: /usr/bin/systemctl stop {service}",
+            $"{user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart {service}",
+            $"{user} ALL=(root) NOPASSWD: /usr/sbin/service {service} start",
+            $"{user} ALL=(root) NOPASSWD: /usr/sbin/service {service} stop",
+            $"{user} ALL=(root) NOPASSWD: /usr/sbin/service {service} restart",
+            $"{user} ALL=(root) NOPASSWD: /sbin/service {service} start",
+            $"{user} ALL=(root) NOPASSWD: /sbin/service {service} stop",
+            $"{user} ALL=(root) NOPASSWD: /sbin/service {service} restart",
+            $"{user} ALL=(root) NOPASSWD: /etc/init.d/{service} start",
+            $"{user} ALL=(root) NOPASSWD: /etc/init.d/{service} stop",
+            $"{user} ALL=(root) NOPASSWD: /etc/init.d/{service} restart"
+        };
+
+        var sudoers = string.Join("\n", sudoersLines) + "\n";
+        var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(sudoers));
+
+        RunSudo(ssh, $"echo '{b64}' | base64 -d > {ShEscape(sudoersPath)}");
+        RunSudo(ssh, $"chmod 440 {ShEscape(sudoersPath)}");
+        RunSudo(ssh, $"visudo -cf {ShEscape(sudoersPath)} >/dev/null");
+        _log.Info($"Installed sudoers self-update rule: {sudoersPath}");
+    }
+
+    private string BuildUpdaterConfigJson()
+    {
+        var chmodPaths = new List<string> { _opt.RemoteExeName };
+        var channel = NormalizeUpdaterChannel(_opt.UpdaterChannel);
+        var channelFilePath = string.IsNullOrWhiteSpace(_opt.UpdaterChannelFilePath)
+            ? "/etc/accessapp-updater.channel"
+            : _opt.UpdaterChannelFilePath.Trim();
+
+        if (!string.IsNullOrWhiteSpace(_opt.ExtraChmod755Path))
+        {
+            var rel = TryMakeRelativeRemotePath(_opt.RemoteDir, _opt.ExtraChmod755Path);
+            if (!string.IsNullOrWhiteSpace(rel))
+                chmodPaths.Add(rel);
+        }
+
+        var payload = new
+        {
+            ManifestUrl = _opt.UpdaterManifestUrl,
+            Channel = channel,
+            ChannelFilePath = channelFilePath,
+            AllowDowngrade = false,
+            InstallDir = _opt.RemoteDir,
+            WorkDir = _opt.UpdaterWorkDir,
+            VersionFileName = _opt.UpdaterVersionFileName,
+            ExecutableName = _opt.RemoteExeName,
+            HttpTimeoutSeconds = Math.Max(30, _opt.UpdaterHttpTimeoutSeconds),
+            PreserveFiles = _opt.UpdaterPreserveFiles,
+            ExecutableRelativePathsToChmodX = chmodPaths.Distinct(StringComparer.Ordinal).ToArray()
+        };
+
+        return JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
+    }
+
+    private static string NormalizeUpdaterChannel(string? value)
+    {
+        var channel = (value ?? string.Empty).Trim().ToLowerInvariant();
+        return channel switch
+        {
+            "stable" => "stable",
+            "test" => "test",
+            "develop" => "develop",
+            "dev" => "develop",
+            "prod-stable" => "stable",
+            "prod-test" => "test",
+            "prod-develop" => "develop",
+            _ => "stable"
+        };
     }
 
     // ------------------------------------------------------------
@@ -769,15 +1172,15 @@ public sealed class SshCassiaDeployer
             $"systemctl show -p FragmentPath '{ServiceUnitName}' 2>/dev/null | sed 's/^FragmentPath=//'").Trim();
 
         if (!string.IsNullOrWhiteSpace(frag) && !frag.Equals("n/a", StringComparison.OrdinalIgnoreCase))
-        {
-            _log.Info($"Systemd unit exists: {frag}");
-            return;
-        }
-
-        _log.Info($"Systemd unit missing -> installing: {ServiceUnitName}");
+            _log.Info($"Systemd unit exists -> updating: {frag}");
+        else
+            _log.Info($"Systemd unit missing -> installing: {ServiceUnitName}");
 
         var unitPath = $"/etc/systemd/system/{ServiceUnitName}";
         var remoteExe = CombineRemote(_opt.RemoteDir, _opt.RemoteExeName);
+        var preStartLine = _opt.InstallStartupUpdater
+            ? $"ExecStartPre=-{StartupUpdaterExecStartPre}"
+            : string.Empty;
 
         var unit = $"""
 [Unit]
@@ -789,6 +1192,7 @@ Wants=network-online.target
 Type=simple
 User={_opt.User}
 WorkingDirectory={_opt.RemoteDir}
+{preStartLine}
 ExecStart={remoteExe}
 Restart=always
 RestartSec=2
@@ -809,18 +1213,21 @@ WantedBy=multi-user.target
     {
         var scriptPath = $"/etc/init.d/{_opt.ServiceName}";
         var remoteExe = CombineRemote(_opt.RemoteDir, _opt.RemoteExeName);
+        var updaterExe = _opt.UpdaterRemoteExePath.Replace("'", "");
+        var updaterCfg = _opt.UpdaterRemoteConfigPath.Replace("'", "");
+        var updaterStartBlock = _opt.InstallStartupUpdater
+            ? @"  if [ -x ""$UPDATER_EXE"" ]; then
+    echo ""Running startup updater...""
+    run_as_app_user ""'$UPDATER_EXE' --config '$UPDATER_CFG'"" || echo ""[WARN] startup updater failed; continuing with current app""
+  fi
+"
+            : string.Empty;
 
         var exists = RunCommandCapture(ssh, $"test -f '{scriptPath}'; echo $?").Trim() == "0";
         if (exists)
-        {
-            _log.Info($"Init script exists: {scriptPath}");
-
-            // Still fix CRLF / bad shebang issues if any (best effort)
-            RunSudo(ssh, $"sed -i 's/\\r$//' '{scriptPath}' || true");
-            return;
-        }
-
-        _log.Info($"Installing init script: {scriptPath}");
+            _log.Info($"Init script exists -> updating: {scriptPath}");
+        else
+            _log.Info($"Installing init script: {scriptPath}");
 
         // IMPORTANT: Use real newlines in the script content (no \\n sequences).
         // Also remove any accidental CRLF by running sed after write.
@@ -836,9 +1243,29 @@ WantedBy=multi-user.target
 
 APP_DIR='{_opt.RemoteDir.Replace("'", "")}'
 APP_EXE='{remoteExe.Replace("'", "")}'
-PIDFILE='/var/run/{_opt.ServiceName}.pid'
+UPDATER_EXE='{updaterExe}'
+UPDATER_CFG='{updaterCfg}'
+APP_USER='{_opt.User.Replace("'", "")}'
+PIDFILE='{_opt.RemoteDir.Replace("'", "")}/.{_opt.ServiceName}.pid'
 LOGFILE='{_opt.RemoteDir.Replace("'", "")}/accessapp.log'
 MAX_LOG_SIZE=$((10 * 1024 * 1024))  # 10 MB
+
+run_as_app_user() {{
+  CMD=""$1""
+  if [ ""$(id -un 2>/dev/null || true)"" = ""$APP_USER"" ]; then
+    sh -lc ""$CMD""
+    return $?
+  fi
+  if command -v su >/dev/null 2>&1; then
+    su -s /bin/sh -c ""$CMD"" ""$APP_USER""
+    return $?
+  fi
+  if command -v runuser >/dev/null 2>&1; then
+    runuser -u ""$APP_USER"" -- sh -lc ""$CMD""
+    return $?
+  fi
+  sh -lc ""$CMD""
+}}
 
 truncate_log_if_needed() {{
   if [ -f ""$LOGFILE"" ]; then
@@ -853,15 +1280,18 @@ start() {{
   echo ""Starting accessapp...""
   mkdir -p ""$APP_DIR"" 2>/dev/null || true
   cd ""$APP_DIR"" || exit 1
+  touch ""$LOGFILE"" 2>/dev/null || true
+  chown ""$APP_USER"":""$APP_USER"" ""$APP_DIR"" ""$LOGFILE"" 2>/dev/null || true
+
+{updaterStartBlock}
 
   truncate_log_if_needed
 
-  nohup ""$APP_EXE"" >> ""$LOGFILE"" 2>&1 &
-  PID=$!
-  echo $PID > ""$PIDFILE""
+  run_as_app_user ""nohup '$APP_EXE' >> '$LOGFILE' 2>&1 & echo \\$! > '$PIDFILE'""
+  PID=$(cat ""$PIDFILE"" 2>/dev/null || true)
 
   sleep 1
-  if kill -0 $PID 2>/dev/null; then
+  if [ -n ""$PID"" ] && kill -0 $PID 2>/dev/null; then
     echo ""Started (pid=$PID)""
     exit 0
   fi
@@ -938,12 +1368,15 @@ exit 0
         _log.Info($"Ensuring remote dir exists & is writable: {_opt.RemoteDir}");
 
         RunCommand(ssh, $"mkdir -p {ShEscape(_opt.RemoteDir)}");
+        RunCommand(ssh, $"mkdir -p {ShEscape(_opt.RemoteDir + ".prev")} || true");
 
         // chown via sudo (one-liner)
         RunSudo(ssh, $"chown -R {_opt.User}:{_opt.User} {ShEscape(_opt.RemoteDir)} || true");
+        RunSudo(ssh, $"if [ -d {ShEscape(_opt.RemoteDir + ".prev")} ]; then chown -R {_opt.User}:{_opt.User} {ShEscape(_opt.RemoteDir + ".prev")}; fi || true");
 
         // chmod without sudo (should be fine after chown)
         RunCommand(ssh, $"chmod -R u+rwX {ShEscape(_opt.RemoteDir)} || true");
+        RunCommand(ssh, $"if [ -d {ShEscape(_opt.RemoteDir + ".prev")} ]; then chmod -R u+rwX {ShEscape(_opt.RemoteDir + ".prev")}; fi || true");
     }
 
     // ------------------------------------------------------------
@@ -1032,7 +1465,10 @@ exit 0
         SftpClient sftp,
         string localDir,
         string remoteDir,
-        string remoteManifestPath)
+        string remoteManifestPath,
+        string? expectedWifiSsid,
+        string? wifiPassword,
+        bool wifiAutoCreateProfile)
     {
         localDir = Path.GetFullPath(localDir);
         if (!Directory.Exists(localDir))
@@ -1098,8 +1534,14 @@ exit 0
             var remoteParent = GetRemoteParentDir(remotePath);
             EnsureRemoteDirectorySftp(sftp, remoteParent);
 
-            using var fs = File.OpenRead(e.fullPath);
-            sftp.UploadFile(fs, remotePath, true);
+            UploadStreamSftpWithRetry(
+                ssh,
+                sftp,
+                () => File.OpenRead(e.fullPath),
+                remotePath,
+                expectedWifiSsid,
+                wifiPassword,
+                wifiAutoCreateProfile);
 
             // Set remote mtime to local mtime (critical for stable comparisons)
             var attrs = sftp.GetAttributes(remotePath);
@@ -1114,7 +1556,14 @@ exit 0
 
         // Write updated manifest via SFTP so it’s guaranteed to persist
         _log.Info("Writing remote manifest via SFTP...");
-        WriteRemoteManifestSftp(sftp, remoteManifestPath, localEntries);
+        WriteRemoteManifestSftp(
+            ssh,
+            sftp,
+            remoteManifestPath,
+            localEntries,
+            expectedWifiSsid,
+            wifiPassword,
+            wifiAutoCreateProfile);
         _log.Info("Manifest updated.");
     }
 
@@ -1152,9 +1601,13 @@ exit 0
     }
 
     private void WriteRemoteManifestSftp(
+        SshClient ssh,
         SftpClient sftp,
         string remoteManifestPath,
-        List<(string rel, long size, long mtimeUtcSeconds, string fullPath)> entries)
+        List<(string rel, long size, long mtimeUtcSeconds, string fullPath)> entries,
+        string? expectedWifiSsid,
+        string? wifiPassword,
+        bool wifiAutoCreateProfile)
     {
         EnsureRemoteDirectorySftp(sftp, GetRemoteParentDir(remoteManifestPath));
 
@@ -1165,8 +1618,15 @@ exit 0
                 sw.WriteLine($"{e.size}\t{e.mtimeUtcSeconds}\t{e.rel}");
         }
 
-        ms.Position = 0;
-        sftp.UploadFile(ms, remoteManifestPath, true);
+        var manifestBytes = ms.ToArray();
+        UploadStreamSftpWithRetry(
+            ssh,
+            sftp,
+            () => new MemoryStream(manifestBytes, writable: false),
+            remoteManifestPath,
+            expectedWifiSsid,
+            wifiPassword,
+            wifiAutoCreateProfile);
 
         // best effort perms
         try
@@ -1207,6 +1667,196 @@ exit 0
         }
     }
 
+    private void UploadStreamSftpWithRetry(
+        SshClient ssh,
+        SftpClient sftp,
+        Func<Stream> openInput,
+        string remotePath,
+        string? expectedWifiSsid,
+        string? wifiPassword,
+        bool wifiAutoCreateProfile,
+        int attempts = 3,
+        int retryDelayMs = 300)
+    {
+        remotePath = NormalizeRemote(remotePath);
+
+        Exception? lastEx = null;
+        var pid = Process.GetCurrentProcess().Id;
+
+        for (int attempt = 1; attempt <= Math.Max(1, attempts); attempt++)
+        {
+            var tempPath = $"{remotePath}.upload-{pid}-{Guid.NewGuid():N}.tmp";
+
+            try
+            {
+                EnsureSftpConnected(sftp);
+                EnsureRemoteDirectorySftp(sftp, GetRemoteParentDir(remotePath));
+
+                using (var input = openInput())
+                {
+                    if (input.CanSeek)
+                        input.Position = 0;
+
+                    sftp.UploadFile(input, tempPath, true);
+                }
+
+                if (sftp.Exists(remotePath))
+                {
+                    var existing = sftp.GetAttributes(remotePath);
+                    if (existing.IsDirectory)
+                        throw new IOException($"Remote upload target is a directory, expected file: {remotePath}");
+
+                    sftp.DeleteFile(remotePath);
+                }
+
+                sftp.RenameFile(tempPath, remotePath);
+                return;
+            }
+            catch (Exception ex) when (
+                IsTransientSftpError(ex))
+            {
+                lastEx = ex;
+
+                try
+                {
+                    if (sftp.Exists(tempPath))
+                        sftp.DeleteFile(tempPath);
+                }
+                catch
+                {
+                    // ignore cleanup errors
+                }
+
+                if (attempt < attempts)
+                {
+                    _log.Warn($"SFTP upload retry {attempt}/{attempts} failed for {remotePath}: {ex.Message}");
+                    try
+                    {
+                        RecoverConnectivityAndReconnect(
+                            ssh,
+                            sftp,
+                            expectedWifiSsid,
+                            wifiPassword,
+                            wifiAutoCreateProfile,
+                            remotePath,
+                            ex);
+                    }
+                    catch (Exception reconnectEx)
+                    {
+                        _log.Warn($"Recovery reconnect after failed upload also failed: {reconnectEx.Message}");
+                    }
+                    if (retryDelayMs > 0)
+                        Thread.Sleep(retryDelayMs);
+                    continue;
+                }
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"SFTP upload failed for {remotePath} after {attempts} attempts.",
+            lastEx);
+    }
+
+    private void RecoverConnectivityAndReconnect(
+        SshClient ssh,
+        SftpClient sftp,
+        string? expectedWifiSsid,
+        string? wifiPassword,
+        bool wifiAutoCreateProfile,
+        string remotePath,
+        Exception rootCause)
+    {
+        if (!string.IsNullOrWhiteSpace(expectedWifiSsid))
+        {
+            var currentSsid = GetConnectedWifiSsidLower();
+            var wifiDisconnected =
+                string.IsNullOrWhiteSpace(currentSsid) ||
+                !currentSsid.Equals(expectedWifiSsid, StringComparison.OrdinalIgnoreCase);
+
+            if (wifiDisconnected)
+            {
+                _log.Warn(
+                    $"Wi-Fi disconnected while uploading '{remotePath}' (current SSID: {(string.IsNullOrWhiteSpace(currentSsid) ? "<none>" : currentSsid)}). Reconnecting to '{expectedWifiSsid}'...");
+                ConnectWifiWithRetry(
+                    expectedWifiSsid,
+                    password: string.IsNullOrWhiteSpace(wifiPassword)
+                        ? expectedWifiSsid.ToLowerInvariant()
+                        : wifiPassword,
+                    autoCreateProfile: wifiAutoCreateProfile,
+                    timeoutSeconds: _opt.BulkWifiConnectTimeoutSeconds,
+                    attempts: Math.Max(1, _opt.BulkWifiConnectAttempts),
+                    retryDelayMs: Math.Max(0, _opt.BulkWifiConnectRetryDelayMs));
+            }
+            else
+            {
+                _log.Warn($"Wi-Fi still connected to '{expectedWifiSsid}' after upload error: {rootCause.Message}");
+            }
+        }
+
+        // After any network interruption, reconnect both channels in order (SSH first, then SFTP).
+        ConnectSshAndSftpWithRetry(
+            ssh,
+            sftp,
+            label: string.IsNullOrWhiteSpace(expectedWifiSsid) ? _opt.Host : expectedWifiSsid,
+            attempts: Math.Max(1, _opt.SshConnectAttempts),
+            retryDelayMs: Math.Max(0, _opt.SshConnectRetryDelayMs));
+    }
+
+    private void EnsureSftpConnected(SftpClient sftp)
+    {
+        if (sftp.IsConnected)
+            return;
+
+        ReconnectSftpWithRetry(sftp);
+    }
+
+    private void ReconnectSftpWithRetry(SftpClient sftp)
+    {
+        Exception? lastEx = null;
+        var attempts = Math.Max(1, _opt.SshConnectAttempts);
+        var retryDelayMs = Math.Max(0, _opt.SshConnectRetryDelayMs);
+
+        for (int attempt = 1; attempt <= attempts; attempt++)
+        {
+            try
+            {
+                if (sftp.IsConnected)
+                    sftp.Disconnect();
+
+                sftp.Connect();
+                return;
+            }
+            catch (Exception ex)
+            {
+                lastEx = ex;
+                if (attempt < attempts && retryDelayMs > 0)
+                    Thread.Sleep(retryDelayMs);
+            }
+        }
+
+        throw new InvalidOperationException("Failed to reconnect SFTP session.", lastEx);
+    }
+
+    private static bool IsTransientSftpError(Exception ex)
+    {
+        if (ex is SshException ||
+            ex is SshConnectionException ||
+            ex is SftpPermissionDeniedException ||
+            ex is SftpPathNotFoundException ||
+            ex is IOException ||
+            ex is SocketException)
+            return true;
+
+        if (ex is InvalidOperationException invalidEx)
+        {
+            var msg = invalidEx.Message ?? "";
+            if (msg.Contains("not connected", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
     private static string GetRemoteParentDir(string remotePath)
     {
         remotePath = remotePath.Replace('\\', '/');
@@ -1221,22 +1871,63 @@ exit 0
     private void RunCommand(SshClient ssh, string cmd)
     {
         _log.Info($"SSH: {cmd}");
-        using var c = ssh.CreateCommand(cmd);
-        c.CommandTimeout = TimeSpan.FromSeconds(180);
-        var stdout = c.Execute() ?? "";
+        var attempts = Math.Max(1, _opt.SshConnectAttempts);
+        Exception? lastEx = null;
 
-        if (c.ExitStatus != 0)
-            throw new Exception($"Command failed (exit {c.ExitStatus}): {cmd}\nSTDOUT:\n{stdout}\nSTDERR:\n{c.Error}");
+        for (int attempt = 1; attempt <= attempts; attempt++)
+        {
+            try
+            {
+                EnsureSshConnected(ssh);
+
+                using var c = ssh.CreateCommand(cmd);
+                c.CommandTimeout = TimeSpan.FromSeconds(180);
+                var stdout = c.Execute() ?? "";
+
+                if (c.ExitStatus != 0)
+                    throw new Exception($"Command failed (exit {c.ExitStatus}): {cmd}\nSTDOUT:\n{stdout}\nSTDERR:\n{c.Error}");
+
+                return;
+            }
+            catch (Exception ex) when (attempt < attempts && IsTransientSshError(ex))
+            {
+                lastEx = ex;
+                _log.Warn($"SSH command retry {attempt}/{attempts} after transient error: {ex.Message}");
+                ReconnectSshWithRetry(ssh);
+            }
+        }
+
+        if (lastEx != null)
+            throw new InvalidOperationException($"SSH command failed after {attempts} attempts: {cmd}", lastEx);
     }
 
     private string RunCommandCapture(SshClient ssh, string cmd)
     {
-        using var c = ssh.CreateCommand(cmd);
-        c.CommandTimeout = TimeSpan.FromSeconds(60);
-        var stdout = c.Execute() ?? "";
-        if (!string.IsNullOrWhiteSpace(c.Error))
-            stdout += "\n" + c.Error;
-        return stdout;
+        var attempts = Math.Max(1, _opt.SshConnectAttempts);
+        Exception? lastEx = null;
+
+        for (int attempt = 1; attempt <= attempts; attempt++)
+        {
+            try
+            {
+                EnsureSshConnected(ssh);
+
+                using var c = ssh.CreateCommand(cmd);
+                c.CommandTimeout = TimeSpan.FromSeconds(60);
+                var stdout = c.Execute() ?? "";
+                if (!string.IsNullOrWhiteSpace(c.Error))
+                    stdout += "\n" + c.Error;
+                return stdout;
+            }
+            catch (Exception ex) when (attempt < attempts && IsTransientSshError(ex))
+            {
+                lastEx = ex;
+                _log.Warn($"SSH capture retry {attempt}/{attempts} after transient error: {ex.Message}");
+                ReconnectSshWithRetry(ssh);
+            }
+        }
+
+        throw new InvalidOperationException($"SSH command capture failed after {attempts} attempts: {cmd}", lastEx);
     }
 
     private void RunSudo(SshClient ssh, string command)
@@ -1250,6 +1941,62 @@ exit 0
         // - Use -p '' so sudo doesn't print interactive prompts into STDERR
         var pwd = _opt.Password ?? "";
         RunCommand(ssh, $"printf '%s\\n' {ShEscape(pwd)} | sudo -S -p '' sh -lc '{escaped}'");
+    }
+
+    private void EnsureSshConnected(SshClient ssh)
+    {
+        if (ssh.IsConnected)
+            return;
+
+        ReconnectSshWithRetry(ssh);
+    }
+
+    private void ReconnectSshWithRetry(SshClient ssh)
+    {
+        Exception? lastEx = null;
+        var attempts = Math.Max(1, _opt.SshConnectAttempts);
+        var retryDelayMs = Math.Max(0, _opt.SshConnectRetryDelayMs);
+
+        for (int attempt = 1; attempt <= attempts; attempt++)
+        {
+            try
+            {
+                if (ssh.IsConnected)
+                    ssh.Disconnect();
+
+                ssh.Connect();
+                return;
+            }
+            catch (Exception ex)
+            {
+                lastEx = ex;
+                if (attempt < attempts && retryDelayMs > 0)
+                    Thread.Sleep(retryDelayMs);
+            }
+        }
+
+        throw new InvalidOperationException("Failed to reconnect SSH session.", lastEx);
+    }
+
+    private static bool IsTransientSshError(Exception ex)
+    {
+        if (ex is SshConnectionException ||
+            ex is SshOperationTimeoutException ||
+            ex is SocketException ||
+            ex is IOException)
+            return true;
+
+        if (ex is SshException sshEx)
+        {
+            var msg = sshEx.Message ?? "";
+            if (msg.Contains("forcibly closed", StringComparison.OrdinalIgnoreCase) ||
+                msg.Contains("connection reset", StringComparison.OrdinalIgnoreCase) ||
+                msg.Contains("connection closed", StringComparison.OrdinalIgnoreCase) ||
+                msg.Contains("timed out", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 
     // ------------------------------------------------------------
@@ -1268,6 +2015,17 @@ exit 0
         baseDir = NormalizeRemote(baseDir);
         relative = relative.Replace('\\', '/').TrimStart('/');
         return baseDir + "/" + relative;
+    }
+
+    private static string? TryMakeRelativeRemotePath(string baseDir, string fullPath)
+    {
+        baseDir = NormalizeRemote(baseDir).TrimEnd('/') + "/";
+        fullPath = NormalizeRemote(fullPath);
+
+        if (!fullPath.StartsWith(baseDir, StringComparison.Ordinal))
+            return null;
+
+        return fullPath.Substring(baseDir.Length);
     }
 
     private static string ShEscape(string s)

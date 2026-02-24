@@ -1,3 +1,4 @@
+using System;
 using System.Threading.Tasks;
 using AccessAPP.Logging;
 using AccessAPP.Services.HelperClasses;
@@ -11,6 +12,12 @@ internal sealed class PostActorStep : IDeviceUpgradeStep
         var svc = ctx.Svc;
         var dev = ctx.Dev;
 
+        if (!ctx.AnyFirmwareStepExecuted)
+        {
+            UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Post-actor skipped (no FW step executed in this attempt)", "Info", ctx.FirmwareVersion);
+            return true;
+        }
+
         if (!UpgradePipelineSupport.SupportsSettingsBackup(ctx.DetectorType))
         {
             UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, $"Post-actor steps skipped (unsupported detector '{ctx.DetectorType}')", "Info", ctx.FirmwareVersion);
@@ -21,33 +28,67 @@ internal sealed class PostActorStep : IDeviceUpgradeStep
 
         if (isDaliMaster)
         {
-            await Task.Delay(10000).ConfigureAwait(false);
+            bool loggedIn = false;
+            bool reusedSession =
+                RuntimeVariables.UPGRADE_OPTIMIZE_RECONNECT_FLOW &&
+                ctx.ReuseConnectionForPostActor;
 
-            AppLog.Info($"Post-actor: connect+login for {ctx.MacAddress}");
-            var cl = await svc.ConnectAndLoginWithRetryForPipelineAsync(
-                svc.GatewayIpAddress, 80, ctx.MacAddress, ctx.Pincode, ctx.LogId, ctx.FirmwareVersion,
-                maxAttempts: 4,
-                delayBetweenAttemptsMs: 6000).ConfigureAwait(false);
-
-            if (!cl.Success)
+            if (!reusedSession)
             {
-                UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, $"Post-actor connect+login failed: {cl.Message}", "Warn", ctx.FirmwareVersion);
-                ctx.Response.Success = false;
-                ctx.Response.StatusCode = 500;
-                ctx.Response.Message = "Could not connect and login to detector!";
-                return false;
+                await Task.Delay(10000).ConfigureAwait(false);
+            }
+            else
+            {
+                UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Connected", "Skipped (reusing session from settings restore)", ctx.FirmwareVersion);
+                loggedIn = await svc.EnsureLoginOnConnectedSessionUnlessBootModeAsync(
+                    ctx.MacAddress,
+                    ctx.Pincode,
+                    ctx.LogId,
+                    ctx.FirmwareVersion,
+                    stageName: "LoggedIn (post-actor reused session)",
+                    maxAttempts: 1).ConfigureAwait(false);
+
+                if (!loggedIn)
+                {
+                    UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Connected", "Reused session unavailable; reconnecting", ctx.FirmwareVersion);
+                    ctx.ReuseConnectionForPostActor = false;
+                }
+            }
+
+            if (!loggedIn)
+            {
+                AppLog.Info($"Post-actor: connect+login for {ctx.MacAddress}");
+                var cl = await svc.ConnectAndLoginWithRetryForPipelineAsync(
+                    svc.GatewayIpAddress, 80, ctx.MacAddress, ctx.Pincode, ctx.LogId, ctx.FirmwareVersion,
+                    maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
+                    delayBetweenAttemptsMs: 6000,
+                    bootModeIsRetryable: true).ConfigureAwait(false);
+
+                if (!cl.Success)
+                {
+                    UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, $"Post-actor connect+login failed: {cl.Message}", "Warn", ctx.FirmwareVersion);
+                    ctx.Response.Success = false;
+                    ctx.Response.StatusCode = 500;
+                    ctx.Response.Message = "Could not connect and login to detector!";
+                    return false;
+                }
             }
 
             if (RuntimeVariables.AutoSetSysFailLevelUnderUpdate)
             {
-                if (await svc.DaliSetDeviceSysFailLevelAsync(ctx.MacAddress, 0xFE).ConfigureAwait(false))
-                    UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "DALI SysFail Level set to 0xFE", "Success", ctx.FirmwareVersion);
+                var restoreValue = ctx.OriginalDaliSysFailLevel ?? (byte)0xFE;
+                var restoreHex = $"0x{restoreValue:X2}";
+
+                if (await svc.DaliSetDeviceSysFailLevelAsync(ctx.MacAddress, restoreValue).ConfigureAwait(false))
+                    UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, $"DALI SysFail Level restored to {restoreHex}", "Success", ctx.FirmwareVersion);
                 else
-                    UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "DALI SysFail Level set failed", "Warn", ctx.FirmwareVersion);
+                    UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, $"DALI SysFail Level restore failed ({restoreHex})", "Warn", ctx.FirmwareVersion);
             }
         }
 
-        if (RuntimeVariables.RebootDetectorAfterUpgrade)
+        bool actorWasUpdatedThisRun = ctx.ActorFirmwareStepExecuted && dev.ActorSuccess;
+
+        if (RuntimeVariables.RebootDetectorAfterUpgrade && actorWasUpdatedThisRun && !ctx.ActorUpdatedBeforeFirmware)
         {
             AppLog.Info($"Rebooting device {ctx.MacAddress} after actor update");
             await svc.RebootDeviceAsync(ctx.MacAddress).ConfigureAwait(false);
@@ -58,9 +99,18 @@ internal sealed class PostActorStep : IDeviceUpgradeStep
             {
                 await svc.ConnectAndLoginWithRetryForPipelineAsync(
                     svc.GatewayIpAddress, svc.GatewayPort, ctx.MacAddress, ctx.Pincode, ctx.LogId, ctx.FirmwareVersion,
-                    maxAttempts: 3,
+                    maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
                     delayBetweenAttemptsMs: 2000).ConfigureAwait(false);
             }
+        }
+        else if (RuntimeVariables.RebootDetectorAfterUpgrade && ctx.ActorUpdatedBeforeFirmware)
+        {
+            UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Reboot skipped (actor updated before bootloader/sensor)", "Info", ctx.FirmwareVersion);
+            AppLog.Info($"Skipping post-actor reboot for {ctx.MacAddress} because actor was already updated pre-firmware.");
+        }
+        else if (RuntimeVariables.RebootDetectorAfterUpgrade && !actorWasUpdatedThisRun)
+        {
+            UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Reboot skipped (actor not updated in this attempt)", "Info", ctx.FirmwareVersion);
         }
 
         if (isDaliMaster && RuntimeVariables.Restore102DBAfterUpgrade)
@@ -88,7 +138,11 @@ internal sealed class PostActorStep : IDeviceUpgradeStep
             }
         }
 
-        await svc.ConnectService.DisconnectFromBleDevice(svc.GatewayIpAddress, ctx.MacAddress, 0, chip: ctx.ChipId).ConfigureAwait(false);
+        // Keep the connection open so the post-upgrade FW verification read can reuse it
+        // without a reconnect round-trip. The outer scope (ProcessSingleDeviceUpgradeAsync)
+        // owns the final disconnect after the FW read completes.
+        ctx.KeepConnectionOpen = true;
+        ctx.Dev.ConnectionLeftOpenForFwRead = true;
         return true;
     }
 }

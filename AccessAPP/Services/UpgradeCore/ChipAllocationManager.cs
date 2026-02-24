@@ -50,6 +50,7 @@ namespace AccessAPP.Services.UpgradeCore
         }
 
         public Task<ChipLease> AcquireAsync() => _allocator.AcquireAsync();
+        public Task<ChipLease> AcquireAsync(int preferredChip) => _allocator.AcquireAsync(preferredChip);
 
         public static ChipLease Fixed(int chip) => ChipLease.Fixed(chip);
 
@@ -73,7 +74,7 @@ namespace AccessAPP.Services.UpgradeCore
                 return Math.Clamp(perChip, 1, 8);
             }
 
-            public async Task<ChipLease> AcquireAsync()
+            public async Task<ChipLease> AcquireAsync(int? preferredChip = null)
             {
                 while (true)
                 {
@@ -81,12 +82,23 @@ namespace AccessAPP.Services.UpgradeCore
                     lock (_gate)
                     {
                         var maxPerChip = GetMaxUpgradesPerChip();
-                        var prefer = Interlocked.Increment(ref _rr) & 1;
-
-                        if (TryTake(prefer == 0 ? 0 : 1, maxPerChip, out var lease) ||
-                            TryTake(prefer == 0 ? 1 : 0, maxPerChip, out lease))
+                        if (preferredChip.HasValue && (preferredChip.Value == 0 || preferredChip.Value == 1))
                         {
-                            return lease;
+                            var prefer = preferredChip.Value;
+                            if (TryTake(prefer, maxPerChip, out var lease) ||
+                                TryTake(prefer == 0 ? 1 : 0, maxPerChip, out lease))
+                            {
+                                return lease;
+                            }
+                        }
+                        else
+                        {
+                            var prefer = Interlocked.Increment(ref _rr) & 1;
+                            if (TryTake(prefer == 0 ? 0 : 1, maxPerChip, out var lease) ||
+                                TryTake(prefer == 0 ? 1 : 0, maxPerChip, out lease))
+                            {
+                                return lease;
+                            }
                         }
 
                         waitTask = _signal.Task;

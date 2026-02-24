@@ -1,5 +1,6 @@
 ﻿using AccessAPP.Models;
 using AccessAPP.Services;
+using AccessAPP.Services.BleAbstractions;
 using AccessAPP.Services.HelperClasses;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
@@ -13,7 +14,7 @@ namespace AccessAPP.Controllers
     public class CassiaController : ControllerBase
     {
         private readonly CassiaScanService _scanService;
-        private readonly CassiaConnectService _connectService;
+        private readonly IBleConnectionService _connectService;
         private readonly CassiaPinCodeService _cassiaPinCodeService;
         private readonly DeviceStorageService _deviceStorageService;
         private readonly CassiaFirmwareUpgradeService _firmwareUpgradeService;
@@ -22,10 +23,13 @@ namespace AccessAPP.Controllers
         private readonly IConfiguration _configuration;
         private readonly string _gatewayIpAddress;
         private readonly int _gatewayPort;
-        private readonly CassiaNotificationService _notificationService; // ✅ Injected singleton
+        private readonly IBleNotificationService _notificationService;
+        private readonly IBleReadWriteService _readWriteService;
+        private readonly MqttConfigStore _mqttStore;
+        private readonly LedRangeLocalStateStore _ledRangeStore;
 
 
-        public CassiaController(IConfiguration configuration, CassiaScanService scanService, CassiaConnectService connectService, CassiaPinCodeService cassiaPinCodeService, DeviceStorageService deviceStorageService, CassiaFirmwareUpgradeService firmwareUpgradeService, FirmwareUploadService firmwareUploadService, FirmwareManifestService firmwareManifestService, CassiaNotificationService notificationService)
+        public CassiaController(IConfiguration configuration, CassiaScanService scanService, IBleConnectionService connectService, CassiaPinCodeService cassiaPinCodeService, DeviceStorageService deviceStorageService, CassiaFirmwareUpgradeService firmwareUpgradeService, FirmwareUploadService firmwareUploadService, FirmwareManifestService firmwareManifestService, IBleNotificationService notificationService, IBleReadWriteService readWriteService, MqttConfigStore mqttStore, LedRangeLocalStateStore ledRangeStore)
         {
             _configuration = configuration;
             _gatewayIpAddress = _configuration.GetValue<string>("GatewayConfiguration:IpAddress");
@@ -38,6 +42,9 @@ namespace AccessAPP.Controllers
             _firmwareUploadService = firmwareUploadService;
             _firmwareManifestService = firmwareManifestService;
             _notificationService = notificationService;
+            _readWriteService = readWriteService;
+            _mqttStore = mqttStore;
+            _ledRangeStore = ledRangeStore;
 
             //_scanService.StartPeriodicScan(_gatewayIpAddress, _gatewayPort);
         }
@@ -45,23 +52,35 @@ namespace AccessAPP.Controllers
         // Add near the top of the CassiaController class:
         private static readonly SemaphoreSlim _mqttConfigLock = new(1, 1);
 
-        private static string MqttConfigPath =>
-            Path.Combine(Directory.GetCurrentDirectory(), "mqtt.json");
-
-        private static AccessAPP.Models.MqttConfig DefaultMqttConfig() => new()
+        private static AccessAPP.Models.MqttConfig ToMqttConfig(MqttOptions opts) => new()
         {
-            Name = "cassia-01",
-            NetworkId = "dk-lab",
-            Host = "prod.statistics.niko-test.nu",
-            Port = 18883,
-            UseTls = false,
-            Username = "accessapp",
-            Password = "",
-            BaseTopic = "accessapp",
-            KeepAliveSeconds = 30,
-            ReconnectDelaySeconds = 10,
-            SubscribeToAllTarget = true
+            Name = opts.Name ?? "",
+            NetworkId = opts.NetworkId ?? "",
+            Host = opts.Host ?? "",
+            Port = opts.Port,
+            UseTls = opts.UseTls,
+            Username = opts.Username ?? "",
+            Password = opts.Password ?? "",
+            BaseTopic = opts.BaseTopic ?? "",
+            KeepAliveSeconds = opts.KeepAliveSeconds,
+            ReconnectDelaySeconds = opts.ReconnectDelaySeconds,
+            SubscribeToAllTarget = opts.SubscribeToAllTarget
         };
+
+        private static void ApplyMqttConfig(MqttOptions opts, AccessAPP.Models.MqttConfig cfg)
+        {
+            opts.Name = cfg.Name ?? "";
+            opts.NetworkId = cfg.NetworkId ?? "";
+            opts.Host = cfg.Host ?? "";
+            opts.Port = cfg.Port;
+            opts.UseTls = cfg.UseTls;
+            opts.Username = string.IsNullOrWhiteSpace(cfg.Username) ? null : cfg.Username;
+            opts.Password = string.IsNullOrWhiteSpace(cfg.Password) ? null : cfg.Password;
+            opts.BaseTopic = cfg.BaseTopic ?? "";
+            opts.KeepAliveSeconds = cfg.KeepAliveSeconds;
+            opts.ReconnectDelaySeconds = cfg.ReconnectDelaySeconds;
+            opts.SubscribeToAllTarget = cfg.SubscribeToAllTarget;
+        }
 
         // Add near the bottom of the CassiaController class:
 
@@ -71,26 +90,8 @@ namespace AccessAPP.Controllers
             await _mqttConfigLock.WaitAsync();
             try
             {
-                if (!System.IO.File.Exists(MqttConfigPath))
-                {
-                    var def = DefaultMqttConfig();
-                    var json = Newtonsoft.Json.JsonConvert.SerializeObject(def, Newtonsoft.Json.Formatting.Indented);
-                    await System.IO.File.WriteAllTextAsync(MqttConfigPath, json);
-                    return Ok(def);
-                }
-
-                var raw = await System.IO.File.ReadAllTextAsync(MqttConfigPath);
-                var cfg = Newtonsoft.Json.JsonConvert.DeserializeObject<AccessAPP.Models.MqttConfig>(raw);
-
-                // If file exists but is empty/invalid, re-create with defaults
-                if (cfg == null)
-                {
-                    cfg = DefaultMqttConfig();
-                    var json = Newtonsoft.Json.JsonConvert.SerializeObject(cfg, Newtonsoft.Json.Formatting.Indented);
-                    await System.IO.File.WriteAllTextAsync(MqttConfigPath, json);
-                }
-
-                return Ok(cfg);
+                var opts = _mqttStore.LoadOrCreateDefault();
+                return Ok(ToMqttConfig(opts));
             }
             catch (Exception ex)
             {
@@ -119,10 +120,11 @@ namespace AccessAPP.Controllers
                 cfg.Password ??= "";
                 cfg.BaseTopic ??= "";
 
-                var json = Newtonsoft.Json.JsonConvert.SerializeObject(cfg, Newtonsoft.Json.Formatting.Indented);
-                await System.IO.File.WriteAllTextAsync(MqttConfigPath, json);
+                var opts = _mqttStore.LoadOrCreateDefault();
+                ApplyMqttConfig(opts, cfg);
+                _mqttStore.Save(opts);
 
-                return Ok(new { success = true, message = "mqtt.json saved", path = MqttConfigPath });
+                return Ok(new { success = true, message = "mqtt.json saved", path = _mqttStore.FilePath });
             }
             catch (Exception ex)
             {
@@ -598,7 +600,7 @@ return StatusCode(500, new { error = "Internal Server Error", message = "An unex
 
                     // Step 2: Send the telegram to the BLE device using WriteBleMessage method
                     // Step 2: Send the telegram to the BLE device
-                    CassiaReadWriteService cassiaReadWrite = new CassiaReadWriteService();
+                    var cassiaReadWrite = _readWriteService;
                     try
                     {
                         // IMPORTANT: Always dispose the HTTP response to return the connection to the pool.
@@ -878,9 +880,7 @@ await Task.Delay(500); // Small delay before retrying
         {
             try
             {
-                var currentDir = Directory.GetCurrentDirectory();
-                AppLog.Debug("Current Directory: " + currentDir);
-var logPath = Path.Combine(currentDir, "Logs", "upgrade_logs.txt");
+                var logPath = AccessAppPaths.UpgradeLog;
 
                 if (!System.IO.File.Exists(logPath))
                 {
@@ -942,6 +942,131 @@ var logPath = Path.Combine(currentDir, "Logs", "upgrade_logs.txt");
         public IActionResult GetAllProgress()
         {
             return Ok(_deviceStorageService.GetAllFirmwareProgress());
+        }
+
+        // ---------------- LED range visualizer (local, no MQTT) ----------------
+        [HttpGet("led-range/state")]
+        public IActionResult GetLedRangeState()
+        {
+            return Ok(_ledRangeStore.GetSnapshot());
+        }
+
+        [HttpPost("led-range/start")]
+        public IActionResult StartLedRange([FromBody] LedRangeStartRequest request)
+        {
+            request ??= new LedRangeStartRequest();
+            var requestId = Guid.NewGuid().ToString("N");
+            var minRssi = request.MinRssi;
+            var modelToken = (request.Model ?? "All").Trim();
+            var models = string.Equals(modelToken, "All", StringComparison.OrdinalIgnoreCase)
+                ? new List<string>()
+                : new List<string> { modelToken };
+
+            var cmd = new LedRangeVisualizeCommand
+            {
+                RequestId = requestId,
+                MinRssi = minRssi,
+                Pincode = string.IsNullOrWhiteSpace(request.Pincode) ? "" : request.Pincode.Trim(),
+                Models = models,
+                MaxConnectAttempts = Math.Max(3, request.MaxConnectAttempts),
+                UseBothChips = request.UseBothChips
+            };
+
+            var snapshot = DeviceStorageService.GetDeviceListSnapshot();
+            _ledRangeStore.ResetForStart(requestId, minRssi);
+            _ledRangeStore.SetStatusText("Starting visualization...");
+
+            _ = Task.Run(async () =>
+            {
+                await _firmwareUpgradeService.RunLedRangeVisualizationAsync(
+                    snapshot,
+                    cmd,
+                    report: payload =>
+                    {
+                        _ledRangeStore.ApplyStage(payload);
+                        return Task.CompletedTask;
+                    },
+                    ct: CancellationToken.None);
+            });
+
+            return Ok(new { success = true, requestId });
+        }
+
+        [HttpPost("led-range/retry-failed")]
+        public IActionResult RetryLedRangeFailed([FromBody] LedRangeStartRequest request)
+        {
+            request ??= new LedRangeStartRequest();
+            var failed = _ledRangeStore.GetFailedMacs();
+            if (failed.Count == 0)
+            {
+                return Ok(new { success = false, message = "No failed devices to retry." });
+            }
+
+            var requestId = Guid.NewGuid().ToString("N");
+            var minRssi = request.MinRssi;
+            var modelToken = (request.Model ?? "All").Trim();
+            var models = string.Equals(modelToken, "All", StringComparison.OrdinalIgnoreCase)
+                ? new List<string>()
+                : new List<string> { modelToken };
+
+            var cmd = new LedRangeVisualizeCommand
+            {
+                RequestId = requestId,
+                MinRssi = minRssi,
+                Pincode = string.IsNullOrWhiteSpace(request.Pincode) ? "" : request.Pincode.Trim(),
+                Models = models,
+                Sensors = failed,
+                MaxConnectAttempts = Math.Max(3, request.MaxConnectAttempts),
+                UseBothChips = request.UseBothChips
+            };
+
+            var snapshot = DeviceStorageService.GetDeviceListSnapshot();
+            _ledRangeStore.PrepareForRetry(failed.Count);
+
+            _ = Task.Run(async () =>
+            {
+                await _firmwareUpgradeService.RunLedRangeVisualizationAsync(
+                    snapshot,
+                    cmd,
+                    report: payload =>
+                    {
+                        _ledRangeStore.ApplyStage(payload);
+                        return Task.CompletedTask;
+                    },
+                    ct: CancellationToken.None);
+            });
+
+            return Ok(new { success = true, requestId, requested = failed.Count });
+        }
+
+        [HttpPost("led-range/disconnect")]
+        public IActionResult DisconnectLedRange([FromBody] LedRangeDisconnectRequest request)
+        {
+            request ??= new LedRangeDisconnectRequest();
+            var requestId = Guid.NewGuid().ToString("N");
+
+            _ledRangeStore.SetStatusText("Disconnect requested...");
+            _firmwareUpgradeService.RequestStopLedRangeVisualization();
+
+            var cmd = new LedRangeDisconnectCommand
+            {
+                RequestId = requestId,
+                ForceAll = request.ForceAll
+            };
+
+            _ = Task.Run(async () =>
+            {
+                await _firmwareUpgradeService.DisconnectLedRangeAsync(
+                    cmd,
+                    report: payload =>
+                    {
+                        _ledRangeStore.ApplyStage(payload);
+                        return Task.CompletedTask;
+                    },
+                    ct: CancellationToken.None);
+            });
+
+            return Ok(new { success = true, requestId, forceAll = request.ForceAll });
         }
 
         /// <summary>

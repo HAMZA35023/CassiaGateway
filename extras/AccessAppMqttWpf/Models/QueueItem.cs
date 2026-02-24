@@ -8,8 +8,28 @@ namespace AccessAppMqttWpf.Models;
 
 public partial class QueueItem : ObservableObject
 {
-    public int QueueSortKey => (Status?.Equals("Done", StringComparison.OrdinalIgnoreCase) == true) ? 1 : 0;
+    public int QueueSortKey => IsTerminalStatus(Status) ? 1 : 0;
     public bool IsDone => QueueSortKey == 1;
+
+
+private static bool IsTerminalStatus(string? status)
+{
+    if (string.IsNullOrWhiteSpace(status)) return false;
+    var s = status.Trim();
+
+    // Backends have used: Done / Success / Completed / Failed / Error / Warn
+    if (s.Equals("done", StringComparison.OrdinalIgnoreCase)) return true;
+    if (s.Equals("success", StringComparison.OrdinalIgnoreCase)) return true;
+    if (s.Equals("warn", StringComparison.OrdinalIgnoreCase) || s.Equals("warning", StringComparison.OrdinalIgnoreCase)) return true;
+    if (s.Equals("no fw", StringComparison.OrdinalIgnoreCase) || s.Equals("nofwread", StringComparison.OrdinalIgnoreCase)) return true;
+    if (s.Equals("failed", StringComparison.OrdinalIgnoreCase) || s.Equals("fail", StringComparison.OrdinalIgnoreCase)) return true;
+    if (s.Equals("error", StringComparison.OrdinalIgnoreCase)) return true;
+    if (s.Contains("complete", StringComparison.OrdinalIgnoreCase)) return true;
+    if (s.Contains("no fw", StringComparison.OrdinalIgnoreCase) || s.Contains("nofw", StringComparison.OrdinalIgnoreCase)) return true;
+    if (s.Contains("fail", StringComparison.OrdinalIgnoreCase) || s.Contains("error", StringComparison.OrdinalIgnoreCase)) return true;
+
+    return false;
+}
 
     [ObservableProperty] private string mac = "";
     [ObservableProperty] private string cassia = "";
@@ -21,6 +41,7 @@ public partial class QueueItem : ObservableObject
 
     [ObservableProperty] private string status = "Queued";
     [ObservableProperty] private int progress = 0;
+    [ObservableProperty] private double? speedPctPerMin;
     [ObservableProperty] private string notes = "";
     [ObservableProperty] private DateTimeOffset lastUpdateUtc = DateTimeOffset.MinValue;
 
@@ -29,6 +50,7 @@ public partial class QueueItem : ObservableObject
     public ObservableCollection<RssiEntry> RssiEntries { get; } = new();
 
     public string ProgressText => $"{Progress}%";
+    public string SpeedText => SpeedPctPerMin.HasValue ? $"{SpeedPctPerMin.Value:0.##} %/min" : "";
     public string LastUpdateLocal => lastUpdateUtc == DateTimeOffset.MinValue ? "" : lastUpdateUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
 
     public void UpdateRssiEntries(Dictionary<string, int> cassiaRssi, string queuedCassia)
@@ -53,5 +75,6 @@ public partial class QueueItem : ObservableObject
     }
 
     partial void OnProgressChanged(int value) => OnPropertyChanged(nameof(ProgressText));
+    partial void OnSpeedPctPerMinChanged(double? value) => OnPropertyChanged(nameof(SpeedText));
     partial void OnLastUpdateUtcChanged(DateTimeOffset value) => OnPropertyChanged(nameof(LastUpdateLocal));
 }

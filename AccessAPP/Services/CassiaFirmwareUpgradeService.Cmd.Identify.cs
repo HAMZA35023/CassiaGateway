@@ -407,6 +407,22 @@ namespace AccessAPP.Services
 
         ///Sensor Programming
 
+        private static int ResolveActorWriteDelayMs()
+        {
+            int actorDelay = RuntimeVariables.UPGRADE_ACTOR_WRITE_SLEEP_MS;
+            if (actorDelay <= 0)
+                actorDelay = RuntimeVariables.WRITE_SLEEP_MS;
+            return Math.Max(0, actorDelay);
+        }
+
+        private static void SleepWithDynamicWriteDelay(string macAddress, int baseDelayMs)
+        {
+            int delayMs = Math.Max(0, baseDelayMs);
+            int extraDelay = _ownInstance?.GetWorkerBalancerExtraDelayMs(macAddress) ?? 0;
+            int total = delayMs + Math.Max(0, extraDelay);
+            if (total > 0)
+                Thread.Sleep(total);
+        }
 
         public static int WriteSensorData(IntPtr buffer, int size, UInt64 customContext)
         {
@@ -423,12 +439,11 @@ namespace AccessAPP.Services
 
                 try
                 {
-
-                    // AppLog.Verbose($"Data Sent: {hexData} | macContext: {macContext}");
-// AppLog.Verbose($"size of buffer: {size}");
-//SendMessage(data);
+                    var _writeSw = Stopwatch.StartNew();
 					_ownInstance.cassiaReadWriteService.WriteBleMessageSync(_ownInstance._gatewayIpAddress, macContext, 14, hexData, "", chip: _ownInstance.GetChipForMac(macContext));
-                    Thread.Sleep(RuntimeVariables.WRITE_SLEEP_MS);
+                    _writeSw.Stop();
+                    AppLog.Debug($"[TIMING] WriteSensorData BLE write: {_writeSw.ElapsedMilliseconds}ms | mac={macContext} | size={size}");
+                    SleepWithDynamicWriteDelay(macContext, ResolveActorWriteDelayMs());
 
                     status = true;
                 }
@@ -449,7 +464,7 @@ namespace AccessAPP.Services
 //SendMessage(data);
                         AppLog.Info($"Trying again... (waited)");
 _ownInstance.cassiaReadWriteService.WriteBleMessageSync(_ownInstance._gatewayIpAddress, macContext, 14, hexData, "", chip: _ownInstance.GetChipForMac(macContext));
-                        Thread.Sleep(RuntimeVariables.WRITE_SLEEP_MS);
+                        SleepWithDynamicWriteDelay(macContext, ResolveActorWriteDelayMs());
 
                         status = true;
                     }
@@ -538,14 +553,22 @@ if (GetHidDevice())
         private static async Task SendBleMessageAsync(BleMessage message, string macAddress)
         {
             // AppLog.Verbose($"Sending BLE message of size {message._BleMessageBuffer.Length}");
-if (message._BleMessageBuffer.Length > 80) // Assuming 251 is the MTU size
+            int configuredChunkSize = RuntimeVariables.ACTOR_CHUNK_SIZE;
+            if (configuredChunkSize <= 0)
+                configuredChunkSize = 80;
+
+            int interChunkSleepMs = RuntimeVariables.ACTOR_INTER_CHUNK_SLEEP_MS;
+            if (interChunkSleepMs < 0)
+                interChunkSleepMs = 0;
+
+            if (message._BleMessageBuffer.Length > configuredChunkSize) // configurable chunking
             {
                 int bytesSent = 0;
                 int remainingBytes = message._BleMessageBuffer.Length;
 
                 while (remainingBytes > 0)
                 {
-                    int chunkSize = Math.Min(80, remainingBytes);
+                    int chunkSize = Math.Min(configuredChunkSize, remainingBytes);
                     byte[] chunk = new byte[chunkSize];
                     Array.Copy(message._BleMessageBuffer, bytesSent, chunk, 0, chunkSize);
 
@@ -554,13 +577,13 @@ if (message._BleMessageBuffer.Length > 80) // Assuming 251 is the MTU size
                     remainingBytes -= chunkSize;
 
                     // AppLog.Verbose($"Sent chunk of size {chunkSize}. Remaining: {remainingBytes}");
-if (remainingBytes > 0)
+                    if (remainingBytes > 0)
                     {
-                        Thread.Sleep(1000);
+                        SleepWithDynamicWriteDelay(macAddress, interChunkSleepMs);
                     }
                     else
                     {
-                        Thread.Sleep(RuntimeVariables.WRITE_SLEEP_MS);
+                        SleepWithDynamicWriteDelay(macAddress, ResolveActorWriteDelayMs());
                     }
 
                 }
@@ -569,7 +592,7 @@ if (remainingBytes > 0)
             {
                 await SendChunk(message._BleMessageBuffer, macAddress);
                 //await Task.Delay(100); // Adjust delay as needed
-                Thread.Sleep(RuntimeVariables.WRITE_SLEEP_MS);
+                SleepWithDynamicWriteDelay(macAddress, ResolveActorWriteDelayMs());
             }
         }
 

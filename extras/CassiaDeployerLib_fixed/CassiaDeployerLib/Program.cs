@@ -23,6 +23,14 @@ internal static class Program
             log.Info($"Local publish : {options.LocalPublishDir}");
             log.Info($"Remote dir    : {options.RemoteDir}");
             log.Info($"Service       : {options.ServiceName}");
+            log.Info($"Skip client build: {options.SkipClientAppBuild}");
+            if (options.InstallStartupUpdater)
+            {
+                log.Info($"Updater exe   : {options.UpdaterRemoteExePath}");
+                log.Info($"Updater feed  : {options.UpdaterManifestUrl}");
+                log.Info($"Updater ch    : {options.UpdaterChannel}");
+                log.Info($"Updater chfile: {options.UpdaterChannelFilePath}");
+            }
             log.Info("");
 
             var deployer = new SshCassiaDeployer(options, log);
@@ -45,9 +53,8 @@ internal static class Program
 
         // Auto-close after 5 seconds
         Console.WriteLine();
-        Console.WriteLine("Press a button to exit...");
-        Thread.Sleep(TimeSpan.FromSeconds(5));
-        Console.ReadKey(true);
+        Console.WriteLine("Closing in 60 seconds ...");
+        Thread.Sleep(TimeSpan.FromSeconds(60));
         return exitCode;
     }
 
@@ -57,6 +64,9 @@ internal static class Program
         //   --bulk-wifi                 Enables BulkWifiDeploy (iterate cassia-E4* SSIDs)
         //   --ssid-prefix <prefix>      Override BulkWifiSsidPrefix (case-insensitive)
         //   --max <n>                   Limit number of SSIDs processed (0 = no limit)
+        //   --scan-passes <n>           Number of Wi-Fi scan passes before bulk deploy
+        //   --scan-delay-ms <n>         Delay between Wi-Fi scan passes
+        //   --deploy-attempts <n>       Full deploy retries per SSID
         //   --host <ip>                 Override host (default is 192.168.40.1)
         //   --port <n>                  Override port
         //   --user <name>               Override user
@@ -81,6 +91,18 @@ internal static class Program
 
                 case "--max":
                     if (i + 1 < args.Length && int.TryParse(args[++i], out var max)) opt.BulkWifiMaxCount = max;
+                    break;
+
+                case "--scan-passes":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var scanPasses)) opt.BulkWifiScanPasses = scanPasses;
+                    break;
+
+                case "--scan-delay-ms":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var scanDelayMs)) opt.BulkWifiScanDelayMs = scanDelayMs;
+                    break;
+
+                case "--deploy-attempts":
+                    if (i + 1 < args.Length && int.TryParse(args[++i], out var deployAttempts)) opt.BulkWifiDeployAttemptsPerTarget = deployAttempts;
                     break;
 
                 case "--host":

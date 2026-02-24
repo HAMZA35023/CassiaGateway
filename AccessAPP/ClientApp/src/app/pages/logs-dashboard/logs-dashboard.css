@@ -1,0 +1,191 @@
+.log-dashboard-wrapper {
+    margin: 2rem;
+  }
+  
+  .title {
+    font-size: 2rem;
+    margin-bottom: 1.5rem;
+  }
+  
+  .log-card {
+    border: 1px solid #ccc;
+    border-radius: 10px;
+    margin-bottom: 1rem;
+    overflow: hidden;
+    background-color: #fafafa;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  }
+  
+  .log-header {
+    background-color: #e0e0e0;
+    padding: 1rem;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+  }
+  
+  .log-details {
+    padding: 1rem;
+    background-color: white;
+  }
+  
+  .log-details ul {
+    list-style-type: none;
+    padding: 0;
+    margin: 0;
+  }
+  
+  .toggle-icon {
+    font-size: 1.5rem;
+    font-weight: bold;
+  }
+
+  .card-container {
+    display: flex;
+    justify-content: flex-start;
+    margin: 1rem 2rem;
+  }
+  
+  .nav-card {
+    display: flex;
+    align-items: center;
+    padding: 1.2rem;
+    background-color: #ffffff;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    width: 320px;
+  }
+  
+  .nav-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  }
+  
+  .nav-card img {
+    width: 48px;
+    height: 48px;
+    margin-right: 1rem;
+  }
+  
+  .card-text h3 {
+    margin: 0;
+    font-size: 1.25rem;
+    font-weight: 600;
+  }
+  
+  .card-text p {
+    margin: 0;
+    font-size: 0.95rem;
+    color: #666;
+  }
+
+  .log-dashboard-wrapper {
+    margin: 2rem;
+    font-family: 'Segoe UI', sans-serif;
+  }
+  
+  .title {
+    font-size: 2rem;
+    font-weight: 700;
+    margin-bottom: 1.5rem;
+  }
+  
+  .logs-table {
+    width: 100%;
+    border-collapse: collapse;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+  }
+  
+  .logs-table th, .logs-table td {
+    padding: 1rem;
+    border-bottom: 1px solid #e0e0e0;
+    text-align: left;
+    vertical-align: top;
+  }
+  
+  .logs-table th {
+    background-color: #f4f4f4;
+    font-weight: bold;
+  }
+  
+  .toggle-btn {
+    background: none;
+    border: none;
+    font-size: 1.2rem;
+    cursor: pointer;
+  }
+  
+  .log-details {
+    background-color: #f9f9f9;
+    padding: 1rem;
+    border-radius: 8px;
+  }
+  
+  .log-details ul {
+    list-style-type: disc;
+    padding-left: 1.5rem;
+    margin: 0;
+  }
+  
+  .stage-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 0.5rem;
+    background-color: #fafafa;
+    border: 1px solid #ddd;
+  }
+  
+  .stage-table th, .stage-table td {
+    padding: 8px 12px;
+    text-align: left;
+    border-bottom: 1px solid #eee;
+    font-size: 0.95rem;
+  }
+  
+  .stage-table th {
+    background-color: #f0f0f0;
+    font-weight: bold;
+  }
+  
+  .sub-log-table {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: collapse;
+    margin-top: 1rem;
+  }
+  
+  .sub-log-table th, .sub-log-table td {
+    padding: 0.75rem;
+    border: 1px solid #eee;
+    text-align: left;
+    white-space: nowrap;
+  }
+  
+  .success {
+    color: green;
+    font-weight: 600;
+  }
+  
+  .failure {
+    color: red;
+    font-weight: 600;
+  }
+  
+  .pending {
+    color: gray;
+    font-style: italic;
+  }
+  
+  .filter-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 20px;
+  align-items: center;
+}
+
+.filter-item {
+  min-width: 200px;
+}

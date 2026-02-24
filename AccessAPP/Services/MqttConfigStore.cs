@@ -23,7 +23,20 @@ public sealed class MqttConfigStore
         {
             if (!File.Exists(FilePath))
             {
-                var def = new MqttOptions();
+                var def = new MqttOptions
+                {
+                    Name = $"cassia-unknown{Random.Shared.Next(1000, 10000)}",
+                    NetworkId = "dk-lab",
+                    Host = "prod.statistics.niko-test.nu",
+                    Port = 18883,
+                    UseTls = false,
+                    Username = "accessapp",
+                    Password = "Niko1234!",
+                    BaseTopic = "accessapp",
+                    KeepAliveSeconds = 30,
+                    ReconnectDelaySeconds = 10,
+                    SubscribeToAllTarget = true
+                };
                 Save(def);
                 return def;
             }

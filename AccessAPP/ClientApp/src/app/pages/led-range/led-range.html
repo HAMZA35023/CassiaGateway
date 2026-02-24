@@ -1,0 +1,138 @@
+<app-tabs></app-tabs>
+
+<div class="led-wrapper">
+  <div class="card header-card">
+    <div>
+      <h1 class="title">LED Range Visualizer</h1>
+      <p class="subtitle">Local LED range visualization. No MQTT required.</p>
+    </div>
+    <div class="status-block">
+      <div class="status-label">Status</div>
+      <div class="status-text">{{ state?.statusText || 'Idle' }}</div>
+    </div>
+  </div>
+
+  <div class="card controls-card">
+    <div class="form-grid">
+      <div class="form-group">
+        <label>Min RSSI</label>
+        <input type="number" [(ngModel)]="form.minRssi" />
+        <div class="hint">Devices below this RSSI are skipped.</div>
+      </div>
+      <div class="form-group">
+        <label>Model</label>
+        <select [(ngModel)]="form.model">
+          <option *ngFor="let option of modelOptions" [value]="option">{{ option }}</option>
+        </select>
+        <div class="hint">Filter by device role or family.</div>
+      </div>
+      <div class="form-group">
+        <label>Retries</label>
+        <input type="number" [(ngModel)]="form.maxConnectAttempts" />
+        <div class="hint">Minimum 3 attempts per device.</div>
+      </div>
+      <div class="form-group">
+        <label>Pincode</label>
+        <input type="text" [(ngModel)]="form.pincode" />
+        <div class="hint">Used for login when required.</div>
+      </div>
+      <div class="form-group checkbox">
+        <label>
+          <input type="checkbox" [(ngModel)]="form.useBothChips" />
+          Use both Cassia chips
+        </label>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn primary" (click)="startVisualization()" [disabled]="isBusy">
+        Start visualization
+      </button>
+      <button class="btn warning" (click)="retryFailed()" [disabled]="isBusy">
+        Retry failed
+      </button>
+      <button class="btn danger" (click)="disconnectSession(false)" [disabled]="isBusy">
+        Disconnect session
+      </button>
+      <button class="btn danger-outline" (click)="disconnectSession(true)" [disabled]="isBusy">
+        Force disconnect all
+      </button>
+    </div>
+    <div class="error" *ngIf="errorText">{{ errorText }}</div>
+  </div>
+
+  <div class="card progress-card">
+    <div class="progress-info">
+      <div class="progress-title">Progress</div>
+      <div class="progress-bar">
+        <div class="progress-fill" [style.width.%]="state?.progressPercent || 0"></div>
+      </div>
+      <div class="progress-text">{{ state?.progressText || '0 / 0 tried' }}</div>
+    </div>
+    <div class="progress-stats">
+      <div>Connected: {{ state?.connectedCount || 0 }}</div>
+      <div>Failed: {{ state?.failedCount || 0 }}</div>
+      <div>Total: {{ state?.requestedTotal || 0 }}</div>
+    </div>
+  </div>
+
+  <div class="tables-grid">
+    <div class="card table-card">
+      <div class="table-title">Connected devices</div>
+      <table>
+        <thead>
+          <tr>
+            <th>MAC</th>
+            <th>Model</th>
+            <th>RSSI</th>
+            <th>Chip</th>
+            <th>Color</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let row of state?.connectedDevices || []">
+            <td>{{ row.mac }}</td>
+            <td>{{ row.model }}</td>
+            <td>{{ row.rssi }}</td>
+            <td>{{ row.chip }}</td>
+            <td class="color">{{ row.color }}</td>
+            <td>{{ row.status }}</td>
+          </tr>
+          <tr *ngIf="(state?.connectedDevices?.length || 0) === 0">
+            <td colspan="6" class="empty">No connected devices yet.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card table-card">
+      <div class="table-title">Failed devices</div>
+      <table>
+        <thead>
+          <tr>
+            <th>MAC</th>
+            <th>Model</th>
+            <th>RSSI</th>
+            <th>Chip</th>
+            <th>Status</th>
+            <th>Error</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let row of state?.failedDevices || []">
+            <td>{{ row.mac }}</td>
+            <td>{{ row.model }}</td>
+            <td>{{ row.rssi }}</td>
+            <td>{{ row.chip }}</td>
+            <td>{{ row.status }}</td>
+            <td>{{ row.error }}</td>
+          </tr>
+          <tr *ngIf="(state?.failedDevices?.length || 0) === 0">
+            <td colspan="6" class="empty">No failed devices.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>

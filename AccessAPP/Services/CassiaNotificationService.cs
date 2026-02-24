@@ -6,7 +6,7 @@ using System.Text.Json;
 using AccessAPP.Services;
 using AccessAPP;
 
-public class CassiaNotificationService : IDisposable
+public class CassiaNotificationService : AccessAPP.Services.BleAbstractions.IBleNotificationService
 {
 
     const bool _DEBUG = false;
@@ -30,8 +30,8 @@ public class CassiaNotificationService : IDisposable
     private static List<Task> _listeningTasks;
     private static readonly object _lock = new();
     private readonly ILogger<CassiaNotificationService> _logger;
-    public SemaphoreSlim semaphore = null;
-    public bool forcedRestartedSSE = false;
+    public SemaphoreSlim? semaphore { get; set; } = null;
+    public bool forcedRestartedSSE { get; set; } = false;
 
     // Singleton instance managed by DI
     private static CassiaNotificationService _instance;

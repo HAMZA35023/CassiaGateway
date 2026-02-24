@@ -1,0 +1,20 @@
+{
+  "ManifestUrl": "http://prod.statistics.niko-test.nu/accessapp/{channel}/manifest.json",
+  "Channel": "stable",
+  "ChannelFilePath": "/etc/accessapp-updater.channel",
+  "System": "linux-arm",
+  "SystemFilePath": "/etc/accessapp-updater.system",
+  "AllowDowngrade": false,
+  "InstallDir": "/home/cassia/FWUpgrade",
+  "WorkDir": "/tmp/accessapp-updater",
+  "VersionFileName": "version.txt",
+  "ExecutableName": "AccessAPP",
+  "HttpTimeoutSeconds": 600,
+  "PreserveFiles": [
+    "mqtt.json"
+  ],
+  "ExecutableRelativePathsToChmodX": [
+    "AccessAPP",
+    "libBootloaderUtilMultiThread.so"
+  ]
+}

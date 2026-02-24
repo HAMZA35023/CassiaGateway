@@ -29,13 +29,16 @@ namespace AccessAPP.Services.UpgradePipeline
 
             // Skip actor upgrade when current Actor App FW matches target, unless forced.
             var actorNeeded = isDaliMaster && (dev.ForceUpdate || !FirmwareResolver.IsSameActorAppVersion(dev.CurrentFirmwareVersion, dev.FirmwareVersion));
+            var anyFirmwareUpgradeNeeded = upgradeBootloader || upgradeSensor || actorNeeded;
 
             var requiresConfigRestore = RuntimeVariables.RestoreSettingsAfterUpgrade &&
                                        (dev.DetectotType == "P48" || dev.DetectotType == "P47" || dev.DetectotType == "P46" ||
-                                        dev.DetectotType == "P49" || dev.DetectotType == "P41" || dev.DetectotType == "P42");
+                                        dev.DetectotType == "P49" || dev.DetectotType == "P41" || dev.DetectotType == "P42") &&
+                                       anyFirmwareUpgradeNeeded;
 
             var requires102Restore = RuntimeVariables.Restore102DBAfterUpgrade &&
-                                     (dev.DetectotType == "P48" || dev.DetectotType == "P47");
+                                     (dev.DetectotType == "P48" || dev.DetectotType == "P47") &&
+                                     anyFirmwareUpgradeNeeded;
 
             return new UpgradeDecisions(
                 IsDaliMaster: isDaliMaster,

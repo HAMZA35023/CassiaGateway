@@ -22,6 +22,18 @@ public partial class CassiaGateway : ObservableObject
     // Editable value in UI (what the user wants to set). Kept separate from ParallelProgrammers.
     [ObservableProperty] private int parallelProgrammersDesired = 0;
     [ObservableProperty] private double totalSpeedpct = 1;
+    [ObservableProperty] private long uptimeSeconds;
+    [ObservableProperty] private DateTimeOffset uptimeReportedUtc = DateTimeOffset.MinValue;
+    [ObservableProperty] private string lastSeenAgoText = "";
+    [ObservableProperty] private string uptimeText = "";
+    [ObservableProperty] private string cellularState = "";
+    [ObservableProperty] private string cellularNetworkType = "";
+    [ObservableProperty] private int? cellularSignalBar;
+    [ObservableProperty] private int? cellularRssiDbm;
+    [ObservableProperty] private int? cellularLteRsrpDbm;
+    [ObservableProperty] private int? cellularLteRsrqDb;
+    [ObservableProperty] private int? cellularLteSnrDb;
+    [ObservableProperty] private string cellularProvider = "";
 
     // Client-side speed history for graphing (max 12 hours kept)
     public ObservableCollection<SpeedSample> SpeedHistory { get; } = new();
@@ -62,6 +74,31 @@ public partial class CassiaGateway : ObservableObject
     [ObservableProperty] private Dictionary<string, string[]> firmwareManifest = new(StringComparer.OrdinalIgnoreCase);
 
     public string StatusLine => $"{NetworkId} • last seen {LastSeenUtc.ToLocalTime():HH:mm:ss} • devices {DevicesSeen} • {QueueLine}";
+    public string CellularSummary
+    {
+        get
+        {
+            var state = (CellularState ?? "").Trim();
+            if (!string.IsNullOrWhiteSpace(state) && !state.Equals("connected", StringComparison.OrdinalIgnoreCase))
+                return state;
+
+            var bits = new List<string>();
+            if (!string.IsNullOrWhiteSpace(CellularNetworkType)) bits.Add(CellularNetworkType.Trim());
+            if (CellularSignalBar.HasValue) bits.Add($"{CellularSignalBar.Value}/5");
+            if (CellularLteRsrpDbm.HasValue) bits.Add($"{CellularLteRsrpDbm.Value} dBm");
+            else if (CellularRssiDbm.HasValue) bits.Add($"{CellularRssiDbm.Value} dBm");
+
+            if (bits.Count > 0)
+                return string.Join(" | ", bits);
+
+            if (!string.IsNullOrWhiteSpace(CellularProvider))
+                return CellularProvider.Trim();
+
+            return "";
+        }
+    }
+
+    public bool HasCellularSummary => !string.IsNullOrWhiteSpace(CellularSummary);
 
     public string LastSeenLocal => LastSeenUtc == DateTimeOffset.MinValue ? "" : LastSeenUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
     public string FwManifestLastSeenLocal => FwManifestLastSeenUtc == DateTimeOffset.MinValue ? "" : FwManifestLastSeenUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
@@ -96,6 +133,7 @@ public partial class CassiaGateway : ObservableObject
     {
         OnPropertyChanged(nameof(StatusLine));
         OnPropertyChanged(nameof(LastSeenLocal));
+        UpdateDerivedTimes(DateTimeOffset.UtcNow);
     }
     partial void OnDevicesSeenChanged(int value) => OnPropertyChanged(nameof(StatusLine));
     partial void OnQueueChanged(int value)
@@ -109,6 +147,20 @@ public partial class CassiaGateway : ObservableObject
         OnPropertyChanged(nameof(QueueLine));
         OnPropertyChanged(nameof(StatusLine));
         OnPropertyChanged(nameof(StripeBrush));
+    }
+    partial void OnCellularStateChanged(string value) => OnCellularSummaryChanged();
+    partial void OnCellularNetworkTypeChanged(string value) => OnCellularSummaryChanged();
+    partial void OnCellularSignalBarChanged(int? value) => OnCellularSummaryChanged();
+    partial void OnCellularRssiDbmChanged(int? value) => OnCellularSummaryChanged();
+    partial void OnCellularLteRsrpDbmChanged(int? value) => OnCellularSummaryChanged();
+    partial void OnCellularLteRsrqDbChanged(int? value) => OnCellularSummaryChanged();
+    partial void OnCellularLteSnrDbChanged(int? value) => OnCellularSummaryChanged();
+    partial void OnCellularProviderChanged(string value) => OnCellularSummaryChanged();
+
+    private void OnCellularSummaryChanged()
+    {
+        OnPropertyChanged(nameof(CellularSummary));
+        OnPropertyChanged(nameof(HasCellularSummary));
     }
 
     partial void OnParallelProgrammersChanged(int value)
@@ -126,6 +178,40 @@ public partial class CassiaGateway : ObservableObject
     partial void OnAssignedP48Changed(int value) => OnPropertyChanged(nameof(AssignedLine));
     partial void OnFwManifestLastSeenUtcChanged(DateTimeOffset value) => OnPropertyChanged(nameof(FwManifestLastSeenLocal));
     partial void OnFirmwareManifestChanged(Dictionary<string, string[]> value) => OnPropertyChanged(nameof(HasFwManifest));
+
+    partial void OnUptimeSecondsChanged(long value) => UpdateDerivedTimes(DateTimeOffset.UtcNow);
+    partial void OnUptimeReportedUtcChanged(DateTimeOffset value) => UpdateDerivedTimes(DateTimeOffset.UtcNow);
+
+    public void UpdateDerivedTimes(DateTimeOffset nowUtc)
+    {
+        if (LastSeenUtc == DateTimeOffset.MinValue)
+        {
+            LastSeenAgoText = "";
+        }
+        else
+        {
+            var delta = nowUtc - LastSeenUtc;
+            if (delta < TimeSpan.Zero) delta = TimeSpan.Zero;
+            var totalMinutes = (int)Math.Floor(delta.TotalMinutes);
+            var seconds = delta.Seconds;
+            LastSeenAgoText = $"{totalMinutes:00}:{seconds:00}";
+        }
+
+        if (UptimeSeconds <= 0 || UptimeReportedUtc == DateTimeOffset.MinValue)
+        {
+            UptimeText = "";
+        }
+        else
+        {
+            var extra = nowUtc - UptimeReportedUtc;
+            if (extra < TimeSpan.Zero) extra = TimeSpan.Zero;
+            var totalSeconds = UptimeSeconds + (long)extra.TotalSeconds;
+            if (totalSeconds < 0) totalSeconds = 0;
+            var ts = TimeSpan.FromSeconds(totalSeconds);
+            var days = (int)ts.TotalDays;
+            UptimeText = $"{days}d, {ts.Hours:00}:{ts.Minutes:00}";
+        }
+    }
 }
 
 public sealed record SpeedSample(DateTimeOffset TimeUtc, double SpeedPctPerMin);

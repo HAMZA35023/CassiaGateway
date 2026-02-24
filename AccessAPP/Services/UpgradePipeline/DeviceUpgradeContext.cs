@@ -25,6 +25,26 @@ internal sealed class DeviceUpgradeContext
     public string? SettingsBackupPath { get; set; }
     public int ChipId { get; set; }
     public bool IsInBoot { get; set; }
+    public bool DetectorNameLogged { get; set; }
+    public byte? OriginalDaliSysFailLevel { get; set; }
+    public bool ActorUpdatedBeforeFirmware { get; set; }
+    public bool ActorConnectionReuseConsumed { get; set; }
+    public bool ReuseConnectionForPostActor { get; set; }
+    public bool AnyFirmwareStepExecuted { get; set; }
+    public bool ActorFirmwareStepExecuted { get; set; }
+
+    /// <summary>
+    /// Set by ProbeAndBootModeStep after it establishes a live BLE session,
+    /// so subsequent steps (e.g. SettingsBackupStep) can reuse it instead of reconnecting.
+    /// </summary>
+    public bool PipelineSessionAlive { get; set; } = false;
+
+    /// <summary>
+    /// Set by PostActorStep to signal that the BLE connection should be kept open
+    /// for the post-upgrade FW verification read instead of disconnecting here.
+    /// The outer scope (ProcessSingleDeviceUpgradeAsync) is responsible for the final disconnect.
+    /// </summary>
+    public bool KeepConnectionOpen { get; set; } = false;
 
     public Stopwatch Stopwatch { get; } = new();
 

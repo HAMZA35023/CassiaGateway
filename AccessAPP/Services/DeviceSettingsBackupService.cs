@@ -117,6 +117,44 @@ namespace AccessAPP.Services
             return backupFilePath ?? string.Empty;
         }
 
+        private static int GetBackupReadAttempts()
+            => Math.Max(1, RuntimeVariables.UPGRADE_SETTINGS_BACKUP_READ_ATTEMPTS);
+
+        private static int GetBackupReadRetryDelayMs()
+            => Math.Max(200, RuntimeVariables.UPGRADE_SETTINGS_BACKUP_READ_RETRY_DELAY_MS);
+
+        private static async Task<string> ReadRequiredAsync(
+            Func<Task<string>> readFunc,
+            string label)
+        {
+            int attempts = GetBackupReadAttempts();
+            int delayMs = GetBackupReadRetryDelayMs();
+            string lastError = "empty response";
+
+            for (int attempt = 1; attempt <= attempts; attempt++)
+            {
+                try
+                {
+                    var hex = await readFunc().ConfigureAwait(false);
+                    if (!string.IsNullOrWhiteSpace(hex))
+                        return hex;
+
+                    lastError = "empty response";
+                    AppLog.Warn($"[Backup] {label} empty (attempt {attempt}/{attempts}).");
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    AppLog.Warn($"[Backup] {label} exception (attempt {attempt}/{attempts}): {ex.Message}");
+                }
+
+                if (attempt < attempts)
+                    await Task.Delay(delayMs).ConfigureAwait(false);
+            }
+
+            throw new Exception($"Settings backup read failed for {label} after {attempts} attempts. Last error: {lastError}");
+        }
+
         public async Task<(string filePath, DeviceSettingsSnapshot snapshot)> BackupToFileAsync(
             string macAddress,
             string pincode, // kept in interface for your earlier calls; not used here
@@ -136,19 +174,19 @@ namespace AccessAPP.Services
                 FirmwareVersionTarget = firmwareVersion,
 
                 UserConfigHex = profile.UserConfig
-                    ? StripBleHeader(await _ble.GetUserConfig(macAddress).ConfigureAwait(false))
+                    ? StripBleHeader(await ReadRequiredAsync(() => _ble.GetUserConfig(macAddress), "UserConfig").ConfigureAwait(false))
                     : null,
 
                 PushButtonsHex = profile.WiredPushButtons
-                    ? StripBleHeader(await _ble.GetWiredPushButtonList(macAddress).ConfigureAwait(false))
+                    ? StripBleHeader(await ReadRequiredAsync(() => _ble.GetWiredPushButtonList(macAddress), "WiredPushButtons").ConfigureAwait(false))
                     : null,
 
                 DaliPushButtonsHex = profile.DaliPushButtons
-                    ? StripBleHeader(await _ble.GetDaliPushButtonList(macAddress).ConfigureAwait(false))
+                    ? StripBleHeader(await ReadRequiredAsync(() => _ble.GetDaliPushButtonList(macAddress), "DaliPushButtons").ConfigureAwait(false))
                     : null,
 
                 BlePushButtonsHex = profile.BlePushButtons
-                    ? StripBleHeader(await _ble.GetBLEPushButtonList(macAddress).ConfigureAwait(false))
+                    ? StripBleHeader(await ReadRequiredAsync(() => _ble.GetBLEPushButtonList(macAddress), "BlePushButtons").ConfigureAwait(false))
                     : null,
             };
 
@@ -265,33 +303,45 @@ bool ok = true;
             if (profile.UserConfig && !string.IsNullOrWhiteSpace(snap.UserConfigHex))
             {
                 AppLog.Info($"[Restore] Writing UserConfig...");
-bool r = await _ble.SetUserConfig(macAddress, snap.UserConfigHex).ConfigureAwait(false);
+                bool r = await WriteWithRetryAsync(
+                        () => _ble.SetUserConfig(macAddress, snap.UserConfigHex),
+                        "UserConfig")
+                    .ConfigureAwait(false);
                 AppLog.Info($"[Restore] UserConfig result={r}");
-ok &= r;
+                ok &= r;
             }
 
             if (profile.WiredPushButtons && !string.IsNullOrWhiteSpace(snap.PushButtonsHex))
             {
                 AppLog.Info($"[Restore] Writing Wired PushButtons...");
-bool r = await _ble.SetWiredPushButtonList(macAddress, snap.PushButtonsHex).ConfigureAwait(false);
+                bool r = await WriteWithRetryAsync(
+                        () => _ble.SetWiredPushButtonList(macAddress, snap.PushButtonsHex),
+                        "Wired PushButtons")
+                    .ConfigureAwait(false);
                 AppLog.Info($"[Restore] Wired PushButtons result={r}");
-ok &= r;
+                ok &= r;
             }
 
             if (profile.DaliPushButtons && !string.IsNullOrWhiteSpace(snap.DaliPushButtonsHex))
             {
                 AppLog.Info($"[Restore] Writing DALI PushButtons...");
-bool r = await _ble.SetDaliPushButtonList(macAddress, snap.DaliPushButtonsHex).ConfigureAwait(false);
+                bool r = await WriteWithRetryAsync(
+                        () => _ble.SetDaliPushButtonList(macAddress, snap.DaliPushButtonsHex),
+                        "DALI PushButtons")
+                    .ConfigureAwait(false);
                 AppLog.Info($"[Restore] DALI PushButtons result={r}");
-ok &= r;
+                ok &= r;
             }
 
             if (profile.BlePushButtons && !string.IsNullOrWhiteSpace(snap.BlePushButtonsHex))
             {
                 AppLog.Info($"[Restore] Writing BLE PushButtons...");
-bool r = await _ble.SetBLEPushButtonList(macAddress, snap.BlePushButtonsHex).ConfigureAwait(false);
+                bool r = await WriteWithRetryAsync(
+                        () => _ble.SetBLEPushButtonList(macAddress, snap.BlePushButtonsHex),
+                        "BLE PushButtons")
+                    .ConfigureAwait(false);
                 AppLog.Info($"[Restore] BLE PushButtons result={r}");
-ok &= r;
+                ok &= r;
             }
 
             AppLog.Info($"[Restore] END ok={ok}");
@@ -309,6 +359,33 @@ return new ServiceResponse
         {
             if (string.IsNullOrWhiteSpace(hex)) return "<null>";
             return hex.Length <= max ? hex : hex.Substring(0, max) + "...";
+        }
+
+        private static async Task<bool> WriteWithRetryAsync(
+            Func<Task<bool>> action,
+            string label,
+            int maxAttempts = 3,
+            int delayMs = 2000)
+        {
+            for (int attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                try
+                {
+                    var ok = await action().ConfigureAwait(false);
+                    if (ok) return true;
+
+                    AppLog.Warn($"[Restore] {label} failed (attempt {attempt}/{maxAttempts}).");
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Warn($"[Restore] {label} exception (attempt {attempt}/{maxAttempts}): {ex.Message}");
+                }
+
+                if (attempt < maxAttempts)
+                    await Task.Delay(delayMs).ConfigureAwait(false);
+            }
+
+            return false;
         }
 
 

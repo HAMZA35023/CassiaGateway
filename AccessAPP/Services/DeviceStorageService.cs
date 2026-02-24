@@ -36,6 +36,9 @@ namespace AccessAPP.Services
         // After this, the device is removed from the device list entirely (not just marked stale).
         // This prevents "get-device-list" from showing devices that are no longer available.
         private static readonly TimeSpan RemoveAfter = TimeSpan.FromMinutes(10);
+        private readonly object _staleSuppressionGate = new();
+        private bool _scanWasPausedUnderUpgrade;
+        private DateTimeOffset _suppressStaleUntilUtc = DateTimeOffset.MinValue;
 
         private sealed class RssiSample
         {
@@ -129,6 +132,49 @@ namespace AccessAPP.Services
                 })
                 .OrderBy(x => x.MacAddress, StringComparer.OrdinalIgnoreCase)
                 .ToList();
+        }
+
+        public static int ClearAllDevices()
+        {
+            var inst = _ownInstance;
+            if (inst is null)
+                return 0;
+
+            var removed = inst._deviceList.Count;
+            inst._deviceList.Clear();
+            inst._rssiState.Clear();
+            inst._lastDevicePublishUtc.Clear();
+            inst._lastProgressPublishUtc.Clear();
+            inst._isStale.Clear();
+            return removed;
+        }
+
+        public static bool TryGetDeviceName(string mac, out string name)
+        {
+            name = "";
+            var inst = _ownInstance;
+            if (inst is null) return false;
+            if (string.IsNullOrWhiteSpace(mac)) return false;
+
+            if (!inst._deviceList.TryGetValue(mac, out var dev) || dev is null)
+                return false;
+
+            name = (dev.name ?? "").Trim();
+            return !string.IsNullOrWhiteSpace(name);
+        }
+
+        public static bool TryGetProductNumber(string mac, out string productNumber)
+        {
+            productNumber = "";
+            var inst = _ownInstance;
+            if (inst is null) return false;
+            if (string.IsNullOrWhiteSpace(mac)) return false;
+
+            if (!inst._deviceList.TryGetValue(mac, out var dev) || dev is null)
+                return false;
+
+            productNumber = (dev.ProductNumber ?? "").Trim();
+            return !string.IsNullOrWhiteSpace(productNumber);
         }
 
         // Add or update devices based on MAC address and filter by RSSI
@@ -236,9 +282,44 @@ namespace AccessAPP.Services
             PruneStaleDevices();
         }
 
+        private static bool IsScanPausedUnderUpgrade()
+            => !RuntimeVariables.BLE_SCAN_UNDER_PROGRAMMING &&
+               CassiaFirmwareUpgradeService.GetProgrammingCount() > 1;
+
+        private static TimeSpan GetStaleAfterScanResumeDelay()
+        {
+            var delayMs = Math.Max(0, RuntimeVariables.BLE_STALE_DELAY_AFTER_SCAN_RESUME_MS);
+            return TimeSpan.FromMilliseconds(delayMs);
+        }
+
+        private bool ShouldSuppressStaleUpdates(DateTimeOffset now)
+        {
+            var scanPaused = IsScanPausedUnderUpgrade();
+
+            lock (_staleSuppressionGate)
+            {
+                if (scanPaused)
+                {
+                    _scanWasPausedUnderUpgrade = true;
+                    return true;
+                }
+
+                if (_scanWasPausedUnderUpgrade)
+                {
+                    var staleAfterScanResumeDelay = GetStaleAfterScanResumeDelay();
+                    _scanWasPausedUnderUpgrade = false;
+                    _suppressStaleUntilUtc = now.Add(staleAfterScanResumeDelay);
+                    AppLog.Info($"[DeviceStorage] Scan resumed. Delaying stale device updates for {staleAfterScanResumeDelay.TotalSeconds:0}s.");
+                }
+
+                return now < _suppressStaleUntilUtc;
+            }
+        }
+
         private void PruneStaleDevices()
         {
             var now = DateTimeOffset.UtcNow;
+            var suppressStaleUpdates = ShouldSuppressStaleUpdates(now);
 
             foreach (var kvp in _deviceList)
             {
@@ -257,7 +338,7 @@ namespace AccessAPP.Services
                     continue;
 
                 // 1) Mark as stale after StaleAfter
-                if ((now - lastSeen) > StaleAfter)
+                if (!suppressStaleUpdates && (now - lastSeen) > StaleAfter)
                 {
                     _deviceList.AddOrUpdate(mac,
                         _ => kvp.Value,
@@ -293,7 +374,7 @@ namespace AccessAPP.Services
         }
 
 
-        public void UpdateFirmwareProgress(string mac, double progress, string status = "Programming")
+        public void UpdateFirmwareProgress(string mac, double progress, string status = "Programming", double? speedPctPerMin = null)
         {
             _progressStatus.AddOrUpdate(mac,
                 new FirmwareProgressStatus
@@ -301,19 +382,21 @@ namespace AccessAPP.Services
                     MacAddress = mac,
                     Progress = progress,
                     Status = status,
+                    SpeedPctPerMin = speedPctPerMin,
                     LastUpdated = DateTime.UtcNow
                 },
                 (key, existing) =>
                 {
                     existing.Progress = Math.Min(progress, 100);
                     existing.Status = status;
+                    existing.SpeedPctPerMin = speedPctPerMin;
                     existing.LastUpdated = DateTime.UtcNow;
                     return existing;
                 });
 
             // MQTT publish (throttled, but always sends 100%)
             var p = Math.Min(progress, 100);
-            PublishProgressThrottled(mac, p, status);
+            PublishProgressThrottled(mac, p, status, speedPctPerMin);
         }
 
         public void MarkFirmwareFailed(string mac)
@@ -324,11 +407,13 @@ namespace AccessAPP.Services
                     MacAddress = mac,
                     Progress = 0,
                     Status = "Failed",
+                    SpeedPctPerMin = null,
                     LastUpdated = DateTime.UtcNow
                 },
                 (key, existing) =>
                 {
                     existing.Status = "Failed";
+                    existing.SpeedPctPerMin = null;
                     existing.LastUpdated = DateTime.UtcNow;
                     return existing;
                 });
@@ -340,7 +425,8 @@ namespace AccessAPP.Services
                 {
                     Mac = mac,
                     ProgressPercent = 0,
-                    Stage = "Failed"
+                    Stage = "Failed",
+                    SpeedPctPerMin = null
                 }, ct);
 
                 await _mqtt.PublishLogAsync(new LogMessage
@@ -410,7 +496,7 @@ namespace AccessAPP.Services
         }
 
 
-        private void PublishProgressThrottled(string mac, double progress, string status)
+        private void PublishProgressThrottled(string mac, double progress, string status, double? speedPctPerMin)
         {
             var now = DateTime.UtcNow;
 
@@ -429,7 +515,8 @@ namespace AccessAPP.Services
                 {
                     Mac = mac,
                     ProgressPercent = progress,
-                    Stage = status
+                    Stage = status,
+                    SpeedPctPerMin = speedPctPerMin
                 }, ct);
             });
         }

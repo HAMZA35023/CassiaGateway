@@ -1,0 +1,113 @@
+.dialog-container {
+  padding: 24px;
+  max-width: 600px;
+}
+
+.device-row {
+  margin-bottom: 24px;
+  padding: 10px 0;
+  border-bottom: 1px solid #eee;
+}
+
+.full-width {
+  width: 100%;
+}
+
+.pin-input-group {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.pin {
+  width: 56px;
+  height: 56px;
+}
+
+.pin input {
+  height: 100%;
+  width: 150%;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 600;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  background-color: #fff;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.pin input:focus {
+  border-color: #1976d2;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(25, 118, 210, 0.2);
+}
+
+
+h3 {
+  margin-top: 24px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+p strong {
+  margin-right: 5px;
+}
+
+mat-form-field.pin {
+  background: #fff;
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.1);
+}
+
+mat-form-field.full-width {
+  background: #f6f8fa;
+  border-radius: 5px;
+  padding-right: 4px;
+}
+
+.button-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 32px;
+}
+
+.dialog-container {
+  max-width: 600px;
+  padding: 24px;
+  background: white;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh;
+}
+
+.scrollable-content {
+  overflow-y: auto;
+  max-height: 60vh; /* 👈 This controls the scrollable height */
+  padding-right: 8px;
+  margin-bottom: 1.5rem;
+}
+
+.device-row {
+  margin-bottom: 1.25rem;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 1rem;
+}
+
+.pin-input-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pin {
+  width: 40px;
+}
+
+.button-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}

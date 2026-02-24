@@ -36,6 +36,8 @@ public partial class DiscoveredDevice : ObservableObject
 
     // If the latest (final) upgrade-log completion entry for this device is Failed, we highlight the row red.
     [ObservableProperty] private bool isUpgradeFailed;
+    // Dedicated "attempted but blocked" state (e.g. no FW read outside bootloader).
+    [ObservableProperty] private bool isUpgradeNoFwRead;
 
 
     // --- Upgrade result (from upgrade-log) ---
@@ -57,6 +59,8 @@ public string LastUpgradeSuccessLocal => LastUpgradeSuccessUtc.HasValue
 
     [ObservableProperty] private int bestRssi = int.MinValue;
     [ObservableProperty] private string bestCassia = "";
+    [ObservableProperty] private DateTimeOffset lastRssiAtOrAboveMinus70Utc = DateTimeOffset.MinValue;
+    [ObservableProperty] private DateTimeOffset lastRssiAtOrAboveMinus75Utc = DateTimeOffset.MinValue;
 
     // ----- Assignment (sticky) -----
     // This is the Cassia we will actually use for commands (connect / update / write-read).
@@ -70,6 +74,19 @@ public string LastUpgradeSuccessLocal => LastUpgradeSuccessUtc.HasValue
     public string RssiAll => CassiaRssi.Count == 0 ? "" : string.Join("  ", CassiaRssi.OrderBy(kv => kv.Key).Select(kv => $"{kv.Key}:{kv.Value}"));
 
     public string LastSeenLocal => LastSeenUtc == DateTimeOffset.MinValue ? "" : LastSeenUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+
+    public bool WasAboveThresholdRecently(int threshold, TimeSpan window, DateTimeOffset nowUtc)
+    {
+        DateTimeOffset ts = threshold switch
+        {
+            -70 => LastRssiAtOrAboveMinus70Utc,
+            -75 => LastRssiAtOrAboveMinus75Utc,
+            _ => DateTimeOffset.MinValue
+        };
+
+        if (ts == DateTimeOffset.MinValue) return false;
+        return (nowUtc - ts) <= window;
+    }
 
     partial void OnProductNumberChanged(string value) => OnPropertyChanged(nameof(SensorModel));
 
@@ -130,8 +147,15 @@ private void UpdateRowFlagsFromProcess()
             IsUpgradeSuccess = false;
             IsUpgradeFailed = false;
             IsUpgradeWarn = false;
+            IsUpgradeNoFwRead = false;
             return;
         }
+
+        // If a final result flag is already set from upgrade-log parsing, keep it.
+        // This prevents ProcessStatus text (e.g. "Warn") from overriding the explicit
+        // completion classification when UI filters are toggled.
+        if (IsUpgradeSuccess || IsUpgradeWarn || IsUpgradeFailed || IsUpgradeNoFwRead)
+            return;
 
         var sLower = ((ProcessStatus ?? "").Trim()).ToLowerInvariant();
 
@@ -149,9 +173,11 @@ private void UpdateRowFlagsFromProcess()
             sLower.Contains("aborted");
 
         var warn = !failed && !success && sLower.Contains("warn");
+        var noFwRead = sLower.Contains("nofwread");
 
         // Set explicitly (do not keep stale values from a previous run)
-        IsUpgradeFailed = failed;
+        IsUpgradeNoFwRead = noFwRead;
+        IsUpgradeFailed = failed && !noFwRead;
         IsUpgradeSuccess = !failed && success;
         IsUpgradeWarn = !failed && !success && warn;
     }
@@ -163,9 +189,13 @@ private void UpdateRowFlagsFromProcess()
 
         var best = CassiaRssi.OrderByDescending(kv => kv.Value).FirstOrDefault();
         BestCassia = best.Key ?? cassia;
-        OnPropertyChanged(nameof(RssiAll));
         BestRssi = (best.Key == null) ? rssi : best.Value;
         OnPropertyChanged(nameof(RssiAll));
+
+        if (BestRssi >= -75)
+            LastRssiAtOrAboveMinus75Utc = tsUtc;
+        if (BestRssi >= -70)
+            LastRssiAtOrAboveMinus70Utc = tsUtc;
     }
 
 }

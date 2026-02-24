@@ -1,10 +1,13 @@
 ﻿using System;
 using System.IO;
+using System.IO.Compression;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using AccessAPP;
 
 public interface IUpgradeMqttPublisher
 {
@@ -19,9 +22,11 @@ public static class UpgradeLogger
     public static Action<string>? DebugLog { get; set; }
     private static void D(string msg) => DebugLog?.Invoke("[UpgradeLogger] " + msg);
 
+    private const int UpgradeLogQos = 1; // deliver-at-least-once for upgrade-log messages
+
     private static readonly object _lock = new object();
-    private static readonly string LogDir = Path.Combine(AppContext.BaseDirectory, "Logs");
-    private static readonly string LogFilePath = Path.Combine(LogDir, "upgrade_logs.txt");
+    private static readonly string LogDir = AccessAppPaths.UpgradeLogDir;
+    private static readonly string LogFilePath = AccessAppPaths.UpgradeLog;
 
     // ---- MQTT wiring (set these from your app at startup) ----
     public static IUpgradeMqttPublisher? Mqtt { get; set; }
@@ -48,7 +53,7 @@ public static class UpgradeLogger
         _ = Task.Run(() => PublisherLoopAsync(ct), ct);
     }
 
-    public static void Log(string logId, string mac, string stage, string status, string fwVersion = null)
+    public static void Log(string logId, string mac, string stage, string status, string fwVersion = null, string deviceName = null)
     {
         // Ensure publisher loop is running (safe if called multiple times)
         if (_publisherStarted == 0) StartMqttPublisher();
@@ -65,6 +70,9 @@ public static class UpgradeLogger
 
             if (!string.IsNullOrEmpty(mac))
                 logEntry += $" mac={mac}";
+
+            if (!string.IsNullOrEmpty(deviceName))
+                logEntry += $" name={deviceName}";
 
             if (!string.IsNullOrEmpty(fwVersion))
                 logEntry += $" fw={fwVersion}";
@@ -83,6 +91,8 @@ public static class UpgradeLogger
             Stage = stage,
             Status = status,
             Fw = fwVersion,
+            Name = deviceName,
+            Detector = deviceName,
             TimeLocal = timestamp,
             Line = logEntry,
             NetworkId = NetworkId
@@ -113,12 +123,14 @@ public static class UpgradeLogger
                     mac = item.Mac,
                     stage = item.Stage,
                     status = item.Status,
+                    name = item.Name,
+                    detector = item.Detector,
                     fw = item.Fw,
                     timeLocal = item.TimeLocal,
                     line = item.Line
                 });
 
-                await mqtt.PublishAsync(topic, payload, retain: false, qos: 0, ct: ct).ConfigureAwait(false);
+                await mqtt.PublishAsync(topic, payload, retain: false, qos: UpgradeLogQos, ct: ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -134,11 +146,10 @@ public static class UpgradeLogger
 
     }
 
-    // Publish saved log file (optionally filtered) to MQTT, chunked.
+    // Publish saved log file (optionally filtered) to MQTT as one compressed payload.
     public static async Task PublishSavedLogAsync(
         string? logIdFilter = null,
         int maxLines = 5000,
-        int chunkLines = 100,
         CancellationToken ct = default)
     {
         try
@@ -163,64 +174,52 @@ public static class UpgradeLogger
 
             D($"PublishSavedLogAsync: read {lines.Length} line(s) from file.");
 
-            if (!string.IsNullOrWhiteSpace(logIdFilter))
+            // Compressed transport always sends the full saved log file.
+            if (!string.IsNullOrWhiteSpace(logIdFilter) || maxLines != 5000)
             {
-                var token = $"[logId={logIdFilter}]";
-                lines = lines.Where(l => l.Contains(token, StringComparison.OrdinalIgnoreCase)).ToArray();
-                D($"PublishSavedLogAsync: filtered by logId='{logIdFilter}' => {lines.Length} line(s).");
-            }
-
-            if (maxLines > 0 && lines.Length > maxLines)
-            {
-                lines = lines.Skip(lines.Length - maxLines).ToArray();
-                D($"PublishSavedLogAsync: trimmed to last {lines.Length} line(s).");
+                D("PublishSavedLogAsync: logIdFilter/maxLines ignored for compressed mode (sending full file).");
             }
 
             var topic = TopicResolver?.Invoke(NetworkId)
                        ?? $"accessapp/{NetworkId}/tele/upgrade-log";
 
-            D($"PublishSavedLogAsync: publishing to topic='{topic}', chunkLines={chunkLines}.");
+            D($"PublishSavedLogAsync: publishing compressed payload to topic='{topic}'.");
 
-            // begin marker
+            var fullText = string.Join(Environment.NewLine, lines);
+            var sourceBytes = Encoding.UTF8.GetBytes(fullText);
+            var compressedBytes = GzipCompress(sourceBytes);
+            var compressedBase64 = Convert.ToBase64String(compressedBytes);
+
             await mqtt.PublishAsync(topic, JsonSerializer.Serialize(new
             {
-                type = "saved-log-begin",
+                type = "saved-log-gzip",
                 logId = logIdFilter,
+                encoding = "gzip+base64+utf8",
                 totalLines = lines.Length,
+                originalBytes = sourceBytes.Length,
+                compressedBytes = compressedBytes.Length,
+                data = compressedBase64,
                 timeLocal = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
-            }), retain: false, qos: 0, ct: ct).ConfigureAwait(false);
+            }), retain: false, qos: UpgradeLogQos, ct: ct).ConfigureAwait(false);
 
-            int seq = 0;
-            for (int i = 0; i < lines.Length; i += chunkLines)
-            {
-                ct.ThrowIfCancellationRequested();
-
-                var chunk = lines.Skip(i).Take(chunkLines).ToArray();
-                await mqtt.PublishAsync(topic, JsonSerializer.Serialize(new
-                {
-                    type = "saved-log-chunk",
-                    logId = logIdFilter,
-                    seq = seq++,
-                    lines = chunk
-                }), retain: false, qos: 0, ct: ct).ConfigureAwait(false);
-            }
-
-            // end marker
-            await mqtt.PublishAsync(topic, JsonSerializer.Serialize(new
-            {
-                type = "saved-log-end",
-                logId = logIdFilter,
-                chunks = seq,
-                timeLocal = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
-            }), retain: false, qos: 0, ct: ct).ConfigureAwait(false);
-
-            D($"PublishSavedLogAsync: done. chunks={seq}.");
+            D($"PublishSavedLogAsync: done. totalLines={lines.Length}, originalBytes={sourceBytes.Length}, compressedBytes={compressedBytes.Length}.");
         }
         catch (Exception ex)
         {
             D("PublishSavedLogAsync ERROR: " + ex);
             throw; // so caller can log too
         }
+    }
+
+    private static byte[] GzipCompress(byte[] source)
+    {
+        using var output = new MemoryStream();
+        using (var gzip = new GZipStream(output, CompressionLevel.Optimal, leaveOpen: true))
+        {
+            gzip.Write(source, 0, source.Length);
+        }
+
+        return output.ToArray();
     }
 
 
@@ -231,8 +230,11 @@ public static class UpgradeLogger
         public string Mac { get; set; } = "";
         public string Stage { get; set; } = "";
         public string Status { get; set; } = "";
+        public string? Name { get; set; }
+        public string? Detector { get; set; }
         public string? Fw { get; set; }
         public string TimeLocal { get; set; } = "";
         public string Line { get; set; } = "";
     }
 }
+

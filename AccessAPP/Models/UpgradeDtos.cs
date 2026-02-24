@@ -8,6 +8,8 @@ namespace AccessAPP.Models
         public string DetectotType { get; set; }
         public string FirmwareVersion { get; set; }
         public string CurrentFirmwareVersion { get; set; }
+        public string? PostFirmwareVersion { get; set; }
+        public bool PostUpgradeFwMatch { get; set; } = true;
         public string? SettingsBackupPath { get; set; }
 
         // If true, forces re-programming even when current FW matches target.
@@ -29,6 +31,11 @@ namespace AccessAPP.Models
         public bool requires102Restore = false;
         public bool restore102Success = false;
         public bool shouldRetry = true;
+        public bool PrecheckSessionAlive { get; set; } = false;
+        public bool PrecheckBootMode { get; set; } = false;
+        // Set by PostActorStep when the connection is kept open for post-upgrade FW read.
+        // The outer scope (ProcessSingleDeviceUpgradeAsync) consumes and resets this flag.
+        public bool ConnectionLeftOpenForFwRead { get; set; } = false;
 
         public string finalUpgradeResult = "Failed";
 
@@ -37,7 +44,8 @@ namespace AccessAPP.Models
                && (!upgradeBootloader || BootloaderSuccess)
                && (SensorSuccess)
                && (!requiresConfigRestore || isConfigRestored)
-               && (!requires102Restore || restore102Success);
+               && (!requires102Restore || restore102Success)
+               && PostUpgradeFwMatch;
     }
     public class UpgradeResponse
     {

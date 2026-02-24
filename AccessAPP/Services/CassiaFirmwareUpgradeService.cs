@@ -11,6 +11,7 @@ using System.Net;
 using System.Net.Mail;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using AccessAPP.Logging;
 
 
@@ -36,14 +37,16 @@ namespace AccessAPP.Services
         }
 
         public static double totalSpeed { get; set; } = 0;
+        public static double totalSpeedAvg10s { get; set; } = 0;
 
 
         public static int GlobalnumberOfParallelThreads = 2; // runtime adjustable via MQTT (resets on restart) // Optimal setting with current Cassia Gateway HW (21:43 Min for 3 P48 with actor and sensor firmware update)
         
         private readonly HttpClient _httpClient;
-        private readonly CassiaConnectService _connectService;
+        private readonly Services.BleAbstractions.IBleConnectionService _connectService;
         private readonly CassiaPinCodeService _cassiaPinCodeService;
         private static DeviceStorageService _deviceStorageService;
+        private readonly IMqttService _mqttService;
         private readonly IConfiguration _configuration;
 
         private readonly IDeviceSettingsBackupService _settingsBackup;
@@ -66,18 +69,19 @@ namespace AccessAPP.Services
 	    internal string GatewayIpAddress => _gatewayIpAddress;
 	    internal int GatewayPort => _gatewayPort;
 	    internal IDeviceSettingsBackupService SettingsBackupService => _settingsBackup;
-	    internal CassiaConnectService ConnectService => _connectService;
+	    internal Services.BleAbstractions.IBleConnectionService ConnectService => _connectService;
 
 	    // Wrapper with the SAME parameter order as the original private method.
-	    internal Task<(bool ok, HttpStatusCode code, string msg)> ConnectOnlyWithRetryAsync_Internal(
+        internal Task<(bool ok, HttpStatusCode code, string msg)> ConnectOnlyWithRetryAsync_Internal(
 	        int maxAttempts,
 	        int delayMs,
 	        string stageName,
 	        string macAddress,
 	        string firmwareVersion,
 	        string? logId,
-	        bool logSuccess = true)
-	        => ConnectOnlyWithRetryAsync(maxAttempts, delayMs, stageName, macAddress, firmwareVersion, logId ?? "", logSuccess);
+	        bool logSuccess = true,
+	        int? discoverGattOverride = null)
+	        => ConnectOnlyWithRetryAsync(maxAttempts, delayMs, stageName, macAddress, firmwareVersion, logId ?? "", logSuccess, discoverGattOverride);
 
 	    internal async Task<(bool Success, int StatusCode, string Message)> ConnectAndLoginWithRetryForPipelineAsync(
 	        string gatewayIpAddress,
@@ -87,12 +91,103 @@ namespace AccessAPP.Services
 	        string? logId,
 	        string? firmwareVersion,
 	        int maxAttempts,
-	        int delayBetweenAttemptsMs)
+	        int delayBetweenAttemptsMs,
+	        bool bootModeIsRetryable = false)
 	    {
-	        var r = await ConnectAndLoginWithRetryAsync(gatewayIpAddress, gatewayPort, macAddress, pincode, logId, firmwareVersion, maxAttempts, delayBetweenAttemptsMs)
+	        var r = await ConnectAndLoginWithRetryAsync(gatewayIpAddress, gatewayPort, macAddress, pincode, logId, firmwareVersion, maxAttempts, delayBetweenAttemptsMs, bootModeIsRetryable)
 	            .ConfigureAwait(false);
 	        return (r.Success, r.StatusCode, r.Message ?? "");
 	    }
+
+        internal async Task<bool> EnsureLoginOnConnectedSessionUnlessBootModeAsync(
+            string macAddress,
+            string? pincode,
+            string? logId,
+            string? firmwareVersion,
+            string stageName = "LoggedIn",
+            int maxAttempts = 3)
+        {
+            if (CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress))
+            {
+                UpgradeLogger.Log(logId ?? "", macAddress, stageName, "Skipped (bootloader mode)", firmwareVersion ?? "");
+                return true;
+            }
+
+            int attempts = Math.Max(1, maxAttempts);
+            int loginTimeoutMs = Math.Max(2000, RuntimeVariables.UPGRADE_LOGIN_ATTEMPT_TIMEOUT_MS);
+            int retryDelayMs = Math.Max(100, RuntimeVariables.UPGRADE_LOGIN_RETRY_DELAY_MS);
+            int settleBeforeLoginMs = GetConnectStabilizationDelayMs();
+            for (int attempt = 1; attempt <= attempts; attempt++)
+            {
+                try
+                {
+                    if (attempt == 1 && settleBeforeLoginMs > 0)
+                    {
+                        AppLog.Debug($"{stageName}: waiting {settleBeforeLoginMs}ms before login on connected session for {macAddress}.");
+                        await Task.Delay(settleBeforeLoginMs).ConfigureAwait(false);
+                    }
+
+                    AppLog.Debug($"{stageName}: login attempt {attempt}/{attempts} for {macAddress}.");
+                    using var cts = new CancellationTokenSource(loginTimeoutMs);
+                    var loginResult = await _connectService
+                        .AttemptLogin(_gatewayIpAddress, macAddress, cts.Token)
+                        .ConfigureAwait(false);
+
+                    bool pinReq = loginResult.ResponseBody.PincodeRequired;
+
+                    if (pinReq && !string.IsNullOrEmpty(pincode))
+                    {
+                        var check = await _cassiaPinCodeService.CheckPincode(_gatewayIpAddress, macAddress, pincode).ConfigureAwait(false);
+                        loginResult.ResponseBody = check.ResponseBody;
+                        loginResult.ResponseBody.PincodeRequired = pinReq;
+                    }
+
+                    var statusText = loginResult.Status?.ToString() ?? "";
+                    bool statusOk = string.Equals(statusText, "OK", StringComparison.OrdinalIgnoreCase);
+                    bool pinOk = !pinReq || loginResult.ResponseBody.PinCodeAccepted;
+
+                    if (statusOk && pinOk)
+                    {
+                        AppLog.Debug($"{stageName}: login success for {macAddress} on attempt {attempt}/{attempts}.");
+                        UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Success (attempt {attempt}/{attempts})", firmwareVersion ?? "");
+                        return true;
+                    }
+
+                    AppLog.Debug($"{stageName}: login failed for {macAddress} on attempt {attempt}/{attempts}. Status={statusText}, pinRequired={pinReq}, pinAccepted={loginResult.ResponseBody.PinCodeAccepted}.");
+                    UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Failed (attempt {attempt}/{attempts}) - Status={statusText}", firmwareVersion ?? "");
+                }
+                catch (OperationCanceledException)
+                {
+                    AppLog.Debug($"{stageName}: login timeout for {macAddress} on attempt {attempt}/{attempts}.");
+                    UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Timeout (attempt {attempt}/{attempts}, {loginTimeoutMs / 1000}s)", firmwareVersion ?? "");
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Debug($"{stageName}: login exception for {macAddress} on attempt {attempt}/{attempts}: {ex.Message}");
+                    UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Exception (attempt {attempt}/{attempts}): {ex.Message}", firmwareVersion ?? "");
+                }
+
+                if (attempt < attempts)
+                    await Task.Delay(retryDelayMs).ConfigureAwait(false);
+            }
+
+            // Final safety: boot mode can flip after a jump and the first check may be stale.
+            // If we are actually in boot mode, treat login as "not required".
+            try
+            {
+                if (CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress))
+                {
+                    UpgradeLogger.Log(logId ?? "", macAddress, stageName, "Skipped (bootloader mode detected after login failure)", firmwareVersion ?? "");
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLog.Debug($"{stageName}: boot-mode recheck failed for {macAddress}: {ex.Message}");
+            }
+
+            return false;
+        }
         private string MacAddress = "";
         private double totalRows = 0;
         private string sensorType = "";
@@ -112,10 +207,9 @@ namespace AccessAPP.Services
         private static string NormalizeMac(string? mac)
             => MacUtils.NormalizeMac(mac);
 
-        CassiaReadWriteService cassiaReadWriteService = new CassiaReadWriteService();
+        Services.BleAbstractions.IBleReadWriteService cassiaReadWriteService;
 
-
-        private readonly CassiaNotificationService _notificationService; // ✅ Injected singleton
+        private readonly Services.BleAbstractions.IBleNotificationService _notificationService; // Injected singleton
 
         private static CassiaFirmwareUpgradeService _ownInstance = null;
 
@@ -196,25 +290,56 @@ public static int GetProgrammingCount()
             return inst is null ? 0 : inst._queue.RemoveFromUpgradeQueue(mac);
         }
 
+        /// <summary>
+        /// Force-remove a MAC from the active in-progress set.
+        /// Use when a previous upgrade task became stuck (e.g. due to a hung D-Bus call before
+        /// the per-call timeout fixes) and the process was not restarted.  Removing the MAC
+        /// here allows a fresh start-update request to proceed.  If the old task eventually
+        /// wakes up it will call TryRemove on a key that no longer exists — which is a safe no-op.
+        /// </summary>
+        public static bool ForceRemoveFromInProgress(string mac)
+        {
+            mac = MacUtils.NormalizeMac(mac);
+            if (string.IsNullOrWhiteSpace(mac)) return false;
+            var inst = _ownInstance;
+            if (inst is null) return false;
+            bool removed = inst._macsInProgress.TryRemove(mac, out _);
+            if (removed)
+                AppLog.Info($"[UPGRADE QUEUE] Force-removed '{mac}' from in-progress set (was stuck).");
+            return removed;
+        }
+
 
 
         private static readonly ConcurrentDictionary<string, object> _macLocks = new();
         private static readonly ConcurrentDictionary<string, SlidingRate10s> _macRate10s = new();
         private static readonly ConcurrentDictionary<string, double> _lastInstanceRate = new();
 
+        public static (double TotalPctPerMin, double TotalAvg10sPctPerMin, int WorkersWithSpeed) GetSpeedSnapshot()
+        {
+            double total = 0.0;
+            foreach (var rate in _lastInstanceRate.Values)
+                total += rate;
+
+            var rounded = Math.Round(total, 2);
+            return (rounded, rounded, _lastInstanceRate.Count);
+        }
+
         // Overall / all instances
 
-        public CassiaFirmwareUpgradeService(HttpClient httpClient, CassiaConnectService connectService, CassiaPinCodeService cassiaPinCodeService, CassiaNotificationService notificationService, DeviceStorageService deviceStorageService, IConfiguration configuration)
+        public CassiaFirmwareUpgradeService(HttpClient httpClient, Services.BleAbstractions.IBleConnectionService connectService, CassiaPinCodeService cassiaPinCodeService, Services.BleAbstractions.IBleNotificationService notificationService, DeviceStorageService deviceStorageService, IConfiguration configuration, IMqttService mqttService, Services.BleAbstractions.IBleReadWriteService readWriteService)
         {
             _ownInstance = this;
             _httpClient = httpClient;
             _connectService = connectService;
             _deviceStorageService = deviceStorageService;
             _cassiaPinCodeService = cassiaPinCodeService;
+            _mqttService = mqttService;
             _configuration = configuration;
             _gatewayIpAddress = _configuration.GetValue<string>("GatewayConfiguration:IpAddress");
             _gatewayPort = _configuration.GetValue<int>("GatewayConfiguration:Port");
             _notificationService = notificationService;
+            cassiaReadWriteService = readWriteService;
             _settingsBackup = new DeviceSettingsBackupService(this);
 
             // Dedicated components (structural refactor; no behavior changes intended)
@@ -270,27 +395,112 @@ return true; // command was likely accepted before disconnect
             string levelHex = sysFailLevel.ToString("X2", CultureInfo.InvariantCulture);
             string cmd = prefix + levelHex;
 
-            var sensorResponse = await _connectService.GetDataFromBleDevice(
-                _gatewayIpAddress,
-                _gatewayPort,
-                nodeMac,
-                cmd);
-
-            if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
+            try
             {
-                AppLog.Warn($"[DALI] SysFailLevel set failed: MAC={nodeMac}, Level=0x{levelHex}, Status={sensorResponse.Status}, RAW={sensorResponse.Data}");
-return false;
+                var sensorResponse = await GetDataWithSysFailTimeoutAsync(nodeMac, cmd, "SysFailLevel set").ConfigureAwait(false);
+                if (sensorResponse == null)
+                    return false;
+
+                if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
+                {
+                    AppLog.Warn($"[DALI] SysFailLevel set failed: MAC={nodeMac}, Level=0x{levelHex}, Status={sensorResponse.Status}, RAW={sensorResponse.Data}");
+                    return false;
+                }
+
+                string reply = sensorResponse.Data.Trim().ToUpperInvariant();
+
+                // Success can be "00" or "0000"
+                bool ok = reply == "00" || reply == "0000";
+
+                AppLog.Info($"[DALI] SysFailLevel set: MAC={nodeMac}, Level=0x{levelHex}, Cmd={cmd}, Reply={reply}, OK={ok}");
+                if (!ok)
+                    AppLog.Warn($"[DALI] SysFailLevel set rejected: MAC={nodeMac}, Level=0x{levelHex}, Cmd={cmd}, Reply={reply}");
+                return ok;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn($"[DALI] SysFailLevel set exception: MAC={nodeMac}, Level=0x{levelHex}, {ex.Message}");
+                return false;
+            }
+        }
+
+        public async Task<byte?> DaliGetDeviceSysFailLevelAsync(string nodeMac)
+        {
+            // DaliDeviceCommonParam:
+            // 01-10-04-07-00-34-6A
+            const string cmd = "0110040700346A";
+
+            try
+            {
+                var sensorResponse = await GetDataWithSysFailTimeoutAsync(nodeMac, cmd, "SysFailLevel read").ConfigureAwait(false);
+                if (sensorResponse == null)
+                    return null;
+
+                if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
+                {
+                    AppLog.Warn($"[DALI] CommonParam read failed: MAC={nodeMac}, Status={sensorResponse.Status}, RAW={sensorResponse.Data}");
+                    return null;
+                }
+
+                var raw = sensorResponse.Data.Trim();
+                var byteMatches = Regex.Matches(raw, @"[0-9A-Fa-f]{2}");
+                if (byteMatches.Count < 8)
+                {
+                    AppLog.Warn($"[DALI] CommonParam parse failed (expected >=8 bytes): MAC={nodeMac}, RAW={raw}");
+                    return null;
+                }
+
+                var bytes = byteMatches
+                    .Cast<Match>()
+                    .Select(m => byte.Parse(m.Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture))
+                    .ToArray();
+
+                // Response layout (1 byte each):
+                // [0] Status, [1] MaxLevel, [2] MinLevel, [3] PowerOnLevel,
+                // [4] SysFailLevel, [5] FadeTime, [6] FadeRate, [7] ExtendedFadeTime
+                var status = bytes[0];
+                var sysFail = bytes[4];
+
+                if (status != 0x00)
+                {
+                    AppLog.Warn($"[DALI] CommonParam status not OK: MAC={nodeMac}, Status=0x{status:X2}, RAW={raw}");
+                    return null;
+                }
+
+                AppLog.Info($"[DALI] CommonParam read: MAC={nodeMac}, SysFailLevel=0x{sysFail:X2}, RAW={raw}");
+                return sysFail;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn($"[DALI] CommonParam read exception: MAC={nodeMac}, {ex.Message}");
+                return null;
+            }
+        }
+
+        private static int GetSysFailTimeoutMs()
+        {
+            int configured = RuntimeVariables.UPGRADE_DALI_SYSFAIL_TIMEOUT_MS;
+            if (configured <= 0)
+                configured = 5000;
+
+            return Math.Min(5000, configured);
+        }
+
+        private async Task<DataResponseModel?> GetDataWithSysFailTimeoutAsync(
+            string nodeMac,
+            string cmd,
+            string label)
+        {
+            int timeoutMs = GetSysFailTimeoutMs();
+            var task = _connectService.GetDataFromBleDevice(_gatewayIpAddress, _gatewayPort, nodeMac, cmd);
+            var completed = await Task.WhenAny(task, Task.Delay(timeoutMs)).ConfigureAwait(false);
+            if (completed != task)
+            {
+                AppLog.Warn($"[DALI] {label} timed out after {timeoutMs}ms: MAC={nodeMac}");
+                return null;
             }
 
-            string reply = sensorResponse.Data.Trim().ToUpperInvariant();
-
-            // Success can be "00" or "0000"
-            bool ok = reply == "00" || reply == "0000";
-
-            AppLog.Info($"[DALI] SysFailLevel set: MAC={nodeMac}, Level=0x{levelHex}, Cmd={cmd}, Reply={reply}, OK={ok}");
-if (!ok)
-                AppLog.Warn($"[DALI] SysFailLevel set rejected: MAC={nodeMac}, Level=0x{levelHex}, Cmd={cmd}, Reply={reply}");
-return ok;
+            return await task.ConfigureAwait(false);
         }
 
         public async Task<string> GetBLEPushButtonList(string nodeMac)
@@ -483,7 +693,8 @@ return resp;
             bool isBootloader,
             string DetectorType,
             string FirmwareVersion,
-            string logId = null)
+            string logId = null,
+            bool reuseExistingConnection = false)
         {
             ServiceResponse response = new ServiceResponse();
             sensorType = DetectorType;
@@ -503,73 +714,44 @@ return resp;
             // Local helpers (no new deps)
             // ----------------------------
 
-            const int connectMaxAttempts = 5;
+            int connectMaxAttempts = Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS);
             const int loginMaxAttempts = 3;
             const int bootJumpMaxAttempts = 5;
 
-            async Task<bool> ConnectWithRetryAsync(string stepName)
+            int? BootJumpDiscoverGattOverride()
             {
-                for (int attempt = 1; attempt <= connectMaxAttempts; attempt++)
-                {
-                    try
-                    {
-						var cr = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac, chip: GetChipForMac(nodeMac));
-                        if (cr.Status == HttpStatusCode.OK)
-                        {
-                            UpgradeLogger.Log(logId, nodeMac, stepName, $"Success (attempt {attempt}/{connectMaxAttempts})");
-                            return true;
-                        }
+                int v = RuntimeVariables.UPGRADE_CONNECT_DISCOVER_GATT_AFTER_BOOT_JUMP;
+                if (v < 0) return null;
+                return v <= 0 ? 0 : 1;
+            }
 
-                        UpgradeLogger.Log(logId, nodeMac, stepName, $"Failed (attempt {attempt}/{connectMaxAttempts})");
-                    }
-                    catch (Exception ex)
-                    {
-                        UpgradeLogger.Log(logId, nodeMac, stepName, $"Exception (attempt {attempt}/{connectMaxAttempts}): {ex.Message}");
-                    }
+            async Task<bool> ConnectWithRetryAsync(string stepName, int? discoverGattOverride = null)
+            {
+                var connect = await ConnectOnlyWithRetryAsync(
+                    maxAttempts: connectMaxAttempts,
+                    delayMs: 2000,
+                    stageName: stepName,
+                    macAddress: nodeMac,
+                    FirmwareVersion: FirmwareVersion,
+                    logId: logId,
+                    logSuccess: true,
+                    discoverGattOverride: discoverGattOverride).ConfigureAwait(false);
 
-                    // Backoff (fast -> slower)
-                    int delay = attempt switch
-                    {
-                        1 => 1500,
-                        2 => 3000,
-                        3 => 5000,
-                        _ => 8000
-                    };
-                    await Task.Delay(delay);
-                }
+                if (!connect.ok)
+                    AppLog.Warn($"{stepName}: connect failed for {nodeMac} on chip {GetChipForMac(nodeMac)} with status {connect.code}. Message: {connect.msg}");
 
-                return false;
+                return connect.ok;
             }
 
             async Task<bool> LoginWithRetryAsync()
             {
-                for (int attempt = 1; attempt <= loginMaxAttempts; attempt++)
-                {
-                    try
-                    {
-                        var loginResult = await _connectService.AttemptLogin(_gatewayIpAddress, nodeMac);
-
-                        bool pinReq = loginResult.ResponseBody.PincodeRequired;
-                        if (pinReq && !string.IsNullOrEmpty(pincode))
-                        {
-                            var check = await _cassiaPinCodeService.CheckPincode(_gatewayIpAddress, nodeMac, pincode);
-                            loginResult.ResponseBody = check.ResponseBody;
-                            loginResult.ResponseBody.PincodeRequired = pinReq;
-                        }
-
-                        // NOTE: you previously commented out the "fail if not accepted".
-                        // Keep your behavior: log success and continue.
-                        UpgradeLogger.Log(logId, nodeMac, "LoggedIn", $"Success (attempt {attempt}/{loginMaxAttempts})");
-                        return true;
-                    }
-                    catch (Exception ex)
-                    {
-                        UpgradeLogger.Log(logId, nodeMac, "Login", $"Exception (attempt {attempt}/{loginMaxAttempts}): {ex.Message}");
-                    }
-
-                    await Task.Delay(2000);
-                }
-                return false;
+                return await EnsureLoginOnConnectedSessionUnlessBootModeAsync(
+                    nodeMac,
+                    pincode,
+                    logId,
+                    FirmwareVersion,
+                    stageName: "LoggedIn",
+                    maxAttempts: loginMaxAttempts).ConfigureAwait(false);
             }
 
             async Task<bool> EnsureBootModeAsync()
@@ -604,10 +786,11 @@ return resp;
                     UpgradeLogger.Log(logId, nodeMac, "JumpToBootloader", $"Sent (attempt {attempt}/{bootJumpMaxAttempts})");
 
                     // Give device time to switch to bootloader
-                    await Task.Delay(10000);
+                    int jumpDelay = 10000 + Math.Max(0, RuntimeVariables.UPGRADE_DELAY_AFTER_BOOT_JUMP_MS);
+                    await Task.Delay(jumpDelay);
 
                     // Reconnect after jump (robust)
-                    if (!await ConnectWithRetryAsync("Connect After JumpToBoot"))
+                    if (!await ConnectWithRetryAsync("Connect After JumpToBoot", BootJumpDiscoverGattOverride()))
                     {
                         UpgradeLogger.Log(logId, nodeMac, "Connect After JumpToBoot", $"Failed (attempt {attempt}/{bootJumpMaxAttempts})");
                         await Task.Delay(3000);
@@ -638,6 +821,19 @@ return true;
                         await Task.Delay(1500);
                     }
 
+                    // Device reconnected in Application mode — re-login before the next
+                    // JumpToBootloader attempt.  The device resets its authenticated session
+                    // on every disconnect, so sending JumpToBootloader on an unauthenticated
+                    // connection is either rejected or causes unexpected device behaviour
+                    // (crash / prolonged unresponsiveness) that makes all subsequent connect
+                    // attempts fail.
+                    if (attempt < bootJumpMaxAttempts)
+                    {
+                        var reloginOk = await LoginWithRetryAsync();
+                        if (!reloginOk)
+                            AppLog.Warn($"EnsureBootMode: re-login failed for {nodeMac} on attempt {attempt}/{bootJumpMaxAttempts} — next jump may be rejected");
+                    }
+
                     // Try again
                     await Task.Delay(3000);
                 }
@@ -649,12 +845,20 @@ return true;
             // ----------------------------
             // Step 1: Connect (robust)
             // ----------------------------
-            if (!await ConnectWithRetryAsync("Connected"))
+            if (!reuseExistingConnection)
             {
-                response.Success = false;
-                response.StatusCode = 500;
-                response.Message = "Failed to connect to device.";
-                return response;
+                if (!await ConnectWithRetryAsync("Connected"))
+                {
+                    response.Success = false;
+                    response.StatusCode = 500;
+                    response.Message = "Failed to connect to device.";
+                    return response;
+                }
+            }
+            else
+            {
+                UpgradeLogger.Log(logId, nodeMac, "Connected", "Skipped (reusing existing session)");
+                AppLog.Info($"Skipping initial connect for {nodeMac} (reusing existing session).");
             }
 
             AppLog.Info($"Connected to device...{nodeMac}");
@@ -665,7 +869,11 @@ return true;
 UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
                 await Task.Delay(3000);
 
-                return await ProcessingSensorUpgrade(nodeMac, bActor, isBootloader, DetectorType, FirmwareVersion, logId);
+                // Device is already connected by the caller above — skip the redundant reconnect
+                // inside ProcessingSensorUpgrade. Reconnecting would disconnect the working
+                // BlueZ link and then fail to re-establish it (bootloader device not immediately
+                // ready for a new connection attempt).
+                return await ProcessingSensorUpgrade(nodeMac, bActor, isBootloader, DetectorType, FirmwareVersion, logId, pincode, skipInitialConnect: true);
             }
 
             // ----------------------------
@@ -673,11 +881,33 @@ UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
             // ----------------------------
             if (!await LoginWithRetryAsync())
             {
+                if (reuseExistingConnection)
+                {
+                    UpgradeLogger.Log(logId, nodeMac, "Login", "Failed on reused session; reconnecting");
+                    if (!await ConnectWithRetryAsync("Connected (fallback after reused-session login fail)"))
+                    {
+                        response.Success = false;
+                        response.StatusCode = 500;
+                        response.Message = "Failed to connect to device.";
+                        return response;
+                    }
+                    if (!await LoginWithRetryAsync())
+                    {
+                        response.Success = false;
+                        response.StatusCode = 401;
+                        response.Message = "Failed to login to the device.";
+                        UpgradeLogger.Log(logId, nodeMac, "Login", "Failed");
+                        return response;
+                    }
+                }
+                else
+                {
                 response.Success = false;
                 response.StatusCode = 401;
                 response.Message = "Failed to login to the device.";
                 UpgradeLogger.Log(logId, nodeMac, "Login", "Failed");
                 return response;
+                }
             }
 
             AppLog.Info($"Logged into device...{nodeMac}");
@@ -707,10 +937,12 @@ await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chi
                 // continue anyway (device might already have dropped)
             }
 
-            await Task.Delay(3000);
+            int bootJumpDelayMs = RuntimeVariables.UPGRADE_DELAY_AFTER_BOOT_JUMP_MS;
+            int postDisconnectDelay = 3000 + Math.Max(0, bootJumpDelayMs);
+            await Task.Delay(postDisconnectDelay);
 
             // Now do the actual programming flow
-            return await ProcessingSensorUpgrade(nodeMac, bActor, isBootloader, DetectorType, FirmwareVersion, logId);
+            return await ProcessingSensorUpgrade(nodeMac, bActor, isBootloader, DetectorType, FirmwareVersion, logId, pincode);
         }
         public async Task<ServiceResponse> UpgradeActorAsync(
             string nodeMac,
@@ -723,77 +955,36 @@ await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chi
             UpgradeLogger.Log(logId, nodeMac, "Process Start Actor Upgrade", "Success");
             ServiceResponse response = new();
 
-            const int connectMaxAttempts = 5;
+            int connectMaxAttempts = Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS);
             const int loginMaxAttempts = 3;
             const int bootJumpMaxAttempts = 3;
 
             async Task<bool> ConnectWithRetryAsync(string stepName)
             {
-                for (int attempt = 1; attempt <= connectMaxAttempts; attempt++)
-                {
-                    try
-                    {
-						var cr = await _connectService.ConnectToBleDevice(_gatewayIpAddress, 80, nodeMac, chip: GetChipForMac(nodeMac));
-                        if (cr.Status == HttpStatusCode.OK)
-                        {
-                            UpgradeLogger.Log(logId, nodeMac, stepName, $"Success (attempt {attempt}/{connectMaxAttempts})");
-                            return true;
-                        }
+                var connect = await ConnectOnlyWithRetryAsync(
+                    maxAttempts: connectMaxAttempts,
+                    delayMs: 2000,
+                    stageName: stepName,
+                    macAddress: nodeMac,
+                    FirmwareVersion: FirmwareVersion,
+                    logId: logId,
+                    logSuccess: true).ConfigureAwait(false);
 
-                        UpgradeLogger.Log(logId, nodeMac, stepName, $"Failed (attempt {attempt}/{connectMaxAttempts})");
-                    }
-                    catch (Exception ex)
-                    {
-                        UpgradeLogger.Log(logId, nodeMac, stepName, $"Exception (attempt {attempt}/{connectMaxAttempts}): {ex.Message}");
-                    }
+                if (!connect.ok)
+                    AppLog.Warn($"{stepName}: connect failed for {nodeMac} on chip {GetChipForMac(nodeMac)} with status {connect.code}. Message: {connect.msg}");
 
-                    int delay = attempt switch
-                    {
-                        1 => 1500,
-                        2 => 3000,
-                        3 => 5000,
-                        _ => 8000
-                    };
-                    await Task.Delay(delay);
-                }
-
-                return false;
+                return connect.ok;
             }
 
             async Task<bool> LoginWithRetryAsync()
             {
-                for (int attempt = 1; attempt <= loginMaxAttempts; attempt++)
-                {
-                    try
-                    {
-                        var loginResult = await _connectService.AttemptLogin(_gatewayIpAddress, nodeMac);
-
-                        if (loginResult.ResponseBody.PincodeRequired && !string.IsNullOrEmpty(pincode))
-                        {
-                            var check = await _cassiaPinCodeService.CheckPincode(_gatewayIpAddress, nodeMac, pincode);
-                            loginResult.ResponseBody = check.ResponseBody;
-                        }
-
-                        // For actor you DO enforce pincode accepted (keeps your original behavior)
-                        if (loginResult.ResponseBody.PincodeRequired && !loginResult.ResponseBody.PinCodeAccepted)
-                        {
-                            UpgradeLogger.Log(logId, nodeMac, "Login", $"Failed (attempt {attempt}/{loginMaxAttempts})");
-                            await Task.Delay(2000);
-                            continue;
-                        }
-
-                        UpgradeLogger.Log(logId, nodeMac, "LoggedIn", $"Success (attempt {attempt}/{loginMaxAttempts})");
-                        return true;
-                    }
-                    catch (Exception ex)
-                    {
-                        UpgradeLogger.Log(logId, nodeMac, "Login", $"Exception (attempt {attempt}/{loginMaxAttempts}): {ex.Message}");
-                    }
-
-                    await Task.Delay(2000);
-                }
-
-                return false;
+                return await EnsureLoginOnConnectedSessionUnlessBootModeAsync(
+                    nodeMac,
+                    pincode,
+                    logId,
+                    FirmwareVersion,
+                    stageName: "LoggedIn",
+                    maxAttempts: loginMaxAttempts).ConfigureAwait(false);
             }
 
             async Task<bool> JumpActorToBootModeAsync()
@@ -823,6 +1014,27 @@ await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chi
                 return false;
             }
 
+            async Task<bool> WaitForApplicationModeAsync()
+            {
+                int waitAttempts = Math.Max(1, RuntimeVariables.UPGRADE_ACTOR_APP_MODE_WAIT_ATTEMPTS);
+                int waitDelayMs = Math.Max(0, RuntimeVariables.UPGRADE_ACTOR_APP_MODE_WAIT_DELAY_MS);
+
+                for (int attempt = 1; attempt <= waitAttempts; attempt++)
+                {
+                    if (!CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac))
+                    {
+                        UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", $"Cleared (attempt {attempt}/{waitAttempts})");
+                        return true;
+                    }
+
+                    UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", $"Still detected; waiting {waitDelayMs}ms (attempt {attempt}/{waitAttempts})");
+                    if (waitDelayMs > 0)
+                        await Task.Delay(waitDelayMs).ConfigureAwait(false);
+                }
+
+                return false;
+            }
+
             // ----------------------------
             // Step 1: Connect (robust)
             // ----------------------------
@@ -840,20 +1052,32 @@ await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chi
             {
                 UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
 
-                response.Success = false;
-                response.StatusCode = 409;
-                response.Message = "Sensor is already in boot mode. It needs to be in Application mode.";
-
-                UpgradeLogger.Log(logId, nodeMac, "Disconnected as sensor is in bootmode", "Info");
-
-                try
+                bool appModeReady = await WaitForApplicationModeAsync().ConfigureAwait(false);
+                if (!appModeReady)
                 {
-					await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chip: GetChipForMac(nodeMac));
-                }
-                catch { /* ignore */ }
+                    response.Success = false;
+                    response.StatusCode = 409;
+                    response.Message = "Sensor is already in boot mode. It needs to be in Application mode.";
 
-                await Task.Delay(5000);
-                return response;
+                    UpgradeLogger.Log(logId, nodeMac, "Disconnected as sensor is in bootmode", "Info");
+
+                    try
+                    {
+						await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chip: GetChipForMac(nodeMac));
+                    }
+                    catch { /* ignore */ }
+
+                    await Task.Delay(5000);
+                    return response;
+                }
+
+                if (!await ConnectWithRetryAsync("Connected (post-bootmode wait)").ConfigureAwait(false))
+                {
+                    response.Success = false;
+                    response.StatusCode = 500;
+                    response.Message = "Failed to connect to device.";
+                    return response;
+                }
             }
 
             // ----------------------------
@@ -883,7 +1107,16 @@ await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chi
             UpgradeLogger.Log(logId, nodeMac, "Actor BootMode", "Achieved");
 
             // Proceed to programming step (existing flow)
-            return await ProcessingActorUpgrade(nodeMac, bActor, DetectorType, FirmwareVersion, logId);
+            if (RuntimeVariables.UPGRADE_DELAY_AFTER_BOOT_JUMP_MS > 0)
+                await Task.Delay(RuntimeVariables.UPGRADE_DELAY_AFTER_BOOT_JUMP_MS);
+
+            return await ProcessingActorUpgrade(
+                nodeMac,
+                bActor,
+                DetectorType,
+                FirmwareVersion,
+                logId,
+                skipBootModeValidation: RuntimeVariables.UPGRADE_OPTIMIZE_RECONNECT_FLOW);
         }
 
         
@@ -933,9 +1166,19 @@ await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chi
             }
             finally
             {
-                // Always disconnect at the end, identical to the original implementation.
-                await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0, chip: ctx.ChipId).ConfigureAwait(false);
-                UpgradeLogger.Log(logId, macAddress, "Disconnected at the end of upgrade process", "Info", FirmwareVersion);
+                // Post-upgrade FW read is handled after all firmware work is complete (outside this attempt).
+
+                // Skip the disconnect when PostActorStep signalled that the connection should
+                // be kept open for the post-upgrade FW verification read. The outer scope
+                // (ProcessSingleDeviceUpgradeAsync) will perform the final disconnect after
+                // the FW read completes.
+                if (!ctx.KeepConnectionOpen)
+                {
+                    await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0, chip: ctx.ChipId).ConfigureAwait(false);
+                    UpgradeLogger.Log(logId, macAddress, "Disconnected at the end of upgrade process", "Info", FirmwareVersion);
+                    if (RuntimeVariables.UPGRADE_DELAY_AFTER_END_DISCONNECT_MS > 0)
+                        await Task.Delay(RuntimeVariables.UPGRADE_DELAY_AFTER_END_DISCONNECT_MS).ConfigureAwait(false);
+                }
             }
         }
 

@@ -18,6 +18,10 @@ public partial class MainWindow : Window
 {
     private bool _queueDefaultSortActive = true;
     private DispatcherTimer? _queueDefaultSortTimer;
+    private DispatcherTimer? _selectionClearTimer;
+    private static readonly TimeSpan SelectionHighlightTimeout = TimeSpan.FromSeconds(10);
+    private DateTimeOffset _devicesSelectionLastChangedUtc = DateTimeOffset.MinValue;
+    private DateTimeOffset _queueSelectionLastChangedUtc = DateTimeOffset.MinValue;
 
     // Keep Upgrade-log expand/collapse state stable across collection refreshes
     private readonly Dictionary<string, bool> _upgradeLogExpandedState = new(StringComparer.OrdinalIgnoreCase);
@@ -28,19 +32,102 @@ public partial class MainWindow : Window
         InitializeComponent();
         Loaded += MainWindow_Loaded;
         DataContext = new MainViewModel();
+        PreviewKeyDown += MainWindow_PreviewKeyDown;
+        PreviewMouseDown += MainWindow_PreviewMouseDown;
 
         Loaded += (_, _) => _queueDefaultSortActive = true;
         ApplyQueueDefaultSort();
+
+        _selectionClearTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _selectionClearTimer.Tick += (_, _) => ClearExpiredGridSelections();
+        _selectionClearTimer.Start();
     }
 
-    private void DevicesGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    private void MainWindow_PreviewMouseDown(object sender, MouseButtonEventArgs e)
     {
-        // Only queue on double click when explicitly enabled
-        if (EnableDoubleClickQueueCheckBox?.IsChecked != true)
-            return;
+        ClearExpiredGridSelections();
+    }
 
-        if (DataContext is MainViewModel vm)
-            ExecuteQueueSingle(vm, vm.SelectedDevice);
+    private void CassiaTile_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        if (DataContext is not MainViewModel vm) return;
+        if (vm.DeveloperModeUnlocked) return;
+        e.Handled = true;
+    }
+
+    private void DevicesGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (sender is not DataGrid grid) return;
+        if (grid.SelectedItems?.Count > 0 || grid.SelectedItem != null)
+            _devicesSelectionLastChangedUtc = DateTimeOffset.UtcNow;
+    }
+
+    private void QueueGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (sender is not DataGrid grid) return;
+        if (grid.SelectedItems?.Count > 0 || grid.SelectedItem != null)
+            _queueSelectionLastChangedUtc = DateTimeOffset.UtcNow;
+    }
+
+    private void ClearExpiredGridSelections()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        if (_devicesSelectionLastChangedUtc != DateTimeOffset.MinValue
+            && now - _devicesSelectionLastChangedUtc >= SelectionHighlightTimeout)
+        {
+            ClearDataGridSelection(DevicesGrid);
+            _devicesSelectionLastChangedUtc = DateTimeOffset.MinValue;
+        }
+
+        if (_queueSelectionLastChangedUtc != DateTimeOffset.MinValue
+            && now - _queueSelectionLastChangedUtc >= SelectionHighlightTimeout)
+        {
+            ClearDataGridSelection(QueueGridInline);
+            ClearDataGridSelection(QueueGridHostInline);
+            ClearDataGridSelection(QueueGrid);
+            _queueSelectionLastChangedUtc = DateTimeOffset.MinValue;
+        }
+    }
+
+    private static void ClearDataGridSelection(DataGrid? grid)
+    {
+        if (grid == null) return;
+        grid.SelectedItem = null;
+        grid.SelectedItems?.Clear();
+    }
+
+    private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.D) return;
+        if (!Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) return;
+        if (!Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)) return;
+
+        if (DataContext is not MainViewModel vm) return;
+        if (vm.DeveloperModeUnlocked) return;
+
+        vm.DeveloperModeUnlocked = true;
+        vm.ConnectionStatus = "Developer actions unlocked.";
+        e.Handled = true;
+    }
+
+    private void ThemeLight_Click(object sender, RoutedEventArgs e)
+    {
+        App.ApplyTheme("Light");
+        UpdateThemeMenuChecks();
+    }
+
+    private void ThemeDark_Click(object sender, RoutedEventArgs e)
+    {
+        App.ApplyTheme("Dark");
+        UpdateThemeMenuChecks();
+    }
+
+    private void UpdateThemeMenuChecks()
+    {
+        var isDark = string.Equals(App.CurrentTheme, "Dark", StringComparison.OrdinalIgnoreCase);
+        if (ThemeLightMenuItem != null) ThemeLightMenuItem.IsChecked = !isDark;
+        if (ThemeDarkMenuItem != null) ThemeDarkMenuItem.IsChecked = isDark;
     }
 
     private void PasswordBox_PasswordChanged(object sender, RoutedEventArgs e)
@@ -279,6 +366,8 @@ public partial class MainWindow : Window
 
     private void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        UpdateThemeMenuChecks();
+
         // Auto-connect shortly after startup (lets UI render first)
         var t = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         t.Tick += (_, __) =>
@@ -501,6 +590,15 @@ public partial class MainWindow : Window
                 try { vm.OpenWriteReadCommand?.Execute(device); } catch { }
             };
             cm.Items.Add(wr);
+
+            cm.Items.Add(new Separator());
+
+            var forceUpdate = new MenuItem { Header = "Update (Force)" };
+            forceUpdate.Click += async (_, __) =>
+            {
+                try { await vm.QueueDeviceAndRequestForceAsync(device).ConfigureAwait(false); } catch { }
+            };
+            cm.Items.Add(forceUpdate);
 
             // Build Assign submenu
             assignRoot.Items.Clear();

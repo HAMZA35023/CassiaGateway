@@ -36,13 +36,13 @@ public sealed class AppSettings
 
 public sealed class MqttSettings
 {
-    public string host { get; set; } = "prod.statistics.niko-test.nu";
-    public int port { get; set; } = 18883;
+    public string host { get; set; } = "acd270e774e848e8a55de829dc58bc6c.s1.eu.hivemq.cloud";
+    public int port { get; set; } = 8883;
     public string topic { get; set; } = "accessapp/#";
     public string username { get; set; } = "accessapp";
     public string password { get; set; } = "Niko1234!";
-    public bool useTls { get; set; } = false;
-    public bool ignoreTlsErrors { get; set; } = true;
+    public bool useTls { get; set; } = true;
+    public bool ignoreTlsErrors { get; set; } = false;
 }
 
 public sealed class AccessAppSettings
@@ -50,9 +50,20 @@ public sealed class AccessAppSettings
     public string networkId { get; set; } = "dk-lab";
     public string commandTopicTemplate { get; set; } = "accessapp/{networkId}/cmd/{cassia}/{command}";
     public string defaultCommand { get; set; } = "start-update";
+    public string theme { get; set; } = "Dark";
 
     // UI option: reflash sensor firmware even if current FW already matches target
     public bool forceUpdate { get; set; } = false;
+
+    // If true, auto-set parallel programmers based on queued model mix:
+    // DALI master only (P47/P48) => 4, otherwise => 2.
+    public bool autoSetWorkersByModel { get; set; } = true;
+
+    // If true, force specific runtime variables to false before every start-update.
+    public bool productionUpdate { get; set; } = false;
+
+    // Host BLE tab: if true, remove rows that are no longer present in latest scan snapshot.
+    public bool hostBleAutoRemoveStaleDevices { get; set; } = false;
 
     /// <summary>
     /// Remembers the selected firmware per detector model across app restarts/resync.

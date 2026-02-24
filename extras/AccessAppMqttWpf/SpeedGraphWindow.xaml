@@ -5,7 +5,7 @@
         Height="600" Width="1040"
         WindowStartupLocation="CenterOwner"
         MinHeight="420" MinWidth="780"
-        Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}">
+        Background="{DynamicResource BgBrush}">
 
     <Grid Margin="12">
         <Grid.RowDefinitions>
@@ -17,9 +17,9 @@
         <!-- Top toolbar -->
         <Border Grid.Row="0"
                 CornerRadius="10"
-                BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+                BorderBrush="{DynamicResource BorderBrush}"
                 BorderThickness="1"
-                Background="{DynamicResource {x:Static SystemColors.ControlLightLightBrushKey}}"
+                Background="{DynamicResource CardBrush}"
                 Padding="10"
                 SnapsToDevicePixels="True">
             <Grid>
@@ -34,25 +34,25 @@
                                Text="Speed"
                                FontSize="16"
                                FontWeight="SemiBold"
-                               Foreground="#222"/>
+                               Foreground="{DynamicResource TextBrush}"/>
 
                     <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
                         <TextBlock Text="Avg 15m:"
-                                   Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                                   Foreground="{DynamicResource MutedBrush}"
                                    Margin="0,0,6,0"/>
                         <TextBlock x:Name="Avg15Text"
                                    FontWeight="SemiBold"
                                    Margin="0,0,14,0"/>
 
                         <TextBlock Text="Avg 30m:"
-                                   Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                                   Foreground="{DynamicResource MutedBrush}"
                                    Margin="0,0,6,0"/>
                         <TextBlock x:Name="Avg30Text"
                                    FontWeight="SemiBold"
                                    Margin="0,0,14,0"/>
 
                         <TextBlock Text="Range:"
-                                   Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                                   Foreground="{DynamicResource MutedBrush}"
                                    Margin="0,0,6,0"/>
                         <TextBlock x:Name="RangeText"
                                    FontWeight="SemiBold"/>
@@ -63,7 +63,7 @@
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="Gateway:"
                                VerticalAlignment="Center"
-                               Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                               Foreground="{DynamicResource MutedBrush}"
                                Margin="0,0,6,0"/>
                     <ComboBox x:Name="GatewayCombo"
                               Width="260"
@@ -75,7 +75,7 @@
 
                     <TextBlock Text="Timeframe:"
                                VerticalAlignment="Center"
-                               Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                               Foreground="{DynamicResource MutedBrush}"
                                Margin="0,0,6,0"/>
                     <ComboBox x:Name="TimeframeCombo"
                               Width="150"
@@ -105,9 +105,9 @@
         <!-- Chart area -->
         <Border Grid.Row="1"
                 CornerRadius="14"
-                BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+                BorderBrush="{DynamicResource BorderBrush}"
                 BorderThickness="1"
-                Background="White"
+                Background="{DynamicResource CardBrush}"
                 Padding="12"
                 SnapsToDevicePixels="True"
                 Margin="0,10,0,0">
@@ -128,11 +128,11 @@
         <DockPanel Grid.Row="2" Margin="0,10,0,0">
             <TextBlock DockPanel.Dock="Left"
                        Text="{Binding ElementName=ChartCanvas, Path=Tag}"
-                       Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                       Foreground="{DynamicResource MutedBrush}"
                        TextTrimming="CharacterEllipsis"/>
             <TextBlock DockPanel.Dock="Right"
                        Text="Tip: drag on the chart to zoom (Custom). Double-click or Reset zoom to restore."
-                       Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"/>
+                       Foreground="{DynamicResource MutedBrush}"/>
         </DockPanel>
     </Grid>
 </Window>

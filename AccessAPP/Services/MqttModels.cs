@@ -92,6 +92,8 @@ public sealed class UpdateProgressMessage
     public double ProgressPercent { get; set; }
     public string? Stage { get; set; }
     public string? FirmwareTarget { get; set; }
+    // Percent points per minute (10s sliding window); null when not applicable.
+    public double? SpeedPctPerMin { get; set; }
 }
 
 public sealed class LogMessage
@@ -118,7 +120,20 @@ public sealed class StatusMessage
     public int programming { get; set; }
 
     public double totalSpeedpct { get; set; }
-    }
+    // OS uptime (seconds). Derived from Environment.TickCount64.
+    public long uptimeSeconds { get; set; }
+
+    // Optional LTE/4G modem status (ZTE MF79U)
+    public string? cellularState { get; set; }
+    public string? cellularNetworkType { get; set; }
+    public int? cellularSignalBar { get; set; }
+    public int? cellularRssiDbm { get; set; }
+    public int? cellularLteRsrpDbm { get; set; }
+    public int? cellularLteRsrqDb { get; set; }
+    public int? cellularLteSnrDb { get; set; }
+    public string? cellularProvider { get; set; }
+    public DateTimeOffset? cellularPolledAtUtc { get; set; }
+}
 
 /// <summary>
 /// DTO used by MQTT "get-device-list" so the full device list can be returned in ONE message.

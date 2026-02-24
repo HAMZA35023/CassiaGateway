@@ -42,8 +42,23 @@ public interface IMqttService : IAsyncDisposable
     // Identify device: Connect (+ optional pincode check + optional login), wait X seconds, disconnect.
     event Func<IdentifyCommand, Task>? IdentifyRequested;
 
+    // LED range visualization: connect/login/set LED based on RSSI and keep links open.
+    event Func<LedRangeVisualizeCommand, Task>? LedRangeVisualizeRequested;
+
+    // Explicit disconnect for previously held LED-range links.
+    event Func<LedRangeDisconnectCommand, Task>? LedRangeDisconnectRequested;
+
     // New: FW manifest request command
     event Func<GetFirmwareManifestCommand, Task>? GetFirmwareManifestRequested;
+
+    // Trigger local AccessAPP updater process.
+    event Func<SelfUpdateCommand, Task>? SelfUpdateRequested;
+
+    // Set updater channel persisted on device.
+    event Func<SetUpdateChannelCommand, Task>? SetUpdateChannelRequested;
+
+    // Reboot the host system.
+    event Func<RebootCommand, Task>? RebootRequested;
 }
 
 // New: command DTO for request payload
@@ -78,4 +93,48 @@ public sealed class IdentifyCommand
 
     /// <summary>Optional correlation id.</summary>
     public string? RequestId { get; set; }
+}
+
+public sealed class LedRangeVisualizeCommand
+{
+    public string? RequestId { get; set; }
+    public string? Pincode { get; set; }
+    public int? MinRssi { get; set; }
+    public List<string> Sensors { get; set; } = new();
+    public List<string> Models { get; set; } = new();
+    public int MaxConnectAttempts { get; set; } = 3;
+    public bool UseBothChips { get; set; } = true;
+}
+
+public sealed class LedRangeDisconnectCommand
+{
+    public string? RequestId { get; set; }
+    public List<string> Sensors { get; set; } = new();
+    public bool ForceAll { get; set; }
+}
+
+public sealed class SelfUpdateCommand
+{
+    public string? RequestId { get; set; }
+    public bool DryRun { get; set; }
+    public int TimeoutSeconds { get; set; } = 120;
+    public string? ConfigPath { get; set; }
+    public string? UpdaterPath { get; set; }
+    public bool RestartService { get; set; } = true;
+    public string ServiceName { get; set; } = "accessapp";
+    public string? UpdateChannel { get; set; }
+    public string? ChannelFilePath { get; set; }
+}
+
+public sealed class SetUpdateChannelCommand
+{
+    public string? RequestId { get; set; }
+    public string? Channel { get; set; }
+    public string? ChannelFilePath { get; set; }
+}
+
+public sealed class RebootCommand
+{
+    public string? RequestId { get; set; }
+    public int DelaySeconds { get; set; } = 2;
 }

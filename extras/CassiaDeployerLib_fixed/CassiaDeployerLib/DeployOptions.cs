@@ -32,6 +32,34 @@ public sealed class DeployOptions
     public string PublishConfiguration { get; set; } = "Release";
     public string PublishRuntime { get; set; } = "linux-arm";
     public bool SelfContained { get; set; } = true;
+    public bool SkipClientAppBuild { get; set; } = false;
+
+    // ---------- Startup updater deploy ----------
+    public bool InstallStartupUpdater { get; set; } = true;
+
+    public string UpdaterProjectDir { get; set; } =
+        @"C:\Users\PLO\source\repos\CassiaGateway\extras\AccessAppUpdater";
+
+    public string UpdaterProjectFile { get; set; } =
+        @"C:\Users\PLO\source\repos\CassiaGateway\extras\AccessAppUpdater\AccessAppUpdater.csproj";
+
+    public string LocalUpdaterPublishDir { get; set; } =
+        @"C:\Users\PLO\source\repos\CassiaGateway\extras\AccessAppUpdater\publish";
+
+    public string UpdaterPublishRuntime { get; set; } = "linux-arm";
+    public bool UpdaterSelfContained { get; set; } = true;
+    public bool UpdaterSingleFile { get; set; } = true;
+
+    public string UpdaterRemoteExePath { get; set; } = "/usr/local/bin/AccessAppUpdater";
+    public string UpdaterRemoteConfigPath { get; set; } = "/etc/accessapp-updater.json";
+    public string UpdaterManifestUrl { get; set; } = "http://prod.statistics.niko-test.nu/accessapp/{channel}/manifest.json";
+    public string UpdaterChannel { get; set; } = "stable";
+    public string UpdaterChannelFilePath { get; set; } = "/etc/accessapp-updater.channel";
+    public string UpdaterWorkDir { get; set; } = "/tmp/accessapp-updater";
+    public string UpdaterVersionFileName { get; set; } = "version.txt";
+    public int UpdaterHttpTimeoutSeconds { get; set; } = 600;
+
+    public List<string> UpdaterPreserveFiles { get; set; } = new() { "mqtt.json" };
 
     // ---------- SSH key login provisioning ----------
     // If enabled, the deployer will:
@@ -82,10 +110,16 @@ public sealed class DeployOptions
     public bool BulkWifiAutoCreateProfile { get; set; } = true;
 
     // How many Wi-Fi scan passes to perform to find as many Cassias as possible
-    public int BulkWifiScanPasses { get; set; } = 4;
+    public int BulkWifiScanPasses { get; set; } = 8;
 
     // Delay between Wi-Fi scan passes
-    public int BulkWifiScanDelayMs { get; set; } = 1500;
+    public int BulkWifiScanDelayMs { get; set; } = 2000;
+
+    // How many times to retry full deployment per SSID (reconnect Wi-Fi + SSH each retry)
+    public int BulkWifiDeployAttemptsPerTarget { get; set; } = 2;
+
+    // Delay between full deployment retries per SSID
+    public int BulkWifiDeployRetryDelayMs { get; set; } = 3000;
 
     // How many times to attempt SSH connect per target (at least 3 recommended)
     public int SshConnectAttempts { get; set; } = 3;
@@ -98,8 +132,7 @@ public sealed class DeployOptions
     public static DeployOptions Load(string path)
     {
         var json = File.ReadAllText(path);
-
-        return JsonSerializer.Deserialize<DeployOptions>(
+        var options = JsonSerializer.Deserialize<DeployOptions>(
                    json,
                    new JsonSerializerOptions
                    {
@@ -108,6 +141,9 @@ public sealed class DeployOptions
                )
                ?? throw new InvalidOperationException(
                    "Failed to deserialize DeployOptions");
+
+        options.NormalizeLocalPaths(Path.GetDirectoryName(Path.GetFullPath(path)) ?? Directory.GetCurrentDirectory());
+        return options;
     }
 
     public static DeployOptions LoadOrCreate(string path)
@@ -132,5 +168,66 @@ public sealed class DeployOptions
             });
 
         File.WriteAllText(path, json);
+    }
+
+    private void NormalizeLocalPaths(string baseDir)
+    {
+        ProjectDir = ResolveMaybeRelative(ProjectDir, baseDir, mustExist: true, expectDirectory: true);
+        ProjectFile = ResolveMaybeRelative(ProjectFile, baseDir, mustExist: true, expectDirectory: false);
+        LocalPublishDir = ResolveMaybeRelative(LocalPublishDir, baseDir, mustExist: false, expectDirectory: true);
+        UpdaterProjectDir = ResolveMaybeRelative(UpdaterProjectDir, baseDir, mustExist: true, expectDirectory: true);
+        UpdaterProjectFile = ResolveMaybeRelative(UpdaterProjectFile, baseDir, mustExist: true, expectDirectory: false);
+        LocalUpdaterPublishDir = ResolveMaybeRelative(LocalUpdaterPublishDir, baseDir, mustExist: false, expectDirectory: true);
+        LocalSshPublicKeyPath = ResolveMaybeRelative(LocalSshPublicKeyPath, baseDir, mustExist: false, expectDirectory: false);
+    }
+
+    private static string ResolveMaybeRelative(string path, string baseDir, bool mustExist, bool expectDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return path;
+
+        if (Path.IsPathRooted(path))
+            return Path.GetFullPath(path);
+
+        var candidates = new List<string>();
+
+        void AddCandidate(string p)
+        {
+            var full = Path.GetFullPath(p);
+            if (!candidates.Contains(full, StringComparer.OrdinalIgnoreCase))
+                candidates.Add(full);
+        }
+
+        // 1) Relative to config file location
+        AddCandidate(Path.Combine(baseDir, path));
+
+        // 2) Relative to process working directory
+        AddCandidate(Path.Combine(Directory.GetCurrentDirectory(), path));
+
+        // 3) Relative to any ancestor of config location (helps when config is copied to bin/)
+        var cursor = new DirectoryInfo(baseDir);
+        while (cursor != null)
+        {
+            AddCandidate(Path.Combine(cursor.FullName, path));
+            cursor = cursor.Parent;
+        }
+
+        if (!mustExist)
+            return candidates[0];
+
+        foreach (var c in candidates)
+        {
+            if (expectDirectory)
+            {
+                if (Directory.Exists(c)) return c;
+            }
+            else
+            {
+                if (File.Exists(c)) return c;
+            }
+        }
+
+        // Fall back to first candidate to preserve a deterministic error path later.
+        return candidates[0];
     }
 }
