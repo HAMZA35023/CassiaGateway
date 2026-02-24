@@ -21,12 +21,6 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-function New-CIHashtable {
-    # Case-insensitive hashtable (OrdinalIgnoreCase) to avoid duplicate-key exceptions
-    # when legacy manifests contain keys with different casing (e.g. 'Sha256' vs 'sha256').
-    return New-Object System.Collections.Hashtable (0, [System.StringComparer]::OrdinalIgnoreCase)
-}
-
 if (-not (Test-Path $PublishDir)) {
     throw "PublishDir not found: $PublishDir"
 }
@@ -141,161 +135,59 @@ try {
     $trimmedBase = $BaseUrl.TrimEnd("/")
     $zipUrl = "$trimmedBase/$zipName"
 
-    # Build objects via assignments (not hashtable literals) so we never throw
-    # "Item has already been added" even if a key is accidentally duplicated.
-    $artifact = New-CIHashtable
-    $artifact["runtime"] = $RuntimeTag
-    $artifact["url"] = $zipUrl
-    $artifact["sha256"] = $hash
-    $artifact["sizeBytes"] = $size
-    $artifact["publishedAtUtc"] = $publishedAt
-
     $manifestPath = Join-Path $outputFull $ManifestFileName
 
-    function ConvertTo-HashtableDeep {
-        param([object]$Obj)
-        if ($null -eq $Obj) { return $null }
-        if ($Obj -is [System.Collections.IDictionary]) {
-            $h = New-CIHashtable
-            foreach ($k in $Obj.Keys) { $h[[string]$k] = ConvertTo-HashtableDeep $Obj[$k] }
-            return $h
-        }
-        if ($Obj -is [System.Collections.IEnumerable] -and -not ($Obj -is [string])) {
-            $list = @()
-            foreach ($item in $Obj) { $list += ,(ConvertTo-HashtableDeep $item) }
-            return $list
-        }
-        if ($Obj -is [pscustomobject]) {
-            $h = New-CIHashtable
-            foreach ($p in $Obj.PSObject.Properties) { $h[[string]$p.Name] = ConvertTo-HashtableDeep $p.Value }
-            return $h
-        }
-        return $Obj
-    }
-
-    $manifest = $null
+    # Carry over builds from an existing manifest only if it covers the same version.
+    # For a new version (or missing/corrupt manifest) we start fresh.
+    # We never modify parsed objects in-place – each build entry is reconstructed from
+    # scalar values to avoid PowerShell hashtable adapter quirks.
+    $builds = [ordered]@{}
     if (Test-Path $manifestPath) {
         try {
-            $existingObj = Get-Content -Path $manifestPath -Raw | ConvertFrom-Json
-            $manifest = ConvertTo-HashtableDeep $existingObj
+            $existing = Get-Content -Path $manifestPath -Raw | ConvertFrom-Json
+            if ($existing.latest.version -eq $Version) {
+                foreach ($prop in $existing.latest.builds.PSObject.Properties) {
+                    $builds[$prop.Name] = [ordered]@{
+                        runtime        = [string]$prop.Value.runtime
+                        url            = [string]$prop.Value.url
+                        sha256         = [string]$prop.Value.sha256
+                        sizeBytes      = [long]$prop.Value.sizeBytes
+                        publishedAtUtc = [string]$prop.Value.publishedAtUtc
+                    }
+                }
+            }
         }
-        catch {
-            Write-Warning "Existing manifest could not be parsed. It will be overwritten: $manifestPath"
-            $manifest = $null
+        catch { }
+    }
+
+    # Add / overwrite this runtime's entry.
+    $builds[$RuntimeTag] = [ordered]@{
+        runtime        = $RuntimeTag
+        url            = $zipUrl
+        sha256         = $hash
+        sizeBytes      = $size
+        publishedAtUtc = $publishedAt
+    }
+
+    # Legacy top-level fields point to linux-arm when present, otherwise the current runtime.
+    $legacyKey = if ($builds.Contains("linux-arm")) { "linux-arm" } else { $RuntimeTag }
+
+    $manifest = [ordered]@{
+        channel        = $Channel
+        app            = $AppName
+        generatedAtUtc = $publishedAt
+        latest         = [ordered]@{
+            publishedAtUtc = $publishedAt
+            sizeBytes      = $builds[$legacyKey].sizeBytes
+            url            = $builds[$legacyKey].url
+            sha256         = $builds[$legacyKey].sha256
+            builds         = $builds
+            channel        = $Channel
+            version        = $Version
         }
     }
 
-    if (-not $manifest) {
-        $manifest = New-CIHashtable
-        $manifest["app"] = $AppName
-        $manifest["channel"] = $Channel
-        $manifest["generatedAtUtc"] = $publishedAt
-
-        $latest = New-CIHashtable
-        $latest["version"] = $Version
-        $latest["channel"] = $Channel
-        # Legacy fields (for older updaters). We keep linux-arm here when available.
-        $latest["url"] = $zipUrl
-        $latest["sha256"] = $hash
-        $latest["sizeBytes"] = $size
-        $latest["publishedAtUtc"] = $publishedAt
-        $latest["builds"] = New-CIHashtable
-        $manifest["latest"] = $latest
-
-        $manifest["releases"] = @()
-    }
-
-    # Ensure latest exists
-    if (-not $manifest.ContainsKey("latest") -or -not $manifest.latest) {
-        $manifest["latest"] = New-CIHashtable
-        $manifest["latest"]["version"] = $Version
-        $manifest["latest"]["channel"] = $Channel
-        $manifest["latest"]["builds"] = New-CIHashtable
-    }
-
-    # Normalize legacy manifest into builds (assume linux-arm when only legacy fields exist)
-    if (-not $manifest.latest.ContainsKey("builds") -or -not $manifest.latest.builds) {
-        $manifest.latest["builds"] = New-CIHashtable
-    }
-    if ($manifest.latest.ContainsKey("url") -and -not $manifest.latest.builds.ContainsKey("linux-arm")) {
-        $b = New-CIHashtable
-        $b["runtime"] = "linux-arm"
-        $b["url"] = $manifest.latest.url
-        $b["sha256"] = $manifest.latest.sha256
-        $b["sizeBytes"] = $manifest.latest.sizeBytes
-        $b["publishedAtUtc"] = $manifest.latest.publishedAtUtc
-        $manifest.latest.builds["linux-arm"] = $b
-    }
-
-    $manifest["app"] = $AppName
-    $manifest["channel"] = $Channel
-    $manifest["generatedAtUtc"] = $publishedAt
-
-    # Update latest
-    $manifest.latest["version"] = $Version
-    $manifest.latest["channel"] = $Channel
-    $manifest.latest["publishedAtUtc"] = $publishedAt
-    $manifest.latest.builds[$RuntimeTag] = $artifact
-
-    # Keep legacy top-level latest fields pointing to linux-arm if available, otherwise current runtime.
-    $legacyKey = "linux-arm"
-    if (-not $manifest.latest.builds.ContainsKey($legacyKey)) {
-        $legacyKey = $RuntimeTag
-    }
-    $legacy = $manifest.latest.builds[$legacyKey]
-    $manifest.latest["url"] = $legacy.url
-    $manifest.latest["sha256"] = $legacy.sha256
-    $manifest.latest["sizeBytes"] = $legacy.sizeBytes
-
-    # Update releases
-    if (-not $manifest.ContainsKey("releases") -or -not $manifest.releases) {
-        $manifest["releases"] = @()
-    }
-
-    $release = $null
-    foreach ($r in $manifest.releases) {
-        if ($r.version -eq $Version) { $release = $r; break }
-    }
-    if (-not $release) {
-        $release = New-CIHashtable
-        $release["version"] = $Version
-        $release["channel"] = $Channel
-        $release["publishedAtUtc"] = $publishedAt
-        $release["url"] = $zipUrl
-        $release["sha256"] = $hash
-        $release["sizeBytes"] = $size
-        $release["builds"] = New-CIHashtable
-        $manifest.releases += $release
-    }
-
-    if (-not $release.ContainsKey("builds") -or -not $release.builds) { $release["builds"] = New-CIHashtable }
-    if ($release.ContainsKey("url") -and -not $release.builds.ContainsKey("linux-arm")) {
-        $rb = New-CIHashtable
-        $rb["runtime"] = "linux-arm"
-        $rb["url"] = $release.url
-        $rb["sha256"] = $release.sha256
-        $rb["sizeBytes"] = $release.sizeBytes
-        $rb["publishedAtUtc"] = $release.publishedAtUtc
-        $release.builds["linux-arm"] = $rb
-    }
-    $release["channel"] = $Channel
-    $release["publishedAtUtc"] = $publishedAt
-    $release.builds[$RuntimeTag] = $artifact
-
-    # Keep legacy fields for the release as linux-arm if available.
-    $legacyKey2 = "linux-arm"
-    if (-not $release.builds.ContainsKey($legacyKey2)) { $legacyKey2 = $RuntimeTag }
-    $legacy2 = $release.builds[$legacyKey2]
-    $release["url"] = $legacy2.url
-    $release["sha256"] = $legacy2.sha256
-    $release["sizeBytes"] = $legacy2.sizeBytes
-
-    # Sort releases newest first
-    $manifest["releases"] = @(
-        $manifest.releases | Sort-Object -Property @{Expression = { $_.version }; Descending = $true}, @{Expression = { $_.publishedAtUtc }; Descending = $true}
-    )
-
-    $manifest | ConvertTo-Json -Depth 20 | Set-Content -Path $manifestPath -Encoding UTF8
+    $manifest | ConvertTo-Json -Depth 10 | Set-Content -Path $manifestPath -Encoding UTF8
 
     Write-Host "Update package created:"
     Write-Host "  Zip      : $zipPath"
