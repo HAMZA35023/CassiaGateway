@@ -79,8 +79,8 @@ public class LinuxBleNotificationService : IBleNotificationService
             if (map.IsEmpty)
             {
                 _handlers.TryRemove(macAddress, out _);
-                _logger.LogDebug("LinuxBLE Notify: last handler removed for {Mac} — calling StopNotify", macAddress);
-                _ = StopNotifyingAsync(macAddress);
+                _logger.LogDebug("LinuxBLE Notify: last handler removed for {Mac} — disposing D-Bus WatchProperties synchronously", macAddress);
+                DisposeNotifySubscriptionSync(macAddress, "Unsubscribe(token)");
             }
         }
     }
@@ -120,6 +120,23 @@ public class LinuxBleNotificationService : IBleNotificationService
     }
 
     // ── Notify management ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Ensures StartNotify + WatchProperties are active before a caller sends a write that
+    /// expects a fast response notification (for example login telegrams).
+    /// </summary>
+    public Task EnsureNotifyingReadyAsync(string macAddress, CancellationToken ct = default)
+        => EnsureNotifyingAsync(macAddress).WaitAsync(ct);
+
+    private void DisposeNotifySubscriptionSync(string macAddress, string source)
+    {
+        if (_notifySubscriptions.TryRemove(macAddress, out var sub))
+        {
+            _notifyCharacteristics.TryRemove(macAddress, out _);
+            try { sub.Dispose(); } catch { /* ignore */ }
+            _logger.LogDebug("LinuxBLE Notify: {Source} {Mac} - D-Bus WatchProperties disposed synchronously", source, macAddress);
+        }
+    }
 
     private async Task EnsureNotifyingAsync(string macAddress)
     {
@@ -308,3 +325,4 @@ public class LinuxBleNotificationService : IBleNotificationService
         }
     }
 }
+

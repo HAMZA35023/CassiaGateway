@@ -86,7 +86,12 @@ try
                 var isInBootMode = false;
                 if (probeConnected)
                 {
-                    const int bootModeChecks = 5;
+                    int bootModeChecks = RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase)
+                        ? 1
+                        : 5;
+                    int bootModeRetryDelayMs = RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase)
+                        ? 0
+                        : 1500;
                     for (int attempt = 1; attempt <= bootModeChecks; attempt++)
                     {
                         if (CheckIfDeviceInBootMode(_gatewayIpAddress, mac))
@@ -95,7 +100,8 @@ try
                             break;
                         }
 
-                        await Task.Delay(1500).ConfigureAwait(false);
+                        if (attempt < bootModeChecks && bootModeRetryDelayMs > 0)
+                            await Task.Delay(bootModeRetryDelayMs).ConfigureAwait(false);
                     }
                 }
 

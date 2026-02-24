@@ -364,6 +364,24 @@ public class LinuxBleConnectionService : IBleConnectionService
                 }
             });
 
+            // Avoid first-login races: ensure StartNotify is active before the first write.
+            if (_notificationService is LinuxBleNotificationService linuxNotify)
+            {
+                _logger.LogDebug("LinuxBLE Login: {Mac} - waiting for notify readiness before login write", macAddress);
+                try
+                {
+                    await linuxNotify.EnsureNotifyingReadyAsync(macAddress, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "LinuxBLE Login: {Mac} notify readiness wait failed (continuing with write)", macAddress);
+                }
+            }
+
             // Write the login telegram to the control characteristic.
             var rw = new LinuxBleReadWriteService(
                 _logger.CreateLogger<LinuxBleReadWriteService>());
