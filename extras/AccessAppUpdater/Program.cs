@@ -78,6 +78,10 @@ internal static class Program
                     InstallAtomically(cfg.InstallDir, stageDir);
                     stageDir = string.Empty;
 
+                    // Always make the primary executable runnable regardless of config.
+                    TryChmodX(Path.Combine(cfg.InstallDir, cfg.ExecutableName));
+
+                    // Also chmod any additional configured paths (e.g. shared libraries).
                     if (cfg.ExecutableRelativePathsToChmodX?.Count > 0)
                     {
                         foreach (var rel in cfg.ExecutableRelativePathsToChmodX)
@@ -642,7 +646,19 @@ exit 0
 
     private static void TryChmodX(string path)
     {
-        TryRun("chmod", $"+x \"{path}\"");
+        if (OperatingSystem.IsWindows())
+            return;
+
+        try
+        {
+            var current = File.GetUnixFileMode(path);
+            File.SetUnixFileMode(path, current | UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute);
+            Log($"chmod +x: {path}");
+        }
+        catch (Exception ex)
+        {
+            Log($"[WARN] chmod +x '{path}' failed: {ex.Message}");
+        }
     }
 
     private static void TryRun(string fileName, string args)
