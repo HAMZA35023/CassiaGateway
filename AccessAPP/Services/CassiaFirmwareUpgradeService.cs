@@ -43,7 +43,7 @@ namespace AccessAPP.Services
         public static int GlobalnumberOfParallelThreads = 2; // runtime adjustable via MQTT (resets on restart) // Optimal setting with current Cassia Gateway HW (21:43 Min for 3 P48 with actor and sensor firmware update)
         
         private readonly HttpClient _httpClient;
-        private readonly CassiaConnectService _connectService;
+        private readonly Services.BleAbstractions.IBleConnectionService _connectService;
         private readonly CassiaPinCodeService _cassiaPinCodeService;
         private static DeviceStorageService _deviceStorageService;
         private readonly IMqttService _mqttService;
@@ -69,7 +69,7 @@ namespace AccessAPP.Services
 	    internal string GatewayIpAddress => _gatewayIpAddress;
 	    internal int GatewayPort => _gatewayPort;
 	    internal IDeviceSettingsBackupService SettingsBackupService => _settingsBackup;
-	    internal CassiaConnectService ConnectService => _connectService;
+	    internal Services.BleAbstractions.IBleConnectionService ConnectService => _connectService;
 
 	    // Wrapper with the SAME parameter order as the original private method.
         internal Task<(bool ok, HttpStatusCode code, string msg)> ConnectOnlyWithRetryAsync_Internal(
@@ -91,9 +91,10 @@ namespace AccessAPP.Services
 	        string? logId,
 	        string? firmwareVersion,
 	        int maxAttempts,
-	        int delayBetweenAttemptsMs)
+	        int delayBetweenAttemptsMs,
+	        bool bootModeIsRetryable = false)
 	    {
-	        var r = await ConnectAndLoginWithRetryAsync(gatewayIpAddress, gatewayPort, macAddress, pincode, logId, firmwareVersion, maxAttempts, delayBetweenAttemptsMs)
+	        var r = await ConnectAndLoginWithRetryAsync(gatewayIpAddress, gatewayPort, macAddress, pincode, logId, firmwareVersion, maxAttempts, delayBetweenAttemptsMs, bootModeIsRetryable)
 	            .ConfigureAwait(false);
 	        return (r.Success, r.StatusCode, r.Message ?? "");
 	    }
@@ -206,10 +207,9 @@ namespace AccessAPP.Services
         private static string NormalizeMac(string? mac)
             => MacUtils.NormalizeMac(mac);
 
-        CassiaReadWriteService cassiaReadWriteService = new CassiaReadWriteService();
+        Services.BleAbstractions.IBleReadWriteService cassiaReadWriteService;
 
-
-        private readonly CassiaNotificationService _notificationService; // ✅ Injected singleton
+        private readonly Services.BleAbstractions.IBleNotificationService _notificationService; // Injected singleton
 
         private static CassiaFirmwareUpgradeService _ownInstance = null;
 
@@ -290,6 +290,25 @@ public static int GetProgrammingCount()
             return inst is null ? 0 : inst._queue.RemoveFromUpgradeQueue(mac);
         }
 
+        /// <summary>
+        /// Force-remove a MAC from the active in-progress set.
+        /// Use when a previous upgrade task became stuck (e.g. due to a hung D-Bus call before
+        /// the per-call timeout fixes) and the process was not restarted.  Removing the MAC
+        /// here allows a fresh start-update request to proceed.  If the old task eventually
+        /// wakes up it will call TryRemove on a key that no longer exists — which is a safe no-op.
+        /// </summary>
+        public static bool ForceRemoveFromInProgress(string mac)
+        {
+            mac = MacUtils.NormalizeMac(mac);
+            if (string.IsNullOrWhiteSpace(mac)) return false;
+            var inst = _ownInstance;
+            if (inst is null) return false;
+            bool removed = inst._macsInProgress.TryRemove(mac, out _);
+            if (removed)
+                AppLog.Info($"[UPGRADE QUEUE] Force-removed '{mac}' from in-progress set (was stuck).");
+            return removed;
+        }
+
 
 
         private static readonly ConcurrentDictionary<string, object> _macLocks = new();
@@ -308,7 +327,7 @@ public static int GetProgrammingCount()
 
         // Overall / all instances
 
-        public CassiaFirmwareUpgradeService(HttpClient httpClient, CassiaConnectService connectService, CassiaPinCodeService cassiaPinCodeService, CassiaNotificationService notificationService, DeviceStorageService deviceStorageService, IConfiguration configuration, IMqttService mqttService)
+        public CassiaFirmwareUpgradeService(HttpClient httpClient, Services.BleAbstractions.IBleConnectionService connectService, CassiaPinCodeService cassiaPinCodeService, Services.BleAbstractions.IBleNotificationService notificationService, DeviceStorageService deviceStorageService, IConfiguration configuration, IMqttService mqttService, Services.BleAbstractions.IBleReadWriteService readWriteService)
         {
             _ownInstance = this;
             _httpClient = httpClient;
@@ -320,6 +339,7 @@ public static int GetProgrammingCount()
             _gatewayIpAddress = _configuration.GetValue<string>("GatewayConfiguration:IpAddress");
             _gatewayPort = _configuration.GetValue<int>("GatewayConfiguration:Port");
             _notificationService = notificationService;
+            cassiaReadWriteService = readWriteService;
             _settingsBackup = new DeviceSettingsBackupService(this);
 
             // Dedicated components (structural refactor; no behavior changes intended)
@@ -801,6 +821,19 @@ return true;
                         await Task.Delay(1500);
                     }
 
+                    // Device reconnected in Application mode — re-login before the next
+                    // JumpToBootloader attempt.  The device resets its authenticated session
+                    // on every disconnect, so sending JumpToBootloader on an unauthenticated
+                    // connection is either rejected or causes unexpected device behaviour
+                    // (crash / prolonged unresponsiveness) that makes all subsequent connect
+                    // attempts fail.
+                    if (attempt < bootJumpMaxAttempts)
+                    {
+                        var reloginOk = await LoginWithRetryAsync();
+                        if (!reloginOk)
+                            AppLog.Warn($"EnsureBootMode: re-login failed for {nodeMac} on attempt {attempt}/{bootJumpMaxAttempts} — next jump may be rejected");
+                    }
+
                     // Try again
                     await Task.Delay(3000);
                 }
@@ -836,7 +869,11 @@ return true;
 UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
                 await Task.Delay(3000);
 
-                return await ProcessingSensorUpgrade(nodeMac, bActor, isBootloader, DetectorType, FirmwareVersion, logId, pincode);
+                // Device is already connected by the caller above — skip the redundant reconnect
+                // inside ProcessingSensorUpgrade. Reconnecting would disconnect the working
+                // BlueZ link and then fail to re-establish it (bootloader device not immediately
+                // ready for a new connection attempt).
+                return await ProcessingSensorUpgrade(nodeMac, bActor, isBootloader, DetectorType, FirmwareVersion, logId, pincode, skipInitialConnect: true);
             }
 
             // ----------------------------
@@ -1131,11 +1168,17 @@ await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chi
             {
                 // Post-upgrade FW read is handled after all firmware work is complete (outside this attempt).
 
-                // Always disconnect at the end, identical to the original implementation.
-                await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0, chip: ctx.ChipId).ConfigureAwait(false);
-                UpgradeLogger.Log(logId, macAddress, "Disconnected at the end of upgrade process", "Info", FirmwareVersion);
-                if (RuntimeVariables.UPGRADE_DELAY_AFTER_END_DISCONNECT_MS > 0)
-                    await Task.Delay(RuntimeVariables.UPGRADE_DELAY_AFTER_END_DISCONNECT_MS).ConfigureAwait(false);
+                // Skip the disconnect when PostActorStep signalled that the connection should
+                // be kept open for the post-upgrade FW verification read. The outer scope
+                // (ProcessSingleDeviceUpgradeAsync) will perform the final disconnect after
+                // the FW read completes.
+                if (!ctx.KeepConnectionOpen)
+                {
+                    await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0, chip: ctx.ChipId).ConfigureAwait(false);
+                    UpgradeLogger.Log(logId, macAddress, "Disconnected at the end of upgrade process", "Info", FirmwareVersion);
+                    if (RuntimeVariables.UPGRADE_DELAY_AFTER_END_DISCONNECT_MS > 0)
+                        await Task.Delay(RuntimeVariables.UPGRADE_DELAY_AFTER_END_DISCONNECT_MS).ConfigureAwait(false);
+                }
             }
         }
 

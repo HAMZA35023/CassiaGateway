@@ -135,31 +135,58 @@ try {
     $trimmedBase = $BaseUrl.TrimEnd("/")
     $zipUrl = "$trimmedBase/$zipName"
 
-    $manifest = [ordered]@{
-        app = $AppName
-        channel = $Channel
-        generatedAtUtc = $publishedAt
-        latest = [ordered]@{
-            version = $Version
-            channel = $Channel
-            url = $zipUrl
-            sha256 = $hash
-            sizeBytes = $size
-            publishedAtUtc = $publishedAt
-        }
-        releases = @(
-            [ordered]@{
-                version = $Version
-                channel = $Channel
-                url = $zipUrl
-                sha256 = $hash
-                sizeBytes = $size
-                publishedAtUtc = $publishedAt
+    $manifestPath = Join-Path $outputFull $ManifestFileName
+
+    # Carry over builds from an existing manifest only if it covers the same version.
+    # For a new version (or missing/corrupt manifest) we start fresh.
+    # We never modify parsed objects in-place – each build entry is reconstructed from
+    # scalar values to avoid PowerShell hashtable adapter quirks.
+    $builds = [ordered]@{}
+    if (Test-Path $manifestPath) {
+        try {
+            $existing = Get-Content -Path $manifestPath -Raw | ConvertFrom-Json
+            if ($existing.latest.version -eq $Version) {
+                foreach ($prop in $existing.latest.builds.PSObject.Properties) {
+                    $builds[$prop.Name] = [ordered]@{
+                        runtime        = [string]$prop.Value.runtime
+                        url            = [string]$prop.Value.url
+                        sha256         = [string]$prop.Value.sha256
+                        sizeBytes      = [long]$prop.Value.sizeBytes
+                        publishedAtUtc = [string]$prop.Value.publishedAtUtc
+                    }
+                }
             }
-        )
+        }
+        catch { }
     }
 
-    $manifestPath = Join-Path $outputFull $ManifestFileName
+    # Add / overwrite this runtime's entry.
+    $builds[$RuntimeTag] = [ordered]@{
+        runtime        = $RuntimeTag
+        url            = $zipUrl
+        sha256         = $hash
+        sizeBytes      = $size
+        publishedAtUtc = $publishedAt
+    }
+
+    # Legacy top-level fields point to linux-arm when present, otherwise the current runtime.
+    $legacyKey = if ($builds.Contains("linux-arm")) { "linux-arm" } else { $RuntimeTag }
+
+    $manifest = [ordered]@{
+        channel        = $Channel
+        app            = $AppName
+        generatedAtUtc = $publishedAt
+        latest         = [ordered]@{
+            publishedAtUtc = $publishedAt
+            sizeBytes      = $builds[$legacyKey].sizeBytes
+            url            = $builds[$legacyKey].url
+            sha256         = $builds[$legacyKey].sha256
+            builds         = $builds
+            channel        = $Channel
+            version        = $Version
+        }
+    }
+
     $manifest | ConvertTo-Json -Depth 10 | Set-Content -Path $manifestPath -Encoding UTF8
 
     Write-Host "Update package created:"

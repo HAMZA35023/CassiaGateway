@@ -1,4 +1,4 @@
-using AccessAPP.Logging;
+﻿using AccessAPP.Logging;
 using AccessAPP.Services.HelperClasses;
 using System;
 using System.Net;
@@ -367,7 +367,8 @@ namespace AccessAPP.Services
             string? logId,
             string? firmwareVersion,
             int maxAttempts = 3,
-            int delayBetweenAttemptsMs = 2000)
+            int delayBetweenAttemptsMs = 2000,
+            bool bootModeIsRetryable = false)
         {
             Exception? lastEx = null;
 
@@ -477,8 +478,32 @@ namespace AccessAPP.Services
                             await Task.Delay(stabilizeMs, cts.Token).ConfigureAwait(false);
                         }
 
-                        bool isAlreadyInBootMode = CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress);
-                        if (isAlreadyInBootMode)
+                        // Only check boot mode if BlueZ has finished GATT re-discovery
+                        // (ServicesResolved=true). When ServicesResolved is false the
+                        // ObjectManager may hold stale objects from the *previous* mode
+                        // (e.g. bootloader GATT after a firmware reboot into app mode),
+                        // which would cause a false-positive 409 that aborts ALL retries.
+                        // When ServicesResolved is false we proceed to login; a genuine
+                        // boot-mode device will fail login and we retry from there.
+                        bool servicesReadyForBootCheck = true;
+                        if (RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase))
+                        {
+                            try
+                            {
+                                var _dp = LinuxBle.BlueZHelpers.DevicePath(
+                                    LinuxBle.BlueZHelpers.GetDeviceAdapter(macAddress), macAddress);
+                                var _dev = await LinuxBle.BlueZHelpers.GetDeviceAsync(_dp).ConfigureAwait(false);
+                                using var srCheckCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                                servicesReadyForBootCheck = await _dev.GetAsync<bool>("ServicesResolved").WaitAsync(srCheckCts.Token).ConfigureAwait(false);
+                            }
+                            catch { servicesReadyForBootCheck = false; }
+
+                            if (!servicesReadyForBootCheck)
+                                AppLog.Debug($"Connect+Login: ServicesResolved=false for {macAddress} — skipping boot-mode check (stale GATT).");
+                        }
+
+                        bool isAlreadyInBootMode = servicesReadyForBootCheck && CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress);
+                        if (isAlreadyInBootMode && !bootModeIsRetryable)
                         {
                             if (touchedGateway)
                                 await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0, chip: chip).ConfigureAwait(false);
@@ -490,45 +515,62 @@ namespace AccessAPP.Services
                             };
                         }
 
-                        UpgradeLogger.Log(logId, macAddress, "Connected", "Success", firmwareVersion);
-
-                        cts.Token.ThrowIfCancellationRequested();
-
-                        // 2) Login
-                        AppLog.Debug($"Connect+Login starting login for {macAddress} (attempt {attempt}/{maxAttempts}).");
-                        var loginResult = await AttemptLoginOnConnectedSessionAsync(
-                            gatewayIp,
-                            macAddress,
-                            pincode,
-                            cts.Token).ConfigureAwait(false);
-
-                        if (!loginResult.Success)
+                        if (isAlreadyInBootMode) // bootModeIsRetryable=true: device still transitioning post-upgrade
                         {
-                            lastEx = new Exception($"Login failed ({loginResult.Message})");
-                            failedThisAttempt = true;
-                            int retryDelayMs = CalculateRetryDelayMs(delayBetweenAttemptsMs, attempt, lastAttemptStatus);
-                            AppLog.Debug($"Connect+Login login failed for {macAddress} on attempt {attempt}/{maxAttempts}. Detail='{loginResult.Message}'. Retry delay={retryDelayMs}ms.");
-
-                            if (touchedGateway)
-                                await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, chip).ConfigureAwait(false);
-
+                            // The device has not yet finished rebooting from bootloader into app mode.
+                            // Treat this as a transient failure — allow the retry loop to continue
+                            // instead of returning a fatal 409 that kills all remaining attempts.
+                            lastEx = new Exception($"Device still in boot mode on attempt {attempt}/{maxAttempts} (post-upgrade transition).");
+                            AppLog.Info($"Connect+Login: {macAddress} still in boot mode on attempt {attempt}/{maxAttempts}; waiting for app-mode transition.");
                             UpgradeLogger.Log(logId, macAddress,
-                                $"Connect+Login failed on attempt {attempt}/{maxAttempts}. Disconnected chip {chip}. Retrying after {RetryDelayText(retryDelayMs)}.",
+                                $"Connect+Login: boot mode on attempt {attempt}/{maxAttempts}; device still transitioning, will retry.",
                                 "Warn", firmwareVersion);
-                            AppLog.Info($"Connect+Login failed for {macAddress} (attempt {attempt}/{maxAttempts}). Login detail: {loginResult.Message}. Disconnected chip {chip}; retrying after {RetryDelayText(retryDelayMs)}.");
+                            failedThisAttempt = true;
+                            if (touchedGateway)
+                                await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0, chip: chip).ConfigureAwait(false);
                         }
                         else
                         {
-                            UpgradeLogger.Log(logId, macAddress, "LoggedIn", "Success", firmwareVersion);
+                            UpgradeLogger.Log(logId, macAddress, "Connected", "Success", firmwareVersion);
 
-                            return new ConnectLoginResult
+                            cts.Token.ThrowIfCancellationRequested();
+
+                            // 2) Login
+                            AppLog.Debug($"Connect+Login starting login for {macAddress} (attempt {attempt}/{maxAttempts}).");
+                            var loginResult = await AttemptLoginOnConnectedSessionAsync(
+                                gatewayIp,
+                                macAddress,
+                                pincode,
+                                cts.Token).ConfigureAwait(false);
+
+                            if (!loginResult.Success)
                             {
-                                Success = true,
-                                StatusCode = 200,
-                                Message = "Connected + logged in",
-                                LoginResponseBody = loginResult.ResponseBody,
-                                RawStatus = loginResult.StatusText
-                            };
+                                lastEx = new Exception($"Login failed ({loginResult.Message})");
+                                failedThisAttempt = true;
+                                int retryDelayMs = CalculateRetryDelayMs(delayBetweenAttemptsMs, attempt, lastAttemptStatus);
+                                AppLog.Debug($"Connect+Login login failed for {macAddress} on attempt {attempt}/{maxAttempts}. Detail='{loginResult.Message}'. Retry delay={retryDelayMs}ms.");
+
+                                if (touchedGateway)
+                                    await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, chip).ConfigureAwait(false);
+
+                                UpgradeLogger.Log(logId, macAddress,
+                                    $"Connect+Login failed on attempt {attempt}/{maxAttempts}. Disconnected chip {chip}. Retrying after {RetryDelayText(retryDelayMs)}.",
+                                    "Warn", firmwareVersion);
+                                AppLog.Info($"Connect+Login failed for {macAddress} (attempt {attempt}/{maxAttempts}). Login detail: {loginResult.Message}. Disconnected chip {chip}; retrying after {RetryDelayText(retryDelayMs)}.");
+                            }
+                            else
+                            {
+                                UpgradeLogger.Log(logId, macAddress, "LoggedIn", "Success", firmwareVersion);
+
+                                return new ConnectLoginResult
+                                {
+                                    Success = true,
+                                    StatusCode = 200,
+                                    Message = "Connected + logged in",
+                                    LoginResponseBody = loginResult.ResponseBody,
+                                    RawStatus = loginResult.StatusText
+                                };
+                            }
                         }
                     }
                 }
@@ -717,7 +759,13 @@ namespace AccessAPP.Services
                     bool skipDisconnect = ShouldSkipDisconnectAfterFailedConnect(last);
 
                     if (touchedGateway && !skipDisconnect)
+                    {
                         await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, chip).ConfigureAwait(false);
+                        // On attempt 2+ ask the platform to remove any stale BlueZ / HCI state so
+                        // the next attempt re-discovers the device from scratch.
+                        if (attempt >= 2)
+                            await _connectService.CleanupAfterFailedConnectAsync(macAddress).ConfigureAwait(false);
+                    }
                     else if (touchedGateway && skipDisconnect)
                         AppLog.Debug($"{stageName}: skipping per-attempt disconnect for {macAddress} because status={(int)last} {last}.");
                 }
@@ -728,7 +776,11 @@ namespace AccessAPP.Services
                     failedThisAttempt = true;
 
                     if (touchedGateway)
+                    {
                         await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, chip).ConfigureAwait(false);
+                        if (attempt >= 2)
+                            await _connectService.CleanupAfterFailedConnectAsync(macAddress).ConfigureAwait(false);
+                    }
 
                     UpgradeLogger.Log(logId, macAddress, stageName, $"Timeout (attempt {attempt}/{maxAttempts})", FirmwareVersion);
                     AppLog.Debug($"{stageName}: timeout for {macAddress} on attempt {attempt}/{maxAttempts}.");
@@ -741,7 +793,11 @@ namespace AccessAPP.Services
                     AppLog.Debug($"{stageName}: exception for {macAddress} on attempt {attempt}/{maxAttempts}: {ex.Message}");
 
                     if (touchedGateway)
+                    {
                         await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, chip).ConfigureAwait(false);
+                        if (attempt >= 2)
+                            await _connectService.CleanupAfterFailedConnectAsync(macAddress).ConfigureAwait(false);
+                    }
                 }
                 finally
                 {

@@ -19,6 +19,10 @@ public sealed class RuntimeVariablesStore
     private static readonly FieldInfo[] Fields =
         typeof(RuntimeVariables).GetFields(BindingFlags.Public | BindingFlags.Static);
 
+    // Snapshot of RuntimeVariables defaults, captured before any LoadFromDisk call.
+    private static readonly Dictionary<string, object?> Defaults =
+        Fields.ToDictionary(f => f.Name, f => f.GetValue(null), StringComparer.OrdinalIgnoreCase);
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -31,19 +35,19 @@ public sealed class RuntimeVariablesStore
 
     public RuntimeVariablesStore()
     {
-        FilePath = "runtime.json";
+        FilePath = AccessAppPaths.RuntimeConfig;
     }
 
     public RuntimeVariablesStore(string filePath)
     {
-        FilePath = string.IsNullOrWhiteSpace(filePath) ? "runtime.json" : filePath;
+        FilePath = string.IsNullOrWhiteSpace(filePath) ? AccessAppPaths.RuntimeConfig : filePath;
     }
 
     public RuntimeVariablesStore(IConfiguration cfg, IHostEnvironment env)
     {
         var path = cfg.GetValue<string>("RuntimeVariables:ConfigPath");
         if (string.IsNullOrWhiteSpace(path))
-            path = "runtime.json";
+            path = AccessAppPaths.RuntimeConfig;
         if (!Path.IsPathRooted(path))
             path = Path.Combine(env.ContentRootPath, path);
 
@@ -55,6 +59,20 @@ public sealed class RuntimeVariablesStore
         var dict = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
         foreach (var f in Fields)
             dict[f.Name] = f.GetValue(null);
+        return dict;
+    }
+
+    /// <summary>Returns only fields whose current value differs from the startup default.</summary>
+    public Dictionary<string, object?> GetNonDefault()
+    {
+        var dict = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var f in Fields)
+        {
+            var current = f.GetValue(null);
+            if (Defaults.TryGetValue(f.Name, out var def) && Equals(current, def))
+                continue;
+            dict[f.Name] = current;
+        }
         return dict;
     }
 
@@ -165,7 +183,7 @@ public sealed class RuntimeVariablesStore
                 if (!string.IsNullOrWhiteSpace(dir))
                     Directory.CreateDirectory(dir);
 
-                var json = JsonSerializer.Serialize(GetAll(), JsonOptions);
+                var json = JsonSerializer.Serialize(GetNonDefault(), JsonOptions);
                 File.WriteAllText(FilePath, json);
                 return true;
             }

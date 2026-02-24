@@ -1701,18 +1701,28 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                     .ToList();
 
                 int removed = 0;
+                int removedInProgress = 0;
                 foreach (var m in macs)
+                {
                     removed += CassiaFirmwareUpgradeService.RemoveFromUpgradeQueuePending(m);
+                    // Also force-clear from the active in-progress set so that a device stuck
+                    // in a previous (hung) upgrade task can be re-queued without restarting.
+                    if (CassiaFirmwareUpgradeService.ForceRemoveFromInProgress(m))
+                        removedInProgress++;
+                }
 
                 var resp = new
                 {
                     success = true,
-                    message = removed > 0 ? "Removed device(s) from pending queue." : "No matching pending devices found in queue.",
+                    message = (removed + removedInProgress) > 0
+                        ? $"Removed device(s): {removed} from pending queue, {removedInProgress} forced from in-progress."
+                        : "No matching devices found in queue or in-progress.",
                     name = CurrentOptions.Name,
                     networkId = CurrentOptions.NetworkId,
                     time = DateTimeOffset.UtcNow,
                     requested = macs,
-                    removed
+                    removed,
+                    removedInProgress
                 };
 
                 return PublishJsonAsync(TeleTopic("queue-remove"), resp, retain: false, CancellationToken.None);
@@ -1785,9 +1795,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 if (string.Equals(command, "clear-upgrade-log", StringComparison.OrdinalIgnoreCase))
             {
                 AppLog.Debug("HandleCommandAsync: dispatch clear-upgrade-log");
-                var currentDir = Directory.GetCurrentDirectory();
-                AppLog.Debug("Current Directory: " + currentDir);
-var logPath = Path.Combine(currentDir, "Logs", "upgrade_logs.txt");
+                var logPath = AccessAppPaths.UpgradeLog;
 
                 if (!System.IO.File.Exists(logPath))
                 {

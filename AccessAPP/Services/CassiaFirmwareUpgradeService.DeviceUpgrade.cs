@@ -135,14 +135,14 @@ try
                                     // best-effort disconnect before reconnect flow
                                 }
 
-                                dev.CurrentFirmwareVersion = await GetFwVersion(mac, dev.Pincode, disconnect_on_finish: true).ConfigureAwait(false);
+                                dev.CurrentFirmwareVersion = await GetFwVersion(mac, dev.Pincode, disconnect_on_finish: true, logId: logId, firmwareVersion: dev.FirmwareVersion).ConfigureAwait(false);
                                 precheckSessionAlive = false;
                             }
                         }
                         else
                         {
                             // Fallback only when probe connect was not available.
-                            dev.CurrentFirmwareVersion = await GetFwVersion(mac, dev.Pincode, disconnect_on_finish: true).ConfigureAwait(false);
+                            dev.CurrentFirmwareVersion = await GetFwVersion(mac, dev.Pincode, disconnect_on_finish: true, logId: logId, firmwareVersion: dev.FirmwareVersion).ConfigureAwait(false);
                             precheckSessionAlive = false;
                         }
                         if (!string.IsNullOrWhiteSpace(dev.CurrentFirmwareVersion))
@@ -179,7 +179,7 @@ try
                 {
                     // Session already closed in precheck fallback path; avoid redundant disconnect call.
                 }
-                else if (probeConnected && !(RuntimeVariables.UPGRADE_OPTIMIZE_RECONNECT_FLOW && precheckSessionAlive && !isInBootMode))
+                else if (probeConnected && !(RuntimeVariables.UPGRADE_OPTIMIZE_RECONNECT_FLOW && precheckSessionAlive))
                 {
                     try
                     {
@@ -191,9 +191,18 @@ try
                         // best-effort disconnect after precheck probe
                     }
                 }
-                else if (probeConnected && precheckSessionAlive && RuntimeVariables.UPGRADE_OPTIMIZE_RECONNECT_FLOW && !isInBootMode)
+                else if (probeConnected && precheckSessionAlive && RuntimeVariables.UPGRADE_OPTIMIZE_RECONNECT_FLOW)
                 {
-                    UpgradeLogger.Log(logId, mac, "Connected (precheck probe)", "Keeping session open for next pipeline step", dev.FirmwareVersion);
+                    // Keep the live precheck session open for the first pipeline step.
+                    // Critically, when the device is already in bootloader mode we must NOT
+                    // disconnect here: the bootloader has a very short advertising/connection
+                    // window after a disconnect and reconnection routinely fails, leaving the
+                    // device stuck in an unrecoverable boot loop.
+                    UpgradeLogger.Log(logId, mac, "Connected (precheck probe)",
+                        isInBootMode
+                            ? "Keeping session open (boot mode — disconnect avoided to preserve bootloader connection)"
+                            : "Keeping session open for next pipeline step",
+                        dev.FirmwareVersion);
                 }
 
                 dev.PrecheckSessionAlive = precheckSessionAlive;
@@ -415,7 +424,25 @@ try
                     // Only run the post FW read once firmware work is fully satisfied.
                     if (anyFirmwarePlanned && firmwareDone)
                     {
-                        await VerifyPostUpgradeFirmwareAsync(dev, mac, logId ?? "", reuseExistingConnection: false).ConfigureAwait(false);
+                        // Reuse the connection that PostActorStep kept open (DALI-master path),
+                        // or fall back to a fresh connect when it was not kept.
+                        bool reuseConn = dev.ConnectionLeftOpenForFwRead;
+                        dev.ConnectionLeftOpenForFwRead = false;
+                        await VerifyPostUpgradeFirmwareAsync(dev, mac, logId ?? "", reuseExistingConnection: reuseConn).ConfigureAwait(false);
+
+                        if (reuseConn)
+                        {
+                            // Final disconnect — the one the user wants here, after the FW read.
+                            await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, mac, 0, chip: GetChipForMac(mac)).ConfigureAwait(false);
+                            UpgradeLogger.Log(logId, mac, "Disconnected at the end of upgrade process", "Info", dev.FirmwareVersion);
+                        }
+                    }
+                    else if (dev.ConnectionLeftOpenForFwRead)
+                    {
+                        // Safety: FW read won't run but the pipeline left the connection open.
+                        dev.ConnectionLeftOpenForFwRead = false;
+                        await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, mac, 0, chip: GetChipForMac(mac)).ConfigureAwait(false);
+                        UpgradeLogger.Log(logId, mac, "Disconnected at the end of upgrade process", "Info", dev.FirmwareVersion);
                     }
                 }
 
@@ -762,7 +789,9 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                     postFw = await GetFwVersion(
                         mac,
                         dev.Pincode,
-                        disconnect_on_finish: !reuseExistingConnection).ConfigureAwait(false);
+                        disconnect_on_finish: !reuseExistingConnection,
+                        logId: logId,
+                        firmwareVersion: dev.FirmwareVersion).ConfigureAwait(false);
                 }
 
                 dev.PostFirmwareVersion = postFw;
@@ -919,31 +948,39 @@ foreach (var s in ordered)
             string DetectorType,
             string FirmwareVersion,
             string logId,
-            string? pincode = null) // should be moved to firmware services
+            string? pincode = null, // should be moved to firmware services
+            bool skipInitialConnect = false)
         {
             AppLog.Info($"Processing Sensor Upgrade started->{nodeMac}");
 var response = new ServiceResponse();
 
-            var connProbe = await ConnectOnlyWithRetryAsync(
-                maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
-                delayMs: 5000,
-                stageName: "Connected (ProcessingSensorUpgrade probe)",
-                logSuccess: false,
-                macAddress: nodeMac,
-                FirmwareVersion: FirmwareVersion,
-                logId: logId,
-                discoverGattOverride: RuntimeVariables.UPGRADE_CONNECT_DISCOVER_GATT_AFTER_BOOT_JUMP < 0
-                    ? null
-                    : (RuntimeVariables.UPGRADE_CONNECT_DISCOVER_GATT_AFTER_BOOT_JUMP <= 0 ? 0 : 1)
-                ).ConfigureAwait(false);
-
-            if (!connProbe.ok)
+            if (!skipInitialConnect)
             {
-                UpgradeLogger.Log(logId, nodeMac, "Connected", "Failed", FirmwareVersion);
-                response.Success = false;
-                response.StatusCode = (int)(connProbe.code == 0 ? HttpStatusCode.ServiceUnavailable : connProbe.code);
-                response.Message = "Failed to connect to device.";
-                return response;
+                var connProbe = await ConnectOnlyWithRetryAsync(
+                    maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
+                    delayMs: 5000,
+                    stageName: "Connected (ProcessingSensorUpgrade probe)",
+                    logSuccess: false,
+                    macAddress: nodeMac,
+                    FirmwareVersion: FirmwareVersion,
+                    logId: logId,
+                    discoverGattOverride: RuntimeVariables.UPGRADE_CONNECT_DISCOVER_GATT_AFTER_BOOT_JUMP < 0
+                        ? null
+                        : (RuntimeVariables.UPGRADE_CONNECT_DISCOVER_GATT_AFTER_BOOT_JUMP <= 0 ? 0 : 1)
+                    ).ConfigureAwait(false);
+
+                if (!connProbe.ok)
+                {
+                    UpgradeLogger.Log(logId, nodeMac, "Connected", "Failed", FirmwareVersion);
+                    response.Success = false;
+                    response.StatusCode = (int)(connProbe.code == 0 ? HttpStatusCode.ServiceUnavailable : connProbe.code);
+                    response.Message = "Failed to connect to device.";
+                    return response;
+                }
+            }
+            else
+            {
+                AppLog.Info($"ProcessingSensorUpgrade: skipping connect probe for {nodeMac} (already connected from caller).");
             }
 
 
@@ -1155,7 +1192,7 @@ await Task.Delay(3000); // Delay between attempts
         
         
 
-        public bool ProgramDevice(string gatewayIpAddress, string nodeMac, CassiaNotificationService cassiaNotificationService, string DetectorType, string FirmwareVersion, bool bActor, bool isBootloader)
+        public bool ProgramDevice(string gatewayIpAddress, string nodeMac, BleAbstractions.IBleNotificationService cassiaNotificationService, string DetectorType, string FirmwareVersion, bool bActor, bool isBootloader)
         {
             AppLog.Info($"Actor is going to be programmed? : {bActor}");
 try

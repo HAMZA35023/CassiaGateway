@@ -33,6 +33,9 @@ namespace AccessAPP.Models
         public bool shouldRetry = true;
         public bool PrecheckSessionAlive { get; set; } = false;
         public bool PrecheckBootMode { get; set; } = false;
+        // Set by PostActorStep when the connection is kept open for post-upgrade FW read.
+        // The outer scope (ProcessSingleDeviceUpgradeAsync) consumes and resets this flag.
+        public bool ConnectionLeftOpenForFwRead { get; set; } = false;
 
         public string finalUpgradeResult = "Failed";
 

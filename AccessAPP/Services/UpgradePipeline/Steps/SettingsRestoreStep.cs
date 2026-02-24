@@ -34,13 +34,19 @@ internal sealed class SettingsRestoreStep : IDeviceUpgradeStep
 
             if (dev.requiresConfigRestore)
             {
-                dev.shouldRetry = false;
+                // Keep shouldRetry=true: the backup is missing because the device started
+                // in boot mode and the backup step couldn't run (or a transient failure).
+                // A retry will re-attempt the backup step from Application mode and the
+                // restore can then succeed.  Disabling retries here would prevent the actor
+                // upgrade (a separate concern) from being retried as well.
                 dev.finalUpgradeResult = "Warn";
             }
             return true;
         }
 
         await Task.Delay(10000).ConfigureAwait(false);
+
+        bool alreadyConnected = false;
 
         if (ctx.IsInBoot)
         {
@@ -56,38 +62,85 @@ internal sealed class SettingsRestoreStep : IDeviceUpgradeStep
 
             if (ctx.IsInBoot)
             {
-                UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Settings restore skipped (device still in boot mode)", "Warn", ctx.FirmwareVersion);
-                AppLog.Warn($" Settings restore skipped for {ctx.MacAddress} - device still in boot mode");
-                return true;
+                // Device is still in boot mode on the existing connection — disconnect and reconnect
+                // to see if the device has rebooted into application firmware by now.
+                // Checking mode on a live bootloader connection always reports boot mode even if the
+                // device has already transitioned; a fresh connect picks up the new GATT table.
+                UpgradeLogger.Log(ctx.LogId, ctx.MacAddress,
+                    "Settings restore: device still in boot mode — disconnecting and reconnecting to check app-mode transition",
+                    "Info", ctx.FirmwareVersion);
+                AppLog.Info($" Settings restore: {ctx.MacAddress} still in boot mode — disconnecting and reconnecting");
+
+                await svc.ConnectService
+                    .DisconnectFromBleDevice(svc.GatewayIpAddress, ctx.MacAddress, 0, chip: ctx.ChipId)
+                    .ConfigureAwait(false);
+
+                var bootRecovery = await svc.ConnectAndLoginWithRetryForPipelineAsync(
+                    svc.GatewayIpAddress, 80, ctx.MacAddress, ctx.Pincode, ctx.LogId, ctx.FirmwareVersion,
+                    maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
+                    delayBetweenAttemptsMs: 6000,
+                    bootModeIsRetryable: true).ConfigureAwait(false);
+
+                if (!bootRecovery.Success)
+                {
+                    UpgradeLogger.Log(ctx.LogId, ctx.MacAddress,
+                        $"Settings restore skipped (reconnect after boot mode failed: {bootRecovery.Message})",
+                        "Warn", ctx.FirmwareVersion);
+                    AppLog.Warn($" Settings restore skipped for {ctx.MacAddress} — reconnect failed: {bootRecovery.Message}");
+                    return true;
+                }
+
+                // Re-check mode on the fresh connection.
+                try { ctx.IsInBoot = svc.CheckIfDeviceInBootMode(svc.GatewayIpAddress, ctx.MacAddress); } catch { }
+                if (ctx.IsInBoot)
+                {
+                    UpgradeLogger.Log(ctx.LogId, ctx.MacAddress,
+                        "Settings restore skipped (device still in boot mode after reconnect)",
+                        "Warn", ctx.FirmwareVersion);
+                    AppLog.Warn($" Settings restore skipped for {ctx.MacAddress} — still in boot mode after reconnect");
+                    await svc.ConnectService
+                        .DisconnectFromBleDevice(svc.GatewayIpAddress, ctx.MacAddress, 0, chip: ctx.ChipId)
+                        .ConfigureAwait(false);
+                    return true;
+                }
+
+                UpgradeLogger.Log(ctx.LogId, ctx.MacAddress,
+                    "Settings restore: app mode confirmed after reconnect — proceeding",
+                    "Info", ctx.FirmwareVersion);
+                AppLog.Info($" Settings restore: {ctx.MacAddress} now in app mode — proceeding (already connected)");
+                alreadyConnected = true;
             }
         }
 
-        AppLog.Info($"Starting settings restore for {ctx.MacAddress} - trying to connect and login");
-
-        var cl = await svc.ConnectAndLoginWithRetryForPipelineAsync(
-            svc.GatewayIpAddress, 80, ctx.MacAddress, ctx.Pincode, ctx.LogId, ctx.FirmwareVersion,
-            maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
-            delayBetweenAttemptsMs: 6000).ConfigureAwait(false);
-
-        if (!cl.Success)
+        if (!alreadyConnected)
         {
-            UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, $"Restore connect+login failed: {cl.Message}", "Warn", ctx.FirmwareVersion);
-            AppLog.Warn($" Restore connect+login failed for {ctx.MacAddress}: {cl.Message}");
+            AppLog.Info($"Starting settings restore for {ctx.MacAddress} - trying to connect and login");
 
-            ctx.Response.Success = false;
-            ctx.Response.StatusCode = (int)HttpStatusCode.InternalServerError;
-            ctx.Response.Message = "Could not connect and login to detector!";
+            var cl = await svc.ConnectAndLoginWithRetryForPipelineAsync(
+                svc.GatewayIpAddress, 80, ctx.MacAddress, ctx.Pincode, ctx.LogId, ctx.FirmwareVersion,
+                maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
+                delayBetweenAttemptsMs: 6000).ConfigureAwait(false);
 
-            if (dev.requiresConfigRestore)
+            if (!cl.Success)
             {
-                dev.LastFailureReason = ctx.Response.Message;
-                dev.shouldRetry = false;
+                UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, $"Restore connect+login failed: {cl.Message}", "Warn", ctx.FirmwareVersion);
+                AppLog.Warn($" Restore connect+login failed for {ctx.MacAddress}: {cl.Message}");
 
-                return false;
+                ctx.Response.Success = false;
+                ctx.Response.StatusCode = (int)HttpStatusCode.InternalServerError;
+                ctx.Response.Message = "Could not connect and login to detector!";
+
+                if (dev.requiresConfigRestore)
+                {
+                    dev.LastFailureReason = ctx.Response.Message;
+                    dev.shouldRetry = false;
+
+                    return false;
+                }
+
+                // If config restore isn't required, we keep going.
+                return true;
             }
-
-            // If config restore isn't required, we keep going.
-            return true;
         }
 
         AppLog.Info($"Starting settings restore for {ctx.MacAddress} - upload config");

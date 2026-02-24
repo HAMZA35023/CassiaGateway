@@ -22,6 +22,7 @@
 		<PackageReference Include="Serilog.Enrichers.Process" Version="3.0.0" />
 		<PackageReference Include="Serilog.Enrichers.Thread" Version="4.0.0" />
 		<PackageReference Include="Serilog.Sinks.OpenTelemetry" Version="4.2.0" />
+		<PackageReference Include="Tmds.DBus" Version="0.21.2" />
 </ItemGroup>
 
 	<Target Name="BuildClientApp" BeforeTargets="Build" Condition="'$(SkipClientAppBuild)' != 'true' and Exists('ClientApp\\build.bat')">
@@ -291,6 +292,12 @@
 			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
 		</None>
 		<None Update="libBootloaderUtilMultiThread.so">
+		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+		</None>
+		<None Update="libBootloaderUtilMultiThread_linux-x64.so">
+		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+		</None>
+		<None Update="libBootloaderUtilMultiThread_arm.so">
 		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
 		</None>
 	</ItemGroup>

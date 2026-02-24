@@ -2,6 +2,7 @@ param(
     [string]$ProjectFile = "AccessAPP\AccessAPP.csproj",
     [string]$Configuration = "Release",
     [string]$Runtime = "linux-arm",
+    [string[]]$Runtimes = @("linux-arm", "linux-x64"),
     [bool]$SelfContained = $true,
     [switch]$SkipPublish,
     [switch]$SkipClientBuild,
@@ -124,41 +125,9 @@ function Invoke-PublishAndPackage {
     }
 
     $effectiveVersion = Get-VersionFromSource -RepoRootPath $RepoRootPath -VersionFilePath $VersionFile -ProvidedVersion $Version
-    $publishDir = Join-Path $RepoRootPath (Join-Path "temp_build\publish_accessapp_update" $TargetChannel)
+
     $channelOutputDir = Join-Path $WebRoot $TargetChannel
     $channelBaseUrl = ($BaseUrl.TrimEnd("/") + "/" + $TargetChannel)
-
-    if (-not $SkipPublish) {
-        if (Test-Path $publishDir) {
-            Remove-Item -Path $publishDir -Recurse -Force
-        }
-        New-Item -ItemType Directory -Path $publishDir -Force | Out-Null
-
-        $selfContainedArg = if ($SelfContained) { "--self-contained" } else { "--no-self-contained" }
-        $publishArgs = @(
-            "publish"
-            $resolvedProject
-            "-c"
-            $Configuration
-            "-r"
-            $Runtime
-            $selfContainedArg
-            "--output"
-            $publishDir
-        )
-        if ($SkipClientBuild) {
-            $publishArgs += "-p:SkipClientAppBuild=true"
-        }
-
-        Write-Log "Publishing AccessAPP for channel '$TargetChannel'..."
-        & dotnet @publishArgs
-        if ($LASTEXITCODE -ne 0) {
-            throw "dotnet publish failed with exit code $LASTEXITCODE"
-        }
-    }
-    elseif (-not (Test-Path $publishDir)) {
-        throw "SkipPublish was set but PublishDir does not exist: $publishDir"
-    }
 
     if (-not (Test-Path $channelOutputDir)) {
         New-Item -ItemType Directory -Path $channelOutputDir -Force | Out-Null
@@ -169,27 +138,86 @@ function Invoke-PublishAndPackage {
         throw "Missing helper script: $packScript"
     }
 
-    Write-Log "Creating zip + manifest for channel '$TargetChannel' in: $channelOutputDir"
-    & $packScript `
-        -PublishDir $publishDir `
-        -Version $effectiveVersion `
-        -BaseUrl $channelBaseUrl `
-        -OutputDir $channelOutputDir `
-        -AppName "AccessAPP" `
-        -RuntimeTag $Runtime `
-        -Channel $TargetChannel `
-        -ManifestFileName $ManifestFileName `
-        -CompressionLevel $CompressionLevel `
-        -StripSymbols:$StripSymbols `
-        -SevenZipPath $SevenZipPath
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "create-update-package.ps1 failed with exit code $LASTEXITCODE"
+    # Default: publish BOTH linux-arm and linux-x64 (packaged as linux-64).
+    $effectiveRuntimes = @()
+    if ($PSBoundParameters.ContainsKey("Runtimes") -and $Runtimes -and $Runtimes.Count -gt 0) {
+        $effectiveRuntimes = $Runtimes
+    }
+    elseif ($PSBoundParameters.ContainsKey("Runtime") -and -not [string]::IsNullOrWhiteSpace($Runtime) -and $Runtime -ne "linux-arm") {
+        # Backwards compatibility: if someone explicitly set -Runtime, publish only that runtime.
+        $effectiveRuntimes = @($Runtime)
+    }
+    else {
+        $effectiveRuntimes = @("linux-arm", "linux-x64")
     }
 
-    Write-Log "Published channel '$TargetChannel' version '$effectiveVersion'."
+    $runtimeTagMap = @{
+        "linux-arm" = "linux-arm"
+        "linux-x64" = "linux-64"
+        "linux-64"  = "linux-64"
+    }
+
+    foreach ($rid in $effectiveRuntimes) {
+        $runtimeTag = $runtimeTagMap[$rid]
+        if (-not $runtimeTag) { $runtimeTag = $rid }
+
+        $publishDir = Join-Path $RepoRootPath (Join-Path "temp_build\publish_accessapp_update" (Join-Path $TargetChannel $runtimeTag))
+
+        if (-not $SkipPublish) {
+            if (Test-Path $publishDir) {
+                Remove-Item -Path $publishDir -Recurse -Force
+            }
+            New-Item -ItemType Directory -Path $publishDir -Force | Out-Null
+
+            $selfContainedArg = if ($SelfContained) { "--self-contained" } else { "--no-self-contained" }
+            $publishArgs = @(
+                "publish"
+                $resolvedProject
+                "-c"
+                $Configuration
+                "-r"
+                $rid
+                $selfContainedArg
+                "--output"
+                $publishDir
+            )
+            if ($SkipClientBuild) {
+                $publishArgs += "-p:SkipClientAppBuild=true"
+            }
+
+            Write-Log "Publishing AccessAPP for channel '$TargetChannel' runtime '$rid'..."
+            $dotnetOut = & dotnet @publishArgs 2>&1
+            if ($dotnetOut) { $dotnetOut | ForEach-Object { Write-Host $_ } }
+            if ($LASTEXITCODE -ne 0) {
+                throw "dotnet publish failed with exit code $LASTEXITCODE"
+            }
+        }
+        elseif (-not (Test-Path $publishDir)) {
+            throw "SkipPublish was set but PublishDir does not exist: $publishDir"
+        }
+
+        Write-Log "Creating zip + manifest for channel '$TargetChannel' runtime '$runtimeTag' in: $channelOutputDir"
+        $packOut = & $packScript `
+            -PublishDir $publishDir `
+            -Version $effectiveVersion `
+            -BaseUrl $channelBaseUrl `
+            -OutputDir $channelOutputDir `
+            -AppName "AccessAPP" `
+            -RuntimeTag $runtimeTag `
+            -Channel $TargetChannel `
+            -ManifestFileName $ManifestFileName `
+            -CompressionLevel $CompressionLevel `
+            -StripSymbols:$StripSymbols `            -SevenZipPath $SevenZipPath 2>&1
+        if ($packOut) { $packOut | ForEach-Object { Write-Host $_ } }
+        if ($LASTEXITCODE -ne 0) {
+            throw "create-update-package.ps1 failed with exit code $LASTEXITCODE"
+        }
+    }
+
+    Write-Log "Published channel '$TargetChannel' version '$effectiveVersion' (runtimes: $($effectiveRuntimes -join ', '))."
     return $effectiveVersion
 }
+
 
 function Send-CompletionNotification {
     param([string]$Message)
@@ -339,6 +367,7 @@ try {
         Write-Log "Update feed published successfully."
         Write-Log "Version: $resultVersion"
         Write-Log "Manifest: $(Join-Path (Join-Path $WebRoot $Channel) $ManifestFileName)"
+        $resultVersion = $resultVersion | Select-Object -First 1
         Send-SmsNotification -Message ("Build {0} {1} published" -f $Channel, $resultVersion)
         Send-CompletionNotification -Message ("Build {0} {1} published" -f $Channel, $resultVersion)
         $scriptExitCode = 0
@@ -433,6 +462,7 @@ try {
                     $built.Add("$branch->$targetChannel ($builtVersion)") | Out-Null
                     Write-Log "Build completed for '$branch' -> '$targetChannel'."
                     if (-not $SmsSummaryOnly) {
+                        $builtVersion = $builtVersion | Select-Object -First 1
                         Send-SmsNotification -Message ("Build {0} {1} published" -f $branch, $builtVersion)
                     }
                 }

@@ -1,6 +1,7 @@
 using AccessAPP.Logging;
 using AccessAPP.Models;
 using AccessAPP.Services.HelperClasses;
+using AccessAPP.Services.LinuxBle;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Concurrent;
@@ -32,6 +33,9 @@ namespace AccessAPP.Services
 
         public bool CheckIfDeviceInBootMode(string gatewayIpAddress, string nodeMac)
         {
+            if (RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase))
+                return CheckIfDeviceInBootModeLinux(nodeMac);
+
             int chip = GetChipForMac(nodeMac);
             string endpoint = $"http://{gatewayIpAddress}/gatt/nodes/{nodeMac}/characteristics?chip={chip}";
 
@@ -72,6 +76,48 @@ namespace AccessAPP.Services
             return false;
         }
 
+        /// <summary>
+        /// Linux-native boot-mode check: queries BlueZ GATT objects for the
+        /// boot-mode characteristic UUID instead of calling the Cassia REST API.
+        /// </summary>
+        private bool CheckIfDeviceInBootModeLinux(string nodeMac)
+        {
+            var devicePath = BlueZHelpers.DevicePath(BlueZHelpers.GetDeviceAdapter(nodeMac), nodeMac);
+
+            var maxAttempts = Math.Max(1, RuntimeVariables.BOOTMODE_RETRY_COUNT);
+            var retryDelayMs = Math.Max(0, RuntimeVariables.BOOTMODE_RETRY_DELAY_MS);
+
+            for (int attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                try
+                {
+                    // Use DetectModeByGattAsync which checks _modeCache first.
+                    // ConnectToBleDevice pre-warms _modeCache with DetectModeByGattAsync
+                    // before returning, so on the common path this is an instant cache hit
+                    // with zero D-Bus calls — no delay between connect and login.
+                    // On cache miss (e.g. ServicesResolved timed out during connect) it
+                    // falls back to a full GATT scan bounded by a 5-second timeout.
+                    using var bootCheckCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    var mode = BlueZHelpers.DetectModeByGattAsync(devicePath, bootCheckCts.Token)
+                        .WaitAsync(bootCheckCts.Token).GetAwaiter().GetResult();
+
+                    return mode == BlueZHelpers.BleMode.Bootloader;
+                }
+                catch (Exception ex) when (attempt < maxAttempts)
+                {
+                    AppLog.Warn($"CheckIfDeviceInBootModeLinux: attempt {attempt} failed for {nodeMac}: {ex.Message}");
+                    if (retryDelayMs > 0) Thread.Sleep(retryDelayMs);
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Error($"Error checking boot mode (linux) for {nodeMac}", ex);
+                    return false;
+                }
+            }
+
+            return false;
+        }
+
         public async Task<bool> ActorBootCheck(string gatewayIpAddress, string nodeMac)
         {
             try
@@ -79,7 +125,7 @@ namespace AccessAPP.Services
                 string hexData = "0117000700D9E7"; // Command to trigger boot mode check
                 //CassiaReadWriteService cassiaReadWriteService = new CassiaReadWriteService();
 
-                using (var cassiaListener = _notificationService)
+                var cassiaListener = _notificationService;
                 {
                     var bootCheckResultTask = new TaskCompletionSource<bool>();
 
@@ -292,7 +338,7 @@ return false;
 
         }
 
-        public void InitializeNotificationSubscription(string macAddress, CassiaNotificationService cassiaNotificationService)
+        public void InitializeNotificationSubscription(string macAddress, BleAbstractions.IBleNotificationService cassiaNotificationService)
         {
             // Unsubscribe from all previous subscriptions
             //foreach (var subscribedMac in _subscribedMacAddresses)
@@ -347,7 +393,7 @@ return false;
             });
         }
 
-        public void UnsubscribeNotification(string macAddress, CassiaNotificationService cassiaNotificationService)
+        public void UnsubscribeNotification(string macAddress, BleAbstractions.IBleNotificationService cassiaNotificationService)
         {
             // Check if the MAC address is subscribed
             ConcurrentQueue<byte[]> _tmpCheck = null;

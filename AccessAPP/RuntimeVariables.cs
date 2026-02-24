@@ -64,7 +64,10 @@ namespace AccessAPP
         // Extra delay added after a failed connect (in addition to backoff).
         public static int UPGRADE_DELAY_AFTER_FAILED_CONNECT_MS = 1500;
         // Timeout per connect attempt.
-        public static int UPGRADE_CONNECT_ATTEMPT_TIMEOUT_MS = 12000;
+        // Must exceed: pre-disconnect wait (6 s) + ConnectAsync (5 s) + Connected poll (1.5 s)
+        // + LINUX_BLE_SERVICES_RESOLVED_TIMEOUT_MS (10 s) + stabilize (1.2 s) + login (8 s) = ~32 s.
+        // 35 s gives a comfortable margin.
+        public static int UPGRADE_CONNECT_ATTEMPT_TIMEOUT_MS = 35000;
         // Delay after connect before login (session stabilization).
         public static int UPGRADE_CONNECT_STABILIZATION_DELAY_MS = 1200;
         // Number of /gap/nodes state checks after a non-OK connect.
@@ -202,6 +205,57 @@ namespace AccessAPP
         public static int UPGRADE_ACTOR_UPLOAD_RETRY_DELAY_MS = 3000;
         public static int UPGRADE_ACTOR_WRITE_SLEEP_MS = 1;
 
-        
+        // BLE backend selection.
+        // "cassia"       = use the Cassia gateway REST/SSE API (default).
+        // "linux-native" = use Linux BlueZ via D-Bus (Tmds.DBus) directly.
+        public static string BLE_BACKEND = "cassia";
+
+        // Linux native BLE: HCI adapter name exposed by BlueZ (e.g. "hci0", "hci1").
+        // Used as the default adapter for connections and as the fallback when LINUX_BLE_ADAPTERS is empty.
+        public static string LINUX_BLE_ADAPTER = "hci0";
+
+        // Linux native BLE: comma-separated list of HCI adapters to scan simultaneously (e.g. "hci0,hci1").
+        // When non-empty this overrides LINUX_BLE_ADAPTER for scanning; LINUX_BLE_ADAPTER is still used
+        // as the fallback for connection if no per-device adapter has been recorded by the scanner.
+        public static string LINUX_BLE_ADAPTERS = "hci0";
+
+        /// <summary>
+        /// Returns the effective HCI adapter list for scanning.
+        /// Uses LINUX_BLE_ADAPTERS (comma-separated) when set; falls back to LINUX_BLE_ADAPTER.
+        /// </summary>
+        public static string[] GetLinuxBleAdapterList() =>
+            !string.IsNullOrWhiteSpace(LINUX_BLE_ADAPTERS)
+                ? LINUX_BLE_ADAPTERS.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                : [LINUX_BLE_ADAPTER];
+
+        // Linux native BLE: MAC address prefix filter for scanning (empty = no filter).
+        public static string LINUX_BLE_MAC_PREFIX = "10:B9:F7";
+
+        // Linux native BLE: how long to wait for BlueZ ServicesResolved=true after connect (ms).
+        // In normal conditions GATT discovery finishes within 5-10 s.  Post-firmware-boot can
+        // take longer, but the connect+login retry loop now handles that via bootModeIsRetryable.
+        // 10 s is a balanced default; raise if devices in your environment are consistently slow.
+        public static int LINUX_BLE_SERVICES_RESOLVED_TIMEOUT_MS = 10000;
+
+        // Linux native BLE: characteristic handle used for BLE write/notify operations.
+        // This is the GATT handle number (decimal) of the main control characteristic.
+        public static int LINUX_BLE_CONTROL_HANDLE = 19;
+
+        // Linux native BLE: characteristic handle for enabling sensor notifications (CCCD).
+        public static int LINUX_BLE_NOTIFY_CCCD_SENSOR_HANDLE = 15;
+
+        // Linux native BLE: characteristic handle for enabling actor notifications (CCCD).
+        public static int LINUX_BLE_NOTIFY_CCCD_ACTOR_HANDLE = 16;
+
+        // Linux native BLE: when writing, how long to wait for the characteristic handle to appear after connect (ms).
+        public static int LINUX_BLE_WRITE_FIND_CHAR_TIMEOUT_MS = 1500;
+
+        // Linux native BLE: request a shorter BLE connection interval after connecting using btmgmt/hcitool.
+        // Reduces per-packet write latency from ~45 ms to 15–30 ms at the cost of slightly higher radio duty cycle.
+        // WARNING: some device firmware disconnects when it receives a connection parameter update request it does
+        //          not expect (especially during the upgrade login phase).  Disabled by default; enable only after
+        //          confirming the target firmware handles conn-update correctly.
+        public static bool LINUX_BLE_ENABLE_CI_UPDATE = false;
+
     }
 }

@@ -1,11 +1,58 @@
+using AccessAPP;
 using AccessAPP.Services;
+using AccessAPP.Services.BleAbstractions;
+using AccessAPP.Services.LinuxBle;
+using AccessAPP.Services.HelperClasses;
 using AccessAPP.Models;
 using AccessAPP.Logging;
 using Serilog;
+using System.Runtime.InteropServices;
 
-const string VERSION = "0.2.0";
+// ── Native library resolver ────────────────────────────────────────────────
+// DllImport("BootloaderUtilMultiThread") targets platform-specific binaries:
+//   Windows : BootloaderUtilMultiThread.dll   (found automatically by the CLR)
+//   Linux x64: libBootloaderUtilMultiThread_linux-x64.so
+//   Linux ARM : libBootloaderUtilMultiThread_arm.so
+// SetDllImportResolver must be called from within the assembly that owns
+// the DllImport (AccessAPP), which is also the executing assembly here.
+NativeLibrary.SetDllImportResolver(typeof(Bootloader_Utils).Assembly,
+    (libraryName, assembly, searchPath) =>
+    {
+        if (!libraryName.Equals("BootloaderUtilMultiThread", StringComparison.OrdinalIgnoreCase))
+            return IntPtr.Zero; // let default logic handle everything else
+
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            return IntPtr.Zero; // Windows: CLR finds BootloaderUtilMultiThread.dll automatically
+
+        var arch = RuntimeInformation.ProcessArchitecture;
+        var suffix = (arch == Architecture.Arm || arch == Architecture.Arm64) ? "arm" : "linux-x64";
+        var soName = $"libBootloaderUtilMultiThread_{suffix}.so";
+
+        if (NativeLibrary.TryLoad(soName, assembly, searchPath, out var handle))
+        {
+            AppLog.Info($"Native library loaded: {soName} (arch={arch})");
+            return handle;
+        }
+
+        AppLog.Warn($"Native library not found: {soName} (arch={arch}) — trying generic fallback");
+
+        // Last-resort fallback: try a non-arch-suffixed name
+        if (NativeLibrary.TryLoad("libBootloaderUtilMultiThread.so", assembly, searchPath, out handle))
+        {
+            AppLog.Info("Native library loaded: libBootloaderUtilMultiThread.so (generic fallback)");
+            return handle;
+        }
+
+        AppLog.Error("Native library load failed: neither arch-specific nor generic libBootloaderUtilMultiThread.so found. Deploy directory is missing the .so file.");
+        return IntPtr.Zero;
+    });
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Migrate persistent files from old base-directory location to the state directory on first run after update.
+MigrateToStateDir(Path.Combine(builder.Environment.ContentRootPath, "mqtt.json"),            AccessAppPaths.MqttConfig);
+MigrateToStateDir(Path.Combine(builder.Environment.ContentRootPath, "runtime.json"),         AccessAppPaths.RuntimeConfig);
+MigrateToStateDir(Path.Combine(builder.Environment.ContentRootPath, "Logs", "upgrade_logs.txt"), AccessAppPaths.UpgradeLog);
 
 LoggingBootstrapper.TryConfigureSerilog(builder);
 
@@ -18,12 +65,41 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddHttpClient();
 
 // Register services
+
+// ── Cassia BLE backend (concrete classes) ──────────────────────────────────
+builder.Services.AddSingleton<CassiaConnectService>();
+builder.Services.AddSingleton<CassiaNotificationService>();
+builder.Services.AddSingleton<CassiaReadWriteService>();
+
+// ── Linux native BLE backend ───────────────────────────────────────────────
+builder.Services.AddSingleton<LinuxBleConnectionService>();
+builder.Services.AddSingleton<LinuxBleNotificationService>();
+builder.Services.AddSingleton<LinuxBleReadWriteService>();
+builder.Services.AddSingleton<LinuxNativeScanDevice>();
+
+// ── BLE interface → concrete mapping (resolved lazily after runtime.json) ─
+// Factories run on first resolution, which happens AFTER LoadFromDisk() below,
+// so BLE_BACKEND already reflects any override from runtime.json.
+builder.Services.AddSingleton<IBleConnectionService>(sp =>
+    RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase)
+        ? sp.GetRequiredService<LinuxBleConnectionService>()
+        : (IBleConnectionService)sp.GetRequiredService<CassiaConnectService>());
+
+builder.Services.AddSingleton<IBleNotificationService>(sp =>
+    RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase)
+        ? sp.GetRequiredService<LinuxBleNotificationService>()
+        : (IBleNotificationService)sp.GetRequiredService<CassiaNotificationService>());
+
+builder.Services.AddSingleton<IBleReadWriteService>(sp =>
+    RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase)
+        ? sp.GetRequiredService<LinuxBleReadWriteService>()
+        : (IBleReadWriteService)sp.GetRequiredService<CassiaReadWriteService>());
+
+// ── Shared / always-on services ────────────────────────────────────────────
 builder.Services.AddSingleton<CassiaScanService>();
 builder.Services.AddSingleton<ScanBleDevice>();
-builder.Services.AddSingleton<CassiaConnectService>();
 builder.Services.AddSingleton<CassiaPinCodeService>();
 builder.Services.AddSingleton<DeviceStorageService>();
-builder.Services.AddSingleton<CassiaNotificationService>();
 builder.Services.AddSingleton<CassiaFirmwareUpgradeService>();
 builder.Services.AddScoped<FirmwareUploadService>();
 builder.Services.AddSingleton<FirmwareManifestService>();
@@ -50,10 +126,9 @@ builder.Services.AddSingleton<MqttConfigStore>(sp =>
     var cfg = sp.GetRequiredService<IConfiguration>();
     var env = sp.GetRequiredService<IHostEnvironment>();
 
-    // Put in appsettings.json if you want, fallback is fine on Cassia
     var path = cfg.GetValue<string>("Mqtt:ConfigPath");
     if (string.IsNullOrWhiteSpace(path))
-        path = "mqtt.json";
+        path = AccessAppPaths.MqttConfig;
     if (!Path.IsPathRooted(path))
         path = Path.Combine(env.ContentRootPath, path);
 
@@ -81,10 +156,24 @@ using (var scope = app.Services.CreateScope())
     if (loadResult.errors.Count > 0)
         AppLog.Warn($"Runtime variables load errors: {string.Join(", ", loadResult.errors.Select(kv => $"{kv.Key}={kv.Value}"))}");
 
-    var cassiaConnectService = serviceProvider.GetRequiredService<CassiaConnectService>();
-    var cassiaNotificationService = serviceProvider.GetRequiredService<CassiaNotificationService>();
-    cassiaNotificationService.semaphore = cassiaConnectService.semaphore;
-    var scanBleDevice = serviceProvider.GetRequiredService<ScanBleDevice>();
+    // Start the BLE backend chosen by BLE_BACKEND (evaluated after runtime.json is loaded).
+    if (RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase))
+    {
+        AppLog.Info("BLE backend: linux-native (BlueZ D-Bus)");
+        // Constructing the singleton starts the BlueZ scan loop.
+        serviceProvider.GetRequiredService<LinuxNativeScanDevice>();
+    }
+    else
+    {
+        AppLog.Info("BLE backend: cassia (REST/SSE)");
+        // Wire the shared semaphore so the notification SSE listener serialises
+        // against the connect service (original behaviour).
+        var cassiaConnectService = serviceProvider.GetRequiredService<CassiaConnectService>();
+        var cassiaNotificationService = serviceProvider.GetRequiredService<CassiaNotificationService>();
+        cassiaNotificationService.semaphore = cassiaConnectService.semaphore;
+        // Constructing the singleton starts the Cassia SSE scan loops.
+        serviceProvider.GetRequiredService<ScanBleDevice>();
+    }
 
     // Start MQTT service
     var mqttService = serviceProvider.GetRequiredService<IMqttService>();
@@ -531,4 +620,19 @@ app.Lifetime.ApplicationStopping.Register(() =>
 
 app.Run();
 
+static void MigrateToStateDir(string oldPath, string newPath)
+{
+    if (!File.Exists(oldPath) || File.Exists(newPath))
+        return;
+    try
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(newPath)!);
+        File.Move(oldPath, newPath);
+        Console.WriteLine($"[info] Migrated {oldPath} -> {newPath}");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[warn] Could not migrate {oldPath}: {ex.Message}");
+    }
+}
 
