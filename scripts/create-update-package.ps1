@@ -207,15 +207,15 @@ try {
 
     # Ensure latest exists
     if (-not $manifest.ContainsKey("latest") -or -not $manifest.latest) {
-        $manifest.latest = New-CIHashtable
-        $manifest.latest["version"] = $Version
-        $manifest.latest["channel"] = $Channel
-        $manifest.latest["builds"] = New-CIHashtable
+        $manifest["latest"] = New-CIHashtable
+        $manifest["latest"]["version"] = $Version
+        $manifest["latest"]["channel"] = $Channel
+        $manifest["latest"]["builds"] = New-CIHashtable
     }
 
     # Normalize legacy manifest into builds (assume linux-arm when only legacy fields exist)
     if (-not $manifest.latest.ContainsKey("builds") -or -not $manifest.latest.builds) {
-        $manifest.latest.builds = New-CIHashtable
+        $manifest.latest["builds"] = New-CIHashtable
     }
     if ($manifest.latest.ContainsKey("url") -and -not $manifest.latest.builds.ContainsKey("linux-arm")) {
         $b = New-CIHashtable
@@ -227,14 +227,14 @@ try {
         $manifest.latest.builds["linux-arm"] = $b
     }
 
-    $manifest.app = $AppName
-    $manifest.channel = $Channel
-    $manifest.generatedAtUtc = $publishedAt
+    $manifest["app"] = $AppName
+    $manifest["channel"] = $Channel
+    $manifest["generatedAtUtc"] = $publishedAt
 
     # Update latest
-    $manifest.latest.version = $Version
-    $manifest.latest.channel = $Channel
-    $manifest.latest.publishedAtUtc = $publishedAt
+    $manifest.latest["version"] = $Version
+    $manifest.latest["channel"] = $Channel
+    $manifest.latest["publishedAtUtc"] = $publishedAt
     $manifest.latest.builds[$RuntimeTag] = $artifact
 
     # Keep legacy top-level latest fields pointing to linux-arm if available, otherwise current runtime.
@@ -243,13 +243,13 @@ try {
         $legacyKey = $RuntimeTag
     }
     $legacy = $manifest.latest.builds[$legacyKey]
-    $manifest.latest.url = $legacy.url
-    $manifest.latest.sha256 = $legacy.sha256
-    $manifest.latest.sizeBytes = $legacy.sizeBytes
+    $manifest.latest["url"] = $legacy.url
+    $manifest.latest["sha256"] = $legacy.sha256
+    $manifest.latest["sizeBytes"] = $legacy.sizeBytes
 
     # Update releases
     if (-not $manifest.ContainsKey("releases") -or -not $manifest.releases) {
-        $manifest.releases = @()
+        $manifest["releases"] = @()
     }
 
     $release = $null
@@ -268,7 +268,7 @@ try {
         $manifest.releases += $release
     }
 
-    if (-not $release.ContainsKey("builds") -or -not $release.builds) { $release.builds = New-CIHashtable }
+    if (-not $release.ContainsKey("builds") -or -not $release.builds) { $release["builds"] = New-CIHashtable }
     if ($release.ContainsKey("url") -and -not $release.builds.ContainsKey("linux-arm")) {
         $rb = New-CIHashtable
         $rb["runtime"] = "linux-arm"
@@ -278,20 +278,20 @@ try {
         $rb["publishedAtUtc"] = $release.publishedAtUtc
         $release.builds["linux-arm"] = $rb
     }
-    $release.channel = $Channel
-    $release.publishedAtUtc = $publishedAt
+    $release["channel"] = $Channel
+    $release["publishedAtUtc"] = $publishedAt
     $release.builds[$RuntimeTag] = $artifact
 
     # Keep legacy fields for the release as linux-arm if available.
     $legacyKey2 = "linux-arm"
     if (-not $release.builds.ContainsKey($legacyKey2)) { $legacyKey2 = $RuntimeTag }
     $legacy2 = $release.builds[$legacyKey2]
-    $release.url = $legacy2.url
-    $release.sha256 = $legacy2.sha256
-    $release.sizeBytes = $legacy2.sizeBytes
+    $release["url"] = $legacy2.url
+    $release["sha256"] = $legacy2.sha256
+    $release["sizeBytes"] = $legacy2.sizeBytes
 
     # Sort releases newest first
-    $manifest.releases = @(
+    $manifest["releases"] = @(
         $manifest.releases | Sort-Object -Property @{Expression = { $_.version }; Descending = $true}, @{Expression = { $_.publishedAtUtc }; Descending = $true}
     )
 
