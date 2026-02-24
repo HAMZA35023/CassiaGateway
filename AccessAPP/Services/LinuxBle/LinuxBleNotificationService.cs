@@ -32,7 +32,15 @@ public class LinuxBleNotificationService : IBleNotificationService
     // D-Bus notification subscription per mac (one per mac, covers the notify characteristic)
     private readonly ConcurrentDictionary<string, IDisposable> _notifySubscriptions = new();
     private readonly ConcurrentDictionary<string, IGattCharacteristic1> _notifyCharacteristics = new();
-    private readonly SemaphoreSlim _subLock = new(1, 1);
+
+    // Per-MAC semaphore so that EnsureNotifyingAsync for device A (hci0) and device B (hci1)
+    // run CONCURRENTLY.  A process-wide (1,1) semaphore serialised all StartNotifyAsync calls
+    // (each up to 10 s) which caused login-notification misses when both chips were active.
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _subLocksByMac =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    private SemaphoreSlim GetSubLock(string macAddress) =>
+        _subLocksByMac.GetOrAdd(macAddress, _ => new SemaphoreSlim(1, 1));
 
     public LinuxBleNotificationService(ILogger<LinuxBleNotificationService> logger)
     {
@@ -121,16 +129,17 @@ public class LinuxBleNotificationService : IBleNotificationService
             return;
         }
 
-        _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — acquiring _subLock", macAddress);
+        _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — acquiring per-MAC subLock", macAddress);
+        var subLock = GetSubLock(macAddress);
         var lockSw = System.Diagnostics.Stopwatch.StartNew();
-        await _subLock.WaitAsync();
+        await subLock.WaitAsync();
         lockSw.Stop();
-        _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — _subLock acquired after {Ms}ms", macAddress, lockSw.ElapsedMilliseconds);
+        _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — per-MAC subLock acquired after {Ms}ms", macAddress, lockSw.ElapsedMilliseconds);
         try
         {
             if (_notifySubscriptions.ContainsKey(macAddress))
             {
-                _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — already subscribed (race), releasing lock", macAddress);
+                _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — already subscribed (race), releasing per-MAC lock", macAddress);
                 return;
             }
 
@@ -246,8 +255,8 @@ public class LinuxBleNotificationService : IBleNotificationService
         }
         finally
         {
-            _subLock.Release();
-            _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — _subLock released", macAddress);
+            GetSubLock(macAddress).Release();
+            _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — per-MAC subLock released", macAddress);
         }
     }
 
