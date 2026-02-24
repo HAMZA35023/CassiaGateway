@@ -39,13 +39,22 @@ public class LinuxBleConnectionService : IBleConnectionService
         int chip = -1, bool useGlobalLock = true, int? discoverGattOverride = null,
         CancellationToken ct = default)
     {
+        // Declared outside the try block so that the OperationCanceledException catch can
+        // call DisconnectAsync() to abort any pending BlueZ ConnectAsync() D-Bus operation.
+        // WaitAsync(ct) cancels the C# awaiter but leaves the underlying D-Bus call running;
+        // calling DisconnectAsync() here is the only way to tell BlueZ to stop connecting.
+        IDevice1? _ctbDevice = null;
+        string? _ctbDevicePath = null;
+
         try
         {
             // Round-robin across configured HCI adapters so that parallel upgrade workers
             // are spread evenly instead of all piling onto the same adapter.
             var bleAdapter = BlueZHelpers.GetNextConnectAdapter(macAddress);
             var devicePath = BlueZHelpers.DevicePath(bleAdapter, macAddress);
+            _ctbDevicePath = devicePath;
             var device = await BlueZHelpers.GetDeviceAsync(devicePath);
+            _ctbDevice = device;
 
             // ── Guard: wait for BlueZ to finish any in-progress disconnect ──────────────
             // When a connect attempt immediately follows a disconnect (precheck or retry),
@@ -216,12 +225,28 @@ public class LinuxBleConnectionService : IBleConnectionService
         }
         catch (OperationCanceledException)
         {
+            // WaitAsync(ct) timed out on the caller's side, but the underlying BlueZ ConnectAsync()
+            // D-Bus operation may still be running.  Issuing DisconnectAsync() signals BlueZ to
+            // abort its pending connection attempt, so the next connect attempt starts from a clean
+            // state instead of finding BlueZ already "connecting" to the device.
+            if (_ctbDevice != null)
+            {
+                try
+                {
+                    _logger.LogDebug("LinuxBLE: {Mac} connect canceled — issuing DisconnectAsync to abort pending BlueZ ConnectAsync", macAddress);
+                    using var abortCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                    await _ctbDevice.DisconnectAsync().WaitAsync(abortCts.Token);
+                }
+                catch { /* best-effort; BlueZ may already be cleaning up */ }
+            }
             BlueZHelpers.ClearConnectedAdapter(macAddress);
+            if (_ctbDevicePath != null) BlueZHelpers.InvalidateCharCache(_ctbDevicePath);
             return new ResponseModel { MacAddress = macAddress, Status = HttpStatusCode.RequestTimeout, Data = "Connect canceled" };
         }
         catch (Exception ex)
         {
             BlueZHelpers.ClearConnectedAdapter(macAddress);
+            if (_ctbDevicePath != null) BlueZHelpers.InvalidateCharCache(_ctbDevicePath);
             _logger.LogError(ex, "LinuxBLE: ConnectToBleDevice failed for {Mac}", macAddress);
             return new ResponseModel
             {
@@ -261,6 +286,14 @@ public class LinuxBleConnectionService : IBleConnectionService
             return new ResponseModel { MacAddress = macAddress, Status = HttpStatusCode.OK, Data = "disconnect attempted" };
         }
     }
+
+    /// <summary>
+    /// Remove the device from BlueZ's D-Bus object tree after repeated connect failures.
+    /// This cancels any BlueZ-internal pending connect and forces a fresh re-discovery,
+    /// so the next attempt does not inherit stale HCI / GATT state from previous attempts.
+    /// </summary>
+    public Task CleanupAfterFailedConnectAsync(string macAddress)
+        => BlueZHelpers.TryRemoveDeviceAsync(macAddress);
 
     // ── Login ────────────────────────────────────────────────────────────────
 

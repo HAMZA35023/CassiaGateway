@@ -34,7 +34,11 @@ internal sealed class SettingsRestoreStep : IDeviceUpgradeStep
 
             if (dev.requiresConfigRestore)
             {
-                dev.shouldRetry = false;
+                // Keep shouldRetry=true: the backup is missing because the device started
+                // in boot mode and the backup step couldn't run (or a transient failure).
+                // A retry will re-attempt the backup step from Application mode and the
+                // restore can then succeed.  Disabling retries here would prevent the actor
+                // upgrade (a separate concern) from being retried as well.
                 dev.finalUpgradeResult = "Warn";
             }
             return true;

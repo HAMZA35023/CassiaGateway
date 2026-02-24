@@ -759,7 +759,13 @@ namespace AccessAPP.Services
                     bool skipDisconnect = ShouldSkipDisconnectAfterFailedConnect(last);
 
                     if (touchedGateway && !skipDisconnect)
+                    {
                         await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, chip).ConfigureAwait(false);
+                        // On attempt 2+ ask the platform to remove any stale BlueZ / HCI state so
+                        // the next attempt re-discovers the device from scratch.
+                        if (attempt >= 2)
+                            await _connectService.CleanupAfterFailedConnectAsync(macAddress).ConfigureAwait(false);
+                    }
                     else if (touchedGateway && skipDisconnect)
                         AppLog.Debug($"{stageName}: skipping per-attempt disconnect for {macAddress} because status={(int)last} {last}.");
                 }
@@ -770,7 +776,11 @@ namespace AccessAPP.Services
                     failedThisAttempt = true;
 
                     if (touchedGateway)
+                    {
                         await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, chip).ConfigureAwait(false);
+                        if (attempt >= 2)
+                            await _connectService.CleanupAfterFailedConnectAsync(macAddress).ConfigureAwait(false);
+                    }
 
                     UpgradeLogger.Log(logId, macAddress, stageName, $"Timeout (attempt {attempt}/{maxAttempts})", FirmwareVersion);
                     AppLog.Debug($"{stageName}: timeout for {macAddress} on attempt {attempt}/{maxAttempts}.");
@@ -783,7 +793,11 @@ namespace AccessAPP.Services
                     AppLog.Debug($"{stageName}: exception for {macAddress} on attempt {attempt}/{maxAttempts}: {ex.Message}");
 
                     if (touchedGateway)
+                    {
                         await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, chip).ConfigureAwait(false);
+                        if (attempt >= 2)
+                            await _connectService.CleanupAfterFailedConnectAsync(macAddress).ConfigureAwait(false);
+                    }
                 }
                 finally
                 {

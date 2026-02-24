@@ -44,4 +44,12 @@ public interface IBleConnectionService
 
     /// <summary>Return locally stored paired device MAC addresses.</summary>
     List<string> GetPairedDevices();
+
+    /// <summary>
+    /// Platform-specific best-effort cleanup after a connect attempt fails.
+    /// On Linux native BLE this removes the device from BlueZ's D-Bus object tree so it is
+    /// re-discovered fresh; on Cassia mode this is a no-op.
+    /// Errors are swallowed — callers do not need to handle failures.
+    /// </summary>
+    Task CleanupAfterFailedConnectAsync(string macAddress) => Task.CompletedTask;
 }

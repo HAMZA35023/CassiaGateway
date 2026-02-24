@@ -15,6 +15,11 @@ public interface IAdapter1 : IDBusObject
     /// Pass an empty dictionary to clear the filter.
     /// </summary>
     Task SetDiscoveryFilterAsync(IDictionary<string, object> filter);
+    /// <summary>
+    /// Remove a device from the adapter's object tree, forcing fresh re-discovery on the next scan.
+    /// Corresponds to org.bluez.Adapter1.RemoveDevice(object device).
+    /// </summary>
+    Task RemoveDeviceAsync(ObjectPath device);
     Task<T> GetAsync<T>(string prop);
     Task<IDictionary<string, object>> GetAllAsync();
     Task SetAsync(string prop, object val);

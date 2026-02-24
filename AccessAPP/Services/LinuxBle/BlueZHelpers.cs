@@ -87,6 +87,56 @@ internal static class BlueZHelpers
         _connectedAdapters.TryRemove(mac, out _);
 
     /// <summary>
+    /// Best-effort: disconnect any pending BlueZ connect attempt and remove the device
+    /// from BlueZ's object tree, forcing a fresh re-discovery on the next scan.
+    /// Call this after repeated connect failures to clear stale HCI / D-Bus state.
+    /// All errors are swallowed — this is purely opportunistic cleanup.
+    /// </summary>
+    public static async Task TryRemoveDeviceAsync(string macAddress)
+    {
+        try
+        {
+            var adapter = GetDeviceAdapter(macAddress);
+            var dp = DevicePath(adapter, macAddress);
+
+            // 1. Cancel any pending BlueZ ConnectAsync by issuing a Disconnect.
+            try
+            {
+                var dev = await GetDeviceAsync(dp);
+                using var dCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                await dev.DisconnectAsync().WaitAsync(dCts.Token);
+            }
+            catch { /* device may already be gone or disconnected — ignore */ }
+
+            // 2. Wipe all C# caches for this device path.
+            ClearConnectedAdapter(macAddress);
+            InvalidateCharCache(dp);
+
+            // 3. Ask BlueZ to remove the device object from its D-Bus tree.
+            //    After removal BlueZ will re-add the device as soon as it sees
+            //    another advertisement — which is exactly what we want on the
+            //    next connect attempt.
+            try
+            {
+                var adp = await GetAdapterAsync(adapter);
+                using var rCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                await adp.RemoveDeviceAsync(new ObjectPath(dp)).WaitAsync(rCts.Token);
+                Console.WriteLine($"[BlueZHelpers] TryRemoveDevice: removed {macAddress} from {adapter}");
+            }
+            catch (Tmds.DBus.DBusException dbex)
+            {
+                // "Does Not Exist" is expected if the device was already removed or
+                // never discovered in this session — not an error worth logging loudly.
+                Console.WriteLine($"[BlueZHelpers] TryRemoveDevice: D-Bus error removing {macAddress}: {dbex.ErrorName} — {dbex.Message}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[BlueZHelpers] TryRemoveDevice: unexpected exception for {macAddress}: {ex.Message}");
+        }
+    }
+
+    /// <summary>
     /// Return the HCI adapter to use for <paramref name="mac"/>.
     /// Prefers the connection-pinned adapter (set by <see cref="SetConnectedAdapter"/>),
     /// then the last-scanned adapter, then <see cref="RuntimeVariables.LINUX_BLE_ADAPTER"/>.

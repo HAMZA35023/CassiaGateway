@@ -821,6 +821,19 @@ return true;
                         await Task.Delay(1500);
                     }
 
+                    // Device reconnected in Application mode — re-login before the next
+                    // JumpToBootloader attempt.  The device resets its authenticated session
+                    // on every disconnect, so sending JumpToBootloader on an unauthenticated
+                    // connection is either rejected or causes unexpected device behaviour
+                    // (crash / prolonged unresponsiveness) that makes all subsequent connect
+                    // attempts fail.
+                    if (attempt < bootJumpMaxAttempts)
+                    {
+                        var reloginOk = await LoginWithRetryAsync();
+                        if (!reloginOk)
+                            AppLog.Warn($"EnsureBootMode: re-login failed for {nodeMac} on attempt {attempt}/{bootJumpMaxAttempts} — next jump may be rejected");
+                    }
+
                     // Try again
                     await Task.Delay(3000);
                 }
