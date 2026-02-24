@@ -424,7 +424,25 @@ try
                     // Only run the post FW read once firmware work is fully satisfied.
                     if (anyFirmwarePlanned && firmwareDone)
                     {
-                        await VerifyPostUpgradeFirmwareAsync(dev, mac, logId ?? "", reuseExistingConnection: false).ConfigureAwait(false);
+                        // Reuse the connection that PostActorStep kept open (DALI-master path),
+                        // or fall back to a fresh connect when it was not kept.
+                        bool reuseConn = dev.ConnectionLeftOpenForFwRead;
+                        dev.ConnectionLeftOpenForFwRead = false;
+                        await VerifyPostUpgradeFirmwareAsync(dev, mac, logId ?? "", reuseExistingConnection: reuseConn).ConfigureAwait(false);
+
+                        if (reuseConn)
+                        {
+                            // Final disconnect — the one the user wants here, after the FW read.
+                            await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, mac, 0, chip: GetChipForMac(mac)).ConfigureAwait(false);
+                            UpgradeLogger.Log(logId, mac, "Disconnected at the end of upgrade process", "Info", dev.FirmwareVersion);
+                        }
+                    }
+                    else if (dev.ConnectionLeftOpenForFwRead)
+                    {
+                        // Safety: FW read won't run but the pipeline left the connection open.
+                        dev.ConnectionLeftOpenForFwRead = false;
+                        await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, mac, 0, chip: GetChipForMac(mac)).ConfigureAwait(false);
+                        UpgradeLogger.Log(logId, mac, "Disconnected at the end of upgrade process", "Info", dev.FirmwareVersion);
                     }
                 }
 

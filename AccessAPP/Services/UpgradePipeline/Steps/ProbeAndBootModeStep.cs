@@ -210,6 +210,8 @@ internal sealed class ProbeAndBootModeStep : IDeviceUpgradeStep
             ctx.DetectorNameLogged = true;
         }
 
+        // Signal to downstream steps that a live BLE session is available for reuse.
+        ctx.PipelineSessionAlive = true;
         return true;
     }
 }

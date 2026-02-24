@@ -138,7 +138,11 @@ internal sealed class PostActorStep : IDeviceUpgradeStep
             }
         }
 
-        await svc.ConnectService.DisconnectFromBleDevice(svc.GatewayIpAddress, ctx.MacAddress, 0, chip: ctx.ChipId).ConfigureAwait(false);
+        // Keep the connection open so the post-upgrade FW verification read can reuse it
+        // without a reconnect round-trip. The outer scope (ProcessSingleDeviceUpgradeAsync)
+        // owns the final disconnect after the FW read completes.
+        ctx.KeepConnectionOpen = true;
+        ctx.Dev.ConnectionLeftOpenForFwRead = true;
         return true;
     }
 }

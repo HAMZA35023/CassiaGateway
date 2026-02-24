@@ -1168,12 +1168,17 @@ await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chi
             {
                 // Post-upgrade FW read is handled after all firmware work is complete (outside this attempt).
 
-                // Always disconnect at the end, identical to the original implementation.
-                await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0, chip: ctx.ChipId).ConfigureAwait(false);
-                UpgradeLogger.Log(logId, macAddress, "Disconnected at the end of upgrade process", "Info", FirmwareVersion);
-                if (RuntimeVariables.UPGRADE_DELAY_AFTER_END_DISCONNECT_MS > 0)
-                    await Task.Delay(RuntimeVariables.UPGRADE_DELAY_AFTER_END_DISCONNECT_MS).ConfigureAwait(false);
-    
+                // Skip the disconnect when PostActorStep signalled that the connection should
+                // be kept open for the post-upgrade FW verification read. The outer scope
+                // (ProcessSingleDeviceUpgradeAsync) will perform the final disconnect after
+                // the FW read completes.
+                if (!ctx.KeepConnectionOpen)
+                {
+                    await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 0, chip: ctx.ChipId).ConfigureAwait(false);
+                    UpgradeLogger.Log(logId, macAddress, "Disconnected at the end of upgrade process", "Info", FirmwareVersion);
+                    if (RuntimeVariables.UPGRADE_DELAY_AFTER_END_DISCONNECT_MS > 0)
+                        await Task.Delay(RuntimeVariables.UPGRADE_DELAY_AFTER_END_DISCONNECT_MS).ConfigureAwait(false);
+                }
             }
         }
 

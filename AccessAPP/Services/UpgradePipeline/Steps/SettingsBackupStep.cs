@@ -44,7 +44,7 @@ internal sealed class SettingsBackupStep : IDeviceUpgradeStep
         {
             bool reuseSession =
                 RuntimeVariables.UPGRADE_OPTIMIZE_RECONNECT_FLOW &&
-                dev.PrecheckSessionAlive &&
+                (dev.PrecheckSessionAlive || ctx.PipelineSessionAlive) &&
                 !ctx.IsInBoot;
 
             bool loggedInViaReuse = false;
