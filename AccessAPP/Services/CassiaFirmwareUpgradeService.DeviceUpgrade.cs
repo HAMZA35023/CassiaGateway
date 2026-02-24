@@ -179,7 +179,7 @@ try
                 {
                     // Session already closed in precheck fallback path; avoid redundant disconnect call.
                 }
-                else if (probeConnected && !(RuntimeVariables.UPGRADE_OPTIMIZE_RECONNECT_FLOW && precheckSessionAlive && !isInBootMode))
+                else if (probeConnected && !(RuntimeVariables.UPGRADE_OPTIMIZE_RECONNECT_FLOW && precheckSessionAlive))
                 {
                     try
                     {
@@ -191,9 +191,18 @@ try
                         // best-effort disconnect after precheck probe
                     }
                 }
-                else if (probeConnected && precheckSessionAlive && RuntimeVariables.UPGRADE_OPTIMIZE_RECONNECT_FLOW && !isInBootMode)
+                else if (probeConnected && precheckSessionAlive && RuntimeVariables.UPGRADE_OPTIMIZE_RECONNECT_FLOW)
                 {
-                    UpgradeLogger.Log(logId, mac, "Connected (precheck probe)", "Keeping session open for next pipeline step", dev.FirmwareVersion);
+                    // Keep the live precheck session open for the first pipeline step.
+                    // Critically, when the device is already in bootloader mode we must NOT
+                    // disconnect here: the bootloader has a very short advertising/connection
+                    // window after a disconnect and reconnection routinely fails, leaving the
+                    // device stuck in an unrecoverable boot loop.
+                    UpgradeLogger.Log(logId, mac, "Connected (precheck probe)",
+                        isInBootMode
+                            ? "Keeping session open (boot mode — disconnect avoided to preserve bootloader connection)"
+                            : "Keeping session open for next pipeline step",
+                        dev.FirmwareVersion);
                 }
 
                 dev.PrecheckSessionAlive = precheckSessionAlive;

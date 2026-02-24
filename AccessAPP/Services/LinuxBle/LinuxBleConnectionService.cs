@@ -112,6 +112,27 @@ public class LinuxBleConnectionService : IBleConnectionService
                 // instead of returning 503 early and losing all post-connect GATT setup.
                 _logger.LogDebug("LinuxBLE: ConnectAsync '{Error}' for {Mac} — verifying Connected state", ex.Message, macAddress);
             }
+            catch (Tmds.DBus.DBusException ex) when (ex.ErrorName == "org.freedesktop.DBus.Error.UnknownObject")
+            {
+                // The device's D-Bus object path does not exist in BlueZ's object tree.
+                // This happens after TryRemoveDeviceAsync clears stale HCI state — BlueZ
+                // re-adds the device automatically once it sees a new advertisement.
+                // Poll the ObjectManager for up to 15 s (or until the caller's CT expires).
+                _logger.LogDebug("LinuxBLE: {Mac} not in BlueZ object tree — waiting up to 15 s for re-discovery", macAddress);
+                bool rediscovered = await WaitForDeviceInObjectManagerAsync(devicePath, ct, timeoutMs: 15000);
+                if (!rediscovered)
+                {
+                    _logger.LogWarning("LinuxBLE: {Mac} re-discovery timed out — device not advertising", macAddress);
+                    BlueZHelpers.ClearConnectedAdapter(macAddress);
+                    if (_ctbDevicePath != null) BlueZHelpers.InvalidateCharCache(_ctbDevicePath);
+                    return new ResponseModel { MacAddress = macAddress, Status = HttpStatusCode.RequestTimeout, Data = "Device not found after re-discovery wait" };
+                }
+                // Device is back in the object tree — refresh the D-Bus proxy and retry.
+                _logger.LogDebug("LinuxBLE: {Mac} re-discovered — retrying ConnectAsync", macAddress);
+                device = await BlueZHelpers.GetDeviceAsync(devicePath);
+                _ctbDevice = device;
+                await device.ConnectAsync().WaitAsync(ct);
+            }
 
             // Wait for BlueZ to report Connected=true; otherwise writes may fail with Not connected.
             var connectedDeadline = DateTime.UtcNow.AddMilliseconds(Math.Max(500, 1500));
@@ -555,6 +576,35 @@ public class LinuxBleConnectionService : IBleConnectionService
     // ── Helper: ILogger<T> for child services ───────────────────────────────
 
     private ILogger<T> CreateLogger<T>() => _logger.CreateLogger<T>();
+
+    // ── Helper: wait for a device path to appear in BlueZ's object tree ─────
+
+    /// <summary>
+    /// Poll BlueZ's ObjectManager until the given device D-Bus path appears (device
+    /// was re-discovered via scan), or until <paramref name="timeoutMs"/> elapses.
+    /// Used to recover after a TryRemoveDeviceAsync call cleared stale HCI state.
+    /// </summary>
+    private static async Task<bool> WaitForDeviceInObjectManagerAsync(
+        string devicePath, CancellationToken ct, int timeoutMs = 15000)
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        var devObjPath = new Tmds.DBus.ObjectPath(devicePath);
+
+        while (!ct.IsCancellationRequested && DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                var objects = await BlueZHelpers.GetManagedObjectsSafeAsync(ct);
+                if (objects.ContainsKey(devObjPath))
+                    return true;
+            }
+            catch { /* ignore transient ObjectManager errors */ }
+
+            try { await Task.Delay(500, ct); } catch (OperationCanceledException) { break; }
+        }
+
+        return false;
+    }
 }
 
 // Extension to allow creating a typed ILogger from an existing ILogger
