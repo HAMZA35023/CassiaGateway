@@ -73,14 +73,7 @@ public class LinuxNativeScanDevice : IDisposable
         var adapterPath = $"/org/bluez/{adapter}/";
 
         // Set BLE-only discovery filter.
-        await adapterObj.SetDiscoveryFilterAsync(new Dictionary<string, object>
-        {
-            ["Transport"] = "le",
-            ["DuplicateData"] = true // receive updates for already-known devices
-        });
-
-        await adapterObj.StartDiscoveryAsync();
-        _logger.LogInformation("LinuxBLE scan: discovery started on {Adapter}", adapter);
+        await BlueZHelpers.EnsureDiscoveryRunningAsync(adapter, _logger);
 
         // Process devices that were already cached in BlueZ from prior scans.
         var existing = await objMgr.GetManagedObjectsAsync();
@@ -133,8 +126,24 @@ public class LinuxNativeScanDevice : IDisposable
             ex => _logger.LogDebug(ex, "LinuxBLE scan: InterfacesRemoved error on {Adapter}", adapter));
 
         // Keep scanning until paused or disposed.
+        // BlueZ can occasionally drop out of active discovery without fully tearing down
+        // our watchers; periodically re-assert discovery so manual "scan on" is not needed.
+        var nextDiscoveryKeepAliveUtc = DateTime.UtcNow;
         while (!_disposed)
         {
+            if (DateTime.UtcNow >= nextDiscoveryKeepAliveUtc)
+            {
+                try
+                {
+                    await BlueZHelpers.EnsureDiscoveryRunningAsync(adapter, _logger);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "LinuxBLE scan: discovery keepalive failed on {Adapter}", adapter);
+                }
+                nextDiscoveryKeepAliveUtc = DateTime.UtcNow.AddSeconds(10);
+            }
+
             if (ShouldPauseScan())
             {
                 await Task.Delay(2000);
@@ -158,7 +167,22 @@ public class LinuxNativeScanDevice : IDisposable
         }
 
         ClearDevicePropsSnapshotForAdapter(adapterPath);
-        try { await adapterObj.StopDiscoveryAsync(); } catch { /* best-effort */ }
+        try
+        {
+            await adapterObj.StopDiscoveryAsync();
+        }
+        catch (Tmds.DBus.DBusException ex) when (
+            ex.ErrorName == "org.bluez.Error.Failed" ||
+            ex.ErrorName == "org.bluez.Error.NotReady" ||
+            ex.ErrorName == "org.bluez.Error.InProgress")
+        {
+            // Best-effort cleanup: scan may already be stopped or adapter is transitioning.
+            _logger.LogDebug("LinuxBLE scan: StopDiscovery skipped on {Adapter} ({ErrorName})", adapter, ex.ErrorName);
+        }
+        catch
+        {
+            // best-effort
+        }
     }
 
     // ── Device processing ────────────────────────────────────────────────────

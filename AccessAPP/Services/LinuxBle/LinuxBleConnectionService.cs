@@ -51,6 +51,18 @@ public class LinuxBleConnectionService : IBleConnectionService
             // Round-robin across configured HCI adapters so that parallel upgrade workers
             // are spread evenly instead of all piling onto the same adapter.
             var bleAdapter = BlueZHelpers.GetNextConnectAdapter(macAddress);
+            try
+            {
+                await BlueZHelpers.EnsureDiscoveryRunningAsync(bleAdapter, _logger, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "LinuxBLE: failed to ensure discovery on {Adapter}; continuing connect flow", bleAdapter);
+            }
             var devicePath = BlueZHelpers.DevicePath(bleAdapter, macAddress);
             _ctbDevicePath = devicePath;
             var device = await BlueZHelpers.GetDeviceAsync(devicePath);
@@ -118,6 +130,7 @@ public class LinuxBleConnectionService : IBleConnectionService
                 // This happens after TryRemoveDeviceAsync clears stale HCI state — BlueZ
                 // re-adds the device automatically once it sees a new advertisement.
                 // Poll the ObjectManager for up to 15 s (or until the caller's CT expires).
+                await BlueZHelpers.EnsureDiscoveryRunningAsync(bleAdapter, _logger, ct).ConfigureAwait(false);
                 _logger.LogDebug("LinuxBLE: {Mac} not in BlueZ object tree — waiting up to 15 s for re-discovery", macAddress);
                 bool rediscovered = await WaitForDeviceInObjectManagerAsync(devicePath, ct, timeoutMs: 15000);
                 if (!rediscovered)
@@ -282,10 +295,11 @@ public class LinuxBleConnectionService : IBleConnectionService
     public async Task<ResponseModel> DisconnectFromBleDevice(
         string gatewayIpAddress, string macAddress, int retries = 1, int chip = -1)
     {
+        string? devicePath = null;
         try
         {
             var bleAdapter = BlueZHelpers.GetDeviceAdapter(macAddress);
-            var devicePath = BlueZHelpers.DevicePath(bleAdapter, macAddress);
+            devicePath = BlueZHelpers.DevicePath(bleAdapter, macAddress);
             var device = await BlueZHelpers.GetDeviceAsync(devicePath);
 
             // Guard against a hung D-Bus call — BlueZ can be unresponsive after a firmware
@@ -295,16 +309,28 @@ public class LinuxBleConnectionService : IBleConnectionService
             using var disconnectCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             await device.DisconnectAsync().WaitAsync(disconnectCts.Token);
 
-            BlueZHelpers.ClearConnectedAdapter(macAddress);
-            BlueZHelpers.InvalidateCharCache(devicePath);
-            _notificationService.Unsubscribe(macAddress);
-
             return new ResponseModel { MacAddress = macAddress, Status = HttpStatusCode.OK, Data = "disconnected" };
+        }
+        catch (Tmds.DBus.DBusException ex) when (IsDeviceAlreadyGoneDbusError(ex))
+        {
+            // Benign: object disappeared before disconnect was sent.
+            _logger.LogDebug(
+                "LinuxBLE: DisconnectFromBleDevice {Mac} skipped because device object is gone ({ErrorName})",
+                macAddress, ex.ErrorName);
+            return new ResponseModel { MacAddress = macAddress, Status = HttpStatusCode.OK, Data = "already disconnected" };
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "LinuxBLE: DisconnectFromBleDevice failed for {Mac}", macAddress);
             return new ResponseModel { MacAddress = macAddress, Status = HttpStatusCode.OK, Data = "disconnect attempted" };
+        }
+        finally
+        {
+            // Always clear local state even if BlueZ object already disappeared.
+            BlueZHelpers.ClearConnectedAdapter(macAddress);
+            if (!string.IsNullOrWhiteSpace(devicePath))
+                BlueZHelpers.InvalidateCharCache(devicePath);
+            _notificationService.Unsubscribe(macAddress);
         }
     }
 
@@ -370,11 +396,19 @@ public class LinuxBleConnectionService : IBleConnectionService
                 _logger.LogDebug("LinuxBLE Login: {Mac} - waiting for notify readiness before login write", macAddress);
                 try
                 {
-                    await linuxNotify.EnsureNotifyingReadyAsync(macAddress, ct).ConfigureAwait(false);
+                    // Bound notify readiness wait so slow ServicesResolved/StartNotify paths do not
+                    // consume the entire login timeout budget before we even send the login write.
+                    using var notifyReadyCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    notifyReadyCts.CancelAfter(TimeSpan.FromSeconds(3));
+                    await linuxNotify.EnsureNotifyingReadyAsync(macAddress, notifyReadyCts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
                 }
                 catch (OperationCanceledException)
                 {
-                    throw;
+                    _logger.LogDebug("LinuxBLE Login: {Mac} notify readiness timed out after 3s; continuing with login write", macAddress);
                 }
                 catch (Exception ex)
                 {
@@ -594,6 +628,10 @@ public class LinuxBleConnectionService : IBleConnectionService
     // ── Helper: ILogger<T> for child services ───────────────────────────────
 
     private ILogger<T> CreateLogger<T>() => _logger.CreateLogger<T>();
+
+    private static bool IsDeviceAlreadyGoneDbusError(Tmds.DBus.DBusException ex)
+        => ex.ErrorName == "org.freedesktop.DBus.Error.UnknownObject" ||
+           ex.ErrorName == "org.bluez.Error.DoesNotExist";
 
     // ── Helper: wait for a device path to appear in BlueZ's object tree ─────
 

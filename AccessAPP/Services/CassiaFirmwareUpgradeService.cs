@@ -756,6 +756,34 @@ return resp;
 
             async Task<bool> EnsureBootModeAsync()
             {
+                async Task<(bool ok, bool bootAchieved)> RecoverSessionForNextJumpAttemptAsync(int currentAttempt)
+                {
+                    int nextAttempt = Math.Min(bootJumpMaxAttempts, currentAttempt + 1);
+                    string reconnectStage = $"Connected (jump retry recovery {nextAttempt}/{bootJumpMaxAttempts})";
+
+                    if (!await ConnectWithRetryAsync(reconnectStage, BootJumpDiscoverGattOverride()).ConfigureAwait(false))
+                    {
+                        AppLog.Warn($"EnsureBootMode: recovery connect failed for {nodeMac} before jump attempt {nextAttempt}/{bootJumpMaxAttempts}.");
+                        return (false, false);
+                    }
+
+                    // Recovery connect may reveal that the device did enter boot mode after all.
+                    if (CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac))
+                    {
+                        UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Achieved during recovery reconnect");
+                        return (true, true);
+                    }
+
+                    bool loginOk = await LoginWithRetryAsync().ConfigureAwait(false);
+                    if (!loginOk)
+                    {
+                        AppLog.Warn($"EnsureBootMode: recovery login failed for {nodeMac} before jump attempt {nextAttempt}/{bootJumpMaxAttempts}.");
+                        return (false, false);
+                    }
+
+                    return (true, false);
+                }
+
                 // Quick check first
                 if (CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac))
                 {
@@ -779,6 +807,17 @@ return resp;
                     if (!jumpOk)
                     {
                         UpgradeLogger.Log(logId, nodeMac, "JumpToBootloader", $"Failed (attempt {attempt}/{bootJumpMaxAttempts})");
+                        if (attempt < bootJumpMaxAttempts)
+                        {
+                            var recovery = await RecoverSessionForNextJumpAttemptAsync(attempt).ConfigureAwait(false);
+                            if (recovery.bootAchieved)
+                                return true;
+                            if (!recovery.ok)
+                            {
+                                UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", $"Abort retries after jump failure (attempt {attempt}/{bootJumpMaxAttempts}); recovery connect/login failed");
+                                return false;
+                            }
+                        }
                         await Task.Delay(3000);
                         continue;
                     }
@@ -829,9 +868,19 @@ return true;
                     // attempts fail.
                     if (attempt < bootJumpMaxAttempts)
                     {
-                        var reloginOk = await LoginWithRetryAsync();
+                        var reloginOk = await LoginWithRetryAsync().ConfigureAwait(false);
                         if (!reloginOk)
-                            AppLog.Warn($"EnsureBootMode: re-login failed for {nodeMac} on attempt {attempt}/{bootJumpMaxAttempts} — next jump may be rejected");
+                        {
+                            AppLog.Warn($"EnsureBootMode: re-login failed for {nodeMac} on attempt {attempt}/{bootJumpMaxAttempts}. Running recovery reconnect+login before next jump.");
+                            var recovery = await RecoverSessionForNextJumpAttemptAsync(attempt).ConfigureAwait(false);
+                            if (recovery.bootAchieved)
+                                return true;
+                            if (!recovery.ok)
+                            {
+                                UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", $"Abort retries after re-login failure (attempt {attempt}/{bootJumpMaxAttempts}); recovery connect/login failed");
+                                return false;
+                            }
+                        }
                     }
 
                     // Try again
