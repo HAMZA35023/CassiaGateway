@@ -22,6 +22,8 @@ public class LinuxNativeScanDevice : IDisposable
     private readonly DeviceStorageService _deviceStorageService;
     private readonly CassiaFirmwareUpgradeService _firmUpgradeService;
     private readonly ILogger<LinuxNativeScanDevice> _logger;
+    private readonly object _devicePropsLock = new();
+    private readonly Dictionary<string, Dictionary<string, object>> _devicePropsByPath = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly string _macPrefix;
     private bool _disposed;
@@ -64,6 +66,8 @@ public class LinuxNativeScanDevice : IDisposable
     {
         var adapterObj = await BlueZHelpers.GetAdapterAsync(adapter);
         var objMgr = await BlueZHelpers.GetObjectManagerAsync();
+        var deviceWatchers = new Dictionary<string, IDisposable>(StringComparer.OrdinalIgnoreCase);
+        var deviceWatchersLock = new object();
 
         // The BlueZ adapter path prefix used to filter devices belonging to this adapter.
         var adapterPath = $"/org/bluez/{adapter}/";
@@ -85,7 +89,11 @@ public class LinuxNativeScanDevice : IDisposable
             var pathStr = path.ToString();
             if (!pathStr.StartsWith(adapterPath, StringComparison.OrdinalIgnoreCase)) continue;
             if (interfaces.TryGetValue("org.bluez.Device1", out var props))
-                TryProcessDevice(pathStr, props, adapter);
+            {
+                var mergedProps = MergeDevicePropsSnapshot(pathStr, props);
+                TryProcessDevice(pathStr, mergedProps, adapter);
+                await EnsureDeviceWatcherAsync(pathStr, adapter, deviceWatchers, deviceWatchersLock);
+            }
         }
 
         // Watch for new devices — filter to this adapter's path prefix.
@@ -96,31 +104,33 @@ public class LinuxNativeScanDevice : IDisposable
                 var pathStr = path.ToString();
                 if (!pathStr.StartsWith(adapterPath, StringComparison.OrdinalIgnoreCase)) return;
                 if (interfaces.TryGetValue("org.bluez.Device1", out var props))
-                    TryProcessDevice(pathStr, props, adapter);
+                {
+                    var mergedProps = MergeDevicePropsSnapshot(pathStr, props);
+                    TryProcessDevice(pathStr, mergedProps, adapter);
+                    _ = Task.Run(() => EnsureDeviceWatcherAsync(pathStr, adapter, deviceWatchers, deviceWatchersLock));
+                }
             },
             ex => _logger.LogError(ex, "LinuxBLE scan: InterfacesAdded error on {Adapter}", adapter));
 
-        // Also watch PropertiesChanged on all Device1 objects so we pick up RSSI and ad updates.
-        var deviceWatchers = new List<IDisposable>();
-        foreach (var (path, interfaces) in existing)
-        {
-            var pathStr = path.ToString();
-            if (!pathStr.StartsWith(adapterPath, StringComparison.OrdinalIgnoreCase)) continue;
-            if (!interfaces.ContainsKey("org.bluez.Device1")) continue;
+        using var removedSub = await objMgr.WatchInterfacesRemovedAsync(
+            args =>
+            {
+                var (path, _) = args;
+                var pathStr = path.ToString();
+                if (!pathStr.StartsWith(adapterPath, StringComparison.OrdinalIgnoreCase))
+                    return;
 
-            var dev = await BlueZHelpers.GetDeviceAsync(pathStr);
-
-            var sub = await dev.WatchPropertiesAsync(
-                changes =>
+                IDisposable? watcher = null;
+                lock (deviceWatchersLock)
                 {
-                    // PropertiesChanged only carries the changed fields (no "Address").
-                    var updatedProps = changes.Changed.ToDictionary(kv => kv.Key, kv => kv.Value);
-                    TryProcessDevice(pathStr, updatedProps, adapter);
-                },
-                ex => _logger.LogDebug(ex, "LinuxBLE scan: PropertiesChanged error on {Path}", pathStr));
+                    if (deviceWatchers.TryGetValue(pathStr, out watcher))
+                        deviceWatchers.Remove(pathStr);
+                }
 
-            deviceWatchers.Add(sub);
-        }
+                watcher?.Dispose();
+                RemoveDevicePropsSnapshot(pathStr);
+            },
+            ex => _logger.LogDebug(ex, "LinuxBLE scan: InterfacesRemoved error on {Adapter}", adapter));
 
         // Keep scanning until paused or disposed.
         while (!_disposed)
@@ -135,7 +145,19 @@ public class LinuxNativeScanDevice : IDisposable
         }
 
         // Cleanup.
-        foreach (var w in deviceWatchers) w.Dispose();
+        List<IDisposable> watchersToDispose;
+        lock (deviceWatchersLock)
+        {
+            watchersToDispose = deviceWatchers.Values.ToList();
+            deviceWatchers.Clear();
+        }
+
+        foreach (var w in watchersToDispose)
+        {
+            try { w.Dispose(); } catch { /* best-effort */ }
+        }
+
+        ClearDevicePropsSnapshotForAdapter(adapterPath);
         try { await adapterObj.StopDiscoveryAsync(); } catch { /* best-effort */ }
     }
 
@@ -164,7 +186,7 @@ public class LinuxNativeScanDevice : IDisposable
 
             int rssi = props.TryGetValue("RSSI", out var r) ? Convert.ToInt32(r) : -127;
 
-            // Build ad-data hex for storage / ScanDataParser fallback.
+            // Keep reconstructed ad-data for diagnostics/storage, but decode only manufacturer data.
             string adData = BlueZHelpers.BuildAdDataFromBlueZProps(props);
             string scanData = adData;
 
@@ -172,62 +194,41 @@ public class LinuxNativeScanDevice : IDisposable
             string lockedHex = null;
             bool? isLocked = null;
 
-            string name = props.TryGetValue("Name", out var n) && n is string nm ? nm : string.Empty;
+            string name = string.Empty;
             var meta = new DetectorMeta();
 
-            // Prefer direct parsing of Cassia manufacturer payload when present + valid.
+            // Linux-native discovery must decode from ManufacturerData only.
             byte[] mfBytes = ExtractManufacturerDataBytes(props);
-
-            if (mfBytes != null &&mfBytes.Length >= 3 && (mfBytes[0] != 0x10 || mfBytes[1] != 0xB9 || mfBytes[2] != 0xF7))
-            {
-
-                //_logger.LogInformation("LinuxBLE scan: skipping non-Cassia manufacturer data for {Mac} on {Adapter}, MfData={Hex}",
-                //    mac, adapter, Convert.ToHexString(mfBytes));
-
+            if (mfBytes == null)
                 return;
 
+            if (mfBytes.Length >= 3 && (mfBytes[0] != 0x10 || mfBytes[1] != 0xB9 || mfBytes[2] != 0xF7))
+            {
+                return;
             }
 
-            if (mfBytes != null)
-            {
-                TryParseManufacturerData(
-                    mfBytes,
-                    mac,
-                    ref name,
-                    out productNumber,
-                    out lockedHex,
-                    out isLocked,
-                    out meta);
-            }
+            TryParseManufacturerData(
+                mfBytes,
+                mac,
+                ref name,
+                out productNumber,
+                out lockedHex,
+                out isLocked,
+                out meta);
 
             // Log raw manufacturer data when product number is still unknown for a Cassia-OUI device —
             // helps diagnose payload format issues. Skip non-Cassia devices (different OUI).
-            if (string.IsNullOrEmpty(productNumber) && mfBytes != null)
-                {
+            if (string.IsNullOrWhiteSpace(productNumber))
+            {
                 _logger.LogInformation("LinuxBLE scan: unknown product for {Mac}, MfData={Hex}",
                     mac, Convert.ToHexString(mfBytes));
-                    return;
-                }
-            // If direct parsing didn't yield anything useful, fall back to ScanDataParser on TLV-wrapped hex.
-            if ((string.IsNullOrEmpty(productNumber) && string.IsNullOrEmpty(name)) && !string.IsNullOrEmpty(scanData))
-            {
-                productNumber = ScanDataParser.ExtractProductNumber(scanData);
-
-                if (scanData.Length >= 50)
-                    name = ScanDataParser.GetName(scanData.Substring(20, 30));
-
-                lockedHex = ScanDataParser.GetLockedInfo(scanData);
-                isLocked = ScanDataParser.IsLocked(scanData);
-                meta = ScanDataParser.GetDetectorMeta(scanData);
+                return;
             }
-            else
-            {
-                // Ensure meta is enriched if we ended up with a productNumber.
-                if (!string.IsNullOrEmpty(productNumber) && string.IsNullOrEmpty(meta.DetectorType))
-                    meta = ScanDataParser.GetDetectorMeta(productNumber);
-            }
+            // Ensure metadata is available even for product-number-only payloads.
+            if (string.IsNullOrEmpty(meta.DetectorType))
+                meta = ScanDataParser.GetDetectorMeta(productNumber);
 
-            if (productNumber == "Unknown")
+            if (productNumber.Equals("Unknown", StringComparison.OrdinalIgnoreCase))
                 return;
 
             // Normalize: if still empty name but we do have product number, show it.
@@ -265,6 +266,90 @@ public class LinuxNativeScanDevice : IDisposable
     }
 
     // ── Manufacturer data helpers ────────────────────────────────────────────
+
+    private async Task EnsureDeviceWatcherAsync(
+        string devicePath,
+        string adapter,
+        Dictionary<string, IDisposable> deviceWatchers,
+        object deviceWatchersLock)
+    {
+        lock (deviceWatchersLock)
+        {
+            if (deviceWatchers.ContainsKey(devicePath))
+                return;
+        }
+
+        try
+        {
+            var dev = await BlueZHelpers.GetDeviceAsync(devicePath);
+            var sub = await dev.WatchPropertiesAsync(
+                changes =>
+                {
+                    var updatedProps = changes.Changed.ToDictionary(kv => kv.Key, kv => kv.Value);
+                    var mergedProps = MergeDevicePropsSnapshot(devicePath, updatedProps);
+                    TryProcessDevice(devicePath, mergedProps, adapter);
+                },
+                ex => _logger.LogDebug(ex, "LinuxBLE scan: PropertiesChanged error on {Path}", devicePath));
+
+            lock (deviceWatchersLock)
+            {
+                if (deviceWatchers.ContainsKey(devicePath))
+                {
+                    sub.Dispose();
+                    return;
+                }
+
+                deviceWatchers[devicePath] = sub;
+            }
+
+            // Immediately process full properties once after watcher attach; InterfacesAdded can be partial.
+            var fullProps = await dev.GetAllAsync();
+            var mergedFullProps = MergeDevicePropsSnapshot(devicePath, fullProps);
+            TryProcessDevice(devicePath, mergedFullProps, adapter);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "LinuxBLE scan: failed to attach device watcher for {Path}", devicePath);
+        }
+    }
+
+    private IDictionary<string, object> MergeDevicePropsSnapshot(string devicePath, IDictionary<string, object> incoming)
+    {
+        lock (_devicePropsLock)
+        {
+            if (!_devicePropsByPath.TryGetValue(devicePath, out var snapshot))
+            {
+                snapshot = new Dictionary<string, object>(incoming, StringComparer.OrdinalIgnoreCase);
+                _devicePropsByPath[devicePath] = snapshot;
+            }
+            else
+            {
+                foreach (var kv in incoming)
+                    snapshot[kv.Key] = kv.Value;
+            }
+
+            return new Dictionary<string, object>(snapshot, StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private void RemoveDevicePropsSnapshot(string devicePath)
+    {
+        lock (_devicePropsLock)
+            _devicePropsByPath.Remove(devicePath);
+    }
+
+    private void ClearDevicePropsSnapshotForAdapter(string adapterPath)
+    {
+        lock (_devicePropsLock)
+        {
+            var toRemove = _devicePropsByPath.Keys
+                .Where(path => path.StartsWith(adapterPath, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            foreach (var path in toRemove)
+                _devicePropsByPath.Remove(path);
+        }
+    }
 
     /// <summary>
     /// Extract the raw manufacturer data byte array from BlueZ Device1 properties.
@@ -397,3 +482,4 @@ private static void TryParseManufacturerData(
 
     public void Dispose() => _disposed = true;
 }
+

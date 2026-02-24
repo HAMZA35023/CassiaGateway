@@ -1,9 +1,15 @@
 AccessApp Cassia backend:
 
 CRITICAL:
+Device discovery with native-liunx is not good enough - it is hard to find the devices.
+-> When restarting the accessapp, it discovers it, but it has hard to live discover the devices.
+-> Start have a look here: LinuxNativeScanDevice.
+-> We only want to decode the manufacturerData! - Sometimes we get a name called "Niko Boot", that is from the before we parse the data.
+-> We do parse the manufacturerData correct!
 
+-> when using BLE_BACKEND="cassia", it also works fine.
 
 MAJOR:
-
+AccessAppMqttWpf does not support like "hci0" in the chip collumn in the datagrids (we get the value from the upgrade-log)
 
 MINOR:
