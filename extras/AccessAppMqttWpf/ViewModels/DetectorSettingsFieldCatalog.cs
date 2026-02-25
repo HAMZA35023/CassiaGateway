@@ -502,7 +502,8 @@ internal static class DetectorSettingsFieldCatalog
             $"HVAC on delay (s). {durationTypeHint}",
             CustomDelayOptionLabel,
             minOverride: 120,
-            maxOverride: 7200);
+            maxOverride: 7200,
+            length: 2);
         AddEnum(
             list,
             "user.cfg_t_hvacoff_delay",
@@ -513,7 +514,8 @@ internal static class DetectorSettingsFieldCatalog
             $"HVAC off delay (s). {durationTypeHint}",
             CustomDelayOptionLabel,
             minOverride: 0,
-            maxOverride: 7200);
+            maxOverride: 7200,
+            length: 2);
         AddEnum(
             list,
             "user.cfg_t_stdby_min_delay",
@@ -524,7 +526,8 @@ internal static class DetectorSettingsFieldCatalog
             $"Standby-min delay (s). {durationTypeHint}",
             CustomDelayOptionLabel,
             minOverride: 0,
-            maxOverride: 7200);
+            maxOverride: 7200,
+            length: 2);
 
         for (var zone = 1; zone <= 5; zone++)
         {
@@ -548,7 +551,8 @@ internal static class DetectorSettingsFieldCatalog
                 $"Off PIR delay (s). {durationTypeHint}",
                 CustomDelayOptionLabel,
                 minOverride: 1,
-                maxOverride: 65535);
+                maxOverride: 65535,
+                length: 2);
             AddEnum(
                 list,
                 $"{prefix}.cfg_zone_t_presence_delay",
@@ -559,7 +563,8 @@ internal static class DetectorSettingsFieldCatalog
                 $"Presence delay (s). {durationTypeHint}",
                 CustomDelayOptionLabel,
                 minOverride: 1,
-                maxOverride: 65535);
+                maxOverride: 65535,
+                length: 2);
             AddEnum(
                 list,
                 $"{prefix}.cfg_zone_t_non_presence_delay",
@@ -570,7 +575,8 @@ internal static class DetectorSettingsFieldCatalog
                 $"Non-presence delay (s). {durationTypeHint}",
                 CustomDelayOptionLabel,
                 minOverride: 1,
-                maxOverride: 65535);
+                maxOverride: 65535,
+                length: 2);
             AddEnum(
                 list,
                 $"{prefix}.cfg_zone_t_orientation_delay",
@@ -581,7 +587,8 @@ internal static class DetectorSettingsFieldCatalog
                 $"Orientation delay (s). {durationTypeHint}",
                 CustomDelayOptionLabel,
                 minOverride: 0,
-                maxOverride: 65535);
+                maxOverride: 65535,
+                length: 2);
             AddEnum(
                 list,
                 $"{prefix}.cfg_zone_t_on_delay",
@@ -592,7 +599,8 @@ internal static class DetectorSettingsFieldCatalog
                 $"On delay (s). {durationTypeHint}",
                 CustomDelayOptionLabel,
                 minOverride: 0,
-                maxOverride: 3600);
+                maxOverride: 3600,
+                length: 2);
             AddEnum(list, $"{prefix}.cfg_zone_type", group, "CFG_ZONE_TYPE", baseOffset + 13, BuildZoneTypeOptions(), "Zone type.");
             AddNumber(list, $"{prefix}.cfg_zone_reserved", group, "CFG_ZONE_RESERVED", baseOffset + 14, 1, 0, 255, "Reserved.");
             AddNumber(list, $"{prefix}.cfg_zone_deskdaylightfactorpct", group, "CFG_ZONE_DESKDAYLIGHTFACTORPCT", baseOffset + 15, 2, 0, 1000, "Desk daylight factor (%).");
@@ -607,7 +615,8 @@ internal static class DetectorSettingsFieldCatalog
                 $"Lux setpoint. {luxTypeHint}",
                 CustomLuxOptionLabel,
                 minOverride: 0,
-                maxOverride: 65535);
+                maxOverride: 65535,
+                length: 2);
             AddNumber(list, $"{prefix}.cfg_zone_daylight", group, "CFG_ZONE_DAYLIGHT", baseOffset + 21, 2, 0, 65535, $"Daylight (lux). {luxTypeHint}");
             AddNumber(list, $"{prefix}.cfg_zone_presence_level", group, "CFG_ZONE_PRESENCE_LEVEL", baseOffset + 23, 1, 0, 100, "Presence level (%).");
             AddNumber(list, $"{prefix}.cfg_zone_non_presence_level", group, "CFG_ZONE_NON_PRESENCE_LEVEL", baseOffset + 24, 1, 0, 100, "Non-presence level (%).");
@@ -682,50 +691,46 @@ internal static class DetectorSettingsFieldCatalog
         const string groupLevels = "Levels";
         const string groupFade = "Fade";
 
-        AddNumber(
+        AddEnum(
             list,
             "dali.common.max_level",
             DetectorSettingsSectionKind.DaliDeviceCommonParam,
             groupLevels,
             "DaliSetDevicesMaxLevel",
             0,
-            1,
-            0,
-            254,
-            "Range 0..254.");
-        AddNumber(
+            BuildDaliArcLevelOptions(includeMask: false),
+            "Range 0..254. Human-readable output uses the standard DALI logarithmic dimming curve.",
+            customEnumValueLabelFactory: value => FormatDaliArcLevelOption(value, includeMask: false));
+        AddEnum(
             list,
             "dali.common.min_level",
             DetectorSettingsSectionKind.DaliDeviceCommonParam,
             groupLevels,
             "DaliSetDevicesMinLevel",
             1,
-            1,
-            0,
-            254,
-            "Range 0..254.");
-        AddNumber(
+            BuildDaliArcLevelOptions(includeMask: false),
+            "Range 0..254. Human-readable output uses the standard DALI logarithmic dimming curve.",
+            customEnumValueLabelFactory: value => FormatDaliArcLevelOption(value, includeMask: false));
+        AddEnum(
             list,
             "dali.common.power_on_level",
             DetectorSettingsSectionKind.DaliDeviceCommonParam,
             groupLevels,
             "DaliSetDevicesPowerOnLevel",
             2,
-            1,
-            0,
-            255,
-            "Range 0..255 (255=no change).");
-        AddNumber(
+            BuildDaliArcLevelOptions(includeMask: true),
+            "Range 0..255 (255 = MASK/no change). Human-readable output uses the standard DALI logarithmic dimming curve.",
+            customEnumValueLabelFactory: value => FormatDaliArcLevelOption(value, includeMask: true));
+        AddEnum(
             list,
             "dali.common.sys_fail_level",
             DetectorSettingsSectionKind.DaliDeviceCommonParam,
             groupLevels,
             "DaliSetDevicesSysFailLevel",
             3,
-            1,
-            0,
-            255,
-            "Range 0..255 (255=no change).");
+            BuildDaliArcLevelOptions(includeMask: true),
+            "Range 0..255 (255 = MASK/no change). Human-readable output uses the standard DALI logarithmic dimming curve.",
+            customEnumValueLabelFactory: value => FormatDaliArcLevelOption(value, includeMask: true));
         AddEnum(
             list,
             "dali.common.fade_time",
@@ -733,9 +738,9 @@ internal static class DetectorSettingsFieldCatalog
             groupFade,
             "DaliSetDevicesFadeTime",
             4,
-            BuildDaliFadeByteOptions(),
-            "Range 0..15 (0 = no fade time).",
-            customEnumValueLabelFactory: value => $"{value}");
+            BuildDaliFadeTimeOptions(),
+            "Range 0..15. 0 means no fade time.",
+            customEnumValueLabelFactory: FormatDaliFadeTimeOption);
         AddEnum(
             list,
             "dali.common.fade_rate",
@@ -743,20 +748,19 @@ internal static class DetectorSettingsFieldCatalog
             groupFade,
             "DaliSetDevicesFadeRate",
             5,
-            BuildDaliFadeByteOptions(),
-            "Range 0..15 (0 = extended fade time).",
-            customEnumValueLabelFactory: value => $"{value}");
-        AddNumber(
+            BuildDaliFadeRateOptions(),
+            "Range 0..15. 0 means use Extended Fade Time.",
+            customEnumValueLabelFactory: FormatDaliFadeRateOption);
+        AddEnum(
             list,
             "dali.common.extended_fade_time",
             DetectorSettingsSectionKind.DaliDeviceCommonParam,
             groupFade,
             "DaliSetDevicesExtendedFadeTime",
             6,
-            1,
-            0,
-            79,
-            "Range 0..79.");
+            BuildDaliExtendedFadeTimeOptions(),
+            "Range 0..79, encoded as 0YYYAAAA (DALI extended fade time).",
+            customEnumValueLabelFactory: FormatDaliExtendedFadeTimeOption);
 
         return list;
     }
@@ -832,7 +836,8 @@ internal static class DetectorSettingsFieldCatalog
         string description,
         Func<int, string>? customEnumValueLabelFactory = null,
         int? minOverride = null,
-        int? maxOverride = null)
+        int? maxOverride = null,
+        int length = 1)
     {
         AddEnum(
             list,
@@ -845,7 +850,8 @@ internal static class DetectorSettingsFieldCatalog
             description,
             customEnumValueLabelFactory,
             minOverride,
-            maxOverride);
+            maxOverride,
+            length);
     }
 
     private static void AddEnum(
@@ -859,7 +865,8 @@ internal static class DetectorSettingsFieldCatalog
         string description,
         Func<int, string>? customEnumValueLabelFactory = null,
         int? minOverride = null,
-        int? maxOverride = null)
+        int? maxOverride = null,
+        int length = 1)
     {
         AddEnumBitField(
             list,
@@ -874,7 +881,8 @@ internal static class DetectorSettingsFieldCatalog
             description,
             customEnumValueLabelFactory,
             minOverride,
-            maxOverride);
+            maxOverride,
+            length);
     }
 
     private static void AddEnumBitField(
@@ -890,7 +898,8 @@ internal static class DetectorSettingsFieldCatalog
         string description,
         Func<int, string>? customEnumValueLabelFactory = null,
         int? minOverride = null,
-        int? maxOverride = null)
+        int? maxOverride = null,
+        int length = 1)
     {
         list.Add(new DetectorFieldDefinition
         {
@@ -900,7 +909,7 @@ internal static class DetectorSettingsFieldCatalog
             Label = label,
             Description = description,
             Offset = offset,
-            Length = 1,
+            Length = Math.Max(1, length),
             EditorKind = DetectorFieldEditorKind.Enum,
             BitMask = bitMask,
             BitShift = bitShift,
@@ -1020,12 +1029,152 @@ internal static class DetectorSettingsFieldCatalog
             new DetectorFieldOption(4, "HVAC")
         };
 
-    private static IReadOnlyList<DetectorFieldOption> BuildDaliFadeByteOptions()
+    private static IReadOnlyList<DetectorFieldOption> BuildDaliArcLevelOptions(bool includeMask)
+    {
+        var max = includeMask ? 255 : 254;
+        var list = new List<DetectorFieldOption>(max + 1);
+        for (var value = 0; value <= max; value++)
+            list.Add(new DetectorFieldOption(value, FormatDaliArcLevelOption(value, includeMask)));
+        return list;
+    }
+
+    private static string FormatDaliArcLevelOption(int value, bool includeMask)
+    {
+        if (value == 255)
+            return includeMask ? "255 - MASK (no change)" : "255 - Out of range";
+        if (value <= 0)
+            return "0 - OFF (0%)";
+        if (value > 254)
+            return $"{value} - Out of range";
+
+        var percent = DaliArcLevelToPercent(value);
+        return $"{value} - {FormatPercent(percent)}";
+    }
+
+    private static double DaliArcLevelToPercent(int arcLevel)
+    {
+        if (arcLevel <= 0)
+            return 0;
+        if (arcLevel >= 254)
+            return 100;
+
+        return 100d * Math.Pow(10d, 3d * (arcLevel - 254d) / 253d);
+    }
+
+    private static string FormatPercent(double value)
+    {
+        if (value <= 0)
+            return "0%";
+        if (value >= 100)
+            return "100%";
+        if (value >= 10)
+            return value.ToString("0.0", CultureInfo.InvariantCulture) + "%";
+        if (value >= 1)
+            return value.ToString("0.00", CultureInfo.InvariantCulture) + "%";
+        return value.ToString("0.000", CultureInfo.InvariantCulture) + "%";
+    }
+
+    private static IReadOnlyList<DetectorFieldOption> BuildDaliFadeTimeOptions()
     {
         var list = new List<DetectorFieldOption>(16);
         for (var value = 0; value <= 15; value++)
-            list.Add(new DetectorFieldOption(value, $"{value}"));
+            list.Add(new DetectorFieldOption(value, FormatDaliFadeTimeOption(value)));
         return list;
+    }
+
+    private static string FormatDaliFadeTimeOption(int value)
+    {
+        if (value <= 0)
+            return "0 - No fade time";
+        if (value > 15)
+            return $"{value} - Out of range";
+
+        var seconds = 0.5d * Math.Pow(2d, value / 2d);
+        return $"{value} - {FormatDuration(seconds)}";
+    }
+
+    private static IReadOnlyList<DetectorFieldOption> BuildDaliFadeRateOptions()
+    {
+        var list = new List<DetectorFieldOption>(16);
+        for (var value = 0; value <= 15; value++)
+            list.Add(new DetectorFieldOption(value, FormatDaliFadeRateOption(value)));
+        return list;
+    }
+
+    private static string FormatDaliFadeRateOption(int value)
+    {
+        if (value <= 0)
+            return "0 - Use Extended Fade Time";
+        if (value > 15)
+            return $"{value} - Out of range";
+
+        // IEC 62386 nominal fade-rate sequence: each step is divided by sqrt(2).
+        var stepsPerSecond = 357.796d / Math.Pow(Math.Sqrt(2d), value - 1d);
+        var fullScaleSeconds = 254d / stepsPerSecond;
+        return $"{value} - {stepsPerSecond.ToString("0.###", CultureInfo.InvariantCulture)} steps/s ({FormatDuration(fullScaleSeconds)} for 0->254)";
+    }
+
+    private static IReadOnlyList<DetectorFieldOption> BuildDaliExtendedFadeTimeOptions()
+    {
+        var list = new List<DetectorFieldOption>(80);
+        for (var value = 0; value <= 79; value++)
+            list.Add(new DetectorFieldOption(value, FormatDaliExtendedFadeTimeOption(value)));
+        return list;
+    }
+
+    private static string FormatDaliExtendedFadeTimeOption(int value)
+    {
+        if (value < 0 || value > 79)
+            return $"{value} - Out of range";
+
+        var multiplierCode = (value >> 4) & 0x07;
+        var baseIndex = value & 0x0F;
+        var baseValue = baseIndex + 1;
+
+        if (multiplierCode == 0)
+            return $"{value} - 0 s (no fade)";
+
+        var unitSeconds = multiplierCode switch
+        {
+            1 => 0.1d,
+            2 => 1d,
+            3 => 10d,
+            4 => 60d,
+            _ => 0d
+        };
+
+        if (unitSeconds <= 0)
+            return $"{value} - Reserved";
+
+        var totalSeconds = baseValue * unitSeconds;
+        var unitLabel = multiplierCode switch
+        {
+            1 => "100 ms",
+            2 => "1 s",
+            3 => "10 s",
+            4 => "1 min",
+            _ => string.Empty
+        };
+
+        return $"{value} - base {baseValue} x {unitLabel} = {FormatDuration(totalSeconds)}";
+    }
+
+    private static string FormatDuration(double totalSeconds)
+    {
+        if (totalSeconds < 1d)
+            return (totalSeconds * 1000d).ToString("0", CultureInfo.InvariantCulture) + " ms";
+        if (totalSeconds < 60d)
+            return totalSeconds.ToString("0.###", CultureInfo.InvariantCulture) + " s";
+
+        var minutes = Math.Floor(totalSeconds / 60d);
+        var seconds = totalSeconds - (minutes * 60d);
+        if (seconds < 0.0001d)
+            return minutes.ToString("0", CultureInfo.InvariantCulture) + " min";
+
+        return minutes.ToString("0", CultureInfo.InvariantCulture)
+               + " min "
+               + seconds.ToString("0.###", CultureInfo.InvariantCulture)
+               + " s";
     }
 
     private static IReadOnlyList<DetectorFieldOption> BuildDelayOptions()

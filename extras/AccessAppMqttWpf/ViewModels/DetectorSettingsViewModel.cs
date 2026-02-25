@@ -108,7 +108,7 @@ public partial class DetectorSettingsViewModel : ObservableObject
                 MacAddress,
                 DetectorType,
                 Pincode,
-                FirmwareVersion).ConfigureAwait(false);
+                FirmwareVersion);
 
             if (result == null)
             {
@@ -175,7 +175,7 @@ public partial class DetectorSettingsViewModel : ObservableObject
                 Pincode,
                 FirmwareVersion,
                 patch,
-                WriteOnlyChanged).ConfigureAwait(false);
+                WriteOnlyChanged);
 
             if (result == null)
             {
@@ -230,7 +230,7 @@ public partial class DetectorSettingsViewModel : ObservableObject
         StatusText = "Queueing update with post-update settings profile...";
         try
         {
-            await _main.QueueDeviceAndRequestWithDetectorSettingsAsync(_device, patch).ConfigureAwait(false);
+            await _main.QueueDeviceAndRequestWithDetectorSettingsAsync(_device, patch);
             StatusText = "Update queued with detector settings profile.";
         }
         catch (Exception ex)
