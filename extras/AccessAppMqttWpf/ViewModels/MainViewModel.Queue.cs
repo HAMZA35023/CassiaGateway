@@ -1521,6 +1521,20 @@ public partial class MainViewModel : ObservableObject
         var normalizedDetectorSettings = detectorSettings?.CloneNormalized();
         if (normalizedDetectorSettings != null && !normalizedDetectorSettings.HasAnyValue)
             normalizedDetectorSettings = null;
+        if (normalizedDetectorSettings == null)
+        {
+            if (!TryResolveModelProfilePatch(model, out normalizedDetectorSettings, out var profileError)
+                && !string.IsNullOrWhiteSpace(profileError))
+            {
+                qi.Status = "Error";
+                qi.Notes = profileError;
+                qi.LastUpdateUtc = DateTimeOffset.UtcNow;
+                MirrorQueueToDevice(qi);
+                RequestQueueRefresh();
+                ConnectionStatus = profileError;
+                return;
+            }
+        }
 
         var payload = new[]
         {

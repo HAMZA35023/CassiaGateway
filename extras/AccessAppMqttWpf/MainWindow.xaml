@@ -989,18 +989,113 @@
 
                     <TextBlock Text="P41 firmware" Style="{StaticResource MetaLabel}"/>
                     <ComboBox ItemsSource="{Binding FirmwareOptionsP41}" SelectedItem="{Binding SelectedFirmwareP41}"/>
+                    <TextBlock Text="P41 post-update settings profile" Style="{StaticResource MetaLabel}"/>
+                    <DockPanel Margin="0,0,0,4">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <Button Style="{StaticResource GhostButton}"
+                                    Content="Browse..."
+                                    Padding="10,4"
+                                    Margin="8,0,0,0"
+                                    Command="{Binding BrowseDetectorSettingsProfileCommand}"
+                                    CommandParameter="P41"/>
+                            <Button Style="{StaticResource GhostButton}"
+                                    Content="Clear"
+                                    Padding="10,4"
+                                    Margin="6,0,0,0"
+                                    Command="{Binding ClearDetectorSettingsProfileCommand}"
+                                    CommandParameter="P41"/>
+                        </StackPanel>
+                        <TextBox Text="{Binding SelectedDetectorSettingsProfileP41, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 VerticalAlignment="Center"/>
+                    </DockPanel>
 
                     <TextBlock Text="P42 firmware" Style="{StaticResource MetaLabel}"/>
                     <ComboBox ItemsSource="{Binding FirmwareOptionsP42}" SelectedItem="{Binding SelectedFirmwareP42}"/>
+                    <TextBlock Text="P42 post-update settings profile" Style="{StaticResource MetaLabel}"/>
+                    <DockPanel Margin="0,0,0,4">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <Button Style="{StaticResource GhostButton}"
+                                    Content="Browse..."
+                                    Padding="10,4"
+                                    Margin="8,0,0,0"
+                                    Command="{Binding BrowseDetectorSettingsProfileCommand}"
+                                    CommandParameter="P42"/>
+                            <Button Style="{StaticResource GhostButton}"
+                                    Content="Clear"
+                                    Padding="10,4"
+                                    Margin="6,0,0,0"
+                                    Command="{Binding ClearDetectorSettingsProfileCommand}"
+                                    CommandParameter="P42"/>
+                        </StackPanel>
+                        <TextBox Text="{Binding SelectedDetectorSettingsProfileP42, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 VerticalAlignment="Center"/>
+                    </DockPanel>
 
                     <TextBlock Text="P46 firmware (also P49)" Style="{StaticResource MetaLabel}"/>
                     <ComboBox ItemsSource="{Binding FirmwareOptionsP46}" SelectedItem="{Binding SelectedFirmwareP46}"/>
+                    <TextBlock Text="P46 post-update settings profile" Style="{StaticResource MetaLabel}"/>
+                    <DockPanel Margin="0,0,0,4">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <Button Style="{StaticResource GhostButton}"
+                                    Content="Browse..."
+                                    Padding="10,4"
+                                    Margin="8,0,0,0"
+                                    Command="{Binding BrowseDetectorSettingsProfileCommand}"
+                                    CommandParameter="P46"/>
+                            <Button Style="{StaticResource GhostButton}"
+                                    Content="Clear"
+                                    Padding="10,4"
+                                    Margin="6,0,0,0"
+                                    Command="{Binding ClearDetectorSettingsProfileCommand}"
+                                    CommandParameter="P46"/>
+                        </StackPanel>
+                        <TextBox Text="{Binding SelectedDetectorSettingsProfileP46, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 VerticalAlignment="Center"/>
+                    </DockPanel>
 
                     <TextBlock Text="P47 firmware" Style="{StaticResource MetaLabel}"/>
                     <ComboBox ItemsSource="{Binding FirmwareOptionsP47}" SelectedItem="{Binding SelectedFirmwareP47}"/>
+                    <TextBlock Text="P47 post-update settings profile" Style="{StaticResource MetaLabel}"/>
+                    <DockPanel Margin="0,0,0,4">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <Button Style="{StaticResource GhostButton}"
+                                    Content="Browse..."
+                                    Padding="10,4"
+                                    Margin="8,0,0,0"
+                                    Command="{Binding BrowseDetectorSettingsProfileCommand}"
+                                    CommandParameter="P47"/>
+                            <Button Style="{StaticResource GhostButton}"
+                                    Content="Clear"
+                                    Padding="10,4"
+                                    Margin="6,0,0,0"
+                                    Command="{Binding ClearDetectorSettingsProfileCommand}"
+                                    CommandParameter="P47"/>
+                        </StackPanel>
+                        <TextBox Text="{Binding SelectedDetectorSettingsProfileP47, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 VerticalAlignment="Center"/>
+                    </DockPanel>
 
                     <TextBlock Text="P48 firmware" Style="{StaticResource MetaLabel}"/>
                     <ComboBox ItemsSource="{Binding FirmwareOptionsP48}" SelectedItem="{Binding SelectedFirmwareP48}"/>
+                    <TextBlock Text="P48 post-update settings profile" Style="{StaticResource MetaLabel}"/>
+                    <DockPanel>
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <Button Style="{StaticResource GhostButton}"
+                                    Content="Browse..."
+                                    Padding="10,4"
+                                    Margin="8,0,0,0"
+                                    Command="{Binding BrowseDetectorSettingsProfileCommand}"
+                                    CommandParameter="P48"/>
+                            <Button Style="{StaticResource GhostButton}"
+                                    Content="Clear"
+                                    Padding="10,4"
+                                    Margin="6,0,0,0"
+                                    Command="{Binding ClearDetectorSettingsProfileCommand}"
+                                    CommandParameter="P48"/>
+                        </StackPanel>
+                        <TextBox Text="{Binding SelectedDetectorSettingsProfileP48, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 VerticalAlignment="Center"/>
+                    </DockPanel>
 
                 </StackPanel>
             </ScrollViewer>
