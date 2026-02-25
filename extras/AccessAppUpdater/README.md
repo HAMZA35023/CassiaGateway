@@ -111,7 +111,9 @@ If `/etc/accessapp-updater.json` does not exist (or you pass `--setup`), the upd
   - `/etc/accessapp-updater.json`
   - `/etc/accessapp-updater.channel`
   - `/etc/accessapp-updater.system`
-- Install `/etc/init.d/AccessApp` and enable autostart (Debian/Ubuntu via `update-rc.d`)
+- Install `/etc/init.d/AccessApp` and enable autostart using available init tooling:
+  - `update-rc.d` (SysV)
+  - `systemctl` (systemd)
 
 Then you can start AccessAPP with:
 
