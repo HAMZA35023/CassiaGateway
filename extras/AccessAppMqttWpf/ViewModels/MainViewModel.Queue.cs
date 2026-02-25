@@ -1317,7 +1317,9 @@ public partial class MainViewModel : ObservableObject
     private async Task QueueDeviceAndRequestAsync(
         DiscoveredDevice d,
         bool? forceUpdateOverride = null,
-        DetectorSettingsPatchModel? detectorSettings = null)
+        DetectorSettingsPatchModel? detectorSettings = null,
+        bool? runDali102TotalNewScanAfterUpdateOverride = null,
+        bool? runDali103TotalNewScanAfterUpdateOverride = null)
     {
         if (d == null || string.IsNullOrWhiteSpace(d.Mac))
             return;
@@ -1518,12 +1520,19 @@ public partial class MainViewModel : ObservableObject
         }
 
         var forceUpdate = forceUpdateOverride ?? ForceUpdateEnabled;
+        var runDali102TotalNewScanAfterUpdate = runDali102TotalNewScanAfterUpdateOverride ?? RunDali102TotalNewScanAfterUpdateEnabled;
+        var runDali103TotalNewScanAfterUpdate = runDali103TotalNewScanAfterUpdateOverride ?? RunDali103TotalNewScanAfterUpdateEnabled;
         var normalizedDetectorSettings = detectorSettings?.CloneNormalized();
         if (normalizedDetectorSettings != null && !normalizedDetectorSettings.HasAnyValue)
             normalizedDetectorSettings = null;
         if (normalizedDetectorSettings == null)
         {
-            if (!TryResolveModelProfilePatch(model, out normalizedDetectorSettings, out var profileError)
+            if (!TryResolveModelProfilePatch(
+                    model,
+                    out normalizedDetectorSettings,
+                    out var profileRunDali102,
+                    out var profileRunDali103,
+                    out var profileError)
                 && !string.IsNullOrWhiteSpace(profileError))
             {
                 qi.Status = "Error";
@@ -1534,6 +1543,9 @@ public partial class MainViewModel : ObservableObject
                 ConnectionStatus = profileError;
                 return;
             }
+
+            runDali102TotalNewScanAfterUpdate = runDali102TotalNewScanAfterUpdate || profileRunDali102;
+            runDali103TotalNewScanAfterUpdate = runDali103TotalNewScanAfterUpdate || profileRunDali103;
         }
 
         var payload = new[]
@@ -1545,6 +1557,8 @@ public partial class MainViewModel : ObservableObject
                 MacAddress = d.Mac,
                 Pincode = "",
                 forceUpdate,
+                runDali102TotalNewScanAfterUpdate,
+                runDali103TotalNewScanAfterUpdate,
                 DetectorSettings = normalizedDetectorSettings
             }
         };

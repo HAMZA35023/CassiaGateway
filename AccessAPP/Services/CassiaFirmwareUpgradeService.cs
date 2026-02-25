@@ -757,6 +757,315 @@ resp = true;
             return resp;
         }
 
+        // 0x0400 + len 0x0008. CRC16 is 0x61AD and encoded little-endian in telegrams => AD61.
+        private const string DaliCommissioningCommandPrefix = "0100040800AD61";
+
+        public async Task<(bool Success, string Message, int? DevicesFound, byte? ResultCode)> DaliRunTotalNewCommissioningScanAsync(
+            string nodeMac,
+            byte searchType,
+            int maxWaitMs = 180000)
+        {
+            if (searchType != 0x01 && searchType != 0x03)
+                return (false, $"Unsupported DALI commissioning search type: 0x{searchType:X2}", null, null);
+
+            var command = DaliCommissioningCommandPrefix + searchType.ToString("X2", CultureInfo.InvariantCulture);
+            var deadlineUtc = DateTime.UtcNow.AddMilliseconds(Math.Max(5000, maxWaitMs));
+            var label = searchType == 0x01 ? "102 total-new" : "103 total-new";
+            var attempt = 0;
+
+            while (DateTime.UtcNow <= deadlineUtc)
+            {
+                attempt++;
+                Guid token = Guid.Empty;
+                var ackTcs = new TaskCompletionSource<byte>(TaskCreationOptions.RunContinuationsAsynchronously);
+                var resultTcs = new TaskCompletionSource<(byte resultCode, byte dataByte)>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+                try
+                {
+                    token = _notificationService.Subscribe(nodeMac, (_, rawTelegram) =>
+                    {
+                        try
+                        {
+                            var normalizedRaw = NormalizeHex(rawTelegram);
+                            if (normalizedRaw.Length < 14)
+                                return;
+
+                            var parsed = new GenericTelegramReply(normalizedRaw);
+                            var telegramType = NormalizeHex(parsed.TelegramType);
+                            var payload = NormalizeHex(parsed.DataResult);
+
+                            if (IsDaliCommissioningReplyTelegram(telegramType))
+                            {
+                                AppLog.Debug($"[DALI] Commissioning {label} notify reply type={telegramType} payload={payload} mac={nodeMac}");
+                                if (TryParseCommissioningPayloadBytes(payload, out var b0, out var _unused))
+                                    ackTcs.TrySetResult(b0);
+                                return;
+                            }
+
+                            if (IsDaliCommissioningStatusResultTelegram(telegramType))
+                            {
+                                AppLog.Debug($"[DALI] Commissioning {label} notify status type={telegramType} payload={payload} mac={nodeMac}");
+                                if (TryParseCommissioningPayloadBytes(payload, out var resultCode, out var dataByte))
+                                    resultTcs.TrySetResult((resultCode, dataByte));
+                            }
+                        }
+                        catch
+                        {
+                            // Ignore malformed/unrelated notifications.
+                        }
+                    });
+
+                    // Linux-native BLE path may race StartNotify vs write. Ensure notifications are ready
+                    // before sending commissioning command so fast 0x0422 replies are not lost.
+                    if (_notificationService is LinuxBle.LinuxBleNotificationService linuxNotify)
+                    {
+                        try
+                        {
+                            using var notifyReadyCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                            await linuxNotify.EnsureNotifyingReadyAsync(nodeMac, notifyReadyCts.Token).ConfigureAwait(false);
+                        }
+                        catch (Exception ex)
+                        {
+                            AppLog.Debug($"[DALI] Commissioning {label} notify readiness wait did not complete for {nodeMac}: {ex.Message}");
+                        }
+                    }
+
+                    using var writeResponse = await cassiaReadWriteService
+                        .WriteBleMessage(_gatewayIpAddress, nodeMac, 19, command, "?noresponse=1")
+                        .ConfigureAwait(false);
+
+                    if (!writeResponse.IsSuccessStatusCode)
+                    {
+                        var statusMsg = $"HTTP {(int)writeResponse.StatusCode} {writeResponse.StatusCode}";
+                        AppLog.Warn($"[DALI] Commissioning {label} command write/read failed for {nodeMac}: {statusMsg} (attempt {attempt}).");
+                        await Task.Delay(2000).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    var ackWaitMs = Math.Max(1000, (int)Math.Min(20000, (deadlineUtc - DateTime.UtcNow).TotalMilliseconds));
+                    var firstReply = await Task.WhenAny(
+                        ackTcs.Task,
+                        resultTcs.Task,
+                        Task.Delay(Math.Max(1, ackWaitMs))).ConfigureAwait(false);
+
+                    bool statusArrivedBeforeAck = firstReply == resultTcs.Task;
+                    if (statusArrivedBeforeAck)
+                    {
+                        AppLog.Warn($"[DALI] Commissioning {label} received 0x0421 status before 0x0422 reply for {nodeMac} (attempt {attempt}).");
+                    }
+
+                    if (firstReply != ackTcs.Task && !statusArrivedBeforeAck)
+                    {
+                        AppLog.Warn($"[DALI] Commissioning {label} did not return 0x0422 reply for {nodeMac} (attempt {attempt}).");
+                        await Task.Delay(2000).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    if (firstReply == ackTcs.Task)
+                    {
+                        var ackStatus = await ackTcs.Task.ConfigureAwait(false);
+                        var ackStatusName = DescribeDaliCommissioningReplyStatus(ackStatus);
+                        if (ackStatus == 0x03)
+                        {
+                            AppLog.Info($"[DALI] Commissioning {label} waiting for previous scan to finish for {nodeMac} (attempt {attempt}, status={ackStatusName}).");
+                            await Task.Delay(5000).ConfigureAwait(false);
+                            continue;
+                        }
+
+                        if (ackStatus != 0x00)
+                        {
+                            return (false, $"Commissioning {label} rejected: {ackStatusName} (0x{ackStatus:X2})", null, null);
+                        }
+                    }
+
+                    async Task<(bool HasValue, byte ResultCode, byte DataByte)> TryGetNextStatusAsync(int waitMs, bool statusAlreadyAvailable)
+                    {
+                        TaskCompletionSource<(byte resultCode, byte dataByte)> completedStatusTcs;
+                        if (statusAlreadyAvailable)
+                        {
+                            completedStatusTcs = resultTcs;
+                        }
+                        else
+                        {
+                            if (!await TryWaitForTaskAsync(resultTcs.Task, waitMs).ConfigureAwait(false))
+                                return (false, 0x00, 0x00);
+                            completedStatusTcs = resultTcs;
+                        }
+
+                        // Re-arm before awaiting so we never drop quick back-to-back status telegrams.
+                        resultTcs = new TaskCompletionSource<(byte resultCode, byte dataByte)>(TaskCreationOptions.RunContinuationsAsynchronously);
+                        var (statusCode, statusData) = await completedStatusTcs.Task.ConfigureAwait(false);
+                        return (true, statusCode, statusData);
+                    }
+
+                    bool IsCommissioningProgressResult(byte code)
+                        => code == 0x0E || code == 0x0F || code == 0x10;
+
+                    var resultDeadlineUtc = DateTime.UtcNow.AddMilliseconds(Math.Max(1000, (int)Math.Min(120000, (deadlineUtc - DateTime.UtcNow).TotalMilliseconds)));
+                    var haveTerminalResult = false;
+                    byte terminalResultCode = 0x00;
+                    byte terminalDataByte = 0x00;
+                    DateTime terminalResultSeenUtc = DateTime.MinValue;
+                    bool statusAlreadyAvailable = statusArrivedBeforeAck;
+                    const int commissioningDoneCountGraceMs = 6000;
+
+                    while (DateTime.UtcNow <= resultDeadlineUtc)
+                    {
+                        var remainingMs = Math.Max(1, (int)(resultDeadlineUtc - DateTime.UtcNow).TotalMilliseconds);
+                        var waitMs = Math.Min(5000, remainingMs);
+                        var nextStatus = await TryGetNextStatusAsync(waitMs, statusAlreadyAvailable).ConfigureAwait(false);
+                        statusAlreadyAvailable = false;
+
+                        if (!nextStatus.HasValue)
+                        {
+                            // Some devices first emit COMMISSIONING_DONE with 0 count and shortly after
+                            // emit a final DONE with the real count. Keep listening briefly for that.
+                            if (haveTerminalResult &&
+                                terminalResultCode == 0x03 &&
+                                terminalDataByte == 0x00 &&
+                                (DateTime.UtcNow - terminalResultSeenUtc).TotalMilliseconds >= commissioningDoneCountGraceMs)
+                            {
+                                break;
+                            }
+
+                            continue;
+                        }
+
+                        var statusCode = nextStatus.ResultCode;
+                        var statusData = nextStatus.DataByte;
+                        AppLog.Debug($"[DALI] Commissioning {label} status update for {nodeMac}: code=0x{statusCode:X2} ({DescribeDaliCommissioningResult(statusCode)}), data={statusData}");
+
+                        if (IsCommissioningProgressResult(statusCode))
+                            continue;
+
+                        haveTerminalResult = true;
+                        terminalResultCode = statusCode;
+                        terminalDataByte = statusData;
+                        terminalResultSeenUtc = DateTime.UtcNow;
+
+                        if (statusCode != 0x03 || statusData != 0x00)
+                            break;
+                    }
+
+                    if (!haveTerminalResult)
+                        return (false, $"Commissioning {label} started but timed out waiting for terminal 0x0421 status result.", null, null);
+
+                    var foundCount = (int)terminalDataByte;
+                    var resultName = DescribeDaliCommissioningResult(terminalResultCode);
+                    var completedOk = IsCommissioningResultSuccess(terminalResultCode);
+                    var message = $"Result={resultName} (0x{terminalResultCode:X2}), devicesFound={foundCount}";
+
+                    if (completedOk)
+                        AppLog.Info($"[DALI] Commissioning {label} completed for {nodeMac}: {message}");
+                    else
+                        AppLog.Warn($"[DALI] Commissioning {label} failed for {nodeMac}: {message}");
+
+                    return (completedOk, message, foundCount, terminalResultCode);
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Warn($"[DALI] Commissioning {label} exception for {nodeMac}: {ex.Message} (attempt {attempt}).");
+                    await Task.Delay(2000).ConfigureAwait(false);
+                }
+                finally
+                {
+                    if (token != Guid.Empty)
+                        _notificationService.Unsubscribe(nodeMac, token);
+                }
+            }
+
+            return (false, $"Commissioning {label} timed out after {Math.Max(5000, maxWaitMs)} ms.", null, null);
+        }
+
+        private static async Task<bool> TryWaitForTaskAsync(Task task, int timeoutMs)
+        {
+            var completed = await Task.WhenAny(task, Task.Delay(Math.Max(1, timeoutMs))).ConfigureAwait(false);
+            return completed == task;
+        }
+
+        private static bool IsDaliCommissioningReplyTelegram(string telegramType)
+            => string.Equals(telegramType, "2204", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(telegramType, "0422", StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsDaliCommissioningStatusResultTelegram(string telegramType)
+            => string.Equals(telegramType, "2104", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(telegramType, "0421", StringComparison.OrdinalIgnoreCase);
+
+        private static bool TryParseCommissioningPayloadBytes(string? payload, out byte b0, out byte b1)
+        {
+            b0 = 0xFF;
+            b1 = 0x00;
+            var normalized = NormalizeHex(payload);
+            if (string.IsNullOrWhiteSpace(normalized) || normalized.Length < 2 || (normalized.Length % 2) != 0)
+                return false;
+
+            byte[] bytes;
+            try
+            {
+                bytes = Convert.FromHexString(normalized);
+            }
+            catch
+            {
+                return false;
+            }
+
+            if (bytes.Length == 0)
+                return false;
+
+            b0 = bytes[0];
+            if (bytes.Length > 1)
+                b1 = bytes[1];
+
+            return true;
+        }
+
+        private static string DescribeDaliCommissioningReplyStatus(byte status)
+            => status switch
+            {
+                0x00 => "ACK",
+                0x01 => "NACK_RANGE_CHECK",
+                0x03 => "NACK_COMMISSIONING_RUNNING",
+                0x04 => "NACK_OPENPERIOD",
+                0x07 => "NOT_AVAILABLE_IN_PROFILE",
+                0x0B => "NACK_USER_CONFIG_BEING_SET",
+                _ => "UNKNOWN"
+            };
+
+        private static bool IsCommissioningResultSuccess(byte resultCode)
+            => resultCode switch
+            {
+                0x04 => false, // COMMISSIONING_ERROR
+                0x09 => false, // ZONE_ASSIGN_ERROR
+                0x0B => false, // ERROR_DALI_8BIT_FRAME_SEND
+                0x0C => false, // ERROR_DALI_16BIT_FRAME_SEND
+                0x0D => false, // ERROR_DALI_24BIT_FRAME_SEND
+                _ => true
+            };
+
+        private static string DescribeDaliCommissioningResult(byte resultCode)
+            => resultCode switch
+            {
+                0x00 => "NO_COMMISSIONING_RESPONSE",
+                0x01 => "ONE_CONTROL_GEAR_RESTORED",
+                0x02 => "MANUAL_COMMISSIONING_NEEDED",
+                0x03 => "COMMISSIONING_DONE",
+                0x04 => "COMMISSIONING_ERROR",
+                0x05 => "NO_NEW_CONTROL_GEAR",
+                0x06 => "NEW_CONTROL_GEAR_FOUND",
+                0x07 => "NO_NEW_INPUT_DEVICES",
+                0x08 => "NEW_INPUT_DEVICES_FOUND",
+                0x09 => "ZONE_ASSIGN_ERROR",
+                0x0A => "ZONE_ASSIGN_OK",
+                0x0B => "ERROR_DALI_8BIT_FRAME_SEND",
+                0x0C => "ERROR_DALI_16BIT_FRAME_SEND",
+                0x0D => "ERROR_DALI_24BIT_FRAME_SEND",
+                0x0E => "DALI_START_CG_AUTO_SCAN_FSM1",
+                0x0F => "DALI_START_CG_AUTO_SCAN_FSM2",
+                0x10 => "DALI_START_CG_AUTO_SCAN_FSM3",
+                0x11 => "COMMISSIONING_DB_FULL",
+                _ => "UNKNOWN"
+            };
+
         public async Task<string> GetUserConfig(string nodeMac)
         {
 

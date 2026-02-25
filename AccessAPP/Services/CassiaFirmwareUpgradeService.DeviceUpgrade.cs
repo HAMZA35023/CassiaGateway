@@ -365,14 +365,26 @@ try
                         {
                             bool pendingConfig = dev.requiresConfigRestore && !dev.isConfigRestored;
                             bool pending102 = dev.requires102Restore && !dev.restore102Success;
+                            bool pendingDaliScan102 = dev.RunDali102TotalNewScanAfterUpdate && !dev.Dali102TotalNewScanSuccess;
+                            bool pendingDaliScan103 = dev.RunDali103TotalNewScanAfterUpdate && !dev.Dali103TotalNewScanSuccess;
                             string pending = string.Join(", ",
                                 new[]
                                 {
                                     pendingConfig ? "settings-restore" : null,
-                                    pending102 ? "dali-102-restore" : null
+                                    pending102 ? "dali-102-restore" : null,
+                                    pendingDaliScan102 ? "dali-102-total-new-scan" : null,
+                                    pendingDaliScan103 ? "dali-103-total-new-scan" : null
                                 }.Where(x => !string.IsNullOrWhiteSpace(x)));
                             if (string.IsNullOrWhiteSpace(pending))
                                 pending = "unknown-state";
+
+                            if (string.Equals(dev.finalUpgradeResult, "Failed", StringComparison.OrdinalIgnoreCase))
+                            {
+                                dev.shouldRetry = false;
+                                AppLog.Warn($"[RETRY STOP] {mac} - no firmware actions pending; keeping failure state ({pending}).");
+                                UpgradeLogger.Log(logId, mac, $"Retry stopped: no firmware actions pending; keeping failure state ({pending}).", "Warn", dev.FirmwareVersion);
+                                break;
+                            }
 
                             dev.LastFailureReason = $"Retry stopped: no firmware actions pending, but upgrade is not fully satisfied ({pending}).";
                             if (!string.Equals(dev.finalUpgradeResult, "Failed", StringComparison.OrdinalIgnoreCase))

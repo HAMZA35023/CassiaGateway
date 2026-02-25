@@ -207,7 +207,9 @@ using (var scope = app.Services.CreateScope())
                 DetectotType = r.DetectorType ?? "",
                 FirmwareVersion = r.FirmwareVersion ?? "",
                 ForceUpdate = r.ForceUpdate ?? false,
-                PostUpdateSettings = r.DetectorSettings?.CloneNormalized()
+                PostUpdateSettings = r.DetectorSettings?.CloneNormalized(),
+                RunDali102TotalNewScanAfterUpdate = r.RunDali102TotalNewScanAfterUpdate ?? false,
+                RunDali103TotalNewScanAfterUpdate = r.RunDali103TotalNewScanAfterUpdate ?? false
             })
             .ToList();
 

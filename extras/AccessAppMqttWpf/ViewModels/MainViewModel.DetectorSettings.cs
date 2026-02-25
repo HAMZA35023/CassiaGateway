@@ -69,16 +69,26 @@ public partial class MainViewModel
 
     internal async Task QueueDeviceAndRequestWithDetectorSettingsAsync(
         DiscoveredDevice? device,
-        DetectorSettingsPatchModel patch)
+        DetectorSettingsPatchModel patch,
+        bool? runDali102TotalNewScanAfterUpdateOverride = null,
+        bool? runDali103TotalNewScanAfterUpdateOverride = null)
     {
         if (device == null) return;
         if (patch == null || !patch.CloneNormalized().HasAnyValue)
         {
-            await QueueDeviceAndRequestAsync(device).ConfigureAwait(false);
+            await QueueDeviceAndRequestAsync(
+                device,
+                runDali102TotalNewScanAfterUpdateOverride: runDali102TotalNewScanAfterUpdateOverride,
+                runDali103TotalNewScanAfterUpdateOverride: runDali103TotalNewScanAfterUpdateOverride).ConfigureAwait(false);
             return;
         }
 
-        await QueueDeviceAndRequestAsync(device, forceUpdateOverride: null, detectorSettings: patch).ConfigureAwait(false);
+        await QueueDeviceAndRequestAsync(
+            device,
+            forceUpdateOverride: null,
+            detectorSettings: patch,
+            runDali102TotalNewScanAfterUpdateOverride: runDali102TotalNewScanAfterUpdateOverride,
+            runDali103TotalNewScanAfterUpdateOverride: runDali103TotalNewScanAfterUpdateOverride).ConfigureAwait(false);
     }
 
     [RelayCommand]

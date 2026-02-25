@@ -111,6 +111,7 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
                     <TextBlock Grid.Row="0" Grid.Column="0" Text="Cassia" VerticalAlignment="Center" Margin="0,0,8,8"/>
@@ -141,8 +142,19 @@
                               VerticalAlignment="Center"
                               Margin="0,0,0,8"/>
 
-                    <TextBlock Grid.Row="3" Grid.Column="0" Text="Profile" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                    <TextBox Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3"
+                    <CheckBox Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2"
+                              Content="Profile: run DALI 102 total-new scan after settings restore"
+                              IsChecked="{Binding RunDali102TotalNewScanAfterUpdate, Mode=TwoWay}"
+                              VerticalAlignment="Center"
+                              Margin="0,0,12,8"/>
+                    <CheckBox Grid.Row="3" Grid.Column="2" Grid.ColumnSpan="2"
+                              Content="Profile: run DALI 103 total-new scan after settings restore"
+                              IsChecked="{Binding RunDali103TotalNewScanAfterUpdate, Mode=TwoWay}"
+                              VerticalAlignment="Center"
+                              Margin="0,0,0,8"/>
+
+                    <TextBlock Grid.Row="4" Grid.Column="0" Text="Profile" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <TextBox Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="3"
                              Text="{Binding ProfilePath}"
                              IsReadOnly="True"
                              Foreground="{DynamicResource MutedBrush}"/>

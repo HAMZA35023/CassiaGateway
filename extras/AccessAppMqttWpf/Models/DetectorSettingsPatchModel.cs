@@ -136,6 +136,8 @@ public sealed class DetectorSettingsProfileModel
     public bool ApplyDaliPushButtons { get; set; }
     public bool ApplyDaliDeviceCommonParam { get; set; }
     public bool ApplyBlePushButtons { get; set; }
+    public bool RunDali102TotalNewScanAfterUpdate { get; set; }
+    public bool RunDali103TotalNewScanAfterUpdate { get; set; }
 
     public DetectorSettingsPatchModel Settings { get; set; } = new();
     public List<DetectorSettingsFieldOverrideModel> FieldOverrides { get; set; } = new();

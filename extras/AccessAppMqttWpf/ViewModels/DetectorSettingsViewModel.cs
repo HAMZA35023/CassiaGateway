@@ -76,6 +76,8 @@ public partial class DetectorSettingsViewModel : ObservableObject
     [ObservableProperty] private string firmwareVersion = "";
     [ObservableProperty] private string pincode = "";
     [ObservableProperty] private bool writeOnlyChanged = true;
+    [ObservableProperty] private bool runDali102TotalNewScanAfterUpdate;
+    [ObservableProperty] private bool runDali103TotalNewScanAfterUpdate;
     [ObservableProperty] private string profilePath = "";
     [ObservableProperty] private string statusText = "";
     [ObservableProperty] private bool isBusy;
@@ -230,7 +232,11 @@ public partial class DetectorSettingsViewModel : ObservableObject
         StatusText = "Queueing update with post-update settings profile...";
         try
         {
-            await _main.QueueDeviceAndRequestWithDetectorSettingsAsync(_device, patch);
+            await _main.QueueDeviceAndRequestWithDetectorSettingsAsync(
+                _device,
+                patch,
+                RunDali102TotalNewScanAfterUpdate,
+                RunDali103TotalNewScanAfterUpdate);
             StatusText = "Update queued with detector settings profile.";
         }
         catch (Exception ex)
@@ -271,6 +277,8 @@ public partial class DetectorSettingsViewModel : ObservableObject
             if (!string.IsNullOrWhiteSpace(profile.FirmwareVersion))
                 FirmwareVersion = profile.FirmwareVersion!.Trim();
             WriteOnlyChanged = profile.WriteOnlyChanged;
+            RunDali102TotalNewScanAfterUpdate = profile.RunDali102TotalNewScanAfterUpdate;
+            RunDali103TotalNewScanAfterUpdate = profile.RunDali103TotalNewScanAfterUpdate;
 
             ClearAllSelections();
 
@@ -355,7 +363,9 @@ public partial class DetectorSettingsViewModel : ObservableObject
                 ApplyPushButtons = !string.IsNullOrWhiteSpace(patch.PushButtonsHex),
                 ApplyDaliPushButtons = !string.IsNullOrWhiteSpace(patch.DaliPushButtonsHex),
                 ApplyDaliDeviceCommonParam = !string.IsNullOrWhiteSpace(patch.DaliDeviceCommonParamHex),
-                ApplyBlePushButtons = !string.IsNullOrWhiteSpace(patch.BlePushButtonsHex)
+                ApplyBlePushButtons = !string.IsNullOrWhiteSpace(patch.BlePushButtonsHex),
+                RunDali102TotalNewScanAfterUpdate = RunDali102TotalNewScanAfterUpdate,
+                RunDali103TotalNewScanAfterUpdate = RunDali103TotalNewScanAfterUpdate
             };
 
             File.WriteAllText(dlg.FileName, profile.ToJson());

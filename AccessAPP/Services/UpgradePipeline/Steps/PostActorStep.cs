@@ -11,8 +11,11 @@ internal sealed class PostActorStep : IDeviceUpgradeStep
     {
         var svc = ctx.Svc;
         var dev = ctx.Dev;
+        var requestedCommissioningScan =
+            dev.RunDali102TotalNewScanAfterUpdate ||
+            dev.RunDali103TotalNewScanAfterUpdate;
 
-        if (!ctx.AnyFirmwareStepExecuted)
+        if (!ctx.AnyFirmwareStepExecuted && !requestedCommissioningScan)
         {
             UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Post-actor skipped (no FW step executed in this attempt)", "Info", ctx.FirmwareVersion);
             return true;
@@ -28,6 +31,16 @@ internal sealed class PostActorStep : IDeviceUpgradeStep
 
         if (isDaliMaster)
         {
+            if (!ctx.AnyFirmwareStepExecuted && requestedCommissioningScan)
+            {
+                UpgradeLogger.Log(
+                    ctx.LogId,
+                    ctx.MacAddress,
+                    "Post-actor: running requested DALI commissioning scans without FW flashing",
+                    "Info",
+                    ctx.FirmwareVersion);
+            }
+
             bool loggedIn = false;
             bool reusedSession =
                 RuntimeVariables.UPGRADE_OPTIMIZE_RECONNECT_FLOW &&
@@ -74,7 +87,7 @@ internal sealed class PostActorStep : IDeviceUpgradeStep
                 }
             }
 
-            if (RuntimeVariables.AutoSetSysFailLevelUnderUpdate)
+            if (ctx.AnyFirmwareStepExecuted && RuntimeVariables.AutoSetSysFailLevelUnderUpdate)
             {
                 var restoreValue = ctx.OriginalDaliSysFailLevel ?? (byte)0xFE;
                 var restoreHex = $"0x{restoreValue:X2}";
@@ -86,9 +99,9 @@ internal sealed class PostActorStep : IDeviceUpgradeStep
             }
         }
 
-        bool actorWasUpdatedThisRun = ctx.ActorFirmwareStepExecuted && dev.ActorSuccess;
+        bool actorWasUpdatedThisRun = ctx.AnyFirmwareStepExecuted && ctx.ActorFirmwareStepExecuted && dev.ActorSuccess;
 
-        if (RuntimeVariables.RebootDetectorAfterUpgrade && actorWasUpdatedThisRun && !ctx.ActorUpdatedBeforeFirmware)
+        if (ctx.AnyFirmwareStepExecuted && RuntimeVariables.RebootDetectorAfterUpgrade && actorWasUpdatedThisRun && !ctx.ActorUpdatedBeforeFirmware)
         {
             AppLog.Info($"Rebooting device {ctx.MacAddress} after actor update");
             await svc.RebootDeviceAsync(ctx.MacAddress).ConfigureAwait(false);
@@ -103,17 +116,17 @@ internal sealed class PostActorStep : IDeviceUpgradeStep
                     delayBetweenAttemptsMs: 2000).ConfigureAwait(false);
             }
         }
-        else if (RuntimeVariables.RebootDetectorAfterUpgrade && ctx.ActorUpdatedBeforeFirmware)
+        else if (ctx.AnyFirmwareStepExecuted && RuntimeVariables.RebootDetectorAfterUpgrade && ctx.ActorUpdatedBeforeFirmware)
         {
             UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Reboot skipped (actor updated before bootloader/sensor)", "Info", ctx.FirmwareVersion);
             AppLog.Info($"Skipping post-actor reboot for {ctx.MacAddress} because actor was already updated pre-firmware.");
         }
-        else if (RuntimeVariables.RebootDetectorAfterUpgrade && !actorWasUpdatedThisRun)
+        else if (ctx.AnyFirmwareStepExecuted && RuntimeVariables.RebootDetectorAfterUpgrade && !actorWasUpdatedThisRun)
         {
             UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Reboot skipped (actor not updated in this attempt)", "Info", ctx.FirmwareVersion);
         }
 
-        if (isDaliMaster && RuntimeVariables.Restore102DBAfterUpgrade)
+        if (ctx.AnyFirmwareStepExecuted && isDaliMaster && RuntimeVariables.Restore102DBAfterUpgrade)
         {
             bool resp = false;
             for (int attempt = 1; attempt <= 3; attempt++)
@@ -131,6 +144,72 @@ internal sealed class PostActorStep : IDeviceUpgradeStep
                 ctx.Response.Success = false;
                 ctx.Response.StatusCode = 500;
                 ctx.Response.Message = "DALI Restore 102 Database failed after retries";
+                dev.LastFailureReason = ctx.Response.Message;
+                dev.shouldRetry = false;
+                dev.finalUpgradeResult = "Failed";
+                return false;
+            }
+        }
+
+        if (isDaliMaster && dev.RunDali102TotalNewScanAfterUpdate)
+        {
+            var scan102 = await svc.DaliRunTotalNewCommissioningScanAsync(ctx.MacAddress, 0x01).ConfigureAwait(false);
+            dev.Dali102TotalNewScanSuccess = scan102.Success;
+            UpgradeLogger.Log(
+                ctx.LogId,
+                ctx.MacAddress,
+                $"DALI 102 total-new scan: {scan102.Message}",
+                scan102.Success ? "Success" : "Failed",
+                ctx.FirmwareVersion);
+
+            if (scan102.DevicesFound.HasValue)
+            {
+                UpgradeLogger.Log(
+                    ctx.LogId,
+                    ctx.MacAddress,
+                    $"DALI 102 total-new scan devices found: {scan102.DevicesFound.Value}",
+                    "Info",
+                    ctx.FirmwareVersion);
+            }
+
+            if (!scan102.Success)
+            {
+                ctx.Response.Success = false;
+                ctx.Response.StatusCode = 500;
+                ctx.Response.Message = $"DALI 102 total-new scan failed: {scan102.Message}";
+                dev.LastFailureReason = ctx.Response.Message;
+                dev.shouldRetry = false;
+                dev.finalUpgradeResult = "Failed";
+                return false;
+            }
+        }
+
+        if (isDaliMaster && dev.RunDali103TotalNewScanAfterUpdate)
+        {
+            var scan103 = await svc.DaliRunTotalNewCommissioningScanAsync(ctx.MacAddress, 0x03).ConfigureAwait(false);
+            dev.Dali103TotalNewScanSuccess = scan103.Success;
+            UpgradeLogger.Log(
+                ctx.LogId,
+                ctx.MacAddress,
+                $"DALI 103 total-new scan: {scan103.Message}",
+                scan103.Success ? "Success" : "Failed",
+                ctx.FirmwareVersion);
+
+            if (scan103.DevicesFound.HasValue)
+            {
+                UpgradeLogger.Log(
+                    ctx.LogId,
+                    ctx.MacAddress,
+                    $"DALI 103 total-new scan devices found: {scan103.DevicesFound.Value}",
+                    "Info",
+                    ctx.FirmwareVersion);
+            }
+
+            if (!scan103.Success)
+            {
+                ctx.Response.Success = false;
+                ctx.Response.StatusCode = 500;
+                ctx.Response.Message = $"DALI 103 total-new scan failed: {scan103.Message}";
                 dev.LastFailureReason = ctx.Response.Message;
                 dev.shouldRetry = false;
                 dev.finalUpgradeResult = "Failed";

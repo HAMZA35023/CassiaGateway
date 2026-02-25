@@ -1514,6 +1514,16 @@
                                                   IsChecked="{Binding AutoSetWorkersByModelEnabled, Mode=TwoWay}"
                                                   Margin="0,0,12,0"
                                                   VerticalAlignment="Center"/>
+                                        <CheckBox Content="Post-update DALI 102 total new scan"
+                                                  ToolTip="After update: run DALI commissioning 0x0400, SearchType 0x01."
+                                                  IsChecked="{Binding RunDali102TotalNewScanAfterUpdateEnabled, Mode=TwoWay}"
+                                                  Margin="0,0,12,0"
+                                                  VerticalAlignment="Center"/>
+                                        <CheckBox Content="Post-update DALI 103 total new scan"
+                                                  ToolTip="After update: run DALI commissioning 0x0400, SearchType 0x03."
+                                                  IsChecked="{Binding RunDali103TotalNewScanAfterUpdateEnabled, Mode=TwoWay}"
+                                                  Margin="0,0,12,0"
+                                                  VerticalAlignment="Center"/>
                                         <Button Style="{StaticResource PrimaryButton}" Content="Update / Queue selected" Padding="12,6" Margin="0,0,8,0" Command="{Binding QueueSelectedCommand}"/>
                                         <Button Style="{StaticResource DangerButton}" Content="Clear queue" Padding="12,6" Margin="0,0,8,0" Command="{Binding ClearQueueCommand}"/>
                                         <Button Style="{StaticResource GhostButton}" Content="Default sort" Padding="12,6" Click="QueueDefaultSort_Click"/>
@@ -1738,6 +1748,16 @@
                             <CheckBox Content="Auto workers by model"
                                       ToolTip="Auto-set workers: DALI master only (P47/P48) = 4, mixed/other = 2"
                                       IsChecked="{Binding AutoSetWorkersByModelEnabled, Mode=TwoWay}"
+                                      Margin="0,0,12,0"
+                                      VerticalAlignment="Center"/>
+                            <CheckBox Content="Post-update DALI 102 total new scan"
+                                      ToolTip="After update: run DALI commissioning 0x0400, SearchType 0x01."
+                                      IsChecked="{Binding RunDali102TotalNewScanAfterUpdateEnabled, Mode=TwoWay}"
+                                      Margin="0,0,12,0"
+                                      VerticalAlignment="Center"/>
+                            <CheckBox Content="Post-update DALI 103 total new scan"
+                                      ToolTip="After update: run DALI commissioning 0x0400, SearchType 0x03."
+                                      IsChecked="{Binding RunDali103TotalNewScanAfterUpdateEnabled, Mode=TwoWay}"
                                       Margin="0,0,12,0"
                                       VerticalAlignment="Center"/>
                             <!-- no "Update / Queue selected" here -->

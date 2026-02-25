@@ -45,6 +45,20 @@ public sealed class StartUpdateRequest
     /// </summary>
     [JsonPropertyName("DetectorSettings")]
     public DetectorSettingsPatch? DetectorSettings { get; set; }
+
+    /// <summary>
+    /// If true, run DALI commissioning total-new 102 scan (0x0400, SearchType=0x01) after update.
+    /// Default is false when omitted.
+    /// </summary>
+    [JsonPropertyName("RunDali102TotalNewScanAfterUpdate")]
+    public bool? RunDali102TotalNewScanAfterUpdate { get; set; }
+
+    /// <summary>
+    /// If true, run DALI commissioning total-new 103 scan (0x0400, SearchType=0x03) after update.
+    /// Default is false when omitted.
+    /// </summary>
+    [JsonPropertyName("RunDali103TotalNewScanAfterUpdate")]
+    public bool? RunDali103TotalNewScanAfterUpdate { get; set; }
 }
 
 // NEW: change MQTT scope (only NetworkId) at runtime

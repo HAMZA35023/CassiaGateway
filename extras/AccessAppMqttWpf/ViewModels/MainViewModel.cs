@@ -224,6 +224,10 @@ public partial class MainViewModel : ObservableObject
     // If true, we include forceUpdate=true in start-update payloads.
     // Default is false on startup.
     [ObservableProperty] private bool forceUpdateEnabled = false;
+    // Runtime-only flags for post-update DALI commissioning scans.
+    // These are intentionally not persisted in appsettings.
+    [ObservableProperty] private bool runDali102TotalNewScanAfterUpdateEnabled = false;
+    [ObservableProperty] private bool runDali103TotalNewScanAfterUpdateEnabled = false;
 
     // If true, auto-adjust workers from queued model mix:
     // DALI master only (P47/P48) => 4, otherwise => 2.
@@ -698,9 +702,13 @@ public partial class MainViewModel : ObservableObject
     private bool TryResolveModelProfilePatch(
         string model,
         out DetectorSettingsPatchModel? patch,
+        out bool runDali102TotalNewScanAfterUpdate,
+        out bool runDali103TotalNewScanAfterUpdate,
         out string error)
     {
         patch = null;
+        runDali102TotalNewScanAfterUpdate = false;
+        runDali103TotalNewScanAfterUpdate = false;
         error = string.Empty;
 
         var path = GetDetectorSettingsProfileForModel(model);
@@ -724,11 +732,20 @@ public partial class MainViewModel : ObservableObject
                 return false;
             }
 
+            runDali102TotalNewScanAfterUpdate = profile.RunDali102TotalNewScanAfterUpdate;
+            runDali103TotalNewScanAfterUpdate = profile.RunDali103TotalNewScanAfterUpdate;
+
             var normalized = (profile.Settings ?? new DetectorSettingsPatchModel()).CloneNormalized();
             if (!normalized.HasAnyValue)
             {
-                error = $"Detector settings profile for {model} has no selected fields: {path}";
-                return false;
+                if (!runDali102TotalNewScanAfterUpdate && !runDali103TotalNewScanAfterUpdate)
+                {
+                    error = $"Detector settings profile for {model} has no selected fields or post-update scans: {path}";
+                    return false;
+                }
+
+                patch = null;
+                return true;
             }
 
             patch = normalized;
