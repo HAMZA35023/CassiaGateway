@@ -20,6 +20,7 @@ namespace AccessAPP.Services
             bool UserConfig,
             bool WiredPushButtons,
             bool DaliPushButtons,
+            bool DaliDeviceCommonParam,
             bool BlePushButtons);
 
         // Conservative default: only UserConfig. Add explicit profiles per detector below.
@@ -28,22 +29,23 @@ namespace AccessAPP.Services
             UserConfig: true,
             WiredPushButtons: false,
             DaliPushButtons: false,
+            DaliDeviceCommonParam: false,
             BlePushButtons: false);
 
         // NOTE: keys are UPPERCASE detector types.
         private static readonly Dictionary<string, SettingsBackupProfile> Profiles = new()
         {
             // P46/P49/P41: UserConfig only
-            ["P46"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: false, DaliPushButtons: false, BlePushButtons: false),
-            ["P49"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: false, DaliPushButtons: false, BlePushButtons: false),
-            ["P41"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: false, DaliPushButtons: false, BlePushButtons: false),
+            ["P46"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: false, DaliPushButtons: false, DaliDeviceCommonParam: false, BlePushButtons: false),
+            ["P49"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: false, DaliPushButtons: false, DaliDeviceCommonParam: false, BlePushButtons: false),
+            ["P41"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: false, DaliPushButtons: false, DaliDeviceCommonParam: false, BlePushButtons: false),
 
             // P42: UserConfig + Wired + BLE (NO DALI)
-            ["P42"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: true, DaliPushButtons: false, BlePushButtons: true),
+            ["P42"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: true, DaliPushButtons: false, DaliDeviceCommonParam: false, BlePushButtons: true),
 
             // P47/P48: DALI masters (explicit)
-            ["P47"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: true, DaliPushButtons: true, BlePushButtons: true),
-            ["P48"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: true, DaliPushButtons: true, BlePushButtons: true),
+            ["P47"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: true, DaliPushButtons: true, DaliDeviceCommonParam: true, BlePushButtons: true),
+            ["P48"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: true, DaliPushButtons: true, DaliDeviceCommonParam: true, BlePushButtons: true),
         };
 
         private static SettingsBackupProfile GetProfile(string? detectorType)
@@ -155,18 +157,14 @@ namespace AccessAPP.Services
             throw new Exception($"Settings backup read failed for {label} after {attempts} attempts. Last error: {lastError}");
         }
 
-        public async Task<(string filePath, DeviceSettingsSnapshot snapshot)> BackupToFileAsync(
+        public async Task<DeviceSettingsSnapshot> CaptureSnapshotAsync(
             string macAddress,
-            string pincode, // kept in interface for your earlier calls; not used here
             string detectorType,
-            string firmwareVersion,
-            string? logId)
+            string firmwareVersion)
         {
-            var path = GetBackupPath(macAddress, logId);
-
             var profile = GetProfile(detectorType);
 
-            var snapshot = new DeviceSettingsSnapshot
+            return new DeviceSettingsSnapshot
             {
                 MacAddress = macAddress,
                 CapturedAt = DateTimeOffset.Now,
@@ -185,15 +183,275 @@ namespace AccessAPP.Services
                     ? StripBleHeader(await ReadRequiredAsync(() => _ble.GetDaliPushButtonList(macAddress), "DaliPushButtons").ConfigureAwait(false))
                     : null,
 
+                DaliDeviceCommonParamHex = profile.DaliDeviceCommonParam
+                    ? StripBleHeader(await ReadRequiredAsync(() => _ble.GetDaliDeviceCommonParam(macAddress), "DaliDeviceCommonParam").ConfigureAwait(false))
+                    : null,
+
                 BlePushButtonsHex = profile.BlePushButtons
                     ? StripBleHeader(await ReadRequiredAsync(() => _ble.GetBLEPushButtonList(macAddress), "BlePushButtons").ConfigureAwait(false))
                     : null,
             };
+        }
+
+        public async Task<(string filePath, DeviceSettingsSnapshot snapshot)> BackupToFileAsync(
+            string macAddress,
+            string pincode, // kept in interface for your earlier calls; not used here
+            string detectorType,
+            string firmwareVersion,
+            string? logId)
+        {
+            var path = GetBackupPath(macAddress, logId);
+            var snapshot = await CaptureSnapshotAsync(macAddress, detectorType, firmwareVersion).ConfigureAwait(false);
 
             var json = JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true });
             await File.WriteAllTextAsync(path, json, Encoding.UTF8).ConfigureAwait(false);
 
             return (path, snapshot);
+        }
+
+        public async Task<ServiceResponse> ApplyOverridesAsync(
+            string macAddress,
+            string detectorType,
+            string firmwareVersion,
+            DetectorSettingsPatch overrides,
+            bool writeOnlyChanged = true)
+        {
+            if (overrides == null || !overrides.HasAnyValue())
+            {
+                return new ServiceResponse
+                {
+                    Success = false,
+                    StatusCode = 400,
+                    Message = "No detector settings override values were provided."
+                };
+            }
+
+            var normalized = overrides.CloneNormalized();
+            var current = await CaptureSnapshotAsync(macAddress, detectorType, firmwareVersion).ConfigureAwait(false);
+            var profile = GetProfile(detectorType);
+
+            var target = new DeviceSettingsSnapshot
+            {
+                MacAddress = macAddress,
+                CapturedAt = DateTimeOffset.Now,
+                DetectorType = detectorType,
+                FirmwareVersionTarget = firmwareVersion,
+                UserConfigHex = current.UserConfigHex,
+                PushButtonsHex = current.PushButtonsHex,
+                DaliPushButtonsHex = current.DaliPushButtonsHex,
+                DaliDeviceCommonParamHex = current.DaliDeviceCommonParamHex,
+                BlePushButtonsHex = current.BlePushButtonsHex
+            };
+
+            bool requestedUser = !string.IsNullOrWhiteSpace(normalized.UserConfigHex)
+                || !string.IsNullOrWhiteSpace(normalized.UserConfigMaskHex);
+            bool requestedWired = !string.IsNullOrWhiteSpace(normalized.PushButtonsHex)
+                || !string.IsNullOrWhiteSpace(normalized.PushButtonsMaskHex);
+            bool requestedDali = !string.IsNullOrWhiteSpace(normalized.DaliPushButtonsHex)
+                || !string.IsNullOrWhiteSpace(normalized.DaliPushButtonsMaskHex);
+            bool requestedDaliCommon = !string.IsNullOrWhiteSpace(normalized.DaliDeviceCommonParamHex)
+                || !string.IsNullOrWhiteSpace(normalized.DaliDeviceCommonParamMaskHex);
+            bool requestedBle = !string.IsNullOrWhiteSpace(normalized.BlePushButtonsHex)
+                || !string.IsNullOrWhiteSpace(normalized.BlePushButtonsMaskHex);
+
+            if (requestedUser)
+            {
+                if (!TryBuildMergedSectionHex(
+                    currentHex: current.UserConfigHex,
+                    requestedHex: normalized.UserConfigHex,
+                    requestedMaskHex: normalized.UserConfigMaskHex,
+                    mergedHex: out var merged,
+                    error: out var err))
+                {
+                    return new ServiceResponse
+                    {
+                        Success = false,
+                        StatusCode = 400,
+                        Message = $"Invalid userConfig patch: {err}"
+                    };
+                }
+                target.UserConfigHex = merged;
+            }
+
+            if (requestedWired)
+            {
+                if (!TryBuildMergedSectionHex(
+                    currentHex: current.PushButtonsHex,
+                    requestedHex: normalized.PushButtonsHex,
+                    requestedMaskHex: normalized.PushButtonsMaskHex,
+                    mergedHex: out var merged,
+                    error: out var err))
+                {
+                    return new ServiceResponse
+                    {
+                        Success = false,
+                        StatusCode = 400,
+                        Message = $"Invalid pushButtons patch: {err}"
+                    };
+                }
+                target.PushButtonsHex = merged;
+            }
+
+            if (requestedDali)
+            {
+                if (!TryBuildMergedSectionHex(
+                    currentHex: current.DaliPushButtonsHex,
+                    requestedHex: normalized.DaliPushButtonsHex,
+                    requestedMaskHex: normalized.DaliPushButtonsMaskHex,
+                    mergedHex: out var merged,
+                    error: out var err))
+                {
+                    return new ServiceResponse
+                    {
+                        Success = false,
+                        StatusCode = 400,
+                        Message = $"Invalid daliPushButtons patch: {err}"
+                    };
+                }
+                target.DaliPushButtonsHex = merged;
+            }
+
+            if (requestedBle)
+            {
+                if (!TryBuildMergedSectionHex(
+                    currentHex: current.BlePushButtonsHex,
+                    requestedHex: normalized.BlePushButtonsHex,
+                    requestedMaskHex: normalized.BlePushButtonsMaskHex,
+                    mergedHex: out var merged,
+                    error: out var err))
+                {
+                    return new ServiceResponse
+                    {
+                        Success = false,
+                        StatusCode = 400,
+                        Message = $"Invalid blePushButtons patch: {err}"
+                    };
+                }
+                target.BlePushButtonsHex = merged;
+            }
+
+            if (requestedDaliCommon)
+            {
+                if (!TryBuildMergedSectionHex(
+                    currentHex: current.DaliDeviceCommonParamHex,
+                    requestedHex: normalized.DaliDeviceCommonParamHex,
+                    requestedMaskHex: normalized.DaliDeviceCommonParamMaskHex,
+                    mergedHex: out var merged,
+                    error: out var err))
+                {
+                    return new ServiceResponse
+                    {
+                        Success = false,
+                        StatusCode = 400,
+                        Message = $"Invalid daliDeviceCommonParam patch: {err}"
+                    };
+                }
+                target.DaliDeviceCommonParamHex = merged;
+            }
+
+            // Keep payload versions aligned with target FW when rules exist.
+            try
+            {
+                var rulesRoot = FirmwareRulesLoader.LoadFromRootFolder();
+                SettingsVersionPatcher.ApplyRestoreVersionRules(target, firmwareVersion, rulesRoot);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn($"[SettingsPatch] Rules load/apply failed (continuing): {ex.Message}");
+            }
+
+            bool ok = true;
+            int writes = 0;
+
+            bool ShouldWrite(string? before, string? after)
+                => !writeOnlyChanged || !HexEquals(before, after);
+
+            if (requestedUser)
+            {
+                if (!profile.UserConfig)
+                {
+                    ok = false;
+                    AppLog.Warn($"[SettingsPatch] UserConfig override requested but detector '{detectorType}' profile does not support it.");
+                }
+                else if (!string.IsNullOrWhiteSpace(target.UserConfigHex) && ShouldWrite(current.UserConfigHex, target.UserConfigHex))
+                {
+                    var r = await WriteWithRetryAsync(() => _ble.SetUserConfig(macAddress, target.UserConfigHex), "UserConfig").ConfigureAwait(false);
+                    ok &= r;
+                    if (r) writes++;
+                }
+            }
+
+            if (requestedWired)
+            {
+                if (!profile.WiredPushButtons)
+                {
+                    ok = false;
+                    AppLog.Warn($"[SettingsPatch] WiredPushButtons override requested but detector '{detectorType}' profile does not support it.");
+                }
+                else if (!string.IsNullOrWhiteSpace(target.PushButtonsHex) && ShouldWrite(current.PushButtonsHex, target.PushButtonsHex))
+                {
+                    var r = await WriteWithRetryAsync(() => _ble.SetWiredPushButtonList(macAddress, target.PushButtonsHex), "Wired PushButtons").ConfigureAwait(false);
+                    ok &= r;
+                    if (r) writes++;
+                }
+            }
+
+            if (requestedDali)
+            {
+                if (!profile.DaliPushButtons)
+                {
+                    ok = false;
+                    AppLog.Warn($"[SettingsPatch] DaliPushButtons override requested but detector '{detectorType}' profile does not support it.");
+                }
+                else if (!string.IsNullOrWhiteSpace(target.DaliPushButtonsHex) && ShouldWrite(current.DaliPushButtonsHex, target.DaliPushButtonsHex))
+                {
+                    var r = await WriteWithRetryAsync(() => _ble.SetDaliPushButtonList(macAddress, target.DaliPushButtonsHex), "DALI PushButtons").ConfigureAwait(false);
+                    ok &= r;
+                    if (r) writes++;
+                }
+            }
+
+            if (requestedBle)
+            {
+                if (!profile.BlePushButtons)
+                {
+                    ok = false;
+                    AppLog.Warn($"[SettingsPatch] BlePushButtons override requested but detector '{detectorType}' profile does not support it.");
+                }
+                else if (!string.IsNullOrWhiteSpace(target.BlePushButtonsHex) && ShouldWrite(current.BlePushButtonsHex, target.BlePushButtonsHex))
+                {
+                    var r = await WriteWithRetryAsync(() => _ble.SetBLEPushButtonList(macAddress, target.BlePushButtonsHex), "BLE PushButtons").ConfigureAwait(false);
+                    ok &= r;
+                    if (r) writes++;
+                }
+            }
+
+            if (requestedDaliCommon)
+            {
+                if (!profile.DaliDeviceCommonParam)
+                {
+                    ok = false;
+                    AppLog.Warn($"[SettingsPatch] DaliDeviceCommonParam override requested but detector '{detectorType}' profile does not support it.");
+                }
+                else if (!string.IsNullOrWhiteSpace(target.DaliDeviceCommonParamHex) && ShouldWrite(current.DaliDeviceCommonParamHex, target.DaliDeviceCommonParamHex))
+                {
+                    var baselineHex = current.DaliDeviceCommonParamHex;
+                    var r = await WriteWithRetryAsync(
+                        () => _ble.SetDaliDeviceCommonParam(macAddress, target.DaliDeviceCommonParamHex, baselineHex),
+                        "DALI Device Common Param").ConfigureAwait(false);
+                    ok &= r;
+                    if (r) writes++;
+                }
+            }
+
+            return new ServiceResponse
+            {
+                Success = ok,
+                StatusCode = ok ? 200 : 500,
+                Message = ok
+                    ? (writes > 0 ? $"Detector settings applied ({writes} section(s) written)." : "Detector settings already matched requested values; nothing written.")
+                    : "Detector settings apply failed for one or more sections."
+            };
         }
 
         public async Task<ServiceResponse> RestoreFromFileAsync(
@@ -269,6 +527,7 @@ return new ServiceResponse
 AppLog.Info($"  UserConfigHex      = {Trunc(snap.UserConfigHex)}");
 AppLog.Info($"  WiredPushButtons   = {Trunc(snap.PushButtonsHex)}");
 AppLog.Info($"  DaliPushButtons    = {Trunc(snap.DaliPushButtonsHex)}");
+AppLog.Info($"  DaliCommonParam    = {Trunc(snap.DaliDeviceCommonParamHex)}");
 AppLog.Info($"  BlePushButtons     = {Trunc(snap.BlePushButtonsHex)}");
 // ---- Rules loading ----
             SettingsVersionPatcher.RulesRoot rulesRoot;
@@ -296,6 +555,7 @@ rulesRoot = new SettingsVersionPatcher.RulesRoot(); // safe fallback
 AppLog.Info($"  UserConfigHex      = {Trunc(snap.UserConfigHex)}");
 AppLog.Info($"  WiredPushButtons   = {Trunc(snap.PushButtonsHex)}");
 AppLog.Info($"  DaliPushButtons    = {Trunc(snap.DaliPushButtonsHex)}");
+AppLog.Info($"  DaliCommonParam    = {Trunc(snap.DaliDeviceCommonParamHex)}");
 AppLog.Info($"  BlePushButtons     = {Trunc(snap.BlePushButtonsHex)}");
 bool ok = true;
 
@@ -344,6 +604,17 @@ bool ok = true;
                 ok &= r;
             }
 
+            if (profile.DaliDeviceCommonParam && !string.IsNullOrWhiteSpace(snap.DaliDeviceCommonParamHex))
+            {
+                AppLog.Info($"[Restore] Writing DALI Device Common Param...");
+                bool r = await WriteWithRetryAsync(
+                        () => _ble.SetDaliDeviceCommonParam(macAddress, snap.DaliDeviceCommonParamHex),
+                        "DALI Device Common Param")
+                    .ConfigureAwait(false);
+                AppLog.Info($"[Restore] DALI Device Common Param result={r}");
+                ok &= r;
+            }
+
             AppLog.Info($"[Restore] END ok={ok}");
 return new ServiceResponse
             {
@@ -386,6 +657,90 @@ return new ServiceResponse
             }
 
             return false;
+        }
+
+        private static bool HexEquals(string? a, string? b)
+            => string.Equals(NormalizeHexForCompare(a), NormalizeHexForCompare(b), StringComparison.Ordinal);
+
+        private static string NormalizeHexForCompare(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return string.Empty;
+
+            return new string(value.Where(Uri.IsHexDigit).ToArray()).ToUpperInvariant();
+        }
+
+        private static bool TryBuildMergedSectionHex(
+            string? currentHex,
+            string? requestedHex,
+            string? requestedMaskHex,
+            out string mergedHex,
+            out string error)
+        {
+            mergedHex = string.Empty;
+            error = string.Empty;
+
+            var normalizedCurrent = NormalizeHexForCompare(currentHex);
+            var normalizedRequested = NormalizeHexForCompare(requestedHex);
+            var normalizedMask = NormalizeHexForCompare(requestedMaskHex);
+
+            if (string.IsNullOrWhiteSpace(normalizedRequested))
+            {
+                error = "No value hex was supplied for the section.";
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(normalizedMask) && normalizedMask.Length != normalizedRequested.Length)
+            {
+                error = $"Mask length ({normalizedMask.Length / 2} bytes) must match value length ({normalizedRequested.Length / 2} bytes).";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(normalizedMask))
+            {
+                mergedHex = normalizedRequested;
+                return true;
+            }
+
+            var currentBytes = HexToBytes(normalizedCurrent);
+            var valueBytes = HexToBytes(normalizedRequested);
+            var maskBytes = HexToBytes(normalizedMask);
+            var targetLen = Math.Max(currentBytes.Length, Math.Max(valueBytes.Length, maskBytes.Length));
+            if (targetLen <= 0)
+            {
+                mergedHex = string.Empty;
+                return true;
+            }
+
+            if (currentBytes.Length == 0)
+            {
+                error = "Current section is empty. Masked updates require a baseline section value.";
+                return false;
+            }
+
+            Array.Resize(ref currentBytes, targetLen);
+            Array.Resize(ref valueBytes, targetLen);
+            Array.Resize(ref maskBytes, targetLen);
+
+            var merged = new byte[targetLen];
+            for (var i = 0; i < targetLen; i++)
+            {
+                var m = maskBytes[i];
+                merged[i] = (byte)((currentBytes[i] & ~m) | (valueBytes[i] & m));
+            }
+
+            mergedHex = Convert.ToHexString(merged);
+            return true;
+        }
+
+        private static byte[] HexToBytes(string? hex)
+        {
+            var clean = NormalizeHexForCompare(hex);
+            if (string.IsNullOrWhiteSpace(clean))
+                return Array.Empty<byte>();
+            if ((clean.Length & 1) != 0)
+                clean = "0" + clean;
+            return Convert.FromHexString(clean);
         }
 
 

@@ -486,6 +486,18 @@
                 <MenuItem.Icon>
                     <TextBlock Text="🧩" Style="{StaticResource MenuIconGlyph}"/>
                 </MenuItem.Icon>
+                <MenuItem Header="Detector settings (new profile)..."
+                          Command="{Binding OpenDetectorSettingsNewProfileCommand}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="📝" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Detector settings (selected)..."
+                          Command="{Binding OpenDetectorSettingsForSelectedCommand}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="⚙" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
                 <MenuItem Header="Remove all ignored devices"
                           Command="{Binding ClearIgnoredDevicesCommand}">
                     <MenuItem.Icon>
@@ -977,18 +989,113 @@
 
                     <TextBlock Text="P41 firmware" Style="{StaticResource MetaLabel}"/>
                     <ComboBox ItemsSource="{Binding FirmwareOptionsP41}" SelectedItem="{Binding SelectedFirmwareP41}"/>
+                    <TextBlock Text="P41 post-update settings profile" Style="{StaticResource MetaLabel}"/>
+                    <DockPanel Margin="0,0,0,4">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <Button Style="{StaticResource GhostButton}"
+                                    Content="Browse..."
+                                    Padding="10,4"
+                                    Margin="8,0,0,0"
+                                    Command="{Binding BrowseDetectorSettingsProfileCommand}"
+                                    CommandParameter="P41"/>
+                            <Button Style="{StaticResource GhostButton}"
+                                    Content="Clear"
+                                    Padding="10,4"
+                                    Margin="6,0,0,0"
+                                    Command="{Binding ClearDetectorSettingsProfileCommand}"
+                                    CommandParameter="P41"/>
+                        </StackPanel>
+                        <TextBox Text="{Binding SelectedDetectorSettingsProfileP41, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 VerticalAlignment="Center"/>
+                    </DockPanel>
 
                     <TextBlock Text="P42 firmware" Style="{StaticResource MetaLabel}"/>
                     <ComboBox ItemsSource="{Binding FirmwareOptionsP42}" SelectedItem="{Binding SelectedFirmwareP42}"/>
+                    <TextBlock Text="P42 post-update settings profile" Style="{StaticResource MetaLabel}"/>
+                    <DockPanel Margin="0,0,0,4">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <Button Style="{StaticResource GhostButton}"
+                                    Content="Browse..."
+                                    Padding="10,4"
+                                    Margin="8,0,0,0"
+                                    Command="{Binding BrowseDetectorSettingsProfileCommand}"
+                                    CommandParameter="P42"/>
+                            <Button Style="{StaticResource GhostButton}"
+                                    Content="Clear"
+                                    Padding="10,4"
+                                    Margin="6,0,0,0"
+                                    Command="{Binding ClearDetectorSettingsProfileCommand}"
+                                    CommandParameter="P42"/>
+                        </StackPanel>
+                        <TextBox Text="{Binding SelectedDetectorSettingsProfileP42, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 VerticalAlignment="Center"/>
+                    </DockPanel>
 
                     <TextBlock Text="P46 firmware (also P49)" Style="{StaticResource MetaLabel}"/>
                     <ComboBox ItemsSource="{Binding FirmwareOptionsP46}" SelectedItem="{Binding SelectedFirmwareP46}"/>
+                    <TextBlock Text="P46 post-update settings profile" Style="{StaticResource MetaLabel}"/>
+                    <DockPanel Margin="0,0,0,4">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <Button Style="{StaticResource GhostButton}"
+                                    Content="Browse..."
+                                    Padding="10,4"
+                                    Margin="8,0,0,0"
+                                    Command="{Binding BrowseDetectorSettingsProfileCommand}"
+                                    CommandParameter="P46"/>
+                            <Button Style="{StaticResource GhostButton}"
+                                    Content="Clear"
+                                    Padding="10,4"
+                                    Margin="6,0,0,0"
+                                    Command="{Binding ClearDetectorSettingsProfileCommand}"
+                                    CommandParameter="P46"/>
+                        </StackPanel>
+                        <TextBox Text="{Binding SelectedDetectorSettingsProfileP46, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 VerticalAlignment="Center"/>
+                    </DockPanel>
 
                     <TextBlock Text="P47 firmware" Style="{StaticResource MetaLabel}"/>
                     <ComboBox ItemsSource="{Binding FirmwareOptionsP47}" SelectedItem="{Binding SelectedFirmwareP47}"/>
+                    <TextBlock Text="P47 post-update settings profile" Style="{StaticResource MetaLabel}"/>
+                    <DockPanel Margin="0,0,0,4">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <Button Style="{StaticResource GhostButton}"
+                                    Content="Browse..."
+                                    Padding="10,4"
+                                    Margin="8,0,0,0"
+                                    Command="{Binding BrowseDetectorSettingsProfileCommand}"
+                                    CommandParameter="P47"/>
+                            <Button Style="{StaticResource GhostButton}"
+                                    Content="Clear"
+                                    Padding="10,4"
+                                    Margin="6,0,0,0"
+                                    Command="{Binding ClearDetectorSettingsProfileCommand}"
+                                    CommandParameter="P47"/>
+                        </StackPanel>
+                        <TextBox Text="{Binding SelectedDetectorSettingsProfileP47, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 VerticalAlignment="Center"/>
+                    </DockPanel>
 
                     <TextBlock Text="P48 firmware" Style="{StaticResource MetaLabel}"/>
                     <ComboBox ItemsSource="{Binding FirmwareOptionsP48}" SelectedItem="{Binding SelectedFirmwareP48}"/>
+                    <TextBlock Text="P48 post-update settings profile" Style="{StaticResource MetaLabel}"/>
+                    <DockPanel>
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <Button Style="{StaticResource GhostButton}"
+                                    Content="Browse..."
+                                    Padding="10,4"
+                                    Margin="8,0,0,0"
+                                    Command="{Binding BrowseDetectorSettingsProfileCommand}"
+                                    CommandParameter="P48"/>
+                            <Button Style="{StaticResource GhostButton}"
+                                    Content="Clear"
+                                    Padding="10,4"
+                                    Margin="6,0,0,0"
+                                    Command="{Binding ClearDetectorSettingsProfileCommand}"
+                                    CommandParameter="P48"/>
+                        </StackPanel>
+                        <TextBox Text="{Binding SelectedDetectorSettingsProfileP48, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 VerticalAlignment="Center"/>
+                    </DockPanel>
 
                 </StackPanel>
             </ScrollViewer>
@@ -1255,6 +1362,9 @@
                                                     <MenuItem Header="Write-Readâ€¦"
                                                               Command="{Binding PlacementTarget.Tag.OpenWriteReadCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                                               CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                                    <MenuItem Header="Detector settings..."
+                                                              Command="{Binding PlacementTarget.Tag.OpenDetectorSettingsCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                              CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
                                                 </ContextMenu>
                                             </Setter.Value>
                                         </Setter>
@@ -1402,6 +1512,16 @@
                                         <CheckBox Content="Auto workers by model"
                                                   ToolTip="Auto-set workers: DALI master only (P47/P48) = 4, mixed/other = 2"
                                                   IsChecked="{Binding AutoSetWorkersByModelEnabled, Mode=TwoWay}"
+                                                  Margin="0,0,12,0"
+                                                  VerticalAlignment="Center"/>
+                                        <CheckBox Content="Post-update DALI 102 total new scan"
+                                                  ToolTip="After update: run DALI commissioning 0x0400, SearchType 0x01."
+                                                  IsChecked="{Binding RunDali102TotalNewScanAfterUpdateEnabled, Mode=TwoWay}"
+                                                  Margin="0,0,12,0"
+                                                  VerticalAlignment="Center"/>
+                                        <CheckBox Content="Post-update DALI 103 total new scan"
+                                                  ToolTip="After update: run DALI commissioning 0x0400, SearchType 0x03."
+                                                  IsChecked="{Binding RunDali103TotalNewScanAfterUpdateEnabled, Mode=TwoWay}"
                                                   Margin="0,0,12,0"
                                                   VerticalAlignment="Center"/>
                                         <Button Style="{StaticResource PrimaryButton}" Content="Update / Queue selected" Padding="12,6" Margin="0,0,8,0" Command="{Binding QueueSelectedCommand}"/>
@@ -1628,6 +1748,16 @@
                             <CheckBox Content="Auto workers by model"
                                       ToolTip="Auto-set workers: DALI master only (P47/P48) = 4, mixed/other = 2"
                                       IsChecked="{Binding AutoSetWorkersByModelEnabled, Mode=TwoWay}"
+                                      Margin="0,0,12,0"
+                                      VerticalAlignment="Center"/>
+                            <CheckBox Content="Post-update DALI 102 total new scan"
+                                      ToolTip="After update: run DALI commissioning 0x0400, SearchType 0x01."
+                                      IsChecked="{Binding RunDali102TotalNewScanAfterUpdateEnabled, Mode=TwoWay}"
+                                      Margin="0,0,12,0"
+                                      VerticalAlignment="Center"/>
+                            <CheckBox Content="Post-update DALI 103 total new scan"
+                                      ToolTip="After update: run DALI commissioning 0x0400, SearchType 0x03."
+                                      IsChecked="{Binding RunDali103TotalNewScanAfterUpdateEnabled, Mode=TwoWay}"
                                       Margin="0,0,12,0"
                                       VerticalAlignment="Center"/>
                             <!-- no "Update / Queue selected" here -->

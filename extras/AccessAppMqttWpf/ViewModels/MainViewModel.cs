@@ -224,6 +224,10 @@ public partial class MainViewModel : ObservableObject
     // If true, we include forceUpdate=true in start-update payloads.
     // Default is false on startup.
     [ObservableProperty] private bool forceUpdateEnabled = false;
+    // Runtime-only flags for post-update DALI commissioning scans.
+    // These are intentionally not persisted in appsettings.
+    [ObservableProperty] private bool runDali102TotalNewScanAfterUpdateEnabled = false;
+    [ObservableProperty] private bool runDali103TotalNewScanAfterUpdateEnabled = false;
 
     // If true, auto-adjust workers from queued model mix:
     // DALI master only (P47/P48) => 4, otherwise => 2.
@@ -244,11 +248,23 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string selectedFirmwareP47 = "";
     [ObservableProperty] private string selectedFirmwareP48 = "";
 
+    [ObservableProperty] private string selectedDetectorSettingsProfileP41 = "";
+    [ObservableProperty] private string selectedDetectorSettingsProfileP42 = "";
+    [ObservableProperty] private string selectedDetectorSettingsProfileP46 = "";
+    [ObservableProperty] private string selectedDetectorSettingsProfileP47 = "";
+    [ObservableProperty] private string selectedDetectorSettingsProfileP48 = "";
+
     partial void OnSelectedFirmwareP41Changed(string value) => PersistSelectedFirmware("P41", value);
     partial void OnSelectedFirmwareP42Changed(string value) => PersistSelectedFirmware("P42", value);
     partial void OnSelectedFirmwareP46Changed(string value) => PersistSelectedFirmware("P46", value);
     partial void OnSelectedFirmwareP47Changed(string value) => PersistSelectedFirmware("P47", value);
     partial void OnSelectedFirmwareP48Changed(string value) => PersistSelectedFirmware("P48", value);
+
+    partial void OnSelectedDetectorSettingsProfileP41Changed(string value) => PersistSelectedDetectorSettingsProfile("P41", value);
+    partial void OnSelectedDetectorSettingsProfileP42Changed(string value) => PersistSelectedDetectorSettingsProfile("P42", value);
+    partial void OnSelectedDetectorSettingsProfileP46Changed(string value) => PersistSelectedDetectorSettingsProfile("P46", value);
+    partial void OnSelectedDetectorSettingsProfileP47Changed(string value) => PersistSelectedDetectorSettingsProfile("P47", value);
+    partial void OnSelectedDetectorSettingsProfileP48Changed(string value) => PersistSelectedDetectorSettingsProfile("P48", value);
 
     [ObservableProperty] private string connectionStatus = "Disconnected";
     [ObservableProperty] private bool isConnected;
@@ -325,6 +341,13 @@ public partial class MainViewModel : ObservableObject
             if (fwMap.TryGetValue("P46", out var fw46)) SelectedFirmwareP46 = fw46 ?? "";
             if (fwMap.TryGetValue("P47", out var fw47)) SelectedFirmwareP47 = fw47 ?? "";
             if (fwMap.TryGetValue("P48", out var fw48)) SelectedFirmwareP48 = fw48 ?? "";
+
+            var profileMap = s.accessapp.detectorSettingsProfileByModel ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (profileMap.TryGetValue("P41", out var ps41)) SelectedDetectorSettingsProfileP41 = ps41 ?? "";
+            if (profileMap.TryGetValue("P42", out var ps42)) SelectedDetectorSettingsProfileP42 = ps42 ?? "";
+            if (profileMap.TryGetValue("P46", out var ps46)) SelectedDetectorSettingsProfileP46 = ps46 ?? "";
+            if (profileMap.TryGetValue("P47", out var ps47)) SelectedDetectorSettingsProfileP47 = ps47 ?? "";
+            if (profileMap.TryGetValue("P48", out var ps48)) SelectedDetectorSettingsProfileP48 = ps48 ?? "";
         }
         catch { /* best-effort */ }
 
@@ -636,6 +659,141 @@ public partial class MainViewModel : ObservableObject
             "P48" => SelectedFirmwareP48,
             _ => ""
         };
+    }
+
+    private string GetDetectorSettingsProfileForModel(string model)
+    {
+        model = (model ?? "").ToUpperInvariant();
+        return model switch
+        {
+            "P41" => SelectedDetectorSettingsProfileP41,
+            "P42" => SelectedDetectorSettingsProfileP42,
+            "P46" => SelectedDetectorSettingsProfileP46,
+            "P47" => SelectedDetectorSettingsProfileP47,
+            "P48" => SelectedDetectorSettingsProfileP48,
+            _ => ""
+        };
+    }
+
+    private void SetDetectorSettingsProfileForModel(string model, string? path)
+    {
+        var value = (path ?? "").Trim();
+        model = (model ?? "").Trim().ToUpperInvariant();
+        switch (model)
+        {
+            case "P41":
+                SelectedDetectorSettingsProfileP41 = value;
+                break;
+            case "P42":
+                SelectedDetectorSettingsProfileP42 = value;
+                break;
+            case "P46":
+                SelectedDetectorSettingsProfileP46 = value;
+                break;
+            case "P47":
+                SelectedDetectorSettingsProfileP47 = value;
+                break;
+            case "P48":
+                SelectedDetectorSettingsProfileP48 = value;
+                break;
+        }
+    }
+
+    private bool TryResolveModelProfilePatch(
+        string model,
+        out DetectorSettingsPatchModel? patch,
+        out bool runDali102TotalNewScanAfterUpdate,
+        out bool runDali103TotalNewScanAfterUpdate,
+        out string error)
+    {
+        patch = null;
+        runDali102TotalNewScanAfterUpdate = false;
+        runDali103TotalNewScanAfterUpdate = false;
+        error = string.Empty;
+
+        var path = GetDetectorSettingsProfileForModel(model);
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+
+        path = path.Trim();
+        if (!File.Exists(path))
+        {
+            error = $"Detector settings profile for {model} was not found: {path}";
+            return false;
+        }
+
+        try
+        {
+            var json = File.ReadAllText(path);
+            var profile = DetectorSettingsProfileModel.Parse(json);
+            if (profile == null)
+            {
+                error = $"Detector settings profile for {model} could not be parsed: {path}";
+                return false;
+            }
+
+            runDali102TotalNewScanAfterUpdate = profile.RunDali102TotalNewScanAfterUpdate;
+            runDali103TotalNewScanAfterUpdate = profile.RunDali103TotalNewScanAfterUpdate;
+
+            var normalized = (profile.Settings ?? new DetectorSettingsPatchModel()).CloneNormalized();
+            if (!normalized.HasAnyValue)
+            {
+                if (!runDali102TotalNewScanAfterUpdate && !runDali103TotalNewScanAfterUpdate)
+                {
+                    error = $"Detector settings profile for {model} has no selected fields or post-update scans: {path}";
+                    return false;
+                }
+
+                patch = null;
+                return true;
+            }
+
+            patch = normalized;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = $"Detector settings profile load failed for {model}: {ex.Message}";
+            return false;
+        }
+    }
+
+    [RelayCommand]
+    private void BrowseDetectorSettingsProfile(string? model)
+    {
+        model = (model ?? "").Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(model))
+            return;
+
+        try
+        {
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Filter = "Detector settings profile (*.json)|*.json|All files (*.*)|*.*",
+                CheckFileExists = true
+            };
+
+            if (dlg.ShowDialog() != true)
+                return;
+
+            SetDetectorSettingsProfileForModel(model, dlg.FileName);
+            ConnectionStatus = $"Selected detector settings profile for {model}.";
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = $"Select profile failed ({model}): {ex.Message}";
+        }
+    }
+
+    [RelayCommand]
+    private void ClearDetectorSettingsProfile(string? model)
+    {
+        model = (model ?? "").Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(model))
+            return;
+
+        SetDetectorSettingsProfileForModel(model, "");
+        ConnectionStatus = $"Cleared detector settings profile for {model}.";
     }
 
     private void LoadFirmwareOptions()
@@ -1370,12 +1528,32 @@ public partial class MainViewModel : ObservableObject
         }
         catch { }
 
+        var profileMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            if (s.accessapp?.detectorSettingsProfileByModel != null)
+            {
+                foreach (var kv in s.accessapp.detectorSettingsProfileByModel)
+                {
+                    if (!string.IsNullOrWhiteSpace(kv.Key))
+                        profileMap[kv.Key.Trim()] = kv.Value ?? "";
+                }
+            }
+        }
+        catch { }
+
         // Always write current in-memory selections.
         fwMap["P41"] = SelectedFirmwareP41 ?? "";
         fwMap["P42"] = SelectedFirmwareP42 ?? "";
         fwMap["P46"] = SelectedFirmwareP46 ?? "";
         fwMap["P47"] = SelectedFirmwareP47 ?? "";
         fwMap["P48"] = SelectedFirmwareP48 ?? "";
+
+        profileMap["P41"] = SelectedDetectorSettingsProfileP41 ?? "";
+        profileMap["P42"] = SelectedDetectorSettingsProfileP42 ?? "";
+        profileMap["P46"] = SelectedDetectorSettingsProfileP46 ?? "";
+        profileMap["P47"] = SelectedDetectorSettingsProfileP47 ?? "";
+        profileMap["P48"] = SelectedDetectorSettingsProfileP48 ?? "";
 
         s.accessapp = new AccessAppSettings
         {
@@ -1387,7 +1565,8 @@ public partial class MainViewModel : ObservableObject
             autoSetWorkersByModel = AutoSetWorkersByModelEnabled,
             productionUpdate = ProductionUpdateEnabled,
             hostBleAutoRemoveStaleDevices = HostBleAutoRemoveStaleDevices,
-            selectedFirmwareByModel = fwMap
+            selectedFirmwareByModel = fwMap,
+            detectorSettingsProfileByModel = profileMap
         };
 
         return s;
@@ -1405,6 +1584,24 @@ public partial class MainViewModel : ObservableObject
             s.accessapp ??= new AccessAppSettings();
             s.accessapp.selectedFirmwareByModel ??= new Dictionary<string, string>();
             s.accessapp.selectedFirmwareByModel[model] = firmware ?? "";
+            _store.Save(BuildSettingsSnapshot(s));
+        }
+        catch
+        {
+            // ignore persistence errors
+        }
+    }
+
+    private void PersistSelectedDetectorSettingsProfile(string model, string? path)
+    {
+        if (_isInitializing) return;
+
+        try
+        {
+            var s = _store.Load();
+            s.accessapp ??= new AccessAppSettings();
+            s.accessapp.detectorSettingsProfileByModel ??= new Dictionary<string, string>();
+            s.accessapp.detectorSettingsProfileByModel[model] = (path ?? "").Trim();
             _store.Save(BuildSettingsSnapshot(s));
         }
         catch

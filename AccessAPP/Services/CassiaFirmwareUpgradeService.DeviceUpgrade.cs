@@ -365,14 +365,26 @@ try
                         {
                             bool pendingConfig = dev.requiresConfigRestore && !dev.isConfigRestored;
                             bool pending102 = dev.requires102Restore && !dev.restore102Success;
+                            bool pendingDaliScan102 = dev.RunDali102TotalNewScanAfterUpdate && !dev.Dali102TotalNewScanSuccess;
+                            bool pendingDaliScan103 = dev.RunDali103TotalNewScanAfterUpdate && !dev.Dali103TotalNewScanSuccess;
                             string pending = string.Join(", ",
                                 new[]
                                 {
                                     pendingConfig ? "settings-restore" : null,
-                                    pending102 ? "dali-102-restore" : null
+                                    pending102 ? "dali-102-restore" : null,
+                                    pendingDaliScan102 ? "dali-102-total-new-scan" : null,
+                                    pendingDaliScan103 ? "dali-103-total-new-scan" : null
                                 }.Where(x => !string.IsNullOrWhiteSpace(x)));
                             if (string.IsNullOrWhiteSpace(pending))
                                 pending = "unknown-state";
+
+                            if (string.Equals(dev.finalUpgradeResult, "Failed", StringComparison.OrdinalIgnoreCase))
+                            {
+                                dev.shouldRetry = false;
+                                AppLog.Warn($"[RETRY STOP] {mac} - no firmware actions pending; keeping failure state ({pending}).");
+                                UpgradeLogger.Log(logId, mac, $"Retry stopped: no firmware actions pending; keeping failure state ({pending}).", "Warn", dev.FirmwareVersion);
+                                break;
+                            }
 
                             dev.LastFailureReason = $"Retry stopped: no firmware actions pending, but upgrade is not fully satisfied ({pending}).";
                             if (!string.Equals(dev.finalUpgradeResult, "Failed", StringComparison.OrdinalIgnoreCase))
@@ -450,6 +462,9 @@ try
                         await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, mac, 0, chip: GetChipForMac(mac)).ConfigureAwait(false);
                         UpgradeLogger.Log(logId, mac, "Disconnected at the end of upgrade process", "Info", dev.FirmwareVersion);
                     }
+
+                    if (!string.Equals(dev.finalUpgradeResult, "Failed", StringComparison.OrdinalIgnoreCase))
+                        await ApplyPostUpdateSettingsIfRequestedAsync(dev, mac, logId ?? "").ConfigureAwait(false);
                 }
 
                 deviceSw.Stop();
@@ -765,6 +780,86 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
             return match.Success ? match.Groups[1].Value : "";
+        }
+
+        private async Task ApplyPostUpdateSettingsIfRequestedAsync(UpgradeProgress dev, string mac, string logId)
+        {
+            var patch = dev.PostUpdateSettings?.CloneNormalized();
+            if (patch == null || !patch.HasAnyValue())
+                return;
+
+            var detectorType = (dev.DetectotType ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(detectorType))
+                detectorType = "P48";
+
+            try
+            {
+                UpgradeLogger.Log(logId, mac, "Post-update settings", "Starting", dev.FirmwareVersion);
+
+                var cl = await ConnectAndLoginWithRetryForPipelineAsync(
+                    _gatewayIpAddress,
+                    _gatewayPort,
+                    mac,
+                    dev.Pincode ?? "",
+                    logId,
+                    dev.FirmwareVersion,
+                    maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
+                    delayBetweenAttemptsMs: 2000,
+                    bootModeIsRetryable: true).ConfigureAwait(false);
+
+                if (!cl.Success)
+                {
+                    var reason = $"Post-update settings connect+login failed: {cl.Message}";
+                    dev.LastFailureReason = string.IsNullOrWhiteSpace(dev.LastFailureReason)
+                        ? reason
+                        : $"{dev.LastFailureReason} | {reason}";
+                    dev.finalUpgradeResult = "Failed";
+                    UpgradeLogger.Log(logId, mac, "Post-update settings", $"Failed ({cl.Message})", dev.FirmwareVersion);
+                    return;
+                }
+
+                var apply = await _settingsBackup
+                    .ApplyOverridesAsync(
+                        macAddress: mac,
+                        detectorType: detectorType,
+                        firmwareVersion: dev.FirmwareVersion ?? "",
+                        overrides: patch,
+                        writeOnlyChanged: true)
+                    .ConfigureAwait(false);
+
+                if (!apply.Success)
+                {
+                    var reason = $"Post-update settings apply failed: {apply.Message}";
+                    dev.LastFailureReason = string.IsNullOrWhiteSpace(dev.LastFailureReason)
+                        ? reason
+                        : $"{dev.LastFailureReason} | {reason}";
+                    dev.finalUpgradeResult = "Failed";
+                    UpgradeLogger.Log(logId, mac, "Post-update settings", $"Failed ({apply.Message})", dev.FirmwareVersion);
+                    return;
+                }
+
+                UpgradeLogger.Log(logId, mac, "Post-update settings", "Success", dev.FirmwareVersion);
+            }
+            catch (Exception ex)
+            {
+                var reason = $"Post-update settings exception: {ex.Message}";
+                dev.LastFailureReason = string.IsNullOrWhiteSpace(dev.LastFailureReason)
+                    ? reason
+                    : $"{dev.LastFailureReason} | {reason}";
+                dev.finalUpgradeResult = "Failed";
+                UpgradeLogger.Log(logId, mac, "Post-update settings", $"Exception: {ex.Message}", dev.FirmwareVersion);
+            }
+            finally
+            {
+                try
+                {
+                    await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, mac, 0, chip: GetChipForMac(mac)).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // best effort
+                }
+            }
         }
 
         private async Task VerifyPostUpgradeFirmwareAsync(UpgradeProgress dev, string mac, string logId, bool reuseExistingConnection)

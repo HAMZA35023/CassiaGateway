@@ -16,6 +16,8 @@ namespace AccessAPP.Services
 
         Task<string> GetDaliPushButtonList(string nodeMac);
         Task<bool> SetDaliPushButtonList(string nodeMac, string newDaliPushButtonListHex);
+        Task<string> GetDaliDeviceCommonParam(string nodeMac);
+        Task<bool> SetDaliDeviceCommonParam(string nodeMac, string newDaliDeviceCommonParamHex, string? currentDaliDeviceCommonParamHex = null);
 
         Task<string> GetBLEPushButtonList(string nodeMac);
         Task<bool> SetBLEPushButtonList(string nodeMac, string newBlePushButtonListHex);

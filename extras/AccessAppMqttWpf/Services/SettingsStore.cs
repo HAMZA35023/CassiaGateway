@@ -70,4 +70,11 @@ public sealed class AccessAppSettings
     /// Keys are typically "P41", "P42", "P46", "P47", "P48".
     /// </summary>
     public Dictionary<string, string> selectedFirmwareByModel { get; set; } = new();
+
+    /// <summary>
+    /// Optional detector settings profile file path per detector model.
+    /// When configured, the profile patch is included as DetectorSettings in start-update payload.
+    /// Keys are typically "P41", "P42", "P46", "P47", "P48".
+    /// </summary>
+    public Dictionary<string, string> detectorSettingsProfileByModel { get; set; } = new();
 }

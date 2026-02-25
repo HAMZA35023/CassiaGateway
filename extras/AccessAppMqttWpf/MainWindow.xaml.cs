@@ -591,6 +591,13 @@ public partial class MainWindow : Window
             };
             cm.Items.Add(wr);
 
+            var detectorSettings = new MenuItem { Header = "Detector settings..." };
+            detectorSettings.Click += (_, __) =>
+            {
+                try { vm.OpenDetectorSettingsCommand?.Execute(device); } catch { }
+            };
+            cm.Items.Add(detectorSettings);
+
             cm.Items.Add(new Separator());
 
             var forceUpdate = new MenuItem { Header = "Update (Force)" };

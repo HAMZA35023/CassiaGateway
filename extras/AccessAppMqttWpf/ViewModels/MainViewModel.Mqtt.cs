@@ -326,6 +326,12 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        if (kind == "tele" && leaf == "detector-settings")
+        {
+            HandleDetectorSettingsTele(cassia, payload);
+            return;
+        }
+
         if (kind == "tele" && leaf == "led-range")
         {
             HandleLedRangeTele(cassia, payload);

@@ -11,6 +11,7 @@ namespace AccessAPP.Models
         public string? PostFirmwareVersion { get; set; }
         public bool PostUpgradeFwMatch { get; set; } = true;
         public string? SettingsBackupPath { get; set; }
+        public DetectorSettingsPatch? PostUpdateSettings { get; set; }
 
         // If true, forces re-programming even when current FW matches target.
         public bool ForceUpdate { get; set; } = false;
@@ -30,6 +31,10 @@ namespace AccessAPP.Models
         public bool requiresConfigRestore = false;
         public bool requires102Restore = false;
         public bool restore102Success = false;
+        public bool RunDali102TotalNewScanAfterUpdate { get; set; } = false;
+        public bool RunDali103TotalNewScanAfterUpdate { get; set; } = false;
+        public bool Dali102TotalNewScanSuccess { get; set; } = false;
+        public bool Dali103TotalNewScanSuccess { get; set; } = false;
         public bool shouldRetry = true;
         public bool PrecheckSessionAlive { get; set; } = false;
         public bool PrecheckBootMode { get; set; } = false;
@@ -45,6 +50,8 @@ namespace AccessAPP.Models
                && (SensorSuccess)
                && (!requiresConfigRestore || isConfigRestored)
                && (!requires102Restore || restore102Success)
+               && (!RunDali102TotalNewScanAfterUpdate || Dali102TotalNewScanSuccess)
+               && (!RunDali103TotalNewScanAfterUpdate || Dali103TotalNewScanSuccess)
                && PostUpgradeFwMatch;
     }
     public class UpgradeResponse
