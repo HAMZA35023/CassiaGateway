@@ -12,6 +12,8 @@ namespace AccessAPP.Models
         public string? PushButtonsMaskHex { get; set; }
         public string? DaliPushButtonsHex { get; set; }
         public string? DaliPushButtonsMaskHex { get; set; }
+        public string? DaliDeviceCommonParamHex { get; set; }
+        public string? DaliDeviceCommonParamMaskHex { get; set; }
         public string? BlePushButtonsHex { get; set; }
         public string? BlePushButtonsMaskHex { get; set; }
 
@@ -19,6 +21,7 @@ namespace AccessAPP.Models
             => !string.IsNullOrWhiteSpace(UserConfigHex)
                || !string.IsNullOrWhiteSpace(PushButtonsHex)
                || !string.IsNullOrWhiteSpace(DaliPushButtonsHex)
+               || !string.IsNullOrWhiteSpace(DaliDeviceCommonParamHex)
                || !string.IsNullOrWhiteSpace(BlePushButtonsHex);
 
         public DetectorSettingsPatch CloneNormalized()
@@ -31,6 +34,8 @@ namespace AccessAPP.Models
                 PushButtonsMaskHex = NormalizeHex(PushButtonsMaskHex),
                 DaliPushButtonsHex = NormalizeHex(DaliPushButtonsHex),
                 DaliPushButtonsMaskHex = NormalizeHex(DaliPushButtonsMaskHex),
+                DaliDeviceCommonParamHex = NormalizeHex(DaliDeviceCommonParamHex),
+                DaliDeviceCommonParamMaskHex = NormalizeHex(DaliDeviceCommonParamMaskHex),
                 BlePushButtonsHex = NormalizeHex(BlePushButtonsHex),
                 BlePushButtonsMaskHex = NormalizeHex(BlePushButtonsMaskHex)
             };
@@ -50,6 +55,7 @@ namespace AccessAPP.Models
                 UserConfigHex = normalized.UserConfigHex,
                 PushButtonsHex = normalized.PushButtonsHex,
                 DaliPushButtonsHex = normalized.DaliPushButtonsHex,
+                DaliDeviceCommonParamHex = normalized.DaliDeviceCommonParamHex,
                 BlePushButtonsHex = normalized.BlePushButtonsHex
             };
         }
@@ -64,6 +70,7 @@ namespace AccessAPP.Models
                 UserConfigHex = NormalizeHex(snapshot.UserConfigHex),
                 PushButtonsHex = NormalizeHex(snapshot.PushButtonsHex),
                 DaliPushButtonsHex = NormalizeHex(snapshot.DaliPushButtonsHex),
+                DaliDeviceCommonParamHex = NormalizeHex(snapshot.DaliDeviceCommonParamHex),
                 BlePushButtonsHex = NormalizeHex(snapshot.BlePushButtonsHex)
             };
         }

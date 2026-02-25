@@ -14,6 +14,8 @@ public sealed class DetectorSettingsPatchModel
     public string? PushButtonsMaskHex { get; set; }
     public string? DaliPushButtonsHex { get; set; }
     public string? DaliPushButtonsMaskHex { get; set; }
+    public string? DaliDeviceCommonParamHex { get; set; }
+    public string? DaliDeviceCommonParamMaskHex { get; set; }
     public string? BlePushButtonsHex { get; set; }
     public string? BlePushButtonsMaskHex { get; set; }
 
@@ -21,6 +23,7 @@ public sealed class DetectorSettingsPatchModel
         !string.IsNullOrWhiteSpace(UserConfigHex)
         || !string.IsNullOrWhiteSpace(PushButtonsHex)
         || !string.IsNullOrWhiteSpace(DaliPushButtonsHex)
+        || !string.IsNullOrWhiteSpace(DaliDeviceCommonParamHex)
         || !string.IsNullOrWhiteSpace(BlePushButtonsHex);
 
     public DetectorSettingsPatchModel CloneNormalized()
@@ -33,6 +36,8 @@ public sealed class DetectorSettingsPatchModel
             PushButtonsMaskHex = NormalizeHex(PushButtonsMaskHex),
             DaliPushButtonsHex = NormalizeHex(DaliPushButtonsHex),
             DaliPushButtonsMaskHex = NormalizeHex(DaliPushButtonsMaskHex),
+            DaliDeviceCommonParamHex = NormalizeHex(DaliDeviceCommonParamHex),
+            DaliDeviceCommonParamMaskHex = NormalizeHex(DaliDeviceCommonParamMaskHex),
             BlePushButtonsHex = NormalizeHex(BlePushButtonsHex),
             BlePushButtonsMaskHex = NormalizeHex(BlePushButtonsMaskHex)
         };
@@ -55,6 +60,10 @@ public sealed class DetectorSettingsPatchModel
             obj["daliPushButtonsHex"] = normalized.DaliPushButtonsHex;
         if (!string.IsNullOrWhiteSpace(normalized.DaliPushButtonsMaskHex))
             obj["daliPushButtonsMaskHex"] = normalized.DaliPushButtonsMaskHex;
+        if (!string.IsNullOrWhiteSpace(normalized.DaliDeviceCommonParamHex))
+            obj["daliDeviceCommonParamHex"] = normalized.DaliDeviceCommonParamHex;
+        if (!string.IsNullOrWhiteSpace(normalized.DaliDeviceCommonParamMaskHex))
+            obj["daliDeviceCommonParamMaskHex"] = normalized.DaliDeviceCommonParamMaskHex;
         if (!string.IsNullOrWhiteSpace(normalized.BlePushButtonsHex))
             obj["blePushButtonsHex"] = normalized.BlePushButtonsHex;
         if (!string.IsNullOrWhiteSpace(normalized.BlePushButtonsMaskHex))
@@ -76,6 +85,8 @@ public sealed class DetectorSettingsPatchModel
             PushButtonsMaskHex = ReadString(obj, "pushButtonsMaskHex", "PushButtonsMaskHex"),
             DaliPushButtonsHex = ReadString(obj, "daliPushButtonsHex", "DaliPushButtonsHex"),
             DaliPushButtonsMaskHex = ReadString(obj, "daliPushButtonsMaskHex", "DaliPushButtonsMaskHex"),
+            DaliDeviceCommonParamHex = ReadString(obj, "daliDeviceCommonParamHex", "DaliDeviceCommonParamHex"),
+            DaliDeviceCommonParamMaskHex = ReadString(obj, "daliDeviceCommonParamMaskHex", "DaliDeviceCommonParamMaskHex"),
             BlePushButtonsHex = ReadString(obj, "blePushButtonsHex", "BlePushButtonsHex"),
             BlePushButtonsMaskHex = ReadString(obj, "blePushButtonsMaskHex", "BlePushButtonsMaskHex")
         }.CloneNormalized();
@@ -123,6 +134,7 @@ public sealed class DetectorSettingsProfileModel
     public bool ApplyUserConfig { get; set; }
     public bool ApplyPushButtons { get; set; }
     public bool ApplyDaliPushButtons { get; set; }
+    public bool ApplyDaliDeviceCommonParam { get; set; }
     public bool ApplyBlePushButtons { get; set; }
 
     public DetectorSettingsPatchModel Settings { get; set; } = new();

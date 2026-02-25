@@ -412,7 +412,7 @@ using (var scope = app.Services.CreateScope())
                 success = false,
                 action = "set",
                 requestId,
-                message = "No detector setting changes provided. Send payload with settings.{userConfigHex|pushButtonsHex|daliPushButtonsHex|blePushButtonsHex} (optionally with matching *MaskHex fields).",
+                message = "No detector setting changes provided. Send payload with settings.{userConfigHex|pushButtonsHex|daliPushButtonsHex|daliDeviceCommonParamHex|blePushButtonsHex} (optionally with matching *MaskHex fields).",
                 name = mqttService.CurrentOptions.Name,
                 networkId = mqttService.CurrentOptions.NetworkId,
                 time = DateTimeOffset.UtcNow

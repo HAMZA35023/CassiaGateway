@@ -10,6 +10,7 @@
         public string? UserConfigHex { get; set; }
         public string? PushButtonsHex { get; set; }
         public string? DaliPushButtonsHex { get; set; }
+        public string? DaliDeviceCommonParamHex { get; set; }
         public string? BlePushButtonsHex { get; set; }
     }
 }

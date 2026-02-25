@@ -382,57 +382,99 @@ return true; // command was likely accepted before disconnect
             }
         }
 
+        private const string DaliGetDeviceCommonParamCmd = "0110040700346A";
+        private const string DaliSetDeviceMaxLevelPrefix = "0111040800BE0C";
+        private const string DaliSetDeviceMinLevelPrefix = "01120408006297";
+        private const string DaliSetDevicePowerOnLevelPrefix = "0113040800D6E1";
+        private const string DaliSetDeviceSysFailLevelPrefix = "0114040800FBB0";
+        private const string DaliSetDeviceFadeTimePrefix = "01150409004FC6";
+        private const string DaliSetDeviceFadeRatePrefix = "0116040800935D";
 
         public async Task<bool> DaliSetDeviceSysFailLevelAsync(
-    string nodeMac,
-    byte sysFailLevel // e.g. 0xFF or 0xFE
-)
+            string nodeMac,
+            byte sysFailLevel)
         {
-            // DaliSetDeviceSysFailLevel:
-            // 01-14-04-08-00-FB-B0-<LEVEL>
-            const string prefix = "0114040800FBB0";
-
-            string levelHex = sysFailLevel.ToString("X2", CultureInfo.InvariantCulture);
-            string cmd = prefix + levelHex;
-
-            try
-            {
-                var sensorResponse = await GetDataWithSysFailTimeoutAsync(nodeMac, cmd, "SysFailLevel set").ConfigureAwait(false);
-                if (sensorResponse == null)
-                    return false;
-
-                if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
-                {
-                    AppLog.Warn($"[DALI] SysFailLevel set failed: MAC={nodeMac}, Level=0x{levelHex}, Status={sensorResponse.Status}, RAW={sensorResponse.Data}");
-                    return false;
-                }
-
-                string reply = sensorResponse.Data.Trim().ToUpperInvariant();
-
-                // Success can be "00" or "0000"
-                bool ok = reply == "00" || reply == "0000";
-
-                AppLog.Info($"[DALI] SysFailLevel set: MAC={nodeMac}, Level=0x{levelHex}, Cmd={cmd}, Reply={reply}, OK={ok}");
-                if (!ok)
-                    AppLog.Warn($"[DALI] SysFailLevel set rejected: MAC={nodeMac}, Level=0x{levelHex}, Cmd={cmd}, Reply={reply}");
-                return ok;
-            }
-            catch (Exception ex)
-            {
-                AppLog.Warn($"[DALI] SysFailLevel set exception: MAC={nodeMac}, Level=0x{levelHex}, {ex.Message}");
-                return false;
-            }
+            return await SendDaliCommonParamSetAsync(
+                    nodeMac,
+                    DaliSetDeviceSysFailLevelPrefix + sysFailLevel.ToString("X2", CultureInfo.InvariantCulture),
+                    $"SysFailLevel=0x{sysFailLevel:X2}")
+                .ConfigureAwait(false);
         }
 
         public async Task<byte?> DaliGetDeviceSysFailLevelAsync(string nodeMac)
         {
-            // DaliDeviceCommonParam:
-            // 01-10-04-07-00-34-6A
-            const string cmd = "0110040700346A";
+            var current = await ReadDaliDeviceCommonParamAsync(nodeMac).ConfigureAwait(false);
+            if (current == null || current.Length < 4)
+                return null;
 
+            return current[3];
+        }
+
+        public async Task<string> GetDaliDeviceCommonParam(string nodeMac)
+        {
+            var values = await ReadDaliDeviceCommonParamAsync(nodeMac).ConfigureAwait(false);
+            if (values == null || values.Length != 7)
+                return string.Empty;
+
+            return Convert.ToHexString(values);
+        }
+
+        public async Task<bool> SetDaliDeviceCommonParam(
+            string nodeMac,
+            string newDaliDeviceCommonParamHex,
+            string? currentDaliDeviceCommonParamHex = null)
+        {
+            if (!TryParseFixedHexSection(newDaliDeviceCommonParamHex, expectedBytes: 7, out var target))
+            {
+                AppLog.Warn($"[DALI] Set common param rejected: invalid target hex '{newDaliDeviceCommonParamHex}'. Expected exactly 7 bytes.");
+                return false;
+            }
+
+            byte[]? baseline = null;
+            if (TryParseFixedHexSection(currentDaliDeviceCommonParamHex, expectedBytes: 7, out var parsedBaseline))
+                baseline = parsedBaseline;
+
+            if (baseline == null)
+                baseline = await ReadDaliDeviceCommonParamAsync(nodeMac).ConfigureAwait(false);
+
+            if (baseline == null || baseline.Length != 7)
+            {
+                AppLog.Warn($"[DALI] Set common param failed: unable to resolve current baseline for MAC={nodeMac}.");
+                return false;
+            }
+
+            var ok = true;
+
+            if (target[0] != baseline[0])
+                ok &= await SendDaliCommonParamSetAsync(nodeMac, DaliSetDeviceMaxLevelPrefix + target[0].ToString("X2", CultureInfo.InvariantCulture), $"MaxLevel=0x{target[0]:X2}").ConfigureAwait(false);
+
+            if (target[1] != baseline[1])
+                ok &= await SendDaliCommonParamSetAsync(nodeMac, DaliSetDeviceMinLevelPrefix + target[1].ToString("X2", CultureInfo.InvariantCulture), $"MinLevel=0x{target[1]:X2}").ConfigureAwait(false);
+
+            if (target[2] != baseline[2])
+                ok &= await SendDaliCommonParamSetAsync(nodeMac, DaliSetDevicePowerOnLevelPrefix + target[2].ToString("X2", CultureInfo.InvariantCulture), $"PowerOnLevel=0x{target[2]:X2}").ConfigureAwait(false);
+
+            if (target[3] != baseline[3])
+                ok &= await SendDaliCommonParamSetAsync(nodeMac, DaliSetDeviceSysFailLevelPrefix + target[3].ToString("X2", CultureInfo.InvariantCulture), $"SysFailLevel=0x{target[3]:X2}").ConfigureAwait(false);
+
+            if (target[4] != baseline[4] || target[6] != baseline[6])
+            {
+                var fadePayload = target[4].ToString("X2", CultureInfo.InvariantCulture) + target[6].ToString("X2", CultureInfo.InvariantCulture);
+                ok &= await SendDaliCommonParamSetAsync(nodeMac, DaliSetDeviceFadeTimePrefix + fadePayload, $"FadeTime=0x{target[4]:X2},ExtendedFade=0x{target[6]:X2}").ConfigureAwait(false);
+            }
+
+            if (target[5] != baseline[5])
+                ok &= await SendDaliCommonParamSetAsync(nodeMac, DaliSetDeviceFadeRatePrefix + target[5].ToString("X2", CultureInfo.InvariantCulture), $"FadeRate=0x{target[5]:X2}").ConfigureAwait(false);
+
+            AppLog.Info($"[DALI] CommonParam set completed: MAC={nodeMac}, AnyChanged={target.Where((v, i) => v != baseline[i]).Any()}, OK={ok}");
+            return ok;
+        }
+
+        private async Task<byte[]?> ReadDaliDeviceCommonParamAsync(string nodeMac)
+        {
             try
             {
-                var sensorResponse = await GetDataWithSysFailTimeoutAsync(nodeMac, cmd, "SysFailLevel read").ConfigureAwait(false);
+                var sensorResponse = await GetDataWithSysFailTimeoutAsync(nodeMac, DaliGetDeviceCommonParamCmd, "DaliCommonParam read").ConfigureAwait(false);
                 if (sensorResponse == null)
                     return null;
 
@@ -442,33 +484,14 @@ return true; // command was likely accepted before disconnect
                     return null;
                 }
 
-                var raw = sensorResponse.Data.Trim();
-                var byteMatches = Regex.Matches(raw, @"[0-9A-Fa-f]{2}");
-                if (byteMatches.Count < 8)
+                if (!TryParseDaliCommonParamPayload(sensorResponse.Data, out var values, out var parseError))
                 {
-                    AppLog.Warn($"[DALI] CommonParam parse failed (expected >=8 bytes): MAC={nodeMac}, RAW={raw}");
+                    AppLog.Warn($"[DALI] CommonParam parse failed: MAC={nodeMac}, Error={parseError}, RAW={sensorResponse.Data}");
                     return null;
                 }
 
-                var bytes = byteMatches
-                    .Cast<Match>()
-                    .Select(m => byte.Parse(m.Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture))
-                    .ToArray();
-
-                // Response layout (1 byte each):
-                // [0] Status, [1] MaxLevel, [2] MinLevel, [3] PowerOnLevel,
-                // [4] SysFailLevel, [5] FadeTime, [6] FadeRate, [7] ExtendedFadeTime
-                var status = bytes[0];
-                var sysFail = bytes[4];
-
-                if (status != 0x00)
-                {
-                    AppLog.Warn($"[DALI] CommonParam status not OK: MAC={nodeMac}, Status=0x{status:X2}, RAW={raw}");
-                    return null;
-                }
-
-                AppLog.Info($"[DALI] CommonParam read: MAC={nodeMac}, SysFailLevel=0x{sysFail:X2}, RAW={raw}");
-                return sysFail;
+                AppLog.Info($"[DALI] CommonParam read: MAC={nodeMac}, Max={values[0]}, Min={values[1]}, PowerOn={values[2]}, SysFail={values[3]}, FadeTime={values[4]}, FadeRate={values[5]}, ExtFade={values[6]}");
+                return values;
             }
             catch (Exception ex)
             {
@@ -476,6 +499,91 @@ return true; // command was likely accepted before disconnect
                 return null;
             }
         }
+
+        private async Task<bool> SendDaliCommonParamSetAsync(string nodeMac, string cmd, string label)
+        {
+            try
+            {
+                var sensorResponse = await GetDataWithSysFailTimeoutAsync(nodeMac, cmd, $"DaliCommonParam set ({label})").ConfigureAwait(false);
+                if (sensorResponse == null)
+                    return false;
+
+                if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
+                {
+                    AppLog.Warn($"[DALI] CommonParam set failed: MAC={nodeMac}, Label={label}, Status={sensorResponse.Status}, RAW={sensorResponse.Data}, Cmd={cmd}");
+                    return false;
+                }
+
+                var reply = NormalizeHex(sensorResponse.Data);
+                var ok = reply == "00" || reply == "0000";
+                if (!ok)
+                    AppLog.Warn($"[DALI] CommonParam set rejected: MAC={nodeMac}, Label={label}, Reply={reply}, Cmd={cmd}");
+
+                return ok;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn($"[DALI] CommonParam set exception: MAC={nodeMac}, Label={label}, {ex.Message}");
+                return false;
+            }
+        }
+
+        private static bool TryParseDaliCommonParamPayload(string? rawPayload, out byte[] values, out string error)
+        {
+            values = Array.Empty<byte>();
+            error = string.Empty;
+
+            if (string.IsNullOrWhiteSpace(rawPayload))
+            {
+                error = "Empty payload.";
+                return false;
+            }
+
+            var byteMatches = Regex.Matches(rawPayload, @"[0-9A-Fa-f]{2}");
+            if (byteMatches.Count < 8)
+            {
+                error = $"Expected at least 8 bytes (status + 7 params), got {byteMatches.Count}.";
+                return false;
+            }
+
+            var bytes = new byte[byteMatches.Count];
+            for (var i = 0; i < byteMatches.Count; i++)
+            {
+                bytes[i] = byte.Parse(byteMatches[i].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+            }
+
+            var status = bytes[0];
+            if (status != 0x00)
+            {
+                error = $"NACK status 0x{status:X2}.";
+                return false;
+            }
+
+            values = new byte[7];
+            Array.Copy(bytes, 1, values, 0, 7);
+            return true;
+        }
+
+        private static bool TryParseFixedHexSection(string? hex, int expectedBytes, out byte[] bytes)
+        {
+            bytes = Array.Empty<byte>();
+            var clean = NormalizeHex(hex);
+            if (clean.Length != expectedBytes * 2)
+                return false;
+
+            try
+            {
+                bytes = Convert.FromHexString(clean);
+                return bytes.Length == expectedBytes;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static string NormalizeHex(string? value)
+            => new string((value ?? string.Empty).Where(Uri.IsHexDigit).ToArray()).ToUpperInvariant();
 
         private static int GetSysFailTimeoutMs()
         {

@@ -2013,6 +2013,16 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                                 patch.DaliPushButtonsMaskHex = daliMask;
                                 hasPatch = true;
                             }
+                            if (TryGetString(root, "daliDeviceCommonParamHex", out var daliCommon))
+                            {
+                                patch.DaliDeviceCommonParamHex = daliCommon;
+                                hasPatch = true;
+                            }
+                            if (TryGetString(root, "daliDeviceCommonParamMaskHex", out var daliCommonMask))
+                            {
+                                patch.DaliDeviceCommonParamMaskHex = daliCommonMask;
+                                hasPatch = true;
+                            }
                             if (TryGetString(root, "blePushButtonsHex", out var ble))
                             {
                                 patch.BlePushButtonsHex = ble;

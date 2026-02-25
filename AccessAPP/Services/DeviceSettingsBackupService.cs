@@ -20,6 +20,7 @@ namespace AccessAPP.Services
             bool UserConfig,
             bool WiredPushButtons,
             bool DaliPushButtons,
+            bool DaliDeviceCommonParam,
             bool BlePushButtons);
 
         // Conservative default: only UserConfig. Add explicit profiles per detector below.
@@ -28,22 +29,23 @@ namespace AccessAPP.Services
             UserConfig: true,
             WiredPushButtons: false,
             DaliPushButtons: false,
+            DaliDeviceCommonParam: false,
             BlePushButtons: false);
 
         // NOTE: keys are UPPERCASE detector types.
         private static readonly Dictionary<string, SettingsBackupProfile> Profiles = new()
         {
             // P46/P49/P41: UserConfig only
-            ["P46"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: false, DaliPushButtons: false, BlePushButtons: false),
-            ["P49"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: false, DaliPushButtons: false, BlePushButtons: false),
-            ["P41"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: false, DaliPushButtons: false, BlePushButtons: false),
+            ["P46"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: false, DaliPushButtons: false, DaliDeviceCommonParam: false, BlePushButtons: false),
+            ["P49"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: false, DaliPushButtons: false, DaliDeviceCommonParam: false, BlePushButtons: false),
+            ["P41"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: false, DaliPushButtons: false, DaliDeviceCommonParam: false, BlePushButtons: false),
 
             // P42: UserConfig + Wired + BLE (NO DALI)
-            ["P42"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: true, DaliPushButtons: false, BlePushButtons: true),
+            ["P42"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: true, DaliPushButtons: false, DaliDeviceCommonParam: false, BlePushButtons: true),
 
             // P47/P48: DALI masters (explicit)
-            ["P47"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: true, DaliPushButtons: true, BlePushButtons: true),
-            ["P48"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: true, DaliPushButtons: true, BlePushButtons: true),
+            ["P47"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: true, DaliPushButtons: true, DaliDeviceCommonParam: true, BlePushButtons: true),
+            ["P48"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: true, DaliPushButtons: true, DaliDeviceCommonParam: true, BlePushButtons: true),
         };
 
         private static SettingsBackupProfile GetProfile(string? detectorType)
@@ -181,6 +183,10 @@ namespace AccessAPP.Services
                     ? StripBleHeader(await ReadRequiredAsync(() => _ble.GetDaliPushButtonList(macAddress), "DaliPushButtons").ConfigureAwait(false))
                     : null,
 
+                DaliDeviceCommonParamHex = profile.DaliDeviceCommonParam
+                    ? StripBleHeader(await ReadRequiredAsync(() => _ble.GetDaliDeviceCommonParam(macAddress), "DaliDeviceCommonParam").ConfigureAwait(false))
+                    : null,
+
                 BlePushButtonsHex = profile.BlePushButtons
                     ? StripBleHeader(await ReadRequiredAsync(() => _ble.GetBLEPushButtonList(macAddress), "BlePushButtons").ConfigureAwait(false))
                     : null,
@@ -233,6 +239,7 @@ namespace AccessAPP.Services
                 UserConfigHex = current.UserConfigHex,
                 PushButtonsHex = current.PushButtonsHex,
                 DaliPushButtonsHex = current.DaliPushButtonsHex,
+                DaliDeviceCommonParamHex = current.DaliDeviceCommonParamHex,
                 BlePushButtonsHex = current.BlePushButtonsHex
             };
 
@@ -242,6 +249,8 @@ namespace AccessAPP.Services
                 || !string.IsNullOrWhiteSpace(normalized.PushButtonsMaskHex);
             bool requestedDali = !string.IsNullOrWhiteSpace(normalized.DaliPushButtonsHex)
                 || !string.IsNullOrWhiteSpace(normalized.DaliPushButtonsMaskHex);
+            bool requestedDaliCommon = !string.IsNullOrWhiteSpace(normalized.DaliDeviceCommonParamHex)
+                || !string.IsNullOrWhiteSpace(normalized.DaliDeviceCommonParamMaskHex);
             bool requestedBle = !string.IsNullOrWhiteSpace(normalized.BlePushButtonsHex)
                 || !string.IsNullOrWhiteSpace(normalized.BlePushButtonsMaskHex);
 
@@ -321,6 +330,25 @@ namespace AccessAPP.Services
                 target.BlePushButtonsHex = merged;
             }
 
+            if (requestedDaliCommon)
+            {
+                if (!TryBuildMergedSectionHex(
+                    currentHex: current.DaliDeviceCommonParamHex,
+                    requestedHex: normalized.DaliDeviceCommonParamHex,
+                    requestedMaskHex: normalized.DaliDeviceCommonParamMaskHex,
+                    mergedHex: out var merged,
+                    error: out var err))
+                {
+                    return new ServiceResponse
+                    {
+                        Success = false,
+                        StatusCode = 400,
+                        Message = $"Invalid daliDeviceCommonParam patch: {err}"
+                    };
+                }
+                target.DaliDeviceCommonParamHex = merged;
+            }
+
             // Keep payload versions aligned with target FW when rules exist.
             try
             {
@@ -393,6 +421,24 @@ namespace AccessAPP.Services
                 else if (!string.IsNullOrWhiteSpace(target.BlePushButtonsHex) && ShouldWrite(current.BlePushButtonsHex, target.BlePushButtonsHex))
                 {
                     var r = await WriteWithRetryAsync(() => _ble.SetBLEPushButtonList(macAddress, target.BlePushButtonsHex), "BLE PushButtons").ConfigureAwait(false);
+                    ok &= r;
+                    if (r) writes++;
+                }
+            }
+
+            if (requestedDaliCommon)
+            {
+                if (!profile.DaliDeviceCommonParam)
+                {
+                    ok = false;
+                    AppLog.Warn($"[SettingsPatch] DaliDeviceCommonParam override requested but detector '{detectorType}' profile does not support it.");
+                }
+                else if (!string.IsNullOrWhiteSpace(target.DaliDeviceCommonParamHex) && ShouldWrite(current.DaliDeviceCommonParamHex, target.DaliDeviceCommonParamHex))
+                {
+                    var baselineHex = current.DaliDeviceCommonParamHex;
+                    var r = await WriteWithRetryAsync(
+                        () => _ble.SetDaliDeviceCommonParam(macAddress, target.DaliDeviceCommonParamHex, baselineHex),
+                        "DALI Device Common Param").ConfigureAwait(false);
                     ok &= r;
                     if (r) writes++;
                 }
@@ -481,6 +527,7 @@ return new ServiceResponse
 AppLog.Info($"  UserConfigHex      = {Trunc(snap.UserConfigHex)}");
 AppLog.Info($"  WiredPushButtons   = {Trunc(snap.PushButtonsHex)}");
 AppLog.Info($"  DaliPushButtons    = {Trunc(snap.DaliPushButtonsHex)}");
+AppLog.Info($"  DaliCommonParam    = {Trunc(snap.DaliDeviceCommonParamHex)}");
 AppLog.Info($"  BlePushButtons     = {Trunc(snap.BlePushButtonsHex)}");
 // ---- Rules loading ----
             SettingsVersionPatcher.RulesRoot rulesRoot;
@@ -508,6 +555,7 @@ rulesRoot = new SettingsVersionPatcher.RulesRoot(); // safe fallback
 AppLog.Info($"  UserConfigHex      = {Trunc(snap.UserConfigHex)}");
 AppLog.Info($"  WiredPushButtons   = {Trunc(snap.PushButtonsHex)}");
 AppLog.Info($"  DaliPushButtons    = {Trunc(snap.DaliPushButtonsHex)}");
+AppLog.Info($"  DaliCommonParam    = {Trunc(snap.DaliDeviceCommonParamHex)}");
 AppLog.Info($"  BlePushButtons     = {Trunc(snap.BlePushButtonsHex)}");
 bool ok = true;
 
@@ -553,6 +601,17 @@ bool ok = true;
                         "BLE PushButtons")
                     .ConfigureAwait(false);
                 AppLog.Info($"[Restore] BLE PushButtons result={r}");
+                ok &= r;
+            }
+
+            if (profile.DaliDeviceCommonParam && !string.IsNullOrWhiteSpace(snap.DaliDeviceCommonParamHex))
+            {
+                AppLog.Info($"[Restore] Writing DALI Device Common Param...");
+                bool r = await WriteWithRetryAsync(
+                        () => _ble.SetDaliDeviceCommonParam(macAddress, snap.DaliDeviceCommonParamHex),
+                        "DALI Device Common Param")
+                    .ConfigureAwait(false);
+                AppLog.Info($"[Restore] DALI Device Common Param result={r}");
                 ok &= r;
             }
 

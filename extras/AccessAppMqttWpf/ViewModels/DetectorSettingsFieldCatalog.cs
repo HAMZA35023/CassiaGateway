@@ -9,7 +9,8 @@ public enum DetectorSettingsSectionKind
     UserConfig,
     WiredPushButtons,
     BlePushButtons,
-    DaliPushButtons
+    DaliPushButtons,
+    DaliDeviceCommonParam
 }
 
 public enum DetectorFieldEditorKind
@@ -418,11 +419,13 @@ internal static class DetectorSettingsFieldCatalog
     public const int WiredPushButtonsLength = 21;
     public const int BlePushButtonsLength = 93;
     public const int DaliPushButtonsLength = 101;
+    public const int DaliDeviceCommonParamLength = 7;
 
     public static IReadOnlyList<DetectorFieldDefinition> UserConfigFields { get; } = BuildUserConfigFields();
     public static IReadOnlyList<DetectorFieldDefinition> WiredPushButtonsFields { get; } = BuildWiredPushButtonsFields();
     public static IReadOnlyList<DetectorFieldDefinition> BlePushButtonsFields { get; } = BuildBlePushButtonsFields();
     public static IReadOnlyList<DetectorFieldDefinition> DaliPushButtonsFields { get; } = BuildDaliPushButtonsFields();
+    public static IReadOnlyList<DetectorFieldDefinition> DaliDeviceCommonParamFields { get; } = BuildDaliDeviceCommonParamFields();
 
     private static IReadOnlyList<DetectorFieldDefinition> BuildUserConfigFields()
     {
@@ -535,7 +538,6 @@ internal static class DetectorSettingsFieldCatalog
             AddBool(list, $"{prefix}.cfg_zone_common_func1.eight_hour_active", DetectorSettingsSectionKind.UserConfig, group, "CFG_8HOUR_ACTIVE", baseOffset + 0, 0x04, "CFG_ZONE_COMMON_FUNC1 bit 2.");
             AddBool(list, $"{prefix}.cfg_zone_common_func1.overexp_active", DetectorSettingsSectionKind.UserConfig, group, "CFG_OVEREXP_ACTIVE", baseOffset + 0, 0x02, "CFG_ZONE_COMMON_FUNC1 bit 1.");
             AddBool(list, $"{prefix}.cfg_zone_common_func1.dlc_active", DetectorSettingsSectionKind.UserConfig, group, "CFG_DLC_ACTIVE", baseOffset + 0, 0x01, "CFG_ZONE_COMMON_FUNC1 bit 0.");
-            AddNumber(list, $"{prefix}.cfg_zone_onoff_func2", group, "CFG_ZONE_ONOFF_FUNC2", baseOffset + 1, 1, 0, 255, "Bitfield byte.");
             AddEnum(
                 list,
                 $"{prefix}.cfg_zone_t_offpir_delay",
@@ -670,6 +672,91 @@ internal static class DetectorSettingsFieldCatalog
             AddNumber(list, $"dali.pb{button}.instance3", DetectorSettingsSectionKind.DaliPushButtons, group, "Instance (7)", entryOffset + 23, 1, 0, 15, "Range 0..15.");
             AddNumber(list, $"dali.pb{button}.short_address", DetectorSettingsSectionKind.DaliPushButtons, group, "Short Address", entryOffset + 24, 1, 0, 63, "Range 0..63.");
         }
+
+        return list;
+    }
+
+    private static IReadOnlyList<DetectorFieldDefinition> BuildDaliDeviceCommonParamFields()
+    {
+        var list = new List<DetectorFieldDefinition>();
+        const string groupLevels = "Levels";
+        const string groupFade = "Fade";
+
+        AddNumber(
+            list,
+            "dali.common.max_level",
+            DetectorSettingsSectionKind.DaliDeviceCommonParam,
+            groupLevels,
+            "DaliSetDevicesMaxLevel",
+            0,
+            1,
+            0,
+            254,
+            "Range 0..254.");
+        AddNumber(
+            list,
+            "dali.common.min_level",
+            DetectorSettingsSectionKind.DaliDeviceCommonParam,
+            groupLevels,
+            "DaliSetDevicesMinLevel",
+            1,
+            1,
+            0,
+            254,
+            "Range 0..254.");
+        AddNumber(
+            list,
+            "dali.common.power_on_level",
+            DetectorSettingsSectionKind.DaliDeviceCommonParam,
+            groupLevels,
+            "DaliSetDevicesPowerOnLevel",
+            2,
+            1,
+            0,
+            255,
+            "Range 0..255 (255=no change).");
+        AddNumber(
+            list,
+            "dali.common.sys_fail_level",
+            DetectorSettingsSectionKind.DaliDeviceCommonParam,
+            groupLevels,
+            "DaliSetDevicesSysFailLevel",
+            3,
+            1,
+            0,
+            255,
+            "Range 0..255 (255=no change).");
+        AddEnum(
+            list,
+            "dali.common.fade_time",
+            DetectorSettingsSectionKind.DaliDeviceCommonParam,
+            groupFade,
+            "DaliSetDevicesFadeTime",
+            4,
+            BuildDaliFadeByteOptions(),
+            "Range 0..15 (0 = no fade time).",
+            customEnumValueLabelFactory: value => $"{value}");
+        AddEnum(
+            list,
+            "dali.common.fade_rate",
+            DetectorSettingsSectionKind.DaliDeviceCommonParam,
+            groupFade,
+            "DaliSetDevicesFadeRate",
+            5,
+            BuildDaliFadeByteOptions(),
+            "Range 0..15 (0 = extended fade time).",
+            customEnumValueLabelFactory: value => $"{value}");
+        AddNumber(
+            list,
+            "dali.common.extended_fade_time",
+            DetectorSettingsSectionKind.DaliDeviceCommonParam,
+            groupFade,
+            "DaliSetDevicesExtendedFadeTime",
+            6,
+            1,
+            0,
+            79,
+            "Range 0..79.");
 
         return list;
     }
@@ -932,6 +1019,14 @@ internal static class DetectorSettingsFieldCatalog
             new DetectorFieldOption(3, "MUZ"),
             new DetectorFieldOption(4, "HVAC")
         };
+
+    private static IReadOnlyList<DetectorFieldOption> BuildDaliFadeByteOptions()
+    {
+        var list = new List<DetectorFieldOption>(16);
+        for (var value = 0; value <= 15; value++)
+            list.Add(new DetectorFieldOption(value, $"{value}"));
+        return list;
+    }
 
     private static IReadOnlyList<DetectorFieldOption> BuildDelayOptions()
         => new[]

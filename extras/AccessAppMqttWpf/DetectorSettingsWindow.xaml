@@ -21,7 +21,7 @@
             <ComboBox ItemsSource="{Binding Options}"
                       DisplayMemberPath="Label"
                       MaxDropDownHeight="520"
-                      MinWidth="440"
+                      MinWidth="520"
                       ToolTip="{Binding Description}"
                       TextSearch.TextPath="Label"
                       HorizontalContentAlignment="Stretch"
@@ -77,8 +77,8 @@
                     <DataGridCheckBoxColumn Header="Apply" Binding="{Binding IsSelected, Mode=TwoWay}" Width="70"/>
                     <DataGridTextColumn Header="Group" Binding="{Binding Group}" Width="140" IsReadOnly="True"/>
                     <DataGridTextColumn Header="Field" Binding="{Binding Label}" Width="240" IsReadOnly="True"/>
-                    <DataGridTemplateColumn Header="Value" CellTemplate="{StaticResource FieldEditorTemplate}" Width="460"/>
-                    <DataGridTextColumn Header="Current" Binding="{Binding CurrentValueText}" Width="180" IsReadOnly="True"/>
+                    <DataGridTemplateColumn Header="Value" CellTemplate="{StaticResource FieldEditorTemplate}" Width="560"/>
+                    <DataGridTextColumn Header="Current" Binding="{Binding CurrentValueText}" Width="220" IsReadOnly="True"/>
                     <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="*" IsReadOnly="True"/>
                 </DataGrid.Columns>
             </DataGrid>
@@ -231,6 +231,17 @@
                         </TabItem>
                         <TabItem Header="PB 4">
                             <ContentControl Content="{Binding DaliPb4Rows}" ContentTemplate="{StaticResource SettingsRowsGridTemplate}"/>
+                        </TabItem>
+                    </TabControl>
+                </TabItem>
+
+                <TabItem Header="DALI Devices">
+                    <TabControl>
+                        <TabItem Header="Levels">
+                            <ContentControl Content="{Binding DaliCommonLevelRows}" ContentTemplate="{StaticResource SettingsRowsGridTemplate}"/>
+                        </TabItem>
+                        <TabItem Header="Fade">
+                            <ContentControl Content="{Binding DaliCommonFadeRows}" ContentTemplate="{StaticResource SettingsRowsGridTemplate}"/>
                         </TabItem>
                     </TabControl>
                 </TabItem>

@@ -45,6 +45,7 @@ public partial class DetectorSettingsViewModel : ObservableObject
     public ObservableCollection<DetectorFieldRowViewModel> WiredPushButtonsRows { get; } = new();
     public ObservableCollection<DetectorFieldRowViewModel> BlePushButtonsRows { get; } = new();
     public ObservableCollection<DetectorFieldRowViewModel> DaliPushButtonsRows { get; } = new();
+    public ObservableCollection<DetectorFieldRowViewModel> DaliDeviceCommonRows { get; } = new();
     public ObservableCollection<DetectorFieldRowViewModel> UserGeneralRows { get; } = new();
     public ObservableCollection<DetectorFieldRowViewModel> UserZone1Rows { get; } = new();
     public ObservableCollection<DetectorFieldRowViewModel> UserZone2Rows { get; } = new();
@@ -66,6 +67,8 @@ public partial class DetectorSettingsViewModel : ObservableObject
     public ObservableCollection<DetectorFieldRowViewModel> DaliPb2Rows { get; } = new();
     public ObservableCollection<DetectorFieldRowViewModel> DaliPb3Rows { get; } = new();
     public ObservableCollection<DetectorFieldRowViewModel> DaliPb4Rows { get; } = new();
+    public ObservableCollection<DetectorFieldRowViewModel> DaliCommonLevelRows { get; } = new();
+    public ObservableCollection<DetectorFieldRowViewModel> DaliCommonFadeRows { get; } = new();
 
     [ObservableProperty] private string macAddress = "";
     [ObservableProperty] private string cassiaName = "";
@@ -81,6 +84,7 @@ public partial class DetectorSettingsViewModel : ObservableObject
     [ObservableProperty] private int selectedWiredFieldCount;
     [ObservableProperty] private int selectedBleFieldCount;
     [ObservableProperty] private int selectedDaliFieldCount;
+    [ObservableProperty] private int selectedDaliCommonFieldCount;
 
     public bool CanQueueUpdateWithProfile => _device != null;
 
@@ -298,6 +302,8 @@ public partial class DetectorSettingsViewModel : ObservableObject
                     SelectAll(BlePushButtonsRows);
                 if (profile.ApplyDaliPushButtons)
                     SelectAll(DaliPushButtonsRows);
+                if (profile.ApplyDaliDeviceCommonParam)
+                    SelectAll(DaliDeviceCommonRows);
             }
 
             UpdateSelectionCounters();
@@ -348,6 +354,7 @@ public partial class DetectorSettingsViewModel : ObservableObject
                 ApplyUserConfig = !string.IsNullOrWhiteSpace(patch.UserConfigHex),
                 ApplyPushButtons = !string.IsNullOrWhiteSpace(patch.PushButtonsHex),
                 ApplyDaliPushButtons = !string.IsNullOrWhiteSpace(patch.DaliPushButtonsHex),
+                ApplyDaliDeviceCommonParam = !string.IsNullOrWhiteSpace(patch.DaliDeviceCommonParamHex),
                 ApplyBlePushButtons = !string.IsNullOrWhiteSpace(patch.BlePushButtonsHex)
             };
 
@@ -370,6 +377,7 @@ public partial class DetectorSettingsViewModel : ObservableObject
         AddRows(WiredPushButtonsRows, DetectorSettingsFieldCatalog.WiredPushButtonsFields);
         AddRows(BlePushButtonsRows, DetectorSettingsFieldCatalog.BlePushButtonsFields);
         AddRows(DaliPushButtonsRows, DetectorSettingsFieldCatalog.DaliPushButtonsFields);
+        AddRows(DaliDeviceCommonRows, DetectorSettingsFieldCatalog.DaliDeviceCommonParamFields);
         BuildTabCollections();
         UpdateSelectionCounters();
     }
@@ -400,6 +408,9 @@ public partial class DetectorSettingsViewModel : ObservableObject
         FillFiltered(DaliPb2Rows, DaliPushButtonsRows, row => row.Group.StartsWith("DALI PB 2", StringComparison.OrdinalIgnoreCase));
         FillFiltered(DaliPb3Rows, DaliPushButtonsRows, row => row.Group.StartsWith("DALI PB 3", StringComparison.OrdinalIgnoreCase));
         FillFiltered(DaliPb4Rows, DaliPushButtonsRows, row => row.Group.StartsWith("DALI PB 4", StringComparison.OrdinalIgnoreCase));
+
+        FillFiltered(DaliCommonLevelRows, DaliDeviceCommonRows, row => row.Group.Equals("Levels", StringComparison.OrdinalIgnoreCase));
+        FillFiltered(DaliCommonFadeRows, DaliDeviceCommonRows, row => row.Group.Equals("Fade", StringComparison.OrdinalIgnoreCase));
     }
 
     private static void FillFiltered(
@@ -437,6 +448,7 @@ public partial class DetectorSettingsViewModel : ObservableObject
         SelectedWiredFieldCount = WiredPushButtonsRows.Count(r => r.IsSelected);
         SelectedBleFieldCount = BlePushButtonsRows.Count(r => r.IsSelected);
         SelectedDaliFieldCount = DaliPushButtonsRows.Count(r => r.IsSelected);
+        SelectedDaliCommonFieldCount = DaliDeviceCommonRows.Count(r => r.IsSelected);
     }
 
     private IEnumerable<DetectorFieldRowViewModel> GetAllRows()
@@ -445,6 +457,7 @@ public partial class DetectorSettingsViewModel : ObservableObject
         foreach (var row in WiredPushButtonsRows) yield return row;
         foreach (var row in BlePushButtonsRows) yield return row;
         foreach (var row in DaliPushButtonsRows) yield return row;
+        foreach (var row in DaliDeviceCommonRows) yield return row;
     }
 
     private void LoadRowsFromPatch(DetectorSettingsPatchModel patch)
@@ -455,6 +468,7 @@ public partial class DetectorSettingsViewModel : ObservableObject
         LoadSectionRows(WiredPushButtonsRows, patch.PushButtonsHex, DetectorSettingsFieldCatalog.WiredPushButtonsLength);
         LoadSectionRows(BlePushButtonsRows, patch.BlePushButtonsHex, DetectorSettingsFieldCatalog.BlePushButtonsLength);
         LoadSectionRows(DaliPushButtonsRows, patch.DaliPushButtonsHex, DetectorSettingsFieldCatalog.DaliPushButtonsLength);
+        LoadSectionRows(DaliDeviceCommonRows, patch.DaliDeviceCommonParamHex, DetectorSettingsFieldCatalog.DaliDeviceCommonParamLength);
 
         ClearAllSelections();
         UpdateSelectionCounters();
@@ -505,6 +519,14 @@ public partial class DetectorSettingsViewModel : ObservableObject
         {
             patch.DaliPushButtonsHex = daliHex;
             patch.DaliPushButtonsMaskHex = daliMask;
+        }
+
+        BuildSectionPatch(DaliDeviceCommonRows, DetectorSettingsFieldCatalog.DaliDeviceCommonParamLength,
+            out var daliCommonHex, out var daliCommonMask, errors);
+        if (!string.IsNullOrWhiteSpace(daliCommonHex))
+        {
+            patch.DaliDeviceCommonParamHex = daliCommonHex;
+            patch.DaliDeviceCommonParamMaskHex = daliCommonMask;
         }
 
         if (errors.Count > 0 && throwOnValidationErrors)
