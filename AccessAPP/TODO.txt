@@ -1,7 +1,7 @@
 AccessApp Cassia backend:
 
 CRITICAL:
-
+Settings-changes and 102/102, should first be executed after all fw-upgrades are done!
 
 MAJOR:
 -> Clear/Remove, should clear the devicelist on cassia as well.

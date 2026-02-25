@@ -759,6 +759,134 @@ resp = true;
 
         // 0x0400 + len 0x0008. CRC16 is 0x61AD and encoded little-endian in telegrams => AD61.
         private const string DaliCommissioningCommandPrefix = "0100040800AD61";
+        private const string DaliGetDeviceDatabaseCount102Cmd = "010F0407007DA5";
+        // 0x0417 + len 0x0007. CRC16 is 0x3B19 and encoded little-endian in telegrams => 193B.
+        private const string DaliGetDeviceDatabaseCount103Cmd = "0117040700193B";
+
+        public Task<(bool Success, int? Count, string Message)> DaliGetDeviceDatabaseCount102Async(
+            string nodeMac,
+            int maxWaitMs = 30000)
+            => DaliGetDeviceDatabaseCountAsync(
+                nodeMac,
+                DaliGetDeviceDatabaseCount102Cmd,
+                "102",
+                IsDaliDatabaseCount102ReplyTelegram,
+                maxWaitMs);
+
+        public Task<(bool Success, int? Count, string Message)> DaliGetDeviceDatabaseCount103Async(
+            string nodeMac,
+            int maxWaitMs = 30000)
+            => DaliGetDeviceDatabaseCountAsync(
+                nodeMac,
+                DaliGetDeviceDatabaseCount103Cmd,
+                "103",
+                IsDaliDatabaseCount103ReplyTelegram,
+                maxWaitMs);
+
+        private async Task<(bool Success, int? Count, string Message)> DaliGetDeviceDatabaseCountAsync(
+            string nodeMac,
+            string command,
+            string label,
+            Func<string, bool> isExpectedReplyTelegram,
+            int maxWaitMs)
+        {
+            var deadlineUtc = DateTime.UtcNow.AddMilliseconds(Math.Max(5000, maxWaitMs));
+            var attempt = 0;
+
+            while (DateTime.UtcNow <= deadlineUtc)
+            {
+                attempt++;
+                Guid token = Guid.Empty;
+                var replyTcs = new TaskCompletionSource<(byte status, byte commissioningRunning, byte count)>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+                try
+                {
+                    token = _notificationService.Subscribe(nodeMac, (_, rawTelegram) =>
+                    {
+                        try
+                        {
+                            var normalizedRaw = NormalizeHex(rawTelegram);
+                            if (normalizedRaw.Length < 14)
+                                return;
+
+                            var parsed = new GenericTelegramReply(normalizedRaw);
+                            var telegramType = NormalizeHex(parsed.TelegramType);
+                            if (!isExpectedReplyTelegram(telegramType))
+                                return;
+
+                            var payload = NormalizeHex(parsed.DataResult);
+                            if (TryParseDaliDatabaseCountPayload(payload, out var status, out var commissioningRunning, out var count))
+                            {
+                                AppLog.Debug($"[DALI] DatabaseCount{label} reply type={telegramType} status=0x{status:X2} running={commissioningRunning} count={count} mac={nodeMac}");
+                                replyTcs.TrySetResult((status, commissioningRunning, count));
+                            }
+                        }
+                        catch
+                        {
+                            // Ignore malformed/unrelated notifications.
+                        }
+                    });
+
+                    if (_notificationService is LinuxBle.LinuxBleNotificationService linuxNotify)
+                    {
+                        try
+                        {
+                            using var notifyReadyCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                            await linuxNotify.EnsureNotifyingReadyAsync(nodeMac, notifyReadyCts.Token).ConfigureAwait(false);
+                        }
+                        catch (Exception ex)
+                        {
+                            AppLog.Debug($"[DALI] DatabaseCount{label} notify readiness wait did not complete for {nodeMac}: {ex.Message}");
+                        }
+                    }
+
+                    using var writeResponse = await cassiaReadWriteService
+                        .WriteBleMessage(_gatewayIpAddress, nodeMac, 19, command, "?noresponse=1")
+                        .ConfigureAwait(false);
+
+                    if (!writeResponse.IsSuccessStatusCode)
+                    {
+                        var statusMsg = $"HTTP {(int)writeResponse.StatusCode} {writeResponse.StatusCode}";
+                        AppLog.Warn($"[DALI] DatabaseCount{label} command write failed for {nodeMac}: {statusMsg} (attempt {attempt}).");
+                        await Task.Delay(1000).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    var waitMs = Math.Max(1000, (int)Math.Min(8000, (deadlineUtc - DateTime.UtcNow).TotalMilliseconds));
+                    if (!await TryWaitForTaskAsync(replyTcs.Task, waitMs).ConfigureAwait(false))
+                    {
+                        AppLog.Warn($"[DALI] DatabaseCount{label} reply timeout for {nodeMac} (attempt {attempt}).");
+                        await Task.Delay(1000).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    var (status, commissioningRunning, count) = await replyTcs.Task.ConfigureAwait(false);
+                    if (status != 0x00)
+                        return (false, null, $"NACK status 0x{status:X2}");
+
+                    if (commissioningRunning == 0x01)
+                    {
+                        AppLog.Info($"[DALI] DatabaseCount{label} indicates commissioning still running for {nodeMac} (attempt {attempt}). Waiting...");
+                        await Task.Delay(1500).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    return (true, count, $"DatabaseCount{label}={count}");
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Warn($"[DALI] DatabaseCount{label} exception for {nodeMac}: {ex.Message} (attempt {attempt}).");
+                    await Task.Delay(1000).ConfigureAwait(false);
+                }
+                finally
+                {
+                    if (token != Guid.Empty)
+                        _notificationService.Unsubscribe(nodeMac, token);
+                }
+            }
+
+            return (false, null, $"DatabaseCount{label} timed out after {Math.Max(5000, maxWaitMs)} ms.");
+        }
 
         public async Task<(bool Success, string Message, int? DevicesFound, byte? ResultCode)> DaliRunTotalNewCommissioningScanAsync(
             string nodeMac,
@@ -991,6 +1119,14 @@ resp = true;
             => string.Equals(telegramType, "2104", StringComparison.OrdinalIgnoreCase)
                || string.Equals(telegramType, "0421", StringComparison.OrdinalIgnoreCase);
 
+        private static bool IsDaliDatabaseCount102ReplyTelegram(string telegramType)
+            => string.Equals(telegramType, "1F04", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(telegramType, "041F", StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsDaliDatabaseCount103ReplyTelegram(string telegramType)
+            => string.Equals(telegramType, "3404", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(telegramType, "0434", StringComparison.OrdinalIgnoreCase);
+
         private static bool TryParseCommissioningPayloadBytes(string? payload, out byte b0, out byte b1)
         {
             b0 = 0xFF;
@@ -1016,6 +1152,39 @@ resp = true;
             if (bytes.Length > 1)
                 b1 = bytes[1];
 
+            return true;
+        }
+
+        private static bool TryParseDaliDatabaseCountPayload(
+            string? payload,
+            out byte status,
+            out byte commissioningRunning,
+            out byte count)
+        {
+            status = 0xFF;
+            commissioningRunning = 0x00;
+            count = 0x00;
+
+            var normalized = NormalizeHex(payload);
+            if (string.IsNullOrWhiteSpace(normalized) || normalized.Length < 6 || (normalized.Length % 2) != 0)
+                return false;
+
+            byte[] bytes;
+            try
+            {
+                bytes = Convert.FromHexString(normalized);
+            }
+            catch
+            {
+                return false;
+            }
+
+            if (bytes.Length < 3)
+                return false;
+
+            status = bytes[0];
+            commissioningRunning = bytes[1];
+            count = bytes[2];
             return true;
         }
 

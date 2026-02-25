@@ -172,6 +172,26 @@ internal sealed class PostActorStep : IDeviceUpgradeStep
                     ctx.FirmwareVersion);
             }
 
+            var dbCount102 = await svc.DaliGetDeviceDatabaseCount102Async(ctx.MacAddress).ConfigureAwait(false);
+            if (dbCount102.Success && dbCount102.Count.HasValue)
+            {
+                UpgradeLogger.Log(
+                    ctx.LogId,
+                    ctx.MacAddress,
+                    $"DALI 102 database total devices: {dbCount102.Count.Value}",
+                    "Info",
+                    ctx.FirmwareVersion);
+            }
+            else
+            {
+                UpgradeLogger.Log(
+                    ctx.LogId,
+                    ctx.MacAddress,
+                    $"DALI 102 database count read failed: {dbCount102.Message}",
+                    "Warn",
+                    ctx.FirmwareVersion);
+            }
+
             if (!scan102.Success)
             {
                 ctx.Response.Success = false;
@@ -202,6 +222,26 @@ internal sealed class PostActorStep : IDeviceUpgradeStep
                     ctx.MacAddress,
                     $"DALI 103 total-new scan devices found: {scan103.DevicesFound.Value}",
                     "Info",
+                    ctx.FirmwareVersion);
+            }
+
+            var dbCount103 = await svc.DaliGetDeviceDatabaseCount103Async(ctx.MacAddress).ConfigureAwait(false);
+            if (dbCount103.Success && dbCount103.Count.HasValue)
+            {
+                UpgradeLogger.Log(
+                    ctx.LogId,
+                    ctx.MacAddress,
+                    $"DALI 103 database total devices: {dbCount103.Count.Value}",
+                    "Info",
+                    ctx.FirmwareVersion);
+            }
+            else
+            {
+                UpgradeLogger.Log(
+                    ctx.LogId,
+                    ctx.MacAddress,
+                    $"DALI 103 database count read failed: {dbCount103.Message}",
+                    "Warn",
                     ctx.FirmwareVersion);
             }
 
