@@ -206,7 +206,8 @@ using (var scope = app.Services.CreateScope())
                 Pincode = r.Pincode ?? "",
                 DetectotType = r.DetectorType ?? "",
                 FirmwareVersion = r.FirmwareVersion ?? "",
-                ForceUpdate = r.ForceUpdate ?? false
+                ForceUpdate = r.ForceUpdate ?? false,
+                PostUpdateSettings = r.DetectorSettings?.CloneNormalized()
             })
             .ToList();
 
@@ -262,6 +263,265 @@ using (var scope = app.Services.CreateScope())
         await mqttService.PublishTeleJsonAsync("fw-version", resp);
     };
 
+    mqttService.GetDetectorSettingsRequested += async cmd =>
+    {
+        var requestId = string.IsNullOrWhiteSpace(cmd.RequestId) ? Guid.NewGuid().ToString("N") : cmd.RequestId!;
+        var requested = (cmd.Sensors ?? new List<string>())
+            .Where(m => !string.IsNullOrWhiteSpace(m))
+            .Select(m => m.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (requested.Count == 0)
+        {
+            await mqttService.PublishTeleJsonAsync("detector-settings", new
+            {
+                success = false,
+                action = "get",
+                requestId,
+                message = "No sensors/mac addresses provided.",
+                name = mqttService.CurrentOptions.Name,
+                networkId = mqttService.CurrentOptions.NetworkId,
+                time = DateTimeOffset.UtcNow
+            });
+            return;
+        }
+
+        var knownByMac = DeviceStorageService.GetDeviceListSnapshot()
+            .Where(x => !string.IsNullOrWhiteSpace(x.MacAddress))
+            .ToDictionary(x => x.MacAddress.Trim(), x => x, StringComparer.OrdinalIgnoreCase);
+
+        var pincode = cmd.Pincode ?? "";
+        var defaultDetector = NormalizeDetectorType(cmd.DetectorType);
+        var defaultFw = (cmd.FirmwareVersion ?? "").Trim();
+        var results = new List<object>();
+        var failed = new List<object>();
+
+        foreach (var mac in requested)
+        {
+            var detectorType = defaultDetector;
+            if (string.IsNullOrWhiteSpace(detectorType) && knownByMac.TryGetValue(mac, out var known))
+                detectorType = NormalizeDetectorType(known.DetectorType);
+
+            if (string.IsNullOrWhiteSpace(detectorType))
+                detectorType = "P48";
+
+            var fw = defaultFw;
+
+            try
+            {
+                var cl = await firmwareUpgradeService.ConnectAndLoginWithRetryForPipelineAsync(
+                    firmwareUpgradeService.GatewayIpAddress,
+                    firmwareUpgradeService.GatewayPort,
+                    mac,
+                    pincode,
+                    logId: requestId,
+                    firmwareVersion: fw,
+                    maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
+                    delayBetweenAttemptsMs: 2000,
+                    bootModeIsRetryable: true).ConfigureAwait(false);
+
+                if (!cl.Success)
+                {
+                    failed.Add(new
+                    {
+                        mac,
+                        detectorType,
+                        success = false,
+                        message = $"Connect+login failed: {cl.Message}"
+                    });
+                    continue;
+                }
+
+                var snapshot = await firmwareUpgradeService.SettingsBackupService
+                    .CaptureSnapshotAsync(mac, detectorType, fw).ConfigureAwait(false);
+
+                results.Add(new
+                {
+                    mac,
+                    detectorType,
+                    firmwareVersion = fw,
+                    success = true,
+                    settings = DetectorSettingsPatch.FromSnapshot(snapshot).CloneNormalized()
+                });
+            }
+            catch (Exception ex)
+            {
+                failed.Add(new
+                {
+                    mac,
+                    detectorType,
+                    success = false,
+                    message = ex.Message
+                });
+            }
+            finally
+            {
+                try { await firmwareUpgradeService.DisconnectDeviceAsync(mac).ConfigureAwait(false); } catch { }
+            }
+        }
+
+        await mqttService.PublishTeleJsonAsync("detector-settings", new
+        {
+            success = failed.Count == 0,
+            action = "get",
+            requestId,
+            message = failed.Count == 0
+                ? $"Detector settings loaded for {results.Count} sensor(s)."
+                : $"Detector settings loaded with failures. Success={results.Count}, Failed={failed.Count}.",
+            name = mqttService.CurrentOptions.Name,
+            networkId = mqttService.CurrentOptions.NetworkId,
+            time = DateTimeOffset.UtcNow,
+            requested,
+            results,
+            failed
+        });
+    };
+
+    mqttService.SetDetectorSettingsRequested += async cmd =>
+    {
+        var requestId = string.IsNullOrWhiteSpace(cmd.RequestId) ? Guid.NewGuid().ToString("N") : cmd.RequestId!;
+        var requested = (cmd.Sensors ?? new List<string>())
+            .Where(m => !string.IsNullOrWhiteSpace(m))
+            .Select(m => m.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var patch = cmd.Settings?.CloneNormalized();
+        var writeOnlyChanged = cmd.WriteOnlyChanged ?? true;
+
+        if (requested.Count == 0)
+        {
+            await mqttService.PublishTeleJsonAsync("detector-settings", new
+            {
+                success = false,
+                action = "set",
+                requestId,
+                message = "No sensors/mac addresses provided.",
+                name = mqttService.CurrentOptions.Name,
+                networkId = mqttService.CurrentOptions.NetworkId,
+                time = DateTimeOffset.UtcNow
+            });
+            return;
+        }
+
+        if (patch == null || !patch.HasAnyValue())
+        {
+            await mqttService.PublishTeleJsonAsync("detector-settings", new
+            {
+                success = false,
+                action = "set",
+                requestId,
+                message = "No detector setting changes provided. Send payload with settings.{userConfigHex|pushButtonsHex|daliPushButtonsHex|blePushButtonsHex} (optionally with matching *MaskHex fields).",
+                name = mqttService.CurrentOptions.Name,
+                networkId = mqttService.CurrentOptions.NetworkId,
+                time = DateTimeOffset.UtcNow
+            });
+            return;
+        }
+
+        var knownByMac = DeviceStorageService.GetDeviceListSnapshot()
+            .Where(x => !string.IsNullOrWhiteSpace(x.MacAddress))
+            .ToDictionary(x => x.MacAddress.Trim(), x => x, StringComparer.OrdinalIgnoreCase);
+
+        var pincode = cmd.Pincode ?? "";
+        var defaultDetector = NormalizeDetectorType(cmd.DetectorType);
+        var defaultFw = (cmd.FirmwareVersion ?? "").Trim();
+        var results = new List<object>();
+        var failed = new List<object>();
+
+        foreach (var mac in requested)
+        {
+            var detectorType = defaultDetector;
+            if (string.IsNullOrWhiteSpace(detectorType) && knownByMac.TryGetValue(mac, out var known))
+                detectorType = NormalizeDetectorType(known.DetectorType);
+            if (string.IsNullOrWhiteSpace(detectorType))
+                detectorType = "P48";
+
+            var fw = defaultFw;
+
+            try
+            {
+                var cl = await firmwareUpgradeService.ConnectAndLoginWithRetryForPipelineAsync(
+                    firmwareUpgradeService.GatewayIpAddress,
+                    firmwareUpgradeService.GatewayPort,
+                    mac,
+                    pincode,
+                    logId: requestId,
+                    firmwareVersion: fw,
+                    maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
+                    delayBetweenAttemptsMs: 2000,
+                    bootModeIsRetryable: true).ConfigureAwait(false);
+
+                if (!cl.Success)
+                {
+                    failed.Add(new
+                    {
+                        mac,
+                        detectorType,
+                        success = false,
+                        message = $"Connect+login failed: {cl.Message}"
+                    });
+                    continue;
+                }
+
+                var apply = await firmwareUpgradeService.SettingsBackupService
+                    .ApplyOverridesAsync(mac, detectorType, fw, patch, writeOnlyChanged).ConfigureAwait(false);
+
+                var current = await firmwareUpgradeService.SettingsBackupService
+                    .CaptureSnapshotAsync(mac, detectorType, fw).ConfigureAwait(false);
+
+                var row = new
+                {
+                    mac,
+                    detectorType,
+                    firmwareVersion = fw,
+                    success = apply.Success,
+                    statusCode = apply.StatusCode,
+                    message = apply.Message,
+                    settings = DetectorSettingsPatch.FromSnapshot(current).CloneNormalized()
+                };
+
+                if (apply.Success)
+                    results.Add(row);
+                else
+                    failed.Add(row);
+            }
+            catch (Exception ex)
+            {
+                failed.Add(new
+                {
+                    mac,
+                    detectorType,
+                    success = false,
+                    message = ex.Message
+                });
+            }
+            finally
+            {
+                try { await firmwareUpgradeService.DisconnectDeviceAsync(mac).ConfigureAwait(false); } catch { }
+            }
+        }
+
+        await mqttService.PublishTeleJsonAsync("detector-settings", new
+        {
+            success = failed.Count == 0,
+            action = "set",
+            requestId,
+            message = failed.Count == 0
+                ? $"Detector settings applied for {results.Count} sensor(s)."
+                : $"Detector settings apply finished with failures. Success={results.Count}, Failed={failed.Count}.",
+            name = mqttService.CurrentOptions.Name,
+            networkId = mqttService.CurrentOptions.NetworkId,
+            time = DateTimeOffset.UtcNow,
+            requested,
+            writeOnlyChanged,
+            requestedSettings = patch,
+            results,
+            failed
+        });
+    };
+
     mqttService.DisconnectDevicesRequested += async cmd =>
     {
         var macs = (cmd.Sensors ?? new List<string>())
@@ -302,6 +562,23 @@ using (var scope = app.Services.CreateScope())
 
         await mqttService.PublishTeleJsonAsync("disconnect", resp);
     };
+
+    static string NormalizeDetectorType(string? value)
+    {
+        var s = (value ?? "").Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(s))
+            return "";
+
+        if (s.Length >= 3 && (s[0] == 'P' || s[0] == 'M') && char.IsDigit(s[1]) && char.IsDigit(s[2]))
+            s = $"{s[0]}{s[1]}{s[2]}";
+
+        if (s.StartsWith("M", StringComparison.Ordinal))
+            s = "P" + s[1..];
+        if (s == "P49")
+            s = "P46";
+
+        return s;
+    }
 
     mqttService.IdentifyRequested += async cmd =>
     {

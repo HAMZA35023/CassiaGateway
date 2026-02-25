@@ -46,6 +46,8 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
     public event Func<StartUpdateCommand, Task>? StartUpdateRequested;
     public event Func<GetFwVersionCommand, Task>? GetFwVersionRequested;
+    public event Func<DetectorSettingsCommand, Task>? GetDetectorSettingsRequested;
+    public event Func<DetectorSettingsCommand, Task>? SetDetectorSettingsRequested;
     public event Func<DisconnectDevicesCommand, Task>? DisconnectDevicesRequested;
 
     // Identify device (connect/login/wait/disconnect)
@@ -530,6 +532,23 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 AppLog.Debug("HandleCommandAsync: dispatch get-fw-version");
                 var dto = JsonSerializer.Deserialize<GetFwVersionCommand>(payload, JsonOptions) ?? new GetFwVersionCommand();
                 return GetFwVersionRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "get-detector-settings", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "get-device-settings", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch get-detector-settings");
+                var dto = ParseDetectorSettingsCommandPayload(payload, requireSettings: false);
+                return GetDetectorSettingsRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "set-detector-settings", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "set-device-settings", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "apply-detector-settings", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch set-detector-settings");
+                var dto = ParseDetectorSettingsCommandPayload(payload, requireSettings: true);
+                return SetDetectorSettingsRequested?.Invoke(dto) ?? Task.CompletedTask;
             }
 
             if (string.Equals(command, "identify", StringComparison.OrdinalIgnoreCase) ||
@@ -1897,6 +1916,170 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
             AppLog.Info($"topic was: {topic}");
             AppLog.Info($"payload was: {payload}");
             return Task.CompletedTask;
+        }
+    }
+
+    private static DetectorSettingsCommand ParseDetectorSettingsCommandPayload(string? payload, bool requireSettings)
+    {
+        var dto = new DetectorSettingsCommand();
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(payload))
+            {
+                dto = new DetectorSettingsCommand();
+            }
+            else if (payload.TrimStart().StartsWith("["))
+            {
+                dto = new DetectorSettingsCommand
+                {
+                    Sensors = JsonSerializer.Deserialize<List<string>>(payload, JsonOptions) ?? new List<string>()
+                };
+            }
+            else if (payload.TrimStart().StartsWith("\""))
+            {
+                dto = new DetectorSettingsCommand
+                {
+                    Sensors = new List<string> { JsonSerializer.Deserialize<string>(payload, JsonOptions) ?? payload.Trim('"') }
+                };
+            }
+            else
+            {
+                dto = JsonSerializer.Deserialize<DetectorSettingsCommand>(payload, JsonOptions) ?? new DetectorSettingsCommand();
+            }
+        }
+        catch
+        {
+            dto = new DetectorSettingsCommand();
+        }
+
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(payload))
+            {
+                using var doc = JsonDocument.Parse(payload);
+                var root = doc.RootElement;
+
+                if (root.ValueKind == JsonValueKind.Object)
+                {
+                    if (dto.Sensors.Count == 0)
+                    {
+                        if (TryGetString(root, "macAddress", out var oneMac) && !string.IsNullOrWhiteSpace(oneMac))
+                            dto.Sensors.Add(oneMac);
+                        else if (TryGetString(root, "mac", out oneMac) && !string.IsNullOrWhiteSpace(oneMac))
+                            dto.Sensors.Add(oneMac);
+                        else if (TryGetString(root, "sensor", out oneMac) && !string.IsNullOrWhiteSpace(oneMac))
+                            dto.Sensors.Add(oneMac);
+                    }
+
+                    if (dto.Settings == null)
+                    {
+                        if (root.TryGetProperty("settings", out var settingsEl) && settingsEl.ValueKind == JsonValueKind.Object)
+                        {
+                            dto.Settings = JsonSerializer.Deserialize<DetectorSettingsPatch>(settingsEl.GetRawText(), JsonOptions);
+                        }
+                        else
+                        {
+                            var patch = new DetectorSettingsPatch();
+                            var hasPatch = false;
+
+                            if (TryGetString(root, "userConfigHex", out var user))
+                            {
+                                patch.UserConfigHex = user;
+                                hasPatch = true;
+                            }
+                            if (TryGetString(root, "userConfigMaskHex", out var userMask))
+                            {
+                                patch.UserConfigMaskHex = userMask;
+                                hasPatch = true;
+                            }
+                            if (TryGetString(root, "pushButtonsHex", out var wired))
+                            {
+                                patch.PushButtonsHex = wired;
+                                hasPatch = true;
+                            }
+                            if (TryGetString(root, "pushButtonsMaskHex", out var wiredMask))
+                            {
+                                patch.PushButtonsMaskHex = wiredMask;
+                                hasPatch = true;
+                            }
+                            if (TryGetString(root, "daliPushButtonsHex", out var dali))
+                            {
+                                patch.DaliPushButtonsHex = dali;
+                                hasPatch = true;
+                            }
+                            if (TryGetString(root, "daliPushButtonsMaskHex", out var daliMask))
+                            {
+                                patch.DaliPushButtonsMaskHex = daliMask;
+                                hasPatch = true;
+                            }
+                            if (TryGetString(root, "blePushButtonsHex", out var ble))
+                            {
+                                patch.BlePushButtonsHex = ble;
+                                hasPatch = true;
+                            }
+                            if (TryGetString(root, "blePushButtonsMaskHex", out var bleMask))
+                            {
+                                patch.BlePushButtonsMaskHex = bleMask;
+                                hasPatch = true;
+                            }
+
+                            if (hasPatch)
+                                dto.Settings = patch;
+                        }
+                    }
+
+                    if (dto.WriteOnlyChanged == null &&
+                        root.TryGetProperty("writeOnlyChanged", out var woc))
+                    {
+                        if (woc.ValueKind == JsonValueKind.True) dto.WriteOnlyChanged = true;
+                        else if (woc.ValueKind == JsonValueKind.False) dto.WriteOnlyChanged = false;
+                        else if (woc.ValueKind == JsonValueKind.String && bool.TryParse(woc.GetString(), out var b)) dto.WriteOnlyChanged = b;
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // keep best-effort parsed dto
+        }
+
+        dto.Sensors = dto.Sensors
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Select(s => s.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (requireSettings && dto.Settings == null)
+            dto.Settings = new DetectorSettingsPatch();
+
+        return dto;
+
+        static bool TryGetString(JsonElement root, string name, out string value)
+        {
+            value = string.Empty;
+            if (!root.TryGetProperty(name, out var el))
+                return false;
+
+            if (el.ValueKind == JsonValueKind.String)
+            {
+                value = el.GetString() ?? string.Empty;
+                return true;
+            }
+
+            if (el.ValueKind == JsonValueKind.Number)
+            {
+                value = el.ToString();
+                return true;
+            }
+
+            if (el.ValueKind == JsonValueKind.True || el.ValueKind == JsonValueKind.False)
+            {
+                value = el.GetBoolean() ? "true" : "false";
+                return true;
+            }
+
+            return false;
         }
     }
 

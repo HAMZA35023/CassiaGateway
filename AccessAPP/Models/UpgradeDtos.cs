@@ -11,6 +11,7 @@ namespace AccessAPP.Models
         public string? PostFirmwareVersion { get; set; }
         public bool PostUpgradeFwMatch { get; set; } = true;
         public string? SettingsBackupPath { get; set; }
+        public DetectorSettingsPatch? PostUpdateSettings { get; set; }
 
         // If true, forces re-programming even when current FW matches target.
         public bool ForceUpdate { get; set; } = false;

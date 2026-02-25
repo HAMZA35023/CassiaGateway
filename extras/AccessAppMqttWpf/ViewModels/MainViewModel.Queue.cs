@@ -1314,7 +1314,10 @@ public partial class MainViewModel : ObservableObject
         await QueueDeviceAndRequestAsync(device, forceUpdateOverride: true);
     }
 
-    private async Task QueueDeviceAndRequestAsync(DiscoveredDevice d, bool? forceUpdateOverride = null)
+    private async Task QueueDeviceAndRequestAsync(
+        DiscoveredDevice d,
+        bool? forceUpdateOverride = null,
+        DetectorSettingsPatchModel? detectorSettings = null)
     {
         if (d == null || string.IsNullOrWhiteSpace(d.Mac))
             return;
@@ -1515,6 +1518,10 @@ public partial class MainViewModel : ObservableObject
         }
 
         var forceUpdate = forceUpdateOverride ?? ForceUpdateEnabled;
+        var normalizedDetectorSettings = detectorSettings?.CloneNormalized();
+        if (normalizedDetectorSettings != null && !normalizedDetectorSettings.HasAnyValue)
+            normalizedDetectorSettings = null;
+
         var payload = new[]
         {
             new
@@ -1523,7 +1530,8 @@ public partial class MainViewModel : ObservableObject
                 FirmwareVersion = fw,
                 MacAddress = d.Mac,
                 Pincode = "",
-                forceUpdate
+                forceUpdate,
+                DetectorSettings = normalizedDetectorSettings
             }
         };
 

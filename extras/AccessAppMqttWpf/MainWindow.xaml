@@ -486,6 +486,18 @@
                 <MenuItem.Icon>
                     <TextBlock Text="🧩" Style="{StaticResource MenuIconGlyph}"/>
                 </MenuItem.Icon>
+                <MenuItem Header="Detector settings (new profile)..."
+                          Command="{Binding OpenDetectorSettingsNewProfileCommand}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="📝" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="Detector settings (selected)..."
+                          Command="{Binding OpenDetectorSettingsForSelectedCommand}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="⚙" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
                 <MenuItem Header="Remove all ignored devices"
                           Command="{Binding ClearIgnoredDevicesCommand}">
                     <MenuItem.Icon>
@@ -1254,6 +1266,9 @@
                                                     <Separator/>
                                                     <MenuItem Header="Write-Readâ€¦"
                                                               Command="{Binding PlacementTarget.Tag.OpenWriteReadCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                              CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                                    <MenuItem Header="Detector settings..."
+                                                              Command="{Binding PlacementTarget.Tag.OpenDetectorSettingsCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                                               CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
                                                 </ContextMenu>
                                             </Setter.Value>

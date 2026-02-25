@@ -26,5 +26,24 @@ namespace AccessAPP.Services
             string firmwareVersion,
             string backupFilePath,
             string? logId);
+
+        /// <summary>
+        /// Reads settings from a connected detector and returns an in-memory snapshot.
+        /// </summary>
+        Task<DeviceSettingsSnapshot> CaptureSnapshotAsync(
+            string macAddress,
+            string detectorType,
+            string firmwareVersion);
+
+        /// <summary>
+        /// Applies an override patch by first reading current settings, merging selected fields,
+        /// and then writing only changed sections back to the connected detector.
+        /// </summary>
+        Task<ServiceResponse> ApplyOverridesAsync(
+            string macAddress,
+            string detectorType,
+            string firmwareVersion,
+            DetectorSettingsPatch overrides,
+            bool writeOnlyChanged = true);
     }
 }

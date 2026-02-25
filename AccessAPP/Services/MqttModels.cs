@@ -1,5 +1,7 @@
 ﻿using System.Text.Json.Serialization;
 
+using AccessAPP.Models;
+
 namespace AccessAPP.Services;
 
 public enum MqttCommandType
@@ -37,6 +39,12 @@ public sealed class StartUpdateRequest
     /// </summary>
     [JsonPropertyName("ForceUpdate")]
     public bool? ForceUpdate { get; set; }
+
+    /// <summary>
+    /// Optional detector settings patch to apply after successful upgrade.
+    /// </summary>
+    [JsonPropertyName("DetectorSettings")]
+    public DetectorSettingsPatch? DetectorSettings { get; set; }
 }
 
 // NEW: change MQTT scope (only NetworkId) at runtime
@@ -52,6 +60,17 @@ public sealed class GetFwVersionCommand
 
     // Optional: if your devices require a pincode for Connect+Login.
     public string? Pincode { get; set; }
+}
+
+public sealed class DetectorSettingsCommand
+{
+    public string? RequestId { get; set; }
+    public List<string> Sensors { get; set; } = new();
+    public string? Pincode { get; set; }
+    public string? DetectorType { get; set; }
+    public string? FirmwareVersion { get; set; }
+    public DetectorSettingsPatch? Settings { get; set; }
+    public bool? WriteOnlyChanged { get; set; }
 }
 
 public sealed class DisconnectDevicesCommand
