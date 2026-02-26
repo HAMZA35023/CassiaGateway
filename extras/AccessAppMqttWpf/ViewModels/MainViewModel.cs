@@ -702,11 +702,13 @@ public partial class MainViewModel : ObservableObject
     private bool TryResolveModelProfilePatch(
         string model,
         out DetectorSettingsPatchModel? patch,
+        out bool runDaliAddressAllToZone1AfterUpdate,
         out bool runDali102TotalNewScanAfterUpdate,
         out bool runDali103TotalNewScanAfterUpdate,
         out string error)
     {
         patch = null;
+        runDaliAddressAllToZone1AfterUpdate = false;
         runDali102TotalNewScanAfterUpdate = false;
         runDali103TotalNewScanAfterUpdate = false;
         error = string.Empty;
@@ -732,13 +734,16 @@ public partial class MainViewModel : ObservableObject
                 return false;
             }
 
+            runDaliAddressAllToZone1AfterUpdate = profile.RunDaliAddressAllToZone1AfterUpdate;
             runDali102TotalNewScanAfterUpdate = profile.RunDali102TotalNewScanAfterUpdate;
             runDali103TotalNewScanAfterUpdate = profile.RunDali103TotalNewScanAfterUpdate;
 
             var normalized = (profile.Settings ?? new DetectorSettingsPatchModel()).CloneNormalized();
             if (!normalized.HasAnyValue)
             {
-                if (!runDali102TotalNewScanAfterUpdate && !runDali103TotalNewScanAfterUpdate)
+                if (!runDaliAddressAllToZone1AfterUpdate
+                    && !runDali102TotalNewScanAfterUpdate
+                    && !runDali103TotalNewScanAfterUpdate)
                 {
                     error = $"Detector settings profile for {model} has no selected fields or post-update scans: {path}";
                     return false;

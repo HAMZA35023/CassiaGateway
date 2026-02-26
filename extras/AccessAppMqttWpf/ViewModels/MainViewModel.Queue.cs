@@ -1318,6 +1318,7 @@ public partial class MainViewModel : ObservableObject
         DiscoveredDevice d,
         bool? forceUpdateOverride = null,
         DetectorSettingsPatchModel? detectorSettings = null,
+        bool? runDaliAddressAllToZone1AfterUpdateOverride = null,
         bool? runDali102TotalNewScanAfterUpdateOverride = null,
         bool? runDali103TotalNewScanAfterUpdateOverride = null)
     {
@@ -1520,6 +1521,7 @@ public partial class MainViewModel : ObservableObject
         }
 
         var forceUpdate = forceUpdateOverride ?? ForceUpdateEnabled;
+        var runDaliAddressAllToZone1AfterUpdate = runDaliAddressAllToZone1AfterUpdateOverride ?? false;
         var runDali102TotalNewScanAfterUpdate = runDali102TotalNewScanAfterUpdateOverride ?? RunDali102TotalNewScanAfterUpdateEnabled;
         var runDali103TotalNewScanAfterUpdate = runDali103TotalNewScanAfterUpdateOverride ?? RunDali103TotalNewScanAfterUpdateEnabled;
         var normalizedDetectorSettings = detectorSettings?.CloneNormalized();
@@ -1530,6 +1532,7 @@ public partial class MainViewModel : ObservableObject
             if (!TryResolveModelProfilePatch(
                     model,
                     out normalizedDetectorSettings,
+                    out var profileRunDaliAddressAllToZone1,
                     out var profileRunDali102,
                     out var profileRunDali103,
                     out var profileError)
@@ -1544,6 +1547,7 @@ public partial class MainViewModel : ObservableObject
                 return;
             }
 
+            runDaliAddressAllToZone1AfterUpdate = runDaliAddressAllToZone1AfterUpdate || profileRunDaliAddressAllToZone1;
             runDali102TotalNewScanAfterUpdate = runDali102TotalNewScanAfterUpdate || profileRunDali102;
             runDali103TotalNewScanAfterUpdate = runDali103TotalNewScanAfterUpdate || profileRunDali103;
         }
@@ -1557,6 +1561,7 @@ public partial class MainViewModel : ObservableObject
                 MacAddress = d.Mac,
                 Pincode = "",
                 forceUpdate,
+                runDaliAddressAllToZone1AfterUpdate,
                 runDali102TotalNewScanAfterUpdate,
                 runDali103TotalNewScanAfterUpdate,
                 DetectorSettings = normalizedDetectorSettings

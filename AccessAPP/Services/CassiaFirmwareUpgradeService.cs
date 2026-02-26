@@ -653,6 +653,8 @@ return resp;
         private const ushort GetSetTunableWhitePresetTelegramType = 0x0157;
         private const ushort GetSetTunableWhiteDefaultKelvinTelegramType = 0x0159;
         private const ushort UnixTimeTelegramType = 0x0150;
+        private const byte TunableWhitePresetPreferredVersion = 0x02;
+        private const byte TunableWhitePresetFallbackVersion = 0x01;
 
         public async Task<string> GetTunableWhiteList(string nodeMac)
         {
@@ -721,59 +723,75 @@ return resp;
 
         public async Task<string> GetTunableWhitePreset(string nodeMac)
         {
-            var payload = new byte[18];
-            payload[0] = 0x00; // Get
-            var sensorCommand = BuildSensorCommandHex(GetSetTunableWhitePresetTelegramType, payload);
-            var sensorResponse = await _connectService.GetDataFromBleDevice(
-                _gatewayIpAddress, _gatewayPort, nodeMac, sensorCommand);
-
-            if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
+            // Some firmware variants validate Version during GET and reject zero/default requests.
+            // Try preferred version first, then fallback.
+            foreach (var version in EnumeratePresetVersions(TunableWhitePresetPreferredVersion))
             {
-                AppLog.Warn($"[TW] Get preset failed: status={sensorResponse.Status}, raw={sensorResponse.Data}");
-                return string.Empty;
+                foreach (var payload in BuildTunableWhitePresetGetPayloadCandidates(version))
+                {
+                    var sensorCommand = BuildSensorCommandHex(GetSetTunableWhitePresetTelegramType, payload);
+                    var sensorResponse = await _connectService.GetDataFromBleDevice(
+                        _gatewayIpAddress, _gatewayPort, nodeMac, sensorCommand);
+
+                    if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
+                    {
+                        AppLog.Warn($"[TW] Get preset failed (version=0x{version:X2}, payload={payload.Length}): status={sensorResponse.Status}, raw={sensorResponse.Data}");
+                        continue;
+                    }
+
+                    if (TryNormalizeTunableWhitePresetSetPayload(sensorResponse.Data, out var setPayload, out _))
+                        return Convert.ToHexString(setPayload);
+
+                    if (TryParseTunableWhitePresetResult(sensorResponse.Data, out var resultCode))
+                    {
+                        AppLog.Warn($"[TW] Get preset rejected (version=0x{version:X2}, payload={payload.Length}): result=0x{resultCode:X2} ({DescribeTunableWhiteResult(resultCode)}), raw={sensorResponse.Data}");
+                        continue;
+                    }
+
+                    AppLog.Warn($"[TW] Get preset parse failed (version=0x{version:X2}, payload={payload.Length}): raw={sensorResponse.Data}");
+                }
             }
 
-            if (!TryNormalizeTunableWhitePresetSetPayload(sensorResponse.Data, out var setPayload, out var error))
-            {
-                AppLog.Warn($"[TW] Get preset parse failed: {error}; raw={sensorResponse.Data}");
-                return string.Empty;
-            }
-
-            return Convert.ToHexString(setPayload);
+            return string.Empty;
         }
 
         public async Task<bool> SetTunableWhitePreset(string nodeMac, string tunableWhitePresetHex)
         {
-            if (!TryNormalizeTunableWhitePresetSetPayload(tunableWhitePresetHex, out var payload, out var normalizeError))
+            if (!TryNormalizeTunableWhitePresetSetPayload(tunableWhitePresetHex, out var normalizedPayload, out var normalizeError))
             {
                 AppLog.Warn($"[TW] Set preset rejected: {normalizeError}");
                 return false;
             }
 
-            payload[0] = 0x01; // enforce Set
-            var sensorCommand = BuildSensorCommandHex(GetSetTunableWhitePresetTelegramType, payload);
-            var sensorResponse = await _connectService.GetDataFromBleDevice(
-                _gatewayIpAddress, _gatewayPort, nodeMac, sensorCommand);
-
-            if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
+            byte requestedVersion = normalizedPayload.Length > 1 ? normalizedPayload[1] : TunableWhitePresetPreferredVersion;
+            foreach (var version in EnumeratePresetVersions(requestedVersion))
             {
-                AppLog.Warn($"[TW] Set preset write failed: status={sensorResponse.Status}, raw={sensorResponse.Data}");
-                return false;
+                foreach (var payload in BuildTunableWhitePresetSetPayloadCandidates(normalizedPayload, version))
+                {
+                    var sensorCommand = BuildSensorCommandHex(GetSetTunableWhitePresetTelegramType, payload);
+                    var sensorResponse = await _connectService.GetDataFromBleDevice(
+                        _gatewayIpAddress, _gatewayPort, nodeMac, sensorCommand);
+
+                    if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
+                    {
+                        AppLog.Warn($"[TW] Set preset write failed (version=0x{version:X2}, payload={payload.Length}): status={sensorResponse.Status}, raw={sensorResponse.Data}");
+                        continue;
+                    }
+
+                    if (!TryParseTunableWhitePresetResult(sensorResponse.Data, out var resultCode))
+                    {
+                        AppLog.Warn($"[TW] Set preset reply parse failed (version=0x{version:X2}, payload={payload.Length}): raw={sensorResponse.Data}");
+                        continue;
+                    }
+
+                    if (resultCode == 0x00)
+                        return true;
+
+                    AppLog.Warn($"[TW] Set preset rejected (version=0x{version:X2}, payload={payload.Length}): result=0x{resultCode:X2} ({DescribeTunableWhiteResult(resultCode)}), raw={sensorResponse.Data}");
+                }
             }
 
-            if (!TryParseTunableWhitePresetResult(sensorResponse.Data, out var resultCode))
-            {
-                AppLog.Warn($"[TW] Set preset reply parse failed: raw={sensorResponse.Data}");
-                return false;
-            }
-
-            if (resultCode != 0x00)
-            {
-                AppLog.Warn($"[TW] Set preset rejected: result=0x{resultCode:X2} ({DescribeTunableWhiteResult(resultCode)})");
-                return false;
-            }
-
-            return true;
+            return false;
         }
 
         public async Task<string> GetTunableWhiteDefaultKelvin(string nodeMac)
@@ -942,15 +960,20 @@ return resp;
             byte version;
             int presetOffset;
 
-            // Reply payload form: setRead, version, result, preset[4]*4 (19 bytes).
-            if (bytes.Length >= 19 && bytes[0] <= 0x01)
+            // Reply payload form (firmware variants):
+            // - setRead, version, result, preset[4]*4
+            // - setRead, result, version, preset[4]*4
+            if (TryParseTunableWhitePresetReplyHeader(bytes, out version, out var replyResult, out presetOffset))
             {
-                if (bytes[2] != 0x00)
+                if (replyResult != 0x00)
                 {
-                    error = $"Sensor returned NACK result 0x{bytes[2]:X2} ({DescribeTunableWhiteResult(bytes[2])}).";
+                    error = $"Sensor returned NACK result 0x{replyResult:X2} ({DescribeTunableWhiteResult(replyResult)}).";
                     return false;
                 }
-
+            }
+            // Set payload variant: getSet, version, reserved, preset[4]*4 (19 bytes).
+            else if (bytes.Length >= 19 && bytes[0] <= 0x01)
+            {
                 version = bytes[1];
                 presetOffset = 3;
             }
@@ -958,6 +981,12 @@ return resp;
             else if (bytes.Length >= 18 && bytes[0] <= 0x01)
             {
                 version = bytes[1];
+                presetOffset = 2;
+            }
+            // Semantic payload variant: version, reserved, preset[4]*4 (18 bytes).
+            else if (bytes.Length >= 18)
+            {
+                version = bytes[0];
                 presetOffset = 2;
             }
             // Semantic form: version, preset[4]*4 (17 bytes).
@@ -1057,9 +1086,9 @@ return resp;
             if (!TryParseHexBytes(responseHex, out var bytes) || bytes.Length == 0)
                 return false;
 
-            if (bytes.Length >= 3 && bytes[0] <= 0x01)
+            if (TryParseTunableWhitePresetReplyHeader(bytes, out _, out var parsedResult, out _))
             {
-                resultCode = bytes[2];
+                resultCode = parsedResult;
                 return true;
             }
 
@@ -1071,6 +1100,115 @@ return resp;
 
             resultCode = bytes[0];
             return true;
+        }
+
+        private static IEnumerable<byte[]> BuildTunableWhitePresetGetPayloadCandidates(byte version)
+        {
+            // Keep request values in valid range for firmware variants that validate fields on GET.
+            var payload18 = new byte[18];
+            payload18[0] = 0x00; // Get
+            payload18[1] = version;
+            WriteDefaultPresetValues(payload18, presetOffset: 2);
+            yield return payload18;
+
+            // Firmware/documentation variants that include one extra placeholder byte.
+            var payload19 = new byte[19];
+            payload19[0] = 0x00; // Get
+            payload19[1] = version;
+            payload19[2] = 0x00; // placeholder/reserved
+            WriteDefaultPresetValues(payload19, presetOffset: 3);
+            yield return payload19;
+        }
+
+        private static IEnumerable<byte[]> BuildTunableWhitePresetSetPayloadCandidates(byte[] normalizedPayload, byte version)
+        {
+            var payload18 = (byte[])normalizedPayload.Clone();
+            payload18[0] = 0x01; // Set
+            payload18[1] = version;
+            yield return payload18;
+
+            var payload19 = new byte[19];
+            payload19[0] = 0x01; // Set
+            payload19[1] = version;
+            payload19[2] = 0x00; // placeholder/reserved
+            Array.Copy(payload18, 2, payload19, 3, 16);
+            yield return payload19;
+        }
+
+        private static void WriteDefaultPresetValues(byte[] payload, int presetOffset)
+        {
+            for (var i = 0; i < 4; i++)
+            {
+                var offset = presetOffset + (i * 4);
+                WriteUInt16Le(payload, offset, 4000); // Kelvin
+                WriteUInt16Le(payload, offset + 2, 500); // Lux
+            }
+        }
+
+        private static bool TryParseTunableWhitePresetReplyHeader(
+            byte[] bytes,
+            out byte version,
+            out byte resultCode,
+            out int presetOffset)
+        {
+            version = 0;
+            resultCode = 0xFF;
+            presetOffset = 3;
+
+            if (bytes.Length < 19 || bytes[0] > 0x01)
+                return false;
+
+            var candA = (version: bytes[1], result: bytes[2], score: ScorePresetReplyCandidate(bytes[1], bytes[2]));
+            var candB = (version: bytes[2], result: bytes[1], score: ScorePresetReplyCandidate(bytes[2], bytes[1]));
+            var chosen = candA.score >= candB.score ? candA : candB;
+
+            if (chosen.score < 0)
+                return false;
+
+            version = chosen.version;
+            resultCode = chosen.result;
+            return true;
+        }
+
+        private static int ScorePresetReplyCandidate(byte version, byte result)
+        {
+            if (!IsKnownTunableWhiteResult(result))
+                return -100;
+
+            var score = 0;
+            score += 2; // known result code
+            if (version == 0x01 || version == 0x02)
+                score += 2;
+            if (result == 0x00)
+                score += 1;
+            if (version != 0x00)
+                score += 1;
+            return score;
+        }
+
+        private static bool IsKnownTunableWhiteResult(byte result)
+            => result == 0x00
+            || result == 0x01
+            || result == 0x02
+            || result == 0x03
+            || result == 0x04
+            || result == 0x07;
+
+        private static IEnumerable<byte> EnumeratePresetVersions(byte first)
+        {
+            var yielded = new HashSet<byte>();
+            if (first > 0 && yielded.Add(first))
+                yield return first;
+            if (yielded.Add(TunableWhitePresetPreferredVersion))
+                yield return TunableWhitePresetPreferredVersion;
+            if (yielded.Add(TunableWhitePresetFallbackVersion))
+                yield return TunableWhitePresetFallbackVersion;
+        }
+
+        private static void WriteUInt16Le(byte[] target, int offset, int value)
+        {
+            target[offset] = (byte)(value & 0xFF);
+            target[offset + 1] = (byte)((value >> 8) & 0xFF);
         }
 
         private static bool TryParseTunableWhiteDefaultKelvinResult(string? responseHex, out byte resultCode)

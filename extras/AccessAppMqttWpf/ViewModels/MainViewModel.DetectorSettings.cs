@@ -70,6 +70,7 @@ public partial class MainViewModel
     internal async Task QueueDeviceAndRequestWithDetectorSettingsAsync(
         DiscoveredDevice? device,
         DetectorSettingsPatchModel patch,
+        bool? runDaliAddressAllToZone1AfterUpdateOverride = null,
         bool? runDali102TotalNewScanAfterUpdateOverride = null,
         bool? runDali103TotalNewScanAfterUpdateOverride = null)
     {
@@ -78,6 +79,7 @@ public partial class MainViewModel
         {
             await QueueDeviceAndRequestAsync(
                 device,
+                runDaliAddressAllToZone1AfterUpdateOverride: runDaliAddressAllToZone1AfterUpdateOverride,
                 runDali102TotalNewScanAfterUpdateOverride: runDali102TotalNewScanAfterUpdateOverride,
                 runDali103TotalNewScanAfterUpdateOverride: runDali103TotalNewScanAfterUpdateOverride).ConfigureAwait(false);
             return;
@@ -87,6 +89,7 @@ public partial class MainViewModel
             device,
             forceUpdateOverride: null,
             detectorSettings: patch,
+            runDaliAddressAllToZone1AfterUpdateOverride: runDaliAddressAllToZone1AfterUpdateOverride,
             runDali102TotalNewScanAfterUpdateOverride: runDali102TotalNewScanAfterUpdateOverride,
             runDali103TotalNewScanAfterUpdateOverride: runDali103TotalNewScanAfterUpdateOverride).ConfigureAwait(false);
     }

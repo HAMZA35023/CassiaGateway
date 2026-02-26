@@ -18,13 +18,19 @@ public sealed class DetectorSettingsPatchModel
     public string? DaliDeviceCommonParamMaskHex { get; set; }
     public string? BlePushButtonsHex { get; set; }
     public string? BlePushButtonsMaskHex { get; set; }
+    public string? TunableWhiteListHex { get; set; }
+    public string? TunableWhitePresetHex { get; set; }
+    public string? TunableWhiteDefaultKelvinHex { get; set; }
 
     public bool HasAnyValue =>
         !string.IsNullOrWhiteSpace(UserConfigHex)
         || !string.IsNullOrWhiteSpace(PushButtonsHex)
         || !string.IsNullOrWhiteSpace(DaliPushButtonsHex)
         || !string.IsNullOrWhiteSpace(DaliDeviceCommonParamHex)
-        || !string.IsNullOrWhiteSpace(BlePushButtonsHex);
+        || !string.IsNullOrWhiteSpace(BlePushButtonsHex)
+        || !string.IsNullOrWhiteSpace(TunableWhiteListHex)
+        || !string.IsNullOrWhiteSpace(TunableWhitePresetHex)
+        || !string.IsNullOrWhiteSpace(TunableWhiteDefaultKelvinHex);
 
     public DetectorSettingsPatchModel CloneNormalized()
     {
@@ -39,7 +45,10 @@ public sealed class DetectorSettingsPatchModel
             DaliDeviceCommonParamHex = NormalizeHex(DaliDeviceCommonParamHex),
             DaliDeviceCommonParamMaskHex = NormalizeHex(DaliDeviceCommonParamMaskHex),
             BlePushButtonsHex = NormalizeHex(BlePushButtonsHex),
-            BlePushButtonsMaskHex = NormalizeHex(BlePushButtonsMaskHex)
+            BlePushButtonsMaskHex = NormalizeHex(BlePushButtonsMaskHex),
+            TunableWhiteListHex = NormalizeHex(TunableWhiteListHex),
+            TunableWhitePresetHex = NormalizeHex(TunableWhitePresetHex),
+            TunableWhiteDefaultKelvinHex = NormalizeHex(TunableWhiteDefaultKelvinHex)
         };
     }
 
@@ -68,6 +77,12 @@ public sealed class DetectorSettingsPatchModel
             obj["blePushButtonsHex"] = normalized.BlePushButtonsHex;
         if (!string.IsNullOrWhiteSpace(normalized.BlePushButtonsMaskHex))
             obj["blePushButtonsMaskHex"] = normalized.BlePushButtonsMaskHex;
+        if (!string.IsNullOrWhiteSpace(normalized.TunableWhiteListHex))
+            obj["tunableWhiteListHex"] = normalized.TunableWhiteListHex;
+        if (!string.IsNullOrWhiteSpace(normalized.TunableWhitePresetHex))
+            obj["tunableWhitePresetHex"] = normalized.TunableWhitePresetHex;
+        if (!string.IsNullOrWhiteSpace(normalized.TunableWhiteDefaultKelvinHex))
+            obj["tunableWhiteDefaultKelvinHex"] = normalized.TunableWhiteDefaultKelvinHex;
 
         return obj;
     }
@@ -88,7 +103,10 @@ public sealed class DetectorSettingsPatchModel
             DaliDeviceCommonParamHex = ReadString(obj, "daliDeviceCommonParamHex", "DaliDeviceCommonParamHex"),
             DaliDeviceCommonParamMaskHex = ReadString(obj, "daliDeviceCommonParamMaskHex", "DaliDeviceCommonParamMaskHex"),
             BlePushButtonsHex = ReadString(obj, "blePushButtonsHex", "BlePushButtonsHex"),
-            BlePushButtonsMaskHex = ReadString(obj, "blePushButtonsMaskHex", "BlePushButtonsMaskHex")
+            BlePushButtonsMaskHex = ReadString(obj, "blePushButtonsMaskHex", "BlePushButtonsMaskHex"),
+            TunableWhiteListHex = ReadString(obj, "tunableWhiteListHex", "TunableWhiteListHex"),
+            TunableWhitePresetHex = ReadString(obj, "tunableWhitePresetHex", "TunableWhitePresetHex"),
+            TunableWhiteDefaultKelvinHex = ReadString(obj, "tunableWhiteDefaultKelvinHex", "TunableWhiteDefaultKelvinHex")
         }.CloneNormalized();
     }
 
@@ -136,6 +154,10 @@ public sealed class DetectorSettingsProfileModel
     public bool ApplyDaliPushButtons { get; set; }
     public bool ApplyDaliDeviceCommonParam { get; set; }
     public bool ApplyBlePushButtons { get; set; }
+    public bool ApplyTunableWhiteList { get; set; }
+    public bool ApplyTunableWhitePreset { get; set; }
+    public bool ApplyTunableWhiteDefaultKelvin { get; set; }
+    public bool RunDaliAddressAllToZone1AfterUpdate { get; set; }
     public bool RunDali102TotalNewScanAfterUpdate { get; set; }
     public bool RunDali103TotalNewScanAfterUpdate { get; set; }
 
