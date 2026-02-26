@@ -208,6 +208,7 @@ using (var scope = app.Services.CreateScope())
                 FirmwareVersion = r.FirmwareVersion ?? "",
                 ForceUpdate = r.ForceUpdate ?? false,
                 PostUpdateSettings = r.DetectorSettings?.CloneNormalized(),
+                RunDaliAddressAllToZone1AfterUpdate = r.RunDaliAddressAllToZone1AfterUpdate ?? false,
                 RunDali102TotalNewScanAfterUpdate = r.RunDali102TotalNewScanAfterUpdate ?? false,
                 RunDali103TotalNewScanAfterUpdate = r.RunDali103TotalNewScanAfterUpdate ?? false
             })
@@ -414,7 +415,7 @@ using (var scope = app.Services.CreateScope())
                 success = false,
                 action = "set",
                 requestId,
-                message = "No detector setting changes provided. Send payload with settings.{userConfigHex|pushButtonsHex|daliPushButtonsHex|daliDeviceCommonParamHex|blePushButtonsHex} (optionally with matching *MaskHex fields).",
+                message = "No detector setting changes provided. Send payload with settings.{userConfigHex|pushButtonsHex|daliPushButtonsHex|daliDeviceCommonParamHex|blePushButtonsHex|tunableWhiteListHex|tunableWhitePresetHex|tunableWhiteDefaultKelvinHex} (optionally with matching *MaskHex fields for section-based settings).",
                 name = mqttService.CurrentOptions.Name,
                 networkId = mqttService.CurrentOptions.NetworkId,
                 time = DateTimeOffset.UtcNow

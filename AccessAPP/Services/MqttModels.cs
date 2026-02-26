@@ -47,6 +47,14 @@ public sealed class StartUpdateRequest
     public DetectorSettingsPatch? DetectorSettings { get; set; }
 
     /// <summary>
+    /// If true, run DALI commissioning 0x0400 with SearchType=0x00 after update
+    /// (address all control gear devices and assign to zone 1).
+    /// Default is false when omitted.
+    /// </summary>
+    [JsonPropertyName("RunDaliAddressAllToZone1AfterUpdate")]
+    public bool? RunDaliAddressAllToZone1AfterUpdate { get; set; }
+
+    /// <summary>
     /// If true, run DALI commissioning total-new 102 scan (0x0400, SearchType=0x01) after update.
     /// Default is false when omitted.
     /// </summary>

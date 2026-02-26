@@ -649,6 +649,504 @@ resp = sensorResponse.Data == "00";
 return resp;
         }
 
+        private const ushort GetSetTunableWhiteListTelegramType = 0x0155;
+        private const ushort GetSetTunableWhitePresetTelegramType = 0x0157;
+        private const ushort GetSetTunableWhiteDefaultKelvinTelegramType = 0x0159;
+        private const ushort UnixTimeTelegramType = 0x0150;
+
+        public async Task<string> GetTunableWhiteList(string nodeMac)
+        {
+            var sensorCommand = BuildSensorCommandHex(GetSetTunableWhiteListTelegramType, new byte[] { 0x00 });
+            var sensorResponse = await _connectService.GetDataFromBleDevice(
+                _gatewayIpAddress, _gatewayPort, nodeMac, sensorCommand);
+
+            if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
+            {
+                AppLog.Warn($"[TW] Get list failed: status={sensorResponse.Status}, raw={sensorResponse.Data}");
+                return string.Empty;
+            }
+
+            if (!TryNormalizeTunableWhiteListSetPayload(sensorResponse.Data, out var setPayload, out var error))
+            {
+                AppLog.Warn($"[TW] Get list parse failed: {error}; raw={sensorResponse.Data}");
+                return string.Empty;
+            }
+
+            var hex = Convert.ToHexString(setPayload);
+            AppLog.Debug($"[TW] Get list OK ({setPayload.Length} bytes payload).");
+            return hex;
+        }
+
+        public async Task<bool> SetTunableWhiteList(string nodeMac, string tunableWhiteListHex)
+        {
+            if (!TryNormalizeTunableWhiteListSetPayload(tunableWhiteListHex, out var payload, out var normalizeError))
+            {
+                AppLog.Warn($"[TW] Set list rejected: {normalizeError}");
+                return false;
+            }
+
+            payload[0] = 0x01; // enforce Set
+            var sensorCommand = BuildSensorCommandHex(GetSetTunableWhiteListTelegramType, payload);
+            var sensorResponse = await _connectService.GetDataFromBleDevice(
+                _gatewayIpAddress, _gatewayPort, nodeMac, sensorCommand);
+
+            if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
+            {
+                AppLog.Warn($"[TW] Set list write failed: status={sensorResponse.Status}, raw={sensorResponse.Data}");
+                return false;
+            }
+
+            if (!TryParseTunableWhiteListResult(sensorResponse.Data, out var resultCode))
+            {
+                AppLog.Warn($"[TW] Set list reply parse failed: raw={sensorResponse.Data}");
+                return false;
+            }
+
+            if (resultCode != 0x00)
+            {
+                AppLog.Warn($"[TW] Set list rejected: result=0x{resultCode:X2} ({DescribeTunableWhiteResult(resultCode)})");
+                return false;
+            }
+
+            var unixOk = await SetUnixTimeWithRuntimeOffsetAsync(nodeMac).ConfigureAwait(false);
+            if (!unixOk)
+            {
+                AppLog.Warn($"[TW] List was written but UnixTime sync failed for {nodeMac}.");
+                return false;
+            }
+
+            AppLog.Info($"[TW] List written and UnixTime synced for {nodeMac}.");
+            return true;
+        }
+
+        public async Task<string> GetTunableWhitePreset(string nodeMac)
+        {
+            var payload = new byte[18];
+            payload[0] = 0x00; // Get
+            var sensorCommand = BuildSensorCommandHex(GetSetTunableWhitePresetTelegramType, payload);
+            var sensorResponse = await _connectService.GetDataFromBleDevice(
+                _gatewayIpAddress, _gatewayPort, nodeMac, sensorCommand);
+
+            if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
+            {
+                AppLog.Warn($"[TW] Get preset failed: status={sensorResponse.Status}, raw={sensorResponse.Data}");
+                return string.Empty;
+            }
+
+            if (!TryNormalizeTunableWhitePresetSetPayload(sensorResponse.Data, out var setPayload, out var error))
+            {
+                AppLog.Warn($"[TW] Get preset parse failed: {error}; raw={sensorResponse.Data}");
+                return string.Empty;
+            }
+
+            return Convert.ToHexString(setPayload);
+        }
+
+        public async Task<bool> SetTunableWhitePreset(string nodeMac, string tunableWhitePresetHex)
+        {
+            if (!TryNormalizeTunableWhitePresetSetPayload(tunableWhitePresetHex, out var payload, out var normalizeError))
+            {
+                AppLog.Warn($"[TW] Set preset rejected: {normalizeError}");
+                return false;
+            }
+
+            payload[0] = 0x01; // enforce Set
+            var sensorCommand = BuildSensorCommandHex(GetSetTunableWhitePresetTelegramType, payload);
+            var sensorResponse = await _connectService.GetDataFromBleDevice(
+                _gatewayIpAddress, _gatewayPort, nodeMac, sensorCommand);
+
+            if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
+            {
+                AppLog.Warn($"[TW] Set preset write failed: status={sensorResponse.Status}, raw={sensorResponse.Data}");
+                return false;
+            }
+
+            if (!TryParseTunableWhitePresetResult(sensorResponse.Data, out var resultCode))
+            {
+                AppLog.Warn($"[TW] Set preset reply parse failed: raw={sensorResponse.Data}");
+                return false;
+            }
+
+            if (resultCode != 0x00)
+            {
+                AppLog.Warn($"[TW] Set preset rejected: result=0x{resultCode:X2} ({DescribeTunableWhiteResult(resultCode)})");
+                return false;
+            }
+
+            return true;
+        }
+
+        public async Task<string> GetTunableWhiteDefaultKelvin(string nodeMac)
+        {
+            var sensorCommand = BuildSensorCommandHex(GetSetTunableWhiteDefaultKelvinTelegramType, new byte[] { 0x00 });
+            var sensorResponse = await _connectService.GetDataFromBleDevice(
+                _gatewayIpAddress, _gatewayPort, nodeMac, sensorCommand);
+
+            if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
+            {
+                AppLog.Warn($"[TW] Get default kelvin failed: status={sensorResponse.Status}, raw={sensorResponse.Data}");
+                return string.Empty;
+            }
+
+            if (!TryNormalizeTunableWhiteDefaultKelvinSetPayload(sensorResponse.Data, out var setPayload, out var error))
+            {
+                AppLog.Warn($"[TW] Get default kelvin parse failed: {error}; raw={sensorResponse.Data}");
+                return string.Empty;
+            }
+
+            return Convert.ToHexString(setPayload);
+        }
+
+        public async Task<bool> SetTunableWhiteDefaultKelvin(string nodeMac, string tunableWhiteDefaultKelvinHex)
+        {
+            if (!TryNormalizeTunableWhiteDefaultKelvinSetPayload(tunableWhiteDefaultKelvinHex, out var payload, out var normalizeError))
+            {
+                AppLog.Warn($"[TW] Set default kelvin rejected: {normalizeError}");
+                return false;
+            }
+
+            payload[0] = 0x01; // enforce Set
+            var sensorCommand = BuildSensorCommandHex(GetSetTunableWhiteDefaultKelvinTelegramType, payload);
+            var sensorResponse = await _connectService.GetDataFromBleDevice(
+                _gatewayIpAddress, _gatewayPort, nodeMac, sensorCommand);
+
+            if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
+            {
+                AppLog.Warn($"[TW] Set default kelvin write failed: status={sensorResponse.Status}, raw={sensorResponse.Data}");
+                return false;
+            }
+
+            if (!TryParseTunableWhiteDefaultKelvinResult(sensorResponse.Data, out var resultCode))
+            {
+                AppLog.Warn($"[TW] Set default kelvin reply parse failed: raw={sensorResponse.Data}");
+                return false;
+            }
+
+            if (resultCode != 0x00)
+            {
+                AppLog.Warn($"[TW] Set default kelvin rejected: result=0x{resultCode:X2} ({DescribeTunableWhiteResult(resultCode)})");
+                return false;
+            }
+
+            return true;
+        }
+
+        private async Task<bool> SetUnixTimeWithRuntimeOffsetAsync(string nodeMac)
+        {
+            try
+            {
+                var seconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + RuntimeVariables.TUNABLE_WHITE_UNIX_TIME_OFFSET_SECONDS;
+                if (seconds < 0)
+                    seconds = 0;
+
+                var payload = new byte[9];
+                payload[0] = 0x01; // write
+                var unixBytes = BitConverter.GetBytes(seconds);
+                if (!BitConverter.IsLittleEndian)
+                    Array.Reverse(unixBytes);
+                Array.Copy(unixBytes, 0, payload, 1, 8);
+
+                var sensorCommand = BuildSensorCommandHex(UnixTimeTelegramType, payload);
+                var sensorResponse = await _connectService.GetDataFromBleDevice(
+                    _gatewayIpAddress, _gatewayPort, nodeMac, sensorCommand);
+
+                if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
+                {
+                    AppLog.Warn($"[TW] UnixTime set failed: status={sensorResponse.Status}, raw={sensorResponse.Data}");
+                    return false;
+                }
+
+                if (!TryParseHexBytes(sensorResponse.Data, out var replyBytes) || replyBytes.Length < 1)
+                {
+                    AppLog.Warn($"[TW] UnixTime reply parse failed: raw={sensorResponse.Data}");
+                    return false;
+                }
+
+                if (replyBytes[0] != 0x01)
+                {
+                    AppLog.Warn($"[TW] UnixTime reply indicates non-write mode: 0x{replyBytes[0]:X2}");
+                    return false;
+                }
+
+                AppLog.Info($"[TW] UnixTime set to {seconds} (offset={RuntimeVariables.TUNABLE_WHITE_UNIX_TIME_OFFSET_SECONDS}s) for {nodeMac}.");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn($"[TW] UnixTime set exception for {nodeMac}: {ex.Message}");
+                return false;
+            }
+        }
+
+        private static bool TryNormalizeTunableWhiteListSetPayload(string? inputHex, out byte[] payload, out string error)
+        {
+            payload = Array.Empty<byte>();
+            error = string.Empty;
+
+            if (!TryParseHexBytes(inputHex, out var bytes))
+            {
+                error = "Empty or invalid hex.";
+                return false;
+            }
+
+            // Reply payload form: setRead, result, version, command, hour[24]*4 (100 bytes).
+            if (bytes.Length >= 100 && bytes[0] <= 0x01)
+            {
+                if (bytes[1] != 0x00)
+                {
+                    error = $"Sensor returned NACK result 0x{bytes[1]:X2} ({DescribeTunableWhiteResult(bytes[1])}).";
+                    return false;
+                }
+
+                payload = new byte[99];
+                payload[0] = 0x01;
+                payload[1] = bytes[2];
+                payload[2] = bytes[3];
+                Array.Copy(bytes, 4, payload, 3, 96);
+                return true;
+            }
+
+            // Set payload form: getSet, version, command, hour[24]*4 (99 bytes).
+            if (bytes.Length >= 99 && bytes[0] <= 0x01)
+            {
+                payload = new byte[99];
+                Array.Copy(bytes, 0, payload, 0, 99);
+                payload[0] = 0x01;
+                return true;
+            }
+
+            // Semantic form: version, command, hour[24]*4 (98 bytes).
+            if (bytes.Length >= 98)
+            {
+                payload = new byte[99];
+                payload[0] = 0x01;
+                Array.Copy(bytes, 0, payload, 1, 98);
+                return true;
+            }
+
+            error = $"Unsupported Tunable White list payload length: {bytes.Length} byte(s).";
+            return false;
+        }
+
+        private static bool TryNormalizeTunableWhitePresetSetPayload(string? inputHex, out byte[] payload, out string error)
+        {
+            payload = Array.Empty<byte>();
+            error = string.Empty;
+
+            if (!TryParseHexBytes(inputHex, out var bytes))
+            {
+                error = "Empty or invalid hex.";
+                return false;
+            }
+
+            byte version;
+            int presetOffset;
+
+            // Reply payload form: setRead, version, result, preset[4]*4 (19 bytes).
+            if (bytes.Length >= 19 && bytes[0] <= 0x01)
+            {
+                if (bytes[2] != 0x00)
+                {
+                    error = $"Sensor returned NACK result 0x{bytes[2]:X2} ({DescribeTunableWhiteResult(bytes[2])}).";
+                    return false;
+                }
+
+                version = bytes[1];
+                presetOffset = 3;
+            }
+            // Set payload form: getSet, version, preset[4]*4 (18 bytes).
+            else if (bytes.Length >= 18 && bytes[0] <= 0x01)
+            {
+                version = bytes[1];
+                presetOffset = 2;
+            }
+            // Semantic form: version, preset[4]*4 (17 bytes).
+            else if (bytes.Length >= 17)
+            {
+                version = bytes[0];
+                presetOffset = 1;
+            }
+            else
+            {
+                error = $"Unsupported Tunable White preset payload length: {bytes.Length} byte(s).";
+                return false;
+            }
+
+            payload = new byte[18];
+            payload[0] = 0x01;
+            payload[1] = version;
+            Array.Copy(bytes, presetOffset, payload, 2, 16);
+            return true;
+        }
+
+        private static bool TryNormalizeTunableWhiteDefaultKelvinSetPayload(string? inputHex, out byte[] payload, out string error)
+        {
+            payload = Array.Empty<byte>();
+            error = string.Empty;
+
+            if (!TryParseHexBytes(inputHex, out var bytes))
+            {
+                error = "Empty or invalid hex.";
+                return false;
+            }
+
+            byte version;
+            byte kelvinLsb;
+            byte kelvinMsb;
+
+            // Reply payload form: setRead, result, version, kelvin(2) (5 bytes).
+            if (bytes.Length >= 5 && bytes[0] <= 0x01)
+            {
+                if (bytes[1] != 0x00)
+                {
+                    error = $"Sensor returned NACK result 0x{bytes[1]:X2} ({DescribeTunableWhiteResult(bytes[1])}).";
+                    return false;
+                }
+
+                version = bytes[2];
+                kelvinLsb = bytes[3];
+                kelvinMsb = bytes[4];
+            }
+            // Set payload form: getSet, version, kelvin(2) (4 bytes).
+            else if (bytes.Length >= 4 && bytes[0] <= 0x01)
+            {
+                version = bytes[1];
+                kelvinLsb = bytes[2];
+                kelvinMsb = bytes[3];
+            }
+            // Semantic form: version, kelvin(2) (3 bytes).
+            else if (bytes.Length >= 3)
+            {
+                version = bytes[0];
+                kelvinLsb = bytes[1];
+                kelvinMsb = bytes[2];
+            }
+            else
+            {
+                error = $"Unsupported Tunable White default kelvin payload length: {bytes.Length} byte(s).";
+                return false;
+            }
+
+            payload = new byte[4];
+            payload[0] = 0x01;
+            payload[1] = version;
+            payload[2] = kelvinLsb;
+            payload[3] = kelvinMsb;
+            return true;
+        }
+
+        private static bool TryParseTunableWhiteListResult(string? responseHex, out byte resultCode)
+        {
+            resultCode = 0xFF;
+            if (!TryParseHexBytes(responseHex, out var bytes) || bytes.Length == 0)
+                return false;
+
+            if (bytes.Length >= 2 && bytes[0] <= 0x01)
+            {
+                resultCode = bytes[1];
+                return true;
+            }
+
+            resultCode = bytes[0];
+            return true;
+        }
+
+        private static bool TryParseTunableWhitePresetResult(string? responseHex, out byte resultCode)
+        {
+            resultCode = 0xFF;
+            if (!TryParseHexBytes(responseHex, out var bytes) || bytes.Length == 0)
+                return false;
+
+            if (bytes.Length >= 3 && bytes[0] <= 0x01)
+            {
+                resultCode = bytes[2];
+                return true;
+            }
+
+            if (bytes.Length >= 2 && bytes[0] <= 0x01)
+            {
+                resultCode = bytes[1];
+                return true;
+            }
+
+            resultCode = bytes[0];
+            return true;
+        }
+
+        private static bool TryParseTunableWhiteDefaultKelvinResult(string? responseHex, out byte resultCode)
+            => TryParseTunableWhiteListResult(responseHex, out resultCode);
+
+        private static string DescribeTunableWhiteResult(byte resultCode)
+            => resultCode switch
+            {
+                0x00 => "ACK",
+                0x01 => "NACK_RANGE_CHECK",
+                0x02 => "NACK_NVM",
+                0x03 => "NACK_FRAME_SIZE_ERROR",
+                0x04 => "NACK_OPENPERIOD",
+                0x07 => "NOT_AVAILABLE_IN_PROFILE",
+                _ => "UNKNOWN"
+            };
+
+        private static string BuildSensorCommandHex(ushort telegramType, byte[] payload)
+        {
+            payload ??= Array.Empty<byte>();
+            ushort totalLength = (ushort)(7 + payload.Length);
+
+            var message = new byte[7 + payload.Length];
+            message[0] = 0x01; // protocol version
+            message[1] = (byte)(telegramType & 0xFF); // telegram type little-endian
+            message[2] = (byte)((telegramType >> 8) & 0xFF);
+            message[3] = (byte)(totalLength & 0xFF); // total length little-endian
+            message[4] = (byte)((totalLength >> 8) & 0xFF);
+
+            var crc16 = CalcSensorCrc16(message.AsSpan(0, 5));
+            message[5] = (byte)(crc16 & 0xFF);
+            message[6] = (byte)((crc16 >> 8) & 0xFF);
+
+            if (payload.Length > 0)
+                Array.Copy(payload, 0, message, 7, payload.Length);
+
+            return Convert.ToHexString(message);
+        }
+
+        private static ushort CalcSensorCrc16(ReadOnlySpan<byte> data, ushort crc = 0x8005, ushort poly = 0x1021)
+        {
+            for (var i = 0; i < data.Length; i++)
+            {
+                crc ^= (ushort)(data[i] << 8);
+                for (var j = 0; j < 8; j++)
+                {
+                    crc = (crc & 0x8000) != 0
+                        ? (ushort)(((crc << 1) ^ poly) & 0xFFFF)
+                        : (ushort)(crc << 1);
+                }
+            }
+
+            return crc;
+        }
+
+        private static bool TryParseHexBytes(string? value, out byte[] bytes)
+        {
+            bytes = Array.Empty<byte>();
+            var clean = NormalizeHex(value);
+            if (string.IsNullOrWhiteSpace(clean))
+                return false;
+
+            if ((clean.Length & 1) != 0)
+                clean = "0" + clean;
+
+            try
+            {
+                bytes = Convert.FromHexString(clean);
+                return bytes.Length > 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         public async Task<string> GetWiredPushButtonList(string nodeMac)
         {
             string sensorCommand = "0113010700181A"; // GetWiredPushButtonList
@@ -893,12 +1391,18 @@ resp = true;
             byte searchType,
             int maxWaitMs = 180000)
         {
-            if (searchType != 0x01 && searchType != 0x03)
+            if (searchType != 0x00 && searchType != 0x01 && searchType != 0x03)
                 return (false, $"Unsupported DALI commissioning search type: 0x{searchType:X2}", null, null);
 
             var command = DaliCommissioningCommandPrefix + searchType.ToString("X2", CultureInfo.InvariantCulture);
             var deadlineUtc = DateTime.UtcNow.AddMilliseconds(Math.Max(5000, maxWaitMs));
-            var label = searchType == 0x01 ? "102 total-new" : "103 total-new";
+            var label = searchType switch
+            {
+                0x00 => "address-all-zone1",
+                0x01 => "102 total-new",
+                0x03 => "103 total-new",
+                _ => $"type-0x{searchType:X2}"
+            };
             var attempt = 0;
 
             while (DateTime.UtcNow <= deadlineUtc)

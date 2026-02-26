@@ -365,6 +365,7 @@ try
                         {
                             bool pendingConfig = dev.requiresConfigRestore && !dev.isConfigRestored;
                             bool pending102 = dev.requires102Restore && !dev.restore102Success;
+                            bool pendingDaliAddressAllToZone1 = dev.RunDaliAddressAllToZone1AfterUpdate && !dev.DaliAddressAllToZone1Success;
                             bool pendingDaliScan102 = dev.RunDali102TotalNewScanAfterUpdate && !dev.Dali102TotalNewScanSuccess;
                             bool pendingDaliScan103 = dev.RunDali103TotalNewScanAfterUpdate && !dev.Dali103TotalNewScanSuccess;
                             string pending = string.Join(", ",
@@ -372,6 +373,7 @@ try
                                 {
                                     pendingConfig ? "settings-restore" : null,
                                     pending102 ? "dali-102-restore" : null,
+                                    pendingDaliAddressAllToZone1 ? "dali-address-all-zone1" : null,
                                     pendingDaliScan102 ? "dali-102-total-new-scan" : null,
                                     pendingDaliScan103 ? "dali-103-total-new-scan" : null
                                 }.Where(x => !string.IsNullOrWhiteSpace(x)));

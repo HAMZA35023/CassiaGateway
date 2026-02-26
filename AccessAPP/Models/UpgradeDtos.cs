@@ -31,8 +31,10 @@ namespace AccessAPP.Models
         public bool requiresConfigRestore = false;
         public bool requires102Restore = false;
         public bool restore102Success = false;
+        public bool RunDaliAddressAllToZone1AfterUpdate { get; set; } = false;
         public bool RunDali102TotalNewScanAfterUpdate { get; set; } = false;
         public bool RunDali103TotalNewScanAfterUpdate { get; set; } = false;
+        public bool DaliAddressAllToZone1Success { get; set; } = false;
         public bool Dali102TotalNewScanSuccess { get; set; } = false;
         public bool Dali103TotalNewScanSuccess { get; set; } = false;
         public bool shouldRetry = true;
@@ -50,6 +52,7 @@ namespace AccessAPP.Models
                && (SensorSuccess)
                && (!requiresConfigRestore || isConfigRestored)
                && (!requires102Restore || restore102Success)
+               && (!RunDaliAddressAllToZone1AfterUpdate || DaliAddressAllToZone1Success)
                && (!RunDali102TotalNewScanAfterUpdate || Dali102TotalNewScanSuccess)
                && (!RunDali103TotalNewScanAfterUpdate || Dali103TotalNewScanSuccess)
                && PostUpgradeFwMatch;

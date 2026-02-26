@@ -12,6 +12,7 @@ internal sealed class PostActorStep : IDeviceUpgradeStep
         var svc = ctx.Svc;
         var dev = ctx.Dev;
         var requestedCommissioningScan =
+            dev.RunDaliAddressAllToZone1AfterUpdate ||
             dev.RunDali102TotalNewScanAfterUpdate ||
             dev.RunDali103TotalNewScanAfterUpdate;
 
@@ -144,6 +145,59 @@ internal sealed class PostActorStep : IDeviceUpgradeStep
                 ctx.Response.Success = false;
                 ctx.Response.StatusCode = 500;
                 ctx.Response.Message = "DALI Restore 102 Database failed after retries";
+                dev.LastFailureReason = ctx.Response.Message;
+                dev.shouldRetry = false;
+                dev.finalUpgradeResult = "Failed";
+                return false;
+            }
+        }
+
+        if (isDaliMaster && dev.RunDaliAddressAllToZone1AfterUpdate)
+        {
+            var addressAll = await svc.DaliRunTotalNewCommissioningScanAsync(ctx.MacAddress, 0x00).ConfigureAwait(false);
+            dev.DaliAddressAllToZone1Success = addressAll.Success;
+            UpgradeLogger.Log(
+                ctx.LogId,
+                ctx.MacAddress,
+                $"DALI address-all to zone 1: {addressAll.Message}",
+                addressAll.Success ? "Success" : "Failed",
+                ctx.FirmwareVersion);
+
+            if (addressAll.DevicesFound.HasValue)
+            {
+                UpgradeLogger.Log(
+                    ctx.LogId,
+                    ctx.MacAddress,
+                    $"DALI address-all to zone 1 devices found: {addressAll.DevicesFound.Value}",
+                    "Info",
+                    ctx.FirmwareVersion);
+            }
+
+            var dbCount102 = await svc.DaliGetDeviceDatabaseCount102Async(ctx.MacAddress).ConfigureAwait(false);
+            if (dbCount102.Success && dbCount102.Count.HasValue)
+            {
+                UpgradeLogger.Log(
+                    ctx.LogId,
+                    ctx.MacAddress,
+                    $"DALI 102 database total devices: {dbCount102.Count.Value}",
+                    "Info",
+                    ctx.FirmwareVersion);
+            }
+            else
+            {
+                UpgradeLogger.Log(
+                    ctx.LogId,
+                    ctx.MacAddress,
+                    $"DALI 102 database count read failed: {dbCount102.Message}",
+                    "Warn",
+                    ctx.FirmwareVersion);
+            }
+
+            if (!addressAll.Success)
+            {
+                ctx.Response.Success = false;
+                ctx.Response.StatusCode = 500;
+                ctx.Response.Message = $"DALI address-all to zone 1 failed: {addressAll.Message}";
                 dev.LastFailureReason = ctx.Response.Message;
                 dev.shouldRetry = false;
                 dev.finalUpgradeResult = "Failed";

@@ -16,13 +16,19 @@ namespace AccessAPP.Models
         public string? DaliDeviceCommonParamMaskHex { get; set; }
         public string? BlePushButtonsHex { get; set; }
         public string? BlePushButtonsMaskHex { get; set; }
+        public string? TunableWhiteListHex { get; set; }
+        public string? TunableWhitePresetHex { get; set; }
+        public string? TunableWhiteDefaultKelvinHex { get; set; }
 
         public bool HasAnyValue()
             => !string.IsNullOrWhiteSpace(UserConfigHex)
                || !string.IsNullOrWhiteSpace(PushButtonsHex)
                || !string.IsNullOrWhiteSpace(DaliPushButtonsHex)
                || !string.IsNullOrWhiteSpace(DaliDeviceCommonParamHex)
-               || !string.IsNullOrWhiteSpace(BlePushButtonsHex);
+               || !string.IsNullOrWhiteSpace(BlePushButtonsHex)
+               || !string.IsNullOrWhiteSpace(TunableWhiteListHex)
+               || !string.IsNullOrWhiteSpace(TunableWhitePresetHex)
+               || !string.IsNullOrWhiteSpace(TunableWhiteDefaultKelvinHex);
 
         public DetectorSettingsPatch CloneNormalized()
         {
@@ -37,7 +43,10 @@ namespace AccessAPP.Models
                 DaliDeviceCommonParamHex = NormalizeHex(DaliDeviceCommonParamHex),
                 DaliDeviceCommonParamMaskHex = NormalizeHex(DaliDeviceCommonParamMaskHex),
                 BlePushButtonsHex = NormalizeHex(BlePushButtonsHex),
-                BlePushButtonsMaskHex = NormalizeHex(BlePushButtonsMaskHex)
+                BlePushButtonsMaskHex = NormalizeHex(BlePushButtonsMaskHex),
+                TunableWhiteListHex = NormalizeHex(TunableWhiteListHex),
+                TunableWhitePresetHex = NormalizeHex(TunableWhitePresetHex),
+                TunableWhiteDefaultKelvinHex = NormalizeHex(TunableWhiteDefaultKelvinHex)
             };
         }
 
@@ -56,7 +65,10 @@ namespace AccessAPP.Models
                 PushButtonsHex = normalized.PushButtonsHex,
                 DaliPushButtonsHex = normalized.DaliPushButtonsHex,
                 DaliDeviceCommonParamHex = normalized.DaliDeviceCommonParamHex,
-                BlePushButtonsHex = normalized.BlePushButtonsHex
+                BlePushButtonsHex = normalized.BlePushButtonsHex,
+                TunableWhiteListHex = normalized.TunableWhiteListHex,
+                TunableWhitePresetHex = normalized.TunableWhitePresetHex,
+                TunableWhiteDefaultKelvinHex = normalized.TunableWhiteDefaultKelvinHex
             };
         }
 
@@ -71,7 +83,10 @@ namespace AccessAPP.Models
                 PushButtonsHex = NormalizeHex(snapshot.PushButtonsHex),
                 DaliPushButtonsHex = NormalizeHex(snapshot.DaliPushButtonsHex),
                 DaliDeviceCommonParamHex = NormalizeHex(snapshot.DaliDeviceCommonParamHex),
-                BlePushButtonsHex = NormalizeHex(snapshot.BlePushButtonsHex)
+                BlePushButtonsHex = NormalizeHex(snapshot.BlePushButtonsHex),
+                TunableWhiteListHex = NormalizeHex(snapshot.TunableWhiteListHex),
+                TunableWhitePresetHex = NormalizeHex(snapshot.TunableWhitePresetHex),
+                TunableWhiteDefaultKelvinHex = NormalizeHex(snapshot.TunableWhiteDefaultKelvinHex)
             };
         }
 

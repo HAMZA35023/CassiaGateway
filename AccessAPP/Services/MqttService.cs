@@ -2033,6 +2033,21 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                                 patch.BlePushButtonsMaskHex = bleMask;
                                 hasPatch = true;
                             }
+                            if (TryGetString(root, "tunableWhiteListHex", out var twList))
+                            {
+                                patch.TunableWhiteListHex = twList;
+                                hasPatch = true;
+                            }
+                            if (TryGetString(root, "tunableWhitePresetHex", out var twPreset))
+                            {
+                                patch.TunableWhitePresetHex = twPreset;
+                                hasPatch = true;
+                            }
+                            if (TryGetString(root, "tunableWhiteDefaultKelvinHex", out var twKelvin))
+                            {
+                                patch.TunableWhiteDefaultKelvinHex = twKelvin;
+                                hasPatch = true;
+                            }
 
                             if (hasPatch)
                                 dto.Settings = patch;

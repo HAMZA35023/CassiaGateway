@@ -51,6 +51,8 @@ namespace AccessAPP
         public static bool RestoreSettingsAfterUpgrade = true;
         // Temporarily set DALI SysFail level during update (usually to 0xFF).
         public static bool AutoSetSysFailLevelUnderUpdate = true;
+        // Seconds offset applied when syncing UnixTime after a Tunable White list write.
+        public static int TUNABLE_WHITE_UNIX_TIME_OFFSET_SECONDS = 0;
 
         // MQTT telemetry
         // Periodic status publish interval for tele/.../status (seconds).

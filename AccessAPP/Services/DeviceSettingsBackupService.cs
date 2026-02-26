@@ -21,7 +21,10 @@ namespace AccessAPP.Services
             bool WiredPushButtons,
             bool DaliPushButtons,
             bool DaliDeviceCommonParam,
-            bool BlePushButtons);
+            bool BlePushButtons,
+            bool TunableWhiteList,
+            bool TunableWhitePreset,
+            bool TunableWhiteDefaultKelvin);
 
         // Conservative default: only UserConfig. Add explicit profiles per detector below.
         // This avoids calling unsupported BLE endpoints for unknown detector families.
@@ -30,22 +33,25 @@ namespace AccessAPP.Services
             WiredPushButtons: false,
             DaliPushButtons: false,
             DaliDeviceCommonParam: false,
-            BlePushButtons: false);
+            BlePushButtons: false,
+            TunableWhiteList: false,
+            TunableWhitePreset: false,
+            TunableWhiteDefaultKelvin: false);
 
         // NOTE: keys are UPPERCASE detector types.
         private static readonly Dictionary<string, SettingsBackupProfile> Profiles = new()
         {
             // P46/P49/P41: UserConfig only
-            ["P46"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: false, DaliPushButtons: false, DaliDeviceCommonParam: false, BlePushButtons: false),
-            ["P49"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: false, DaliPushButtons: false, DaliDeviceCommonParam: false, BlePushButtons: false),
-            ["P41"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: false, DaliPushButtons: false, DaliDeviceCommonParam: false, BlePushButtons: false),
+            ["P46"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: false, DaliPushButtons: false, DaliDeviceCommonParam: false, BlePushButtons: false, TunableWhiteList: false, TunableWhitePreset: false, TunableWhiteDefaultKelvin: false),
+            ["P49"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: false, DaliPushButtons: false, DaliDeviceCommonParam: false, BlePushButtons: false, TunableWhiteList: false, TunableWhitePreset: false, TunableWhiteDefaultKelvin: false),
+            ["P41"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: false, DaliPushButtons: false, DaliDeviceCommonParam: false, BlePushButtons: false, TunableWhiteList: false, TunableWhitePreset: false, TunableWhiteDefaultKelvin: false),
 
             // P42: UserConfig + Wired + BLE (NO DALI)
-            ["P42"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: true, DaliPushButtons: false, DaliDeviceCommonParam: false, BlePushButtons: true),
+            ["P42"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: true, DaliPushButtons: false, DaliDeviceCommonParam: false, BlePushButtons: true, TunableWhiteList: false, TunableWhitePreset: false, TunableWhiteDefaultKelvin: false),
 
             // P47/P48: DALI masters (explicit)
-            ["P47"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: true, DaliPushButtons: true, DaliDeviceCommonParam: true, BlePushButtons: true),
-            ["P48"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: true, DaliPushButtons: true, DaliDeviceCommonParam: true, BlePushButtons: true),
+            ["P47"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: true, DaliPushButtons: true, DaliDeviceCommonParam: true, BlePushButtons: true, TunableWhiteList: true, TunableWhitePreset: true, TunableWhiteDefaultKelvin: true),
+            ["P48"] = new SettingsBackupProfile(UserConfig: true, WiredPushButtons: true, DaliPushButtons: true, DaliDeviceCommonParam: true, BlePushButtons: true, TunableWhiteList: true, TunableWhitePreset: true, TunableWhiteDefaultKelvin: true),
         };
 
         private static SettingsBackupProfile GetProfile(string? detectorType)
@@ -157,6 +163,36 @@ namespace AccessAPP.Services
             throw new Exception($"Settings backup read failed for {label} after {attempts} attempts. Last error: {lastError}");
         }
 
+        private static async Task<string?> ReadOptionalAsync(
+            Func<Task<string>> readFunc,
+            string label)
+        {
+            int attempts = GetBackupReadAttempts();
+            int delayMs = GetBackupReadRetryDelayMs();
+
+            for (int attempt = 1; attempt <= attempts; attempt++)
+            {
+                try
+                {
+                    var hex = await readFunc().ConfigureAwait(false);
+                    if (!string.IsNullOrWhiteSpace(hex))
+                        return hex;
+
+                    AppLog.Warn($"[Backup] Optional {label} empty (attempt {attempt}/{attempts}).");
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Warn($"[Backup] Optional {label} exception (attempt {attempt}/{attempts}): {ex.Message}");
+                }
+
+                if (attempt < attempts)
+                    await Task.Delay(delayMs).ConfigureAwait(false);
+            }
+
+            AppLog.Warn($"[Backup] Optional {label} unavailable after {attempts} attempts; continuing without it.");
+            return null;
+        }
+
         public async Task<DeviceSettingsSnapshot> CaptureSnapshotAsync(
             string macAddress,
             string detectorType,
@@ -189,6 +225,18 @@ namespace AccessAPP.Services
 
                 BlePushButtonsHex = profile.BlePushButtons
                     ? StripBleHeader(await ReadRequiredAsync(() => _ble.GetBLEPushButtonList(macAddress), "BlePushButtons").ConfigureAwait(false))
+                    : null,
+
+                TunableWhiteListHex = profile.TunableWhiteList
+                    ? StripBleHeader(await ReadOptionalAsync(() => _ble.GetTunableWhiteList(macAddress), "TunableWhiteList").ConfigureAwait(false))
+                    : null,
+
+                TunableWhitePresetHex = profile.TunableWhitePreset
+                    ? StripBleHeader(await ReadOptionalAsync(() => _ble.GetTunableWhitePreset(macAddress), "TunableWhitePreset").ConfigureAwait(false))
+                    : null,
+
+                TunableWhiteDefaultKelvinHex = profile.TunableWhiteDefaultKelvin
+                    ? StripBleHeader(await ReadOptionalAsync(() => _ble.GetTunableWhiteDefaultKelvin(macAddress), "TunableWhiteDefaultKelvin").ConfigureAwait(false))
                     : null,
             };
         }
@@ -240,7 +288,10 @@ namespace AccessAPP.Services
                 PushButtonsHex = current.PushButtonsHex,
                 DaliPushButtonsHex = current.DaliPushButtonsHex,
                 DaliDeviceCommonParamHex = current.DaliDeviceCommonParamHex,
-                BlePushButtonsHex = current.BlePushButtonsHex
+                BlePushButtonsHex = current.BlePushButtonsHex,
+                TunableWhiteListHex = current.TunableWhiteListHex,
+                TunableWhitePresetHex = current.TunableWhitePresetHex,
+                TunableWhiteDefaultKelvinHex = current.TunableWhiteDefaultKelvinHex
             };
 
             bool requestedUser = !string.IsNullOrWhiteSpace(normalized.UserConfigHex)
@@ -253,6 +304,9 @@ namespace AccessAPP.Services
                 || !string.IsNullOrWhiteSpace(normalized.DaliDeviceCommonParamMaskHex);
             bool requestedBle = !string.IsNullOrWhiteSpace(normalized.BlePushButtonsHex)
                 || !string.IsNullOrWhiteSpace(normalized.BlePushButtonsMaskHex);
+            bool requestedTunableWhiteList = !string.IsNullOrWhiteSpace(normalized.TunableWhiteListHex);
+            bool requestedTunableWhitePreset = !string.IsNullOrWhiteSpace(normalized.TunableWhitePresetHex);
+            bool requestedTunableWhiteDefaultKelvin = !string.IsNullOrWhiteSpace(normalized.TunableWhiteDefaultKelvinHex);
 
             if (requestedUser)
             {
@@ -349,6 +403,15 @@ namespace AccessAPP.Services
                 target.DaliDeviceCommonParamHex = merged;
             }
 
+            if (requestedTunableWhiteList)
+                target.TunableWhiteListHex = normalized.TunableWhiteListHex;
+
+            if (requestedTunableWhitePreset)
+                target.TunableWhitePresetHex = normalized.TunableWhitePresetHex;
+
+            if (requestedTunableWhiteDefaultKelvin)
+                target.TunableWhiteDefaultKelvinHex = normalized.TunableWhiteDefaultKelvinHex;
+
             // Keep payload versions aligned with target FW when rules exist.
             try
             {
@@ -444,6 +507,57 @@ namespace AccessAPP.Services
                 }
             }
 
+            if (requestedTunableWhiteList)
+            {
+                if (!profile.TunableWhiteList)
+                {
+                    ok = false;
+                    AppLog.Warn($"[SettingsPatch] TunableWhiteList override requested but detector '{detectorType}' profile does not support it.");
+                }
+                else if (!string.IsNullOrWhiteSpace(target.TunableWhiteListHex) && ShouldWrite(current.TunableWhiteListHex, target.TunableWhiteListHex))
+                {
+                    var r = await WriteWithRetryAsync(
+                        () => _ble.SetTunableWhiteList(macAddress, target.TunableWhiteListHex),
+                        "Tunable White List").ConfigureAwait(false);
+                    ok &= r;
+                    if (r) writes++;
+                }
+            }
+
+            if (requestedTunableWhitePreset)
+            {
+                if (!profile.TunableWhitePreset)
+                {
+                    ok = false;
+                    AppLog.Warn($"[SettingsPatch] TunableWhitePreset override requested but detector '{detectorType}' profile does not support it.");
+                }
+                else if (!string.IsNullOrWhiteSpace(target.TunableWhitePresetHex) && ShouldWrite(current.TunableWhitePresetHex, target.TunableWhitePresetHex))
+                {
+                    var r = await WriteWithRetryAsync(
+                        () => _ble.SetTunableWhitePreset(macAddress, target.TunableWhitePresetHex),
+                        "Tunable White Preset").ConfigureAwait(false);
+                    ok &= r;
+                    if (r) writes++;
+                }
+            }
+
+            if (requestedTunableWhiteDefaultKelvin)
+            {
+                if (!profile.TunableWhiteDefaultKelvin)
+                {
+                    ok = false;
+                    AppLog.Warn($"[SettingsPatch] TunableWhiteDefaultKelvin override requested but detector '{detectorType}' profile does not support it.");
+                }
+                else if (!string.IsNullOrWhiteSpace(target.TunableWhiteDefaultKelvinHex) && ShouldWrite(current.TunableWhiteDefaultKelvinHex, target.TunableWhiteDefaultKelvinHex))
+                {
+                    var r = await WriteWithRetryAsync(
+                        () => _ble.SetTunableWhiteDefaultKelvin(macAddress, target.TunableWhiteDefaultKelvinHex),
+                        "Tunable White Default Kelvin").ConfigureAwait(false);
+                    ok &= r;
+                    if (r) writes++;
+                }
+            }
+
             return new ServiceResponse
             {
                 Success = ok,
@@ -529,6 +643,9 @@ AppLog.Info($"  WiredPushButtons   = {Trunc(snap.PushButtonsHex)}");
 AppLog.Info($"  DaliPushButtons    = {Trunc(snap.DaliPushButtonsHex)}");
 AppLog.Info($"  DaliCommonParam    = {Trunc(snap.DaliDeviceCommonParamHex)}");
 AppLog.Info($"  BlePushButtons     = {Trunc(snap.BlePushButtonsHex)}");
+AppLog.Info($"  TwList             = {Trunc(snap.TunableWhiteListHex)}");
+AppLog.Info($"  TwPreset           = {Trunc(snap.TunableWhitePresetHex)}");
+AppLog.Info($"  TwDefaultKelvin    = {Trunc(snap.TunableWhiteDefaultKelvinHex)}");
 // ---- Rules loading ----
             SettingsVersionPatcher.RulesRoot rulesRoot;
 
@@ -557,6 +674,9 @@ AppLog.Info($"  WiredPushButtons   = {Trunc(snap.PushButtonsHex)}");
 AppLog.Info($"  DaliPushButtons    = {Trunc(snap.DaliPushButtonsHex)}");
 AppLog.Info($"  DaliCommonParam    = {Trunc(snap.DaliDeviceCommonParamHex)}");
 AppLog.Info($"  BlePushButtons     = {Trunc(snap.BlePushButtonsHex)}");
+AppLog.Info($"  TwList             = {Trunc(snap.TunableWhiteListHex)}");
+AppLog.Info($"  TwPreset           = {Trunc(snap.TunableWhitePresetHex)}");
+AppLog.Info($"  TwDefaultKelvin    = {Trunc(snap.TunableWhiteDefaultKelvinHex)}");
 bool ok = true;
 
             // ---- BLE restores ----
@@ -612,6 +732,39 @@ bool ok = true;
                         "DALI Device Common Param")
                     .ConfigureAwait(false);
                 AppLog.Info($"[Restore] DALI Device Common Param result={r}");
+                ok &= r;
+            }
+
+            if (profile.TunableWhiteList && !string.IsNullOrWhiteSpace(snap.TunableWhiteListHex))
+            {
+                AppLog.Info($"[Restore] Writing Tunable White List...");
+                bool r = await WriteWithRetryAsync(
+                        () => _ble.SetTunableWhiteList(macAddress, snap.TunableWhiteListHex),
+                        "Tunable White List")
+                    .ConfigureAwait(false);
+                AppLog.Info($"[Restore] Tunable White List result={r}");
+                ok &= r;
+            }
+
+            if (profile.TunableWhitePreset && !string.IsNullOrWhiteSpace(snap.TunableWhitePresetHex))
+            {
+                AppLog.Info($"[Restore] Writing Tunable White Preset...");
+                bool r = await WriteWithRetryAsync(
+                        () => _ble.SetTunableWhitePreset(macAddress, snap.TunableWhitePresetHex),
+                        "Tunable White Preset")
+                    .ConfigureAwait(false);
+                AppLog.Info($"[Restore] Tunable White Preset result={r}");
+                ok &= r;
+            }
+
+            if (profile.TunableWhiteDefaultKelvin && !string.IsNullOrWhiteSpace(snap.TunableWhiteDefaultKelvinHex))
+            {
+                AppLog.Info($"[Restore] Writing Tunable White Default Kelvin...");
+                bool r = await WriteWithRetryAsync(
+                        () => _ble.SetTunableWhiteDefaultKelvin(macAddress, snap.TunableWhiteDefaultKelvinHex),
+                        "Tunable White Default Kelvin")
+                    .ConfigureAwait(false);
+                AppLog.Info($"[Restore] Tunable White Default Kelvin result={r}");
                 ok &= r;
             }
 

@@ -22,6 +22,13 @@ namespace AccessAPP.Services
         Task<string> GetBLEPushButtonList(string nodeMac);
         Task<bool> SetBLEPushButtonList(string nodeMac, string newBlePushButtonListHex);
 
+        Task<string> GetTunableWhiteList(string nodeMac);
+        Task<bool> SetTunableWhiteList(string nodeMac, string tunableWhiteListHex);
+        Task<string> GetTunableWhitePreset(string nodeMac);
+        Task<bool> SetTunableWhitePreset(string nodeMac, string tunableWhitePresetHex);
+        Task<string> GetTunableWhiteDefaultKelvin(string nodeMac);
+        Task<bool> SetTunableWhiteDefaultKelvin(string nodeMac, string tunableWhiteDefaultKelvinHex);
+
         // Optional, you can keep these if you want them in backup service later
         Task<bool> DaliRestore102Database(string nodeMac);
         Task<bool> DaliRestore103Database(string nodeMac);
