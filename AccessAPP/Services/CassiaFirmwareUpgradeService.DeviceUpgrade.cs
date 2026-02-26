@@ -440,6 +440,8 @@ try
                         (!dev.isActorUpgradeNeeded || dev.ActorSuccess) &&
                         (!dev.upgradeBootloader || dev.BootloaderSuccess) &&
                         dev.SensorSuccess;
+                    bool postUpdateSettingsRequested = dev.PostUpdateSettings?.CloneNormalized()?.HasAnyValue() == true;
+                    bool connectionReusableForPostSettings = false;
 
                     // Only run the post FW read once firmware work is fully satisfied.
                     if (anyFirmwarePlanned && firmwareDone)
@@ -453,20 +455,40 @@ try
                         if (reuseConn)
                         {
                             // Final disconnect — the one the user wants here, after the FW read.
-                            await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, mac, 0, chip: GetChipForMac(mac)).ConfigureAwait(false);
-                            UpgradeLogger.Log(logId, mac, "Disconnected at the end of upgrade process", "Info", dev.FirmwareVersion);
+                            if (postUpdateSettingsRequested)
+                            {
+                                connectionReusableForPostSettings = true;
+                                AppLog.Debug($"[POST] {mac} keeping connected session open for post-update settings.");
+                            }
+                            else
+                            {
+                                await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, mac, 0, chip: GetChipForMac(mac)).ConfigureAwait(false);
+                                UpgradeLogger.Log(logId, mac, "Disconnected at the end of upgrade process", "Info", dev.FirmwareVersion);
+                            }
                         }
                     }
                     else if (dev.ConnectionLeftOpenForFwRead)
                     {
                         // Safety: FW read won't run but the pipeline left the connection open.
                         dev.ConnectionLeftOpenForFwRead = false;
-                        await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, mac, 0, chip: GetChipForMac(mac)).ConfigureAwait(false);
-                        UpgradeLogger.Log(logId, mac, "Disconnected at the end of upgrade process", "Info", dev.FirmwareVersion);
+                        if (postUpdateSettingsRequested)
+                        {
+                            connectionReusableForPostSettings = true;
+                            AppLog.Debug($"[POST] {mac} keeping connected session open for post-update settings (FW read skipped).");
+                        }
+                        else
+                        {
+                            await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, mac, 0, chip: GetChipForMac(mac)).ConfigureAwait(false);
+                            UpgradeLogger.Log(logId, mac, "Disconnected at the end of upgrade process", "Info", dev.FirmwareVersion);
+                        }
                     }
 
                     if (!string.Equals(dev.finalUpgradeResult, "Failed", StringComparison.OrdinalIgnoreCase))
-                        await ApplyPostUpdateSettingsIfRequestedAsync(dev, mac, logId ?? "").ConfigureAwait(false);
+                        await ApplyPostUpdateSettingsIfRequestedAsync(
+                            dev,
+                            mac,
+                            logId ?? "",
+                            reuseExistingConnection: connectionReusableForPostSettings).ConfigureAwait(false);
                 }
 
                 deviceSw.Stop();
@@ -784,7 +806,11 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             return match.Success ? match.Groups[1].Value : "";
         }
 
-        private async Task ApplyPostUpdateSettingsIfRequestedAsync(UpgradeProgress dev, string mac, string logId)
+        private async Task ApplyPostUpdateSettingsIfRequestedAsync(
+            UpgradeProgress dev,
+            string mac,
+            string logId,
+            bool reuseExistingConnection = false)
         {
             var patch = dev.PostUpdateSettings?.CloneNormalized();
             if (patch == null || !patch.HasAnyValue())
@@ -798,26 +824,50 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             {
                 UpgradeLogger.Log(logId, mac, "Post-update settings", "Starting", dev.FirmwareVersion);
 
-                var cl = await ConnectAndLoginWithRetryForPipelineAsync(
-                    _gatewayIpAddress,
-                    _gatewayPort,
-                    mac,
-                    dev.Pincode ?? "",
-                    logId,
-                    dev.FirmwareVersion,
-                    maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
-                    delayBetweenAttemptsMs: 2000,
-                    bootModeIsRetryable: true).ConfigureAwait(false);
-
-                if (!cl.Success)
+                if (reuseExistingConnection)
                 {
-                    var reason = $"Post-update settings connect+login failed: {cl.Message}";
-                    dev.LastFailureReason = string.IsNullOrWhiteSpace(dev.LastFailureReason)
-                        ? reason
-                        : $"{dev.LastFailureReason} | {reason}";
-                    dev.finalUpgradeResult = "Failed";
-                    UpgradeLogger.Log(logId, mac, "Post-update settings", $"Failed ({cl.Message})", dev.FirmwareVersion);
-                    return;
+                    var loginOk = await EnsureLoginOnConnectedSessionUnlessBootModeAsync(
+                        macAddress: mac,
+                        pincode: dev.Pincode ?? "",
+                        logId: logId,
+                        firmwareVersion: dev.FirmwareVersion,
+                        stageName: "LoggedIn",
+                        maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_LOGIN_RETRIES_PER_CONNECTED_SESSION)).ConfigureAwait(false);
+
+                    if (!loginOk)
+                    {
+                        var reason = "Post-update settings login failed on existing connection.";
+                        dev.LastFailureReason = string.IsNullOrWhiteSpace(dev.LastFailureReason)
+                            ? reason
+                            : $"{dev.LastFailureReason} | {reason}";
+                        dev.finalUpgradeResult = "Failed";
+                        UpgradeLogger.Log(logId, mac, "Post-update settings", "Failed (login on existing connection)", dev.FirmwareVersion);
+                        return;
+                    }
+                }
+                else
+                {
+                    var cl = await ConnectAndLoginWithRetryForPipelineAsync(
+                        _gatewayIpAddress,
+                        _gatewayPort,
+                        mac,
+                        dev.Pincode ?? "",
+                        logId,
+                        dev.FirmwareVersion,
+                        maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
+                        delayBetweenAttemptsMs: 2000,
+                        bootModeIsRetryable: true).ConfigureAwait(false);
+
+                    if (!cl.Success)
+                    {
+                        var reason = $"Post-update settings connect+login failed: {cl.Message}";
+                        dev.LastFailureReason = string.IsNullOrWhiteSpace(dev.LastFailureReason)
+                            ? reason
+                            : $"{dev.LastFailureReason} | {reason}";
+                        dev.finalUpgradeResult = "Failed";
+                        UpgradeLogger.Log(logId, mac, "Post-update settings", $"Failed ({cl.Message})", dev.FirmwareVersion);
+                        return;
+                    }
                 }
 
                 var apply = await _settingsBackup

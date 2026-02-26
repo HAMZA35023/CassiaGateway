@@ -14,6 +14,7 @@ public partial class DetectorSettingsViewModel : ObservableObject
 {
     private readonly MainViewModel _main;
     private readonly DiscoveredDevice? _device;
+    private bool _suppressTunableWhiteAutoApply;
     private static readonly Regex DetectorModelRegex = new(@"^[PM]\d{2}", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private const int TunableWhiteMinKelvin = 1800;
     private const int TunableWhiteMaxKelvin = 6500;
@@ -139,57 +140,75 @@ public partial class DetectorSettingsViewModel : ObservableObject
     partial void OnApplyTunableWhiteDefaultKelvinChanged(bool value) => UpdateSelectionCounters();
 
     partial void OnTunableWhiteScheduleAllKelvinChanged(int value)
-        => TunableWhiteScheduleAllKelvin = ClampKelvin(value);
+    {
+        TunableWhiteScheduleAllKelvin = ClampKelvin(value);
+        MarkTunableWhiteListEdited();
+    }
 
     partial void OnTunableWhiteScheduleAllLuxChanged(int value)
-        => TunableWhiteScheduleAllLux = ClampLux(value);
+    {
+        TunableWhiteScheduleAllLux = ClampLux(value);
+        MarkTunableWhiteListEdited();
+    }
+
+    partial void OnTunableWhiteListVersionChanged(int value) => MarkTunableWhiteListEdited();
+    partial void OnTunableWhiteListEnabledChanged(bool value) => MarkTunableWhiteListEdited();
+    partial void OnTunableWhitePresetVersionChanged(int value) => MarkTunableWhitePresetEdited();
 
     partial void OnTunableWhitePreset1KelvinChanged(int value)
     {
         TunableWhitePreset1Kelvin = ClampKelvin(value);
         OnPropertyChanged(nameof(TunableWhitePreset1Brush));
+        MarkTunableWhitePresetEdited();
     }
 
     partial void OnTunableWhitePreset1LuxChanged(int value)
     {
         TunableWhitePreset1Lux = ClampLux(value);
         OnPropertyChanged(nameof(TunableWhitePreset1LuxBrush));
+        MarkTunableWhitePresetEdited();
     }
 
     partial void OnTunableWhitePreset2KelvinChanged(int value)
     {
         TunableWhitePreset2Kelvin = ClampKelvin(value);
         OnPropertyChanged(nameof(TunableWhitePreset2Brush));
+        MarkTunableWhitePresetEdited();
     }
 
     partial void OnTunableWhitePreset2LuxChanged(int value)
     {
         TunableWhitePreset2Lux = ClampLux(value);
         OnPropertyChanged(nameof(TunableWhitePreset2LuxBrush));
+        MarkTunableWhitePresetEdited();
     }
 
     partial void OnTunableWhitePreset3KelvinChanged(int value)
     {
         TunableWhitePreset3Kelvin = ClampKelvin(value);
         OnPropertyChanged(nameof(TunableWhitePreset3Brush));
+        MarkTunableWhitePresetEdited();
     }
 
     partial void OnTunableWhitePreset3LuxChanged(int value)
     {
         TunableWhitePreset3Lux = ClampLux(value);
         OnPropertyChanged(nameof(TunableWhitePreset3LuxBrush));
+        MarkTunableWhitePresetEdited();
     }
 
     partial void OnTunableWhitePreset4KelvinChanged(int value)
     {
         TunableWhitePreset4Kelvin = ClampKelvin(value);
         OnPropertyChanged(nameof(TunableWhitePreset4Brush));
+        MarkTunableWhitePresetEdited();
     }
 
     partial void OnTunableWhitePreset4LuxChanged(int value)
     {
         TunableWhitePreset4Lux = ClampLux(value);
         OnPropertyChanged(nameof(TunableWhitePreset4LuxBrush));
+        MarkTunableWhitePresetEdited();
     }
 
     partial void OnTunableWhiteDefaultKelvinChanged(int value)
@@ -208,6 +227,7 @@ public partial class DetectorSettingsViewModel : ObservableObject
     [RelayCommand]
     private void ApplyTunableWhiteScheduleKelvinToAllHours()
     {
+        MarkTunableWhiteListEdited();
         var kelvin = ClampKelvin(TunableWhiteScheduleAllKelvin);
         foreach (var point in TunableWhiteHourPoints)
             point.Kelvin = kelvin;
@@ -216,6 +236,7 @@ public partial class DetectorSettingsViewModel : ObservableObject
     [RelayCommand]
     private void ApplyTunableWhiteScheduleLuxToAllHours()
     {
+        MarkTunableWhiteListEdited();
         var lux = ClampLux(TunableWhiteScheduleAllLux);
         foreach (var point in TunableWhiteHourPoints)
             point.Lux = lux;
@@ -610,7 +631,7 @@ public partial class DetectorSettingsViewModel : ObservableObject
     {
         if (string.Equals(e.PropertyName, nameof(TunableWhiteHourPointViewModel.Kelvin), StringComparison.Ordinal)
             || string.Equals(e.PropertyName, nameof(TunableWhiteHourPointViewModel.Lux), StringComparison.Ordinal))
-            UpdateSelectionCounters();
+            MarkTunableWhiteListEdited();
     }
 
     private void OnFieldRowPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -631,6 +652,28 @@ public partial class DetectorSettingsViewModel : ObservableObject
             (ApplyTunableWhiteList ? 1 : 0)
             + (ApplyTunableWhitePreset ? 1 : 0)
             + (ApplyTunableWhiteDefaultKelvin ? 1 : 0);
+    }
+
+    private void MarkTunableWhiteListEdited()
+    {
+        if (_suppressTunableWhiteAutoApply)
+            return;
+
+        if (!ApplyTunableWhiteList)
+            ApplyTunableWhiteList = true;
+        else
+            UpdateSelectionCounters();
+    }
+
+    private void MarkTunableWhitePresetEdited()
+    {
+        if (_suppressTunableWhiteAutoApply)
+            return;
+
+        if (!ApplyTunableWhitePreset)
+            ApplyTunableWhitePreset = true;
+        else
+            UpdateSelectionCounters();
     }
 
     private IEnumerable<DetectorFieldRowViewModel> GetAllRows()
@@ -782,40 +825,48 @@ public partial class DetectorSettingsViewModel : ObservableObject
 
     private void LoadTunableWhiteFromPatch(DetectorSettingsPatchModel patch)
     {
-        if (TryParseTunableWhiteListHex(patch.TunableWhiteListHex, out var twListVersion, out var twListEnabled, out var hours))
+        _suppressTunableWhiteAutoApply = true;
+        try
         {
-            TunableWhiteListVersion = twListVersion;
-            TunableWhiteListEnabled = twListEnabled;
-            for (var i = 0; i < Math.Min(24, TunableWhiteHourPoints.Count); i++)
+            if (TryParseTunableWhiteListHex(patch.TunableWhiteListHex, out var twListVersion, out var twListEnabled, out var hours))
             {
-                TunableWhiteHourPoints[i].Kelvin = ClampKelvinOrNoChange(hours[i].Kelvin);
-                TunableWhiteHourPoints[i].Lux = ClampLuxOrNoChange(hours[i].Lux);
+                TunableWhiteListVersion = twListVersion;
+                TunableWhiteListEnabled = twListEnabled;
+                for (var i = 0; i < Math.Min(24, TunableWhiteHourPoints.Count); i++)
+                {
+                    TunableWhiteHourPoints[i].Kelvin = ClampKelvinOrNoChange(hours[i].Kelvin);
+                    TunableWhiteHourPoints[i].Lux = ClampLuxOrNoChange(hours[i].Lux);
+                }
+
+                if (TunableWhiteHourPoints.Count > 0)
+                {
+                    TunableWhiteScheduleAllKelvin = TunableWhiteHourPoints[0].Kelvin;
+                    TunableWhiteScheduleAllLux = TunableWhiteHourPoints[0].Lux;
+                }
             }
 
-            if (TunableWhiteHourPoints.Count > 0)
+            if (TryParseTunableWhitePresetHex(patch.TunableWhitePresetHex, out var twPresetVersion, out var presets))
             {
-                TunableWhiteScheduleAllKelvin = TunableWhiteHourPoints[0].Kelvin;
-                TunableWhiteScheduleAllLux = TunableWhiteHourPoints[0].Lux;
+                TunableWhitePresetVersion = twPresetVersion;
+                TunableWhitePreset1Kelvin = ClampKelvinOrNoChange(presets[0].Kelvin);
+                TunableWhitePreset1Lux = ClampLuxOrNoChange(presets[0].Lux);
+                TunableWhitePreset2Kelvin = ClampKelvinOrNoChange(presets[1].Kelvin);
+                TunableWhitePreset2Lux = ClampLuxOrNoChange(presets[1].Lux);
+                TunableWhitePreset3Kelvin = ClampKelvinOrNoChange(presets[2].Kelvin);
+                TunableWhitePreset3Lux = ClampLuxOrNoChange(presets[2].Lux);
+                TunableWhitePreset4Kelvin = ClampKelvinOrNoChange(presets[3].Kelvin);
+                TunableWhitePreset4Lux = ClampLuxOrNoChange(presets[3].Lux);
+            }
+
+            if (TryParseTunableWhiteDefaultKelvinHex(patch.TunableWhiteDefaultKelvinHex, out var twDefaultVersion, out var kelvin))
+            {
+                TunableWhiteDefaultKelvinVersion = twDefaultVersion;
+                TunableWhiteDefaultKelvin = ClampKelvinOrNoChange(kelvin);
             }
         }
-
-        if (TryParseTunableWhitePresetHex(patch.TunableWhitePresetHex, out var twPresetVersion, out var presets))
+        finally
         {
-            TunableWhitePresetVersion = twPresetVersion;
-            TunableWhitePreset1Kelvin = ClampKelvinOrNoChange(presets[0].Kelvin);
-            TunableWhitePreset1Lux = ClampLuxOrNoChange(presets[0].Lux);
-            TunableWhitePreset2Kelvin = ClampKelvinOrNoChange(presets[1].Kelvin);
-            TunableWhitePreset2Lux = ClampLuxOrNoChange(presets[1].Lux);
-            TunableWhitePreset3Kelvin = ClampKelvinOrNoChange(presets[2].Kelvin);
-            TunableWhitePreset3Lux = ClampLuxOrNoChange(presets[2].Lux);
-            TunableWhitePreset4Kelvin = ClampKelvinOrNoChange(presets[3].Kelvin);
-            TunableWhitePreset4Lux = ClampLuxOrNoChange(presets[3].Lux);
-        }
-
-        if (TryParseTunableWhiteDefaultKelvinHex(patch.TunableWhiteDefaultKelvinHex, out var twDefaultVersion, out var kelvin))
-        {
-            TunableWhiteDefaultKelvinVersion = twDefaultVersion;
-            TunableWhiteDefaultKelvin = ClampKelvinOrNoChange(kelvin);
+            _suppressTunableWhiteAutoApply = false;
         }
     }
 

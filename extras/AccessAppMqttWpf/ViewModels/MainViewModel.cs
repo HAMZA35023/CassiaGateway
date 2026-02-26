@@ -260,11 +260,12 @@ public partial class MainViewModel : ObservableObject
     partial void OnSelectedFirmwareP47Changed(string value) => PersistSelectedFirmware("P47", value);
     partial void OnSelectedFirmwareP48Changed(string value) => PersistSelectedFirmware("P48", value);
 
-    partial void OnSelectedDetectorSettingsProfileP41Changed(string value) => PersistSelectedDetectorSettingsProfile("P41", value);
-    partial void OnSelectedDetectorSettingsProfileP42Changed(string value) => PersistSelectedDetectorSettingsProfile("P42", value);
-    partial void OnSelectedDetectorSettingsProfileP46Changed(string value) => PersistSelectedDetectorSettingsProfile("P46", value);
-    partial void OnSelectedDetectorSettingsProfileP47Changed(string value) => PersistSelectedDetectorSettingsProfile("P47", value);
-    partial void OnSelectedDetectorSettingsProfileP48Changed(string value) => PersistSelectedDetectorSettingsProfile("P48", value);
+    // Detector settings profile selections are runtime-only.
+    partial void OnSelectedDetectorSettingsProfileP41Changed(string value) { }
+    partial void OnSelectedDetectorSettingsProfileP42Changed(string value) { }
+    partial void OnSelectedDetectorSettingsProfileP46Changed(string value) { }
+    partial void OnSelectedDetectorSettingsProfileP47Changed(string value) { }
+    partial void OnSelectedDetectorSettingsProfileP48Changed(string value) { }
 
     [ObservableProperty] private string connectionStatus = "Disconnected";
     [ObservableProperty] private bool isConnected;
@@ -342,12 +343,7 @@ public partial class MainViewModel : ObservableObject
             if (fwMap.TryGetValue("P47", out var fw47)) SelectedFirmwareP47 = fw47 ?? "";
             if (fwMap.TryGetValue("P48", out var fw48)) SelectedFirmwareP48 = fw48 ?? "";
 
-            var profileMap = s.accessapp.detectorSettingsProfileByModel ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            if (profileMap.TryGetValue("P41", out var ps41)) SelectedDetectorSettingsProfileP41 = ps41 ?? "";
-            if (profileMap.TryGetValue("P42", out var ps42)) SelectedDetectorSettingsProfileP42 = ps42 ?? "";
-            if (profileMap.TryGetValue("P46", out var ps46)) SelectedDetectorSettingsProfileP46 = ps46 ?? "";
-            if (profileMap.TryGetValue("P47", out var ps47)) SelectedDetectorSettingsProfileP47 = ps47 ?? "";
-            if (profileMap.TryGetValue("P48", out var ps48)) SelectedDetectorSettingsProfileP48 = ps48 ?? "";
+            // Detector settings profile selections are runtime-only (not loaded from persisted settings).
         }
         catch { /* best-effort */ }
 
@@ -1533,32 +1529,12 @@ public partial class MainViewModel : ObservableObject
         }
         catch { }
 
-        var profileMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        try
-        {
-            if (s.accessapp?.detectorSettingsProfileByModel != null)
-            {
-                foreach (var kv in s.accessapp.detectorSettingsProfileByModel)
-                {
-                    if (!string.IsNullOrWhiteSpace(kv.Key))
-                        profileMap[kv.Key.Trim()] = kv.Value ?? "";
-                }
-            }
-        }
-        catch { }
-
         // Always write current in-memory selections.
         fwMap["P41"] = SelectedFirmwareP41 ?? "";
         fwMap["P42"] = SelectedFirmwareP42 ?? "";
         fwMap["P46"] = SelectedFirmwareP46 ?? "";
         fwMap["P47"] = SelectedFirmwareP47 ?? "";
         fwMap["P48"] = SelectedFirmwareP48 ?? "";
-
-        profileMap["P41"] = SelectedDetectorSettingsProfileP41 ?? "";
-        profileMap["P42"] = SelectedDetectorSettingsProfileP42 ?? "";
-        profileMap["P46"] = SelectedDetectorSettingsProfileP46 ?? "";
-        profileMap["P47"] = SelectedDetectorSettingsProfileP47 ?? "";
-        profileMap["P48"] = SelectedDetectorSettingsProfileP48 ?? "";
 
         s.accessapp = new AccessAppSettings
         {
@@ -1570,8 +1546,7 @@ public partial class MainViewModel : ObservableObject
             autoSetWorkersByModel = AutoSetWorkersByModelEnabled,
             productionUpdate = ProductionUpdateEnabled,
             hostBleAutoRemoveStaleDevices = HostBleAutoRemoveStaleDevices,
-            selectedFirmwareByModel = fwMap,
-            detectorSettingsProfileByModel = profileMap
+            selectedFirmwareByModel = fwMap
         };
 
         return s;
@@ -1596,28 +1571,6 @@ public partial class MainViewModel : ObservableObject
             // ignore persistence errors
         }
     }
-
-    private void PersistSelectedDetectorSettingsProfile(string model, string? path)
-    {
-        if (_isInitializing) return;
-
-        try
-        {
-            var s = _store.Load();
-            s.accessapp ??= new AccessAppSettings();
-            s.accessapp.detectorSettingsProfileByModel ??= new Dictionary<string, string>();
-            s.accessapp.detectorSettingsProfileByModel[model] = (path ?? "").Trim();
-            _store.Save(BuildSettingsSnapshot(s));
-        }
-        catch
-        {
-            // ignore persistence errors
-        }
-    }
-
-    
-
-
 
     [RelayCommand]
     private void ClearDevices()

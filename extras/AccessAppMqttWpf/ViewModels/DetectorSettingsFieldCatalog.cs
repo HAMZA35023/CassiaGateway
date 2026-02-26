@@ -101,7 +101,8 @@ public partial class DetectorFieldRowViewModel : ObservableObject
 
     partial void OnBoolValueChanged(bool value)
     {
-        // For bool editors, changing the checkbox should not auto-enable Apply.
+        if (!_suspendAutoSelect && !IsSelected)
+            IsSelected = true;
     }
 
     public void LoadFromBytes(byte[] source)

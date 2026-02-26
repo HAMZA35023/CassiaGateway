@@ -21,7 +21,7 @@
             <ComboBox ItemsSource="{Binding Options}"
                       DisplayMemberPath="Label"
                       MaxDropDownHeight="520"
-                      MinWidth="520"
+                      MinWidth="220"
                       ToolTip="{Binding Description}"
                       TextSearch.TextPath="Label"
                       HorizontalContentAlignment="Stretch"
@@ -75,11 +75,11 @@
                       HorizontalScrollBarVisibility="Auto">
                 <DataGrid.Columns>
                     <DataGridCheckBoxColumn Header="Apply" Binding="{Binding IsSelected, Mode=TwoWay}" Width="70"/>
-                    <DataGridTextColumn Header="Group" Binding="{Binding Group}" Width="140" IsReadOnly="True"/>
-                    <DataGridTextColumn Header="Field" Binding="{Binding Label}" Width="240" IsReadOnly="True"/>
-                    <DataGridTemplateColumn Header="Value" CellTemplate="{StaticResource FieldEditorTemplate}" Width="560"/>
-                    <DataGridTextColumn Header="Current" Binding="{Binding CurrentValueText}" Width="220" IsReadOnly="True"/>
-                    <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="*" IsReadOnly="True"/>
+                    <DataGridTextColumn Header="Group" Binding="{Binding Group}" Width="120" IsReadOnly="True"/>
+                    <DataGridTextColumn Header="Field" Binding="{Binding Label}" Width="210" IsReadOnly="True"/>
+                    <DataGridTemplateColumn Header="Value" CellTemplate="{StaticResource FieldEditorTemplate}" Width="2*"/>
+                    <DataGridTextColumn Header="Current" Binding="{Binding CurrentValueText}" Width="170" IsReadOnly="True"/>
+                    <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="3*" IsReadOnly="True"/>
                 </DataGrid.Columns>
             </DataGrid>
         </DataTemplate>
