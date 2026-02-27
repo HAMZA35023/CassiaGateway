@@ -84,8 +84,10 @@ namespace AccessAPP.Services
         {
             var devicePath = BlueZHelpers.DevicePath(BlueZHelpers.GetDeviceAdapter(nodeMac), nodeMac);
 
-            var maxAttempts = Math.Max(1, RuntimeVariables.BOOTMODE_RETRY_COUNT);
-            var retryDelayMs = Math.Max(0, RuntimeVariables.BOOTMODE_RETRY_DELAY_MS);
+            var maxAttempts = Math.Max(1, RuntimeVariables.LINUX_BLE_BOOTMODE_RETRY_COUNT);
+            var retryDelayMs = Math.Max(0, RuntimeVariables.LINUX_BLE_BOOTMODE_RETRY_DELAY_MS);
+            var gattModeTimeoutMs = Math.Max(500, RuntimeVariables.LINUX_BLE_BOOTMODE_CHECK_TIMEOUT_MS);
+            var bootCharLookupTimeoutMs = Math.Max(500, RuntimeVariables.LINUX_BLE_BOOTMODE_CHAR_LOOKUP_TIMEOUT_MS);
 
             for (int attempt = 1; attempt <= maxAttempts; attempt++)
             {
@@ -97,15 +99,41 @@ namespace AccessAPP.Services
                     // with zero D-Bus calls — no delay between connect and login.
                     // On cache miss (e.g. ServicesResolved timed out during connect) it
                     // falls back to a full GATT scan bounded by a 5-second timeout.
-                    using var bootCheckCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    using var bootCheckCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(gattModeTimeoutMs));
                     var mode = BlueZHelpers.DetectModeByGattAsync(devicePath, bootCheckCts.Token)
                         .WaitAsync(bootCheckCts.Token).GetAwaiter().GetResult();
 
-                    return mode == BlueZHelpers.BleMode.Bootloader;
+                    if (mode == BlueZHelpers.BleMode.Bootloader)
+                        return true;
+
+                    // Fallback: when mode is still unknown right after reconnect/jump,
+                    // do a direct boot characteristic lookup before concluding "not boot mode".
+                    if ((mode == BlueZHelpers.BleMode.Unknown || mode == BlueZHelpers.BleMode.Application) &&
+                        TryDetectBootCharacteristicLinux(devicePath, nodeMac, bootCharLookupTimeoutMs))
+                    {
+                        AppLog.Debug($"CheckIfDeviceInBootModeLinux: boot characteristic fallback detected for {nodeMac}.");
+                        return true;
+                    }
+
+                    // Definitive non-boot result.
+                    if (mode == BlueZHelpers.BleMode.Application)
+                        return false;
+
+                    // mode == Unknown without fallback hit: retry if attempts remain.
+                    if (attempt < maxAttempts)
+                    {
+                        BlueZHelpers.InvalidateCharCache(devicePath);
+                        if (retryDelayMs > 0)
+                            Thread.Sleep(retryDelayMs);
+                        continue;
+                    }
+
+                    return false;
                 }
                 catch (Exception ex) when (attempt < maxAttempts)
                 {
                     AppLog.Warn($"CheckIfDeviceInBootModeLinux: attempt {attempt} failed for {nodeMac}: {ex.Message}");
+                    BlueZHelpers.InvalidateCharCache(devicePath);
                     if (retryDelayMs > 0) Thread.Sleep(retryDelayMs);
                 }
                 catch (Exception ex)
@@ -116,6 +144,38 @@ namespace AccessAPP.Services
             }
 
             return false;
+        }
+
+        private static bool TryDetectBootCharacteristicLinux(string devicePath, string nodeMac, int timeoutMs)
+        {
+            try
+            {
+                BlueZHelpers.ClearNotFoundUuidCache(devicePath, BlueZHelpers.BootNotifyUuid);
+                BlueZHelpers.ClearNotFoundUuidCache(devicePath, BlueZHelpers.BootWriteUuid);
+
+                using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(Math.Max(250, timeoutMs)));
+                var notify = BlueZHelpers.GetCharacteristicByUuidAsync(
+                    devicePath,
+                    BlueZHelpers.BootServiceUuid,
+                    BlueZHelpers.BootNotifyUuid,
+                    cts.Token).WaitAsync(cts.Token).GetAwaiter().GetResult();
+
+                if (notify.characteristic != null)
+                    return true;
+
+                var write = BlueZHelpers.GetCharacteristicByUuidAsync(
+                    devicePath,
+                    BlueZHelpers.BootServiceUuid,
+                    BlueZHelpers.BootWriteUuid,
+                    cts.Token).WaitAsync(cts.Token).GetAwaiter().GetResult();
+
+                return write.characteristic != null;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Debug($"CheckIfDeviceInBootModeLinux: fallback characteristic probe failed for {nodeMac}: {ex.Message}");
+                return false;
+            }
         }
 
         public async Task<bool> ActorBootCheck(string gatewayIpAddress, string nodeMac)

@@ -192,6 +192,18 @@ namespace AccessAPP
         public static int BOOTMODE_RETRY_COUNT = 3;
         // Delay between boot mode check retries.
         public static int BOOTMODE_RETRY_DELAY_MS = 3000;
+        // Linux-native boot mode check: per-attempt timeout for GATT mode detection.
+        public static int LINUX_BLE_BOOTMODE_CHECK_TIMEOUT_MS = 5000;
+        // Linux-native boot mode check: retries when mode is unknown or transiently unavailable.
+        public static int LINUX_BLE_BOOTMODE_RETRY_COUNT = 1;
+        // Linux-native boot mode check: delay between retries.
+        public static int LINUX_BLE_BOOTMODE_RETRY_DELAY_MS = 250;
+        // Linux-native boot mode check: fallback UUID lookup timeout when mode is Unknown.
+        public static int LINUX_BLE_BOOTMODE_CHAR_LOOKUP_TIMEOUT_MS = 2500;
+        // Sensor upgrade: post-jump bootmode verify total budget (hard-capped to 10s in flow).
+        public static int UPGRADE_SENSOR_BOOTMODE_VERIFY_BUDGET_MS = 10000;
+        // Sensor upgrade: delay between post-jump bootmode verify polls.
+        public static int UPGRADE_SENSOR_BOOTMODE_VERIFY_POLL_MS = 750;
 
         // Actor upgrade: wait for sensor to return to application mode if boot mode detected.
         public static int UPGRADE_ACTOR_APP_MODE_WAIT_ATTEMPTS = 6;
@@ -240,6 +252,9 @@ namespace AccessAPP
         // take longer, but the connect+login retry loop now handles that via bootModeIsRetryable.
         // 10 s is a balanced default; raise if devices in your environment are consistently slow.
         public static int LINUX_BLE_SERVICES_RESOLVED_TIMEOUT_MS = 10000;
+        // Linux native BLE: additional short wait in mode detection when ServicesResolved is still false.
+        // Helps avoid false "not boot mode" results right after reconnect/jump transitions.
+        public static int LINUX_BLE_MODE_DETECT_SR_GRACE_MS = 1200;
 
         // Linux native BLE: characteristic handle used for BLE write/notify operations.
         // This is the GATT handle number (decimal) of the main control characteristic.

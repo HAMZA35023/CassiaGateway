@@ -617,13 +617,40 @@ internal static class BlueZHelpers
 
         // Guard: if BlueZ has not finished service discovery, the ObjectManager may still expose
         // GATT objects from the *previous* connection session (e.g. stale bootloader services after
-        // a firmware upload and reboot). Only trust the GATT tree once ServicesResolved=true;
-        // otherwise return Unknown so the caller retries without caching the wrong mode.
+        // a firmware upload and reboot). Only trust the GATT tree once ServicesResolved=true.
+        // Use a short grace window because ServicesResolved often flips shortly after reconnect.
         try
         {
             var dev = await GetDeviceAsync(devicePath);
-            if (!await dev.GetAsync<bool>("ServicesResolved"))
-                return BleMode.Unknown;
+            int srGraceMs = Math.Max(0, RuntimeVariables.LINUX_BLE_MODE_DETECT_SR_GRACE_MS);
+            var srDeadline = DateTime.UtcNow.AddMilliseconds(srGraceMs);
+            while (true)
+            {
+                ct.ThrowIfCancellationRequested();
+                bool servicesResolved;
+                try
+                {
+                    using var srPollCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    srPollCts.CancelAfter(TimeSpan.FromSeconds(2));
+                    servicesResolved = await dev.GetAsync<bool>("ServicesResolved").WaitAsync(srPollCts.Token);
+                }
+                catch
+                {
+                    return BleMode.Unknown;
+                }
+
+                if (servicesResolved)
+                    break;
+
+                if (DateTime.UtcNow >= srDeadline)
+                    return BleMode.Unknown;
+
+                int remainingMs = (int)Math.Max(0, (srDeadline - DateTime.UtcNow).TotalMilliseconds);
+                int sleepMs = Math.Min(150, remainingMs);
+                if (sleepMs <= 0)
+                    return BleMode.Unknown;
+                await Task.Delay(sleepMs, ct);
+            }
         }
         catch
         {

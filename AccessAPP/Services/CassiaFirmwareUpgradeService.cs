@@ -2064,9 +2064,14 @@ return resp;
                         continue;
                     }
 
-                    // Verify boot mode (sometimes needs multiple checks)
-                    for (int verify = 1; verify <= 5; verify++)
+                    // Verify boot mode with a hard bounded budget so this step does not stall.
+                    int verifyBudgetMs = Math.Clamp(RuntimeVariables.UPGRADE_SENSOR_BOOTMODE_VERIFY_BUDGET_MS, 1000, 10000);
+                    int verifyPollMs = Math.Max(100, RuntimeVariables.UPGRADE_SENSOR_BOOTMODE_VERIFY_POLL_MS);
+                    var verifyDeadlineUtc = DateTime.UtcNow.AddMilliseconds(verifyBudgetMs);
+                    int verify = 0;
+                    while (true)
                     {
+                        verify++;
                         bool isBoot = false;
                         try
                         {
@@ -2074,19 +2079,29 @@ return resp;
                         }
                         catch (Exception ex)
                         {
-                            UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", $"Check exception (verify {verify}/5): {ex.Message}");
+                            UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", $"Check exception (verify {verify}): {ex.Message}");
                         }
 
                         if (isBoot)
                         {
                             UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Achieved");
                             AppLog.Info($"Device entered boot mode after {attempt} jump attempts.");
-return true;
+                            return true;
                         }
 
-                        UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", $"NotYet (verify {verify}/5, attempt {attempt}/{bootJumpMaxAttempts})");
-                        await Task.Delay(1500);
+                        int remainingMs = (int)Math.Max(0, (verifyDeadlineUtc - DateTime.UtcNow).TotalMilliseconds);
+                        if (remainingMs <= 0)
+                            break;
+
+                        UpgradeLogger.Log(
+                            logId,
+                            nodeMac,
+                            "Sensor BootMode",
+                            $"NotYet (verify {verify}, attempt {attempt}/{bootJumpMaxAttempts}, remaining {Math.Max(1, (int)Math.Ceiling(remainingMs / 1000.0))}s)");
+
+                        await Task.Delay(Math.Min(verifyPollMs, remainingMs)).ConfigureAwait(false);
                     }
+                    UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", $"NotYet (attempt {attempt}/{bootJumpMaxAttempts}) after {verifyBudgetMs / 1000}s verify budget");
 
                     // Device reconnected in Application mode — re-login before the next
                     // JumpToBootloader attempt.  The device resets its authenticated session

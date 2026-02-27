@@ -87,7 +87,14 @@ namespace AccessAPP.Services
                connectStatus == HttpStatusCode.InternalServerError;
 
         private static bool ShouldUsePerChipConnectGate()
-            => RuntimeVariables.UPGRADE_CONNECT_LOGIN_USE_PER_CHIP_GATE;
+        {
+            if (!RuntimeVariables.UPGRADE_CONNECT_LOGIN_USE_PER_CHIP_GATE)
+                return false;
+
+            // Linux-native connects are already adapter-aware; chip gating can
+            // serialize devices that are actually on different HCI adapters.
+            return !RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase);
+        }
 
         private static SemaphoreSlim GetConnectFlowGateForChip(int chip)
             => chip == 1 ? Chip1ConnectLoginGate : Chip0ConnectLoginGate;
