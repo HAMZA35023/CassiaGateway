@@ -164,9 +164,10 @@ internal static class BlueZHelpers
     /// Priority:
     /// <list type="number">
     ///   <item>Active-connection pin (<see cref="SetConnectedAdapter"/>) — never disturb a live session.</item>
-    ///   <item>Round-robin across all adapters in <see cref="RuntimeVariables.LINUX_BLE_ADAPTERS"/>
-    ///         when more than one adapter is configured.  Each call advances the counter so that
-    ///         parallel upgrade workers are spread evenly across adapters.</item>
+    ///   <item>Least-loaded adapter among <see cref="RuntimeVariables.LINUX_BLE_ADAPTERS"/>, based on
+    ///         active connection pins in <c>_connectedAdapters</c>.</item>
+    ///   <item>If load ties, prefer the last-scanned adapter for this MAC when available, else
+    ///         round-robin across the tied set.</item>
     ///   <item>Last-scanned adapter (<c>_macToAdapter</c>) / global default — single-adapter fallback.</item>
     /// </list>
     /// </para>
@@ -177,8 +178,8 @@ internal static class BlueZHelpers
         if (_connectedAdapters.TryGetValue(mac, out var pinned))
             return pinned;
 
-        var adapters = RuntimeVariables.GetLinuxBleAdapterList();
-        if (adapters.Length <= 1)
+        var configuredAdapters = RuntimeVariables.GetLinuxBleAdapterList();
+        if (configuredAdapters.Length <= 1)
         {
             // Single-adapter config: keep existing behaviour (last-scanned or default).
             return _macToAdapter.TryGetValue(mac, out var scanned)
@@ -186,9 +187,65 @@ internal static class BlueZHelpers
                 : RuntimeVariables.LINUX_BLE_ADAPTER;
         }
 
-        // Round-robin across all configured adapters to spread parallel workers.
-        var idx = (uint)Interlocked.Increment(ref _connectRoundRobin) % (uint)adapters.Length;
-        return adapters[(int)idx];
+        var adapters = new List<string>(configuredAdapters.Length);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var adapter in configuredAdapters)
+        {
+            if (string.IsNullOrWhiteSpace(adapter))
+                continue;
+            if (seen.Add(adapter))
+                adapters.Add(adapter);
+        }
+
+        if (adapters.Count == 0)
+            return RuntimeVariables.LINUX_BLE_ADAPTER;
+
+        if (adapters.Count == 1)
+            return adapters[0];
+
+        // Count active pinned sessions per configured adapter.
+        var loadByAdapter = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var adapter in adapters)
+            loadByAdapter[adapter] = 0;
+
+        foreach (var (_, connectedAdapter) in _connectedAdapters)
+        {
+            if (!string.IsNullOrWhiteSpace(connectedAdapter) &&
+                loadByAdapter.TryGetValue(connectedAdapter, out var inUse))
+            {
+                loadByAdapter[connectedAdapter] = inUse + 1;
+            }
+        }
+
+        var minLoad = int.MaxValue;
+        foreach (var adapter in adapters)
+        {
+            int inUse = loadByAdapter[adapter];
+            if (inUse < minLoad)
+                minLoad = inUse;
+        }
+
+        var leastLoaded = new List<string>(adapters.Count);
+        foreach (var adapter in adapters)
+        {
+            if (loadByAdapter[adapter] == minLoad)
+                leastLoaded.Add(adapter);
+        }
+
+        // If the scanner already sees this MAC on one of the least-loaded adapters,
+        // keep that path to reduce adapter hopping between retries.
+        if (_macToAdapter.TryGetValue(mac, out var scannedAdapter))
+        {
+            foreach (var adapter in leastLoaded)
+            {
+                if (string.Equals(adapter, scannedAdapter, StringComparison.OrdinalIgnoreCase))
+                    return adapter;
+            }
+        }
+
+        // Tie-break with round-robin among least-loaded adapters.
+        var idx = (uint)Interlocked.Increment(ref _connectRoundRobin) % (uint)leastLoaded.Count;
+        return leastLoaded[(int)idx];
     }
 
     /// <summary>
