@@ -112,6 +112,12 @@ namespace AccessAPP
         public static int UPGRADE_LOGIN_DELAY_AFTER_CONNECT_MS = 800;
         // Delay after login before reading firmware version.
         public static int UPGRADE_DELAY_AFTER_LOGIN_BEFORE_FW_READ_MS = 5000;
+        // Precheck FW-read login timeout (connected-session path).
+        public static int UPGRADE_PRECHECK_LOGIN_ATTEMPT_TIMEOUT_MS = 2000;
+        // Precheck FW-read: extra settle delay before login.
+        public static int UPGRADE_PRECHECK_LOGIN_SETTLE_DELAY_MS = 0;
+        // Precheck FW-read: delay after login before first FW read.
+        public static int UPGRADE_PRECHECK_DELAY_AFTER_LOGIN_BEFORE_FW_READ_MS = 0;
         // Delay before post-upgrade firmware verification read.
         public static int UPGRADE_POST_UPGRADE_FW_READ_DELAY_MS = 3000;
         // Firmware read attempts (per part).
@@ -134,6 +140,12 @@ namespace AccessAPP
         public static int UPGRADE_SETTINGS_BACKUP_RETRY_DELAY_MS = 2000;
         // Max connect attempts per step.
         public static int UPGRADE_CONNECT_MAX_ATTEMPTS = 10;
+        // Precheck probe connect: tighter cap to avoid long stalls before upgrade starts.
+        public static int UPGRADE_PRECHECK_PROBE_CONNECT_MAX_ATTEMPTS = 2;
+        // Delay between precheck probe connect retries.
+        public static int UPGRADE_PRECHECK_PROBE_CONNECT_RETRY_DELAY_MS = 500;
+        // Timeout per precheck probe connect attempt.
+        public static int UPGRADE_PRECHECK_PROBE_CONNECT_ATTEMPT_TIMEOUT_MS = 4500;
         // Enable optimized flow that reuses sessions and reduces reconnects.
         public static bool UPGRADE_OPTIMIZE_RECONNECT_FLOW = true;
         // Trust /gap/nodes connected state to recover after connect errors.

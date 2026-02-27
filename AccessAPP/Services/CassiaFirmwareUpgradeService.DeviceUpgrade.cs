@@ -71,13 +71,14 @@ try
                 var probeConnected = false;
                 var precheckSessionAlive = false;
                 var probe = await ConnectOnlyWithRetryAsync_Internal(
-                    maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
-                    delayMs: 2000,
+                    maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_PRECHECK_PROBE_CONNECT_MAX_ATTEMPTS),
+                    delayMs: Math.Max(100, RuntimeVariables.UPGRADE_PRECHECK_PROBE_CONNECT_RETRY_DELAY_MS),
                     stageName: "Connected (precheck probe)",
                     macAddress: mac,
                     firmwareVersion: dev.FirmwareVersion,
                     logId: logId,
-                    logSuccess: true
+                    logSuccess: true,
+                    connectAttemptTimeoutMsOverride: Math.Max(1000, RuntimeVariables.UPGRADE_PRECHECK_PROBE_CONNECT_ATTEMPT_TIMEOUT_MS)
                 ).ConfigureAwait(false);
 
                 probeConnected = probe.ok;

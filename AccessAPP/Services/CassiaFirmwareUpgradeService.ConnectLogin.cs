@@ -672,7 +672,8 @@ namespace AccessAPP.Services
                 string FirmwareVersion,
                 string logId,
                 bool logSuccess = true,
-                int? discoverGattOverride = null)
+                int? discoverGattOverride = null,
+                int? connectAttemptTimeoutMsOverride = null)
         {
             HttpStatusCode last = 0;
             string lastMsg = "Connect failed";
@@ -687,7 +688,9 @@ namespace AccessAPP.Services
 
                 try
                 {
-                    int timeoutMs = GetConnectAttemptTimeoutMs();
+                    int timeoutMs = connectAttemptTimeoutMsOverride.HasValue
+                        ? Math.Max(1000, connectAttemptTimeoutMsOverride.Value)
+                        : GetConnectAttemptTimeoutMs();
                     using var cts = new CancellationTokenSource(timeoutMs);
 
                     if (ShouldUsePerChipConnectGate())

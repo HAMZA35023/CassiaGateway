@@ -80,8 +80,18 @@ namespace AccessAPP.Services
 	        string firmwareVersion,
 	        string? logId,
 	        bool logSuccess = true,
-	        int? discoverGattOverride = null)
-	        => ConnectOnlyWithRetryAsync(maxAttempts, delayMs, stageName, macAddress, firmwareVersion, logId ?? "", logSuccess, discoverGattOverride);
+	        int? discoverGattOverride = null,
+            int? connectAttemptTimeoutMsOverride = null)
+	        => ConnectOnlyWithRetryAsync(
+                maxAttempts,
+                delayMs,
+                stageName,
+                macAddress,
+                firmwareVersion,
+                logId ?? "",
+                logSuccess,
+                discoverGattOverride,
+                connectAttemptTimeoutMsOverride);
 
 	    internal async Task<(bool Success, int StatusCode, string Message)> ConnectAndLoginWithRetryForPipelineAsync(
 	        string gatewayIpAddress,
