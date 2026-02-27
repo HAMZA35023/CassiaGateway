@@ -203,9 +203,11 @@ namespace AccessAPP
         public static int UPGRADE_ACTOR_BOOTMODE_CHECK_TIMEOUT_MS = 120000; // ms
         public static int UPGRADE_ACTOR_POST_BOOTMODE_DELAY_MS = 5000;
         // Actor upload retries and pacing (actor-only)
-        public static int UPGRADE_ACTOR_UPLOAD_MAX_ATTEMPTS = 1;
+        public static int UPGRADE_ACTOR_UPLOAD_MAX_ATTEMPTS = 2;
         public static int UPGRADE_ACTOR_UPLOAD_RETRY_DELAY_MS = 3000;
         public static int UPGRADE_ACTOR_WRITE_SLEEP_MS = 1;
+        // Read callback wait for incoming programming notification data (sensor/bootloader/actor).
+        public static int UPGRADE_PROGRAMMING_NOTIFICATION_WAIT_MS = 30000;
 
         // BLE backend selection.
         // "cassia"       = use the Cassia gateway REST/SSE API (default).
