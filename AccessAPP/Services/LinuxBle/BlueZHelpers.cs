@@ -270,6 +270,13 @@ internal static class BlueZHelpers
         finally { _proxySem.Release(); }
     }
 
+    private static void InvalidateAdapterProxy(string adapter)
+    {
+        if (string.IsNullOrWhiteSpace(adapter))
+            return;
+        _adapterProxies.TryRemove(adapter, out _);
+    }
+
     /// <summary>
     /// Best-effort guard to ensure LE discovery is running on the adapter.
     /// Useful when BlueZ reports a device path as UnknownObject and we need
@@ -286,42 +293,61 @@ internal static class BlueZHelpers
 
         var adapterObj = await GetAdapterAsync(adapter);
 
-        // Keep discovery in LE mode and allow repeated advertisements.
-        try
+        static bool IsRecoverableStartError(Tmds.DBus.DBusException ex) =>
+            ex.ErrorName == "org.bluez.Error.Failed" ||
+            ex.ErrorName == "org.bluez.Error.NotReady" ||
+            ex.ErrorName == "org.bluez.Error.NotAuthorized";
+
+        async Task<bool> IsAlreadyDiscoveringAsync(IAdapter1 adp)
         {
-            await adapterObj.SetDiscoveryFilterAsync(new Dictionary<string, object>
+            try
             {
-                ["Transport"] = "le",
-                ["DuplicateData"] = true
-            });
+                using var discoveringCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                discoveringCts.CancelAfter(TimeSpan.FromSeconds(2));
+                return await adp.GetAsync<bool>("Discovering").WaitAsync(discoveringCts.Token);
+            }
+            catch
+            {
+                return false;
+            }
         }
-        catch (Exception ex)
+
+        async Task TrySetDiscoveryFilterAsync(IAdapter1 adp)
         {
-            logger?.LogDebug(ex, "LinuxBLE scan: SetDiscoveryFilter failed on {Adapter}; continuing", adapter);
+            try
+            {
+                await adp.SetDiscoveryFilterAsync(new Dictionary<string, object>
+                {
+                    ["Transport"] = "le",
+                    ["DuplicateData"] = true
+                });
+            }
+            catch (Exception ex)
+            {
+                logger?.LogDebug(ex, "LinuxBLE scan: SetDiscoveryFilter failed on {Adapter}; continuing", adapter);
+            }
         }
+
+        // Fast path: avoid churn when discovery is already active.
+        if (await IsAlreadyDiscoveringAsync(adapterObj))
+        {
+            logger?.LogDebug("LinuxBLE scan: discovery already active on {Adapter}", adapter);
+            return;
+        }
+
+        await TrySetDiscoveryFilterAsync(adapterObj);
 
         try
         {
-            await adapterObj.StartDiscoveryAsync().WaitAsync(ct);
+            using var startCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            startCts.CancelAfter(TimeSpan.FromSeconds(5));
+            await adapterObj.StartDiscoveryAsync().WaitAsync(startCts.Token);
             logger?.LogInformation("LinuxBLE scan: discovery started on {Adapter}", adapter);
             return;
         }
         catch (Tmds.DBus.DBusException ex) when (ex.ErrorName == "org.bluez.Error.InProgress")
         {
-            // InProgress can be stale; verify Discovering and force restart if needed.
-            bool discovering = false;
-            try
-            {
-                using var discoveringCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                discoveringCts.CancelAfter(TimeSpan.FromSeconds(2));
-                discovering = await adapterObj.GetAsync<bool>("Discovering").WaitAsync(discoveringCts.Token);
-            }
-            catch
-            {
-                // best-effort
-            }
-
-            if (discovering)
+            if (await IsAlreadyDiscoveringAsync(adapterObj))
             {
                 logger?.LogDebug("LinuxBLE scan: discovery already active on {Adapter}", adapter);
                 return;
@@ -330,25 +356,63 @@ internal static class BlueZHelpers
             logger?.LogWarning(
                 "LinuxBLE scan: StartDiscovery returned InProgress but Discovering=false on {Adapter}; forcing restart",
                 adapter);
-
-            try
-            {
-                using var stopCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                stopCts.CancelAfter(TimeSpan.FromSeconds(2));
-                await adapterObj.StopDiscoveryAsync().WaitAsync(stopCts.Token);
-            }
-            catch
-            {
-                // best-effort
-            }
-
-            try { await Task.Delay(150, ct); } catch (OperationCanceledException) { return; }
-
-            using var restartCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            restartCts.CancelAfter(TimeSpan.FromSeconds(5));
-            await adapterObj.StartDiscoveryAsync().WaitAsync(restartCts.Token);
-            logger?.LogInformation("LinuxBLE scan: discovery restarted on {Adapter}", adapter);
         }
+        catch (Tmds.DBus.DBusException ex) when (IsRecoverableStartError(ex))
+        {
+            if (await IsAlreadyDiscoveringAsync(adapterObj))
+            {
+                logger?.LogDebug(
+                    "LinuxBLE scan: StartDiscovery returned {ErrorName} on {Adapter} but Discovering=true; continuing",
+                    ex.ErrorName, adapter);
+                return;
+            }
+
+            logger?.LogWarning(
+                "LinuxBLE scan: StartDiscovery transient failure on {Adapter} ({ErrorName}) — forcing restart",
+                adapter, ex.ErrorName);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger?.LogDebug(ex, "LinuxBLE scan: StartDiscovery failed on {Adapter}; forcing restart", adapter);
+        }
+
+        // Restart path (best effort): stop, refresh adapter proxy, and start again.
+        try
+        {
+            using var stopCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            stopCts.CancelAfter(TimeSpan.FromSeconds(2));
+            await adapterObj.StopDiscoveryAsync().WaitAsync(stopCts.Token);
+        }
+        catch
+        {
+            // best-effort
+        }
+
+        try
+        {
+            await Task.Delay(150, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        InvalidateAdapterProxy(adapter);
+        adapterObj = await GetAdapterAsync(adapter);
+        await TrySetDiscoveryFilterAsync(adapterObj);
+
+        using var restartCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        restartCts.CancelAfter(TimeSpan.FromSeconds(5));
+        await adapterObj.StartDiscoveryAsync().WaitAsync(restartCts.Token);
+
+        if (await IsAlreadyDiscoveringAsync(adapterObj))
+            logger?.LogInformation("LinuxBLE scan: discovery restarted on {Adapter}", adapter);
+        else
+            logger?.LogWarning("LinuxBLE scan: discovery restart issued on {Adapter} but Discovering=false", adapter);
     }
 
     /// <summary>

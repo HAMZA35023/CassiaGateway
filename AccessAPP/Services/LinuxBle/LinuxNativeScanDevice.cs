@@ -129,6 +129,7 @@ public class LinuxNativeScanDevice : IDisposable
         // BlueZ can occasionally drop out of active discovery without fully tearing down
         // our watchers; periodically re-assert discovery so manual "scan on" is not needed.
         var nextDiscoveryKeepAliveUtc = DateTime.UtcNow;
+        int consecutiveKeepAliveFailures = 0;
         while (!_disposed)
         {
             if (DateTime.UtcNow >= nextDiscoveryKeepAliveUtc)
@@ -136,10 +137,27 @@ public class LinuxNativeScanDevice : IDisposable
                 try
                 {
                     await BlueZHelpers.EnsureDiscoveryRunningAsync(adapter, _logger);
+                    if (consecutiveKeepAliveFailures > 0)
+                    {
+                        _logger.LogInformation(
+                            "LinuxBLE scan: discovery keepalive recovered on {Adapter} after {Failures} failure(s)",
+                            adapter, consecutiveKeepAliveFailures);
+                    }
+                    consecutiveKeepAliveFailures = 0;
                 }
                 catch (Exception ex)
                 {
+                    consecutiveKeepAliveFailures++;
                     _logger.LogDebug(ex, "LinuxBLE scan: discovery keepalive failed on {Adapter}", adapter);
+                    // If keepalive keeps failing, restart the whole adapter scan session so
+                    // watchers/object-state are rebuilt from a clean baseline.
+                    if (consecutiveKeepAliveFailures >= 6)
+                    {
+                        _logger.LogWarning(
+                            "LinuxBLE scan: discovery keepalive failed {Failures} consecutive times on {Adapter}; restarting scan session",
+                            consecutiveKeepAliveFailures, adapter);
+                        throw;
+                    }
                 }
                 nextDiscoveryKeepAliveUtc = DateTime.UtcNow.AddSeconds(10);
             }
