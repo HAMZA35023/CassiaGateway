@@ -393,13 +393,14 @@ public class LinuxBleConnectionService : IBleConnectionService
             // Avoid first-login races: ensure StartNotify is active before the first write.
             if (_notificationService is LinuxBleNotificationService linuxNotify)
             {
-                _logger.LogDebug("LinuxBLE Login: {Mac} - waiting for notify readiness before login write", macAddress);
+                int notifyReadyTimeoutMs = Math.Max(1000, RuntimeVariables.LINUX_BLE_LOGIN_NOTIFY_READY_TIMEOUT_MS);
+                _logger.LogDebug("LinuxBLE Login: {Mac} - waiting for notify readiness before login write (timeout={TimeoutMs}ms)", macAddress, notifyReadyTimeoutMs);
                 try
                 {
                     // Bound notify readiness wait so slow ServicesResolved/StartNotify paths do not
                     // consume the entire login timeout budget before we even send the login write.
                     using var notifyReadyCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                    notifyReadyCts.CancelAfter(TimeSpan.FromSeconds(3));
+                    notifyReadyCts.CancelAfter(notifyReadyTimeoutMs);
                     await linuxNotify.EnsureNotifyingReadyAsync(macAddress, notifyReadyCts.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -408,11 +409,21 @@ public class LinuxBleConnectionService : IBleConnectionService
                 }
                 catch (OperationCanceledException)
                 {
-                    _logger.LogDebug("LinuxBLE Login: {Mac} notify readiness timed out after 3s; continuing with login write", macAddress);
+                    _logger.LogWarning("LinuxBLE Login: {Mac} notify readiness timed out after {TimeoutMs}ms; aborting login write", macAddress, notifyReadyTimeoutMs);
+                    return MakeLoginTimeout(
+                        macAddress,
+                        $"Notify readiness timeout before login write ({notifyReadyTimeoutMs} ms).",
+                        HttpStatusCode.RequestTimeout,
+                        "Canceled");
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogDebug(ex, "LinuxBLE Login: {Mac} notify readiness wait failed (continuing with write)", macAddress);
+                    _logger.LogWarning(ex, "LinuxBLE Login: {Mac} notify readiness wait failed; aborting login write", macAddress);
+                    return MakeLoginTimeout(
+                        macAddress,
+                        "Notify readiness failed before login write.",
+                        HttpStatusCode.RequestTimeout,
+                        "Canceled");
                 }
             }
 

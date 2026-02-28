@@ -284,6 +284,8 @@ namespace AccessAPP
         public static int LINUX_BLE_WRITE_FIND_CHAR_TIMEOUT_MS = 1500;
         // Linux native BLE: max time to wait for command notification after a write (ms).
         public static int LINUX_BLE_DATA_NOTIFICATION_TIMEOUT_MS = 12000;
+        // Linux native BLE: max time to wait for notify pipeline readiness before login write (ms).
+        public static int LINUX_BLE_LOGIN_NOTIFY_READY_TIMEOUT_MS = 5000;
 
         // Linux native BLE: request a shorter BLE connection interval after connecting using btmgmt/hcitool.
         // Reduces per-packet write latency from ~45 ms to 15–30 ms at the cost of slightly higher radio duty cycle.

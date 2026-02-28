@@ -466,7 +466,11 @@ namespace AccessAPP.Services
                         bool skipDisconnect = ShouldSkipDisconnectAfterFailedConnect(connectStatus);
 
                         if (touchedGateway && !skipDisconnect)
+                        {
                             await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, chip).ConfigureAwait(false);
+                            if (attempt >= 2)
+                                await _connectService.CleanupAfterFailedConnectAsync(macAddress).ConfigureAwait(false);
+                        }
                         else if (touchedGateway && skipDisconnect)
                             AppLog.Debug($"Connect+Login connect failure for {macAddress}: skipping per-attempt disconnect because status={(int)connectStatus} {connectStatus}.");
 
@@ -558,7 +562,11 @@ namespace AccessAPP.Services
                                 AppLog.Debug($"Connect+Login login failed for {macAddress} on attempt {attempt}/{maxAttempts}. Detail='{loginResult.Message}'. Retry delay={retryDelayMs}ms.");
 
                                 if (touchedGateway)
+                                {
                                     await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, chip).ConfigureAwait(false);
+                                    if (attempt >= 2)
+                                        await _connectService.CleanupAfterFailedConnectAsync(macAddress).ConfigureAwait(false);
+                                }
 
                                 UpgradeLogger.Log(logId, macAddress,
                                     $"Connect+Login failed on attempt {attempt}/{maxAttempts}. Disconnected chip {chip}. Retrying after {RetryDelayText(retryDelayMs)}.",
@@ -593,6 +601,8 @@ namespace AccessAPP.Services
                     if (touchedGateway)
                     {
                         await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, chip).ConfigureAwait(false);
+                        if (attempt >= 2)
+                            await _connectService.CleanupAfterFailedConnectAsync(macAddress).ConfigureAwait(false);
 
                         UpgradeLogger.Log(logId, macAddress,
                             $"Connect+Login timeout on attempt {attempt}/{maxAttempts}. Disconnected chip {chip}. Retrying after {RetryDelayText(retryDelayMs)}.",
@@ -618,7 +628,11 @@ namespace AccessAPP.Services
                         "Warn", firmwareVersion);
 
                     if (touchedGateway)
+                    {
                         await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, chip).ConfigureAwait(false);
+                        if (attempt >= 2)
+                            await _connectService.CleanupAfterFailedConnectAsync(macAddress).ConfigureAwait(false);
+                    }
 
                     if (touchedGateway)
                     {
@@ -650,6 +664,8 @@ namespace AccessAPP.Services
 
             int finalChip = GetChipForMac(macAddress);
             await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, finalChip).ConfigureAwait(false);
+            if (maxAttempts >= 2)
+                await _connectService.CleanupAfterFailedConnectAsync(macAddress).ConfigureAwait(false);
 
             UpgradeLogger.Log(logId, macAddress,
                 $"All Connect+Login attempts failed. Disconnected chip {finalChip}.",
