@@ -1103,7 +1103,8 @@ foreach (var s in ordered)
             string FirmwareVersion,
             string logId,
             string? pincode = null, // should be moved to firmware services
-            bool skipInitialConnect = false)
+            bool skipInitialConnect = false,
+            bool assumeBootMode = false)
         {
             AppLog.Info($"Processing Sensor Upgrade started->{nodeMac}");
 var response = new ServiceResponse();
@@ -1137,8 +1138,10 @@ var response = new ServiceResponse();
                 AppLog.Info($"ProcessingSensorUpgrade: skipping connect probe for {nodeMac} (already connected from caller).");
             }
 
-
-            bool isAlreadyInBootMode = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
+            bool checkedBootMode = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
+            bool isAlreadyInBootMode = assumeBootMode || checkedBootMode;
+            if (assumeBootMode && !checkedBootMode)
+                AppLog.Warn($"ProcessingSensorUpgrade: assumeBootMode requested but immediate boot mode check failed for {nodeMac}; proceeding with bootloader flow.");
 
             //var notificationService = new CassiaNotificationService(_configuration);
             if (isAlreadyInBootMode)

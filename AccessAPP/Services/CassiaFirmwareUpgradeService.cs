@@ -2121,7 +2121,29 @@ return resp;
                     // attempts fail.
                     if (attempt < bootJumpMaxAttempts)
                     {
-                        var reloginOk = await LoginWithRetryAsync().ConfigureAwait(false);
+                        // Before retrying login, do one extra boot-mode check to avoid
+                        // wasting time on login attempts that cannot succeed in bootloader mode.
+                        bool lateBootDetected = false;
+                        try
+                        {
+                            lateBootDetected = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
+                        }
+                        catch { }
+                        if (lateBootDetected)
+                        {
+                            UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Achieved (late verify before re-login)");
+                            return true;
+                        }
+
+                        // Keep this re-login light; if it fails, recovery reconnect below
+                        // performs another boot-mode check before deciding next action.
+                        var reloginOk = await EnsureLoginOnConnectedSessionUnlessBootModeAsync(
+                            nodeMac,
+                            pincode,
+                            logId,
+                            FirmwareVersion,
+                            stageName: "LoggedIn",
+                            maxAttempts: 1).ConfigureAwait(false);
                         if (!reloginOk)
                         {
                             AppLog.Warn($"EnsureBootMode: re-login failed for {nodeMac} on attempt {attempt}/{bootJumpMaxAttempts}. Running recovery reconnect+login before next jump.");
@@ -2175,7 +2197,16 @@ UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
                 // inside ProcessingSensorUpgrade. Reconnecting would disconnect the working
                 // BlueZ link and then fail to re-establish it (bootloader device not immediately
                 // ready for a new connection attempt).
-                return await ProcessingSensorUpgrade(nodeMac, bActor, isBootloader, DetectorType, FirmwareVersion, logId, pincode, skipInitialConnect: true);
+                return await ProcessingSensorUpgrade(
+                    nodeMac,
+                    bActor,
+                    isBootloader,
+                    DetectorType,
+                    FirmwareVersion,
+                    logId,
+                    pincode,
+                    skipInitialConnect: true,
+                    assumeBootMode: true);
             }
 
             // ----------------------------
@@ -2224,27 +2255,19 @@ UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
                 return response;
             }
 
-            // ----------------------------
-            // Disconnect and prepare for upgrade process
-            // ----------------------------
-            try
-            {
-                AppLog.Info("device disconnected and will reconnect after 3s");
-await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chip: GetChipForMac(nodeMac));
-                UpgradeLogger.Log(logId, nodeMac, "Disconnected", "Success");
-            }
-            catch (Exception ex)
-            {
-                UpgradeLogger.Log(logId, nodeMac, "Disconnected", $"Exception: {ex.Message}");
-                // continue anyway (device might already have dropped)
-            }
-
-            int bootJumpDelayMs = RuntimeVariables.UPGRADE_DELAY_AFTER_BOOT_JUMP_MS;
-            int postDisconnectDelay = 3000 + Math.Max(0, bootJumpDelayMs);
-            await Task.Delay(postDisconnectDelay);
-
-            // Now do the actual programming flow
-            return await ProcessingSensorUpgrade(nodeMac, bActor, isBootloader, DetectorType, FirmwareVersion, logId, pincode);
+            // Once boot mode is achieved, login is no longer possible/required.
+            // Keep the live session and continue straight into programming.
+            UpgradeLogger.Log(logId, nodeMac, "Connected", "Session kept for sensor programming after boot mode", FirmwareVersion);
+            return await ProcessingSensorUpgrade(
+                nodeMac,
+                bActor,
+                isBootloader,
+                DetectorType,
+                FirmwareVersion,
+                logId,
+                pincode,
+                skipInitialConnect: true,
+                assumeBootMode: true);
         }
         public async Task<ServiceResponse> UpgradeActorAsync(
             string nodeMac,
