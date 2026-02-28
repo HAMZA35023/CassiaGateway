@@ -491,15 +491,9 @@ public class LinuxBleConnectionService : IBleConnectionService
         var rw = new LinuxBleReadWriteService(
             _logger.CreateLogger<LinuxBleReadWriteService>());
 
-        HttpStatusCode writeStatus;
-        using (var wr = await rw.WriteBleMessageAsync(gatewayIpAddress, macAddress,
-                   RuntimeVariables.LINUX_BLE_CONTROL_HANDLE, value, "?noresponse=1"))
-        {
-            writeStatus = wr.StatusCode;
-        }
-
         var tcs = new TaskCompletionSource<DataResponseModel>();
         Guid token = Guid.Empty;
+        HttpStatusCode writeStatus = HttpStatusCode.RequestTimeout;
 
         token = _notificationService.Subscribe(macAddress, (_, data) =>
         {
@@ -513,18 +507,50 @@ public class LinuxBleConnectionService : IBleConnectionService
             });
         });
 
-        var completed = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromSeconds(120)));
-        _notificationService.Unsubscribe(macAddress, token);
-
-        if (completed == tcs.Task) return await tcs.Task;
-
-        return new DataResponseModel
+        try
         {
-            MacAddress = macAddress,
-            Data = "Timeout",
-            Status = HttpStatusCode.RequestTimeout,
-            Time = DateTimeOffset.Now.ToUnixTimeMilliseconds()
-        };
+            // Subscribe before write to avoid missing a fast response notification.
+            using (var wr = await rw.WriteBleMessageAsync(
+                       gatewayIpAddress,
+                       macAddress,
+                       RuntimeVariables.LINUX_BLE_CONTROL_HANDLE,
+                       value,
+                       "?noresponse=1"))
+            {
+                writeStatus = wr.StatusCode;
+            }
+
+            if (writeStatus != HttpStatusCode.OK)
+            {
+                return new DataResponseModel
+                {
+                    MacAddress = macAddress,
+                    Data = "WriteFailed",
+                    Status = writeStatus,
+                    Time = DateTimeOffset.Now.ToUnixTimeMilliseconds()
+                };
+            }
+
+            int timeoutMs = Math.Clamp(RuntimeVariables.LINUX_BLE_DATA_NOTIFICATION_TIMEOUT_MS, 2000, 120000);
+            var completed = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromMilliseconds(timeoutMs)));
+
+            if (completed == tcs.Task)
+                return await tcs.Task;
+
+            _logger.LogWarning("LinuxBLE DataRead: timeout waiting for notification for {Mac} after {TimeoutMs}ms", macAddress, timeoutMs);
+            return new DataResponseModel
+            {
+                MacAddress = macAddress,
+                Data = "Timeout",
+                Status = HttpStatusCode.RequestTimeout,
+                Time = DateTimeOffset.Now.ToUnixTimeMilliseconds()
+            };
+        }
+        finally
+        {
+            if (token != Guid.Empty)
+                _notificationService.Unsubscribe(macAddress, token);
+        }
     }
 
     // ── Light control ────────────────────────────────────────────────────────

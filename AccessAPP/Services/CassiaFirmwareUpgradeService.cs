@@ -131,6 +131,14 @@ namespace AccessAPP.Services
             {
                 try
                 {
+                    // Mode can flip between attempts (especially right after jump/reconnect).
+                    // Re-check every round so we stop trying login as soon as boot mode is active.
+                    if (CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress))
+                    {
+                        UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Skipped (bootloader mode, attempt {attempt}/{attempts})", firmwareVersion ?? "");
+                        return true;
+                    }
+
                     if (attempt == 1 && settleBeforeLoginMs > 0)
                     {
                         AppLog.Debug($"{stageName}: waiting {settleBeforeLoginMs}ms before login on connected session for {macAddress}.");
@@ -165,16 +173,35 @@ namespace AccessAPP.Services
 
                     AppLog.Debug($"{stageName}: login failed for {macAddress} on attempt {attempt}/{attempts}. Status={statusText}, pinRequired={pinReq}, pinAccepted={loginResult.ResponseBody.PinCodeAccepted}.");
                     UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Failed (attempt {attempt}/{attempts}) - Status={statusText}", firmwareVersion ?? "");
+
+                    // If login failed because device transitioned to boot mode, do not keep retrying.
+                    if (CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress))
+                    {
+                        UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Skipped (bootloader mode detected after failed login attempt {attempt}/{attempts})", firmwareVersion ?? "");
+                        return true;
+                    }
                 }
                 catch (OperationCanceledException)
                 {
                     AppLog.Debug($"{stageName}: login timeout for {macAddress} on attempt {attempt}/{attempts}.");
                     UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Timeout (attempt {attempt}/{attempts}, {loginTimeoutMs / 1000}s)", firmwareVersion ?? "");
+
+                    if (CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress))
+                    {
+                        UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Skipped (bootloader mode detected after timeout attempt {attempt}/{attempts})", firmwareVersion ?? "");
+                        return true;
+                    }
                 }
                 catch (Exception ex)
                 {
                     AppLog.Debug($"{stageName}: login exception for {macAddress} on attempt {attempt}/{attempts}: {ex.Message}");
                     UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Exception (attempt {attempt}/{attempts}): {ex.Message}", firmwareVersion ?? "");
+
+                    if (CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress))
+                    {
+                        UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Skipped (bootloader mode detected after exception attempt {attempt}/{attempts})", firmwareVersion ?? "");
+                        return true;
+                    }
                 }
 
                 if (attempt < attempts)

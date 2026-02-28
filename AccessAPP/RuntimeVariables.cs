@@ -138,6 +138,8 @@ namespace AccessAPP
         public static int UPGRADE_SETTINGS_BACKUP_RETRY_ROUNDS = 2;
         // Settings backup: delay between backup rounds.
         public static int UPGRADE_SETTINGS_BACKUP_RETRY_DELAY_MS = 2000;
+        // Settings restore/apply: max wait per BLE write action before the attempt is failed.
+        public static int UPGRADE_SETTINGS_RESTORE_WRITE_TIMEOUT_MS = 15000;
         // Max connect attempts per step.
         public static int UPGRADE_CONNECT_MAX_ATTEMPTS = 10;
         // Precheck probe connect: tighter cap to avoid long stalls before upgrade starts.
@@ -280,6 +282,8 @@ namespace AccessAPP
 
         // Linux native BLE: when writing, how long to wait for the characteristic handle to appear after connect (ms).
         public static int LINUX_BLE_WRITE_FIND_CHAR_TIMEOUT_MS = 1500;
+        // Linux native BLE: max time to wait for command notification after a write (ms).
+        public static int LINUX_BLE_DATA_NOTIFICATION_TIMEOUT_MS = 12000;
 
         // Linux native BLE: request a shorter BLE connection interval after connecting using btmgmt/hcitool.
         // Reduces per-packet write latency from ~45 ms to 15–30 ms at the cost of slightly higher radio duty cycle.

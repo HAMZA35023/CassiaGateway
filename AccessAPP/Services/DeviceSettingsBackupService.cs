@@ -791,14 +791,19 @@ return new ServiceResponse
             int maxAttempts = 3,
             int delayMs = 2000)
         {
+            int writeTimeoutMs = Math.Clamp(RuntimeVariables.UPGRADE_SETTINGS_RESTORE_WRITE_TIMEOUT_MS, 1000, 120000);
             for (int attempt = 1; attempt <= maxAttempts; attempt++)
             {
                 try
                 {
-                    var ok = await action().ConfigureAwait(false);
+                    var ok = await action().WaitAsync(TimeSpan.FromMilliseconds(writeTimeoutMs)).ConfigureAwait(false);
                     if (ok) return true;
 
                     AppLog.Warn($"[Restore] {label} failed (attempt {attempt}/{maxAttempts}).");
+                }
+                catch (TimeoutException)
+                {
+                    AppLog.Warn($"[Restore] {label} timed out (attempt {attempt}/{maxAttempts}, timeout={writeTimeoutMs}ms).");
                 }
                 catch (Exception ex)
                 {

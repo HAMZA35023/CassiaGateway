@@ -48,16 +48,27 @@ public class LinuxNativeScanDevice : IDisposable
 
     private async Task RunAdapterScanLoopAsync(string adapter)
     {
+        int consecutiveFailures = 0;
         while (!_disposed)
         {
             try
             {
                 await ScanAsync(adapter);
+                consecutiveFailures = 0;
             }
             catch (Exception ex) when (!_disposed)
             {
-                _logger.LogError(ex, "LinuxBLE scan: error in scan loop for {Adapter}, retrying in 5s", adapter);
-                await Task.Delay(5000);
+                consecutiveFailures++;
+                BlueZHelpers.InvalidateScanProxies(adapter);
+
+                var retryDelayMs = Math.Min(30000, 5000 * Math.Max(1, consecutiveFailures));
+                _logger.LogError(
+                    ex,
+                    "LinuxBLE scan: error in scan loop for {Adapter}, retrying in {DelayMs}ms (failure {FailureCount})",
+                    adapter,
+                    retryDelayMs,
+                    consecutiveFailures);
+                await Task.Delay(retryDelayMs);
             }
         }
     }
@@ -65,18 +76,40 @@ public class LinuxNativeScanDevice : IDisposable
     private async Task ScanAsync(string adapter)
     {
         var adapterObj = await BlueZHelpers.GetAdapterAsync(adapter);
-        var objMgr = await BlueZHelpers.GetObjectManagerAsync();
         var deviceWatchers = new Dictionary<string, IDisposable>(StringComparer.OrdinalIgnoreCase);
         var deviceWatchersLock = new object();
 
         // The BlueZ adapter path prefix used to filter devices belonging to this adapter.
         var adapterPath = $"/org/bluez/{adapter}/";
 
-        // Set BLE-only discovery filter.
-        await BlueZHelpers.EnsureDiscoveryRunningAsync(adapter, _logger);
+        // Set BLE-only discovery filter (best effort). If BlueZ is temporarily
+        // unstable, continue and let keepalive retry instead of restarting
+        // the whole scan loop immediately.
+        try
+        {
+            await BlueZHelpers.EnsureDiscoveryRunningAsync(adapter, _logger);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "LinuxBLE scan: initial discovery ensure failed on {Adapter}; continuing with keepalive retries", adapter);
+        }
 
         // Process devices that were already cached in BlueZ from prior scans.
-        var existing = await objMgr.GetManagedObjectsAsync();
+        IDictionary<Tmds.DBus.ObjectPath, IDictionary<string, IDictionary<string, object>>> existing;
+        try
+        {
+            existing = await BlueZHelpers.GetManagedObjectsSafeAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "LinuxBLE scan: failed to read initial object snapshot on {Adapter}; continuing with live watchers only",
+                adapter);
+            BlueZHelpers.InvalidateScanProxies(adapter);
+            existing = new Dictionary<Tmds.DBus.ObjectPath, IDictionary<string, IDictionary<string, object>>>();
+        }
+
         foreach (var (path, interfaces) in existing)
         {
             var pathStr = path.ToString();
@@ -89,41 +122,68 @@ public class LinuxNativeScanDevice : IDisposable
             }
         }
 
-        // Watch for new devices — filter to this adapter's path prefix.
-        using var addedSub = await objMgr.WatchInterfacesAddedAsync(
-            args =>
+        // Watch for new/removed devices — filter to this adapter's path prefix.
+        IDisposable? addedSub = null;
+        IDisposable? removedSub = null;
+        const int maxWatcherAttachAttempts = 5;
+        for (int attempt = 1; attempt <= maxWatcherAttachAttempts && !_disposed; attempt++)
+        {
+            try
             {
-                var (path, interfaces) = args;
-                var pathStr = path.ToString();
-                if (!pathStr.StartsWith(adapterPath, StringComparison.OrdinalIgnoreCase)) return;
-                if (interfaces.TryGetValue("org.bluez.Device1", out var props))
-                {
-                    var mergedProps = MergeDevicePropsSnapshot(pathStr, props);
-                    TryProcessDevice(pathStr, mergedProps, adapter);
-                    _ = Task.Run(() => EnsureDeviceWatcherAsync(pathStr, adapter, deviceWatchers, deviceWatchersLock));
-                }
-            },
-            ex => _logger.LogError(ex, "LinuxBLE scan: InterfacesAdded error on {Adapter}", adapter));
+                var objMgr = await BlueZHelpers.GetObjectManagerAsync();
+                addedSub = await objMgr.WatchInterfacesAddedAsync(
+                    args =>
+                    {
+                        var (path, interfaces) = args;
+                        var pathStr = path.ToString();
+                        if (!pathStr.StartsWith(adapterPath, StringComparison.OrdinalIgnoreCase)) return;
+                        if (interfaces.TryGetValue("org.bluez.Device1", out var props))
+                        {
+                            var mergedProps = MergeDevicePropsSnapshot(pathStr, props);
+                            TryProcessDevice(pathStr, mergedProps, adapter);
+                            _ = Task.Run(() => EnsureDeviceWatcherAsync(pathStr, adapter, deviceWatchers, deviceWatchersLock));
+                        }
+                    },
+                    ex => _logger.LogError(ex, "LinuxBLE scan: InterfacesAdded error on {Adapter}", adapter));
 
-        using var removedSub = await objMgr.WatchInterfacesRemovedAsync(
-            args =>
+                removedSub = await objMgr.WatchInterfacesRemovedAsync(
+                    args =>
+                    {
+                        var (path, _) = args;
+                        var pathStr = path.ToString();
+                        if (!pathStr.StartsWith(adapterPath, StringComparison.OrdinalIgnoreCase))
+                            return;
+
+                        IDisposable? watcher = null;
+                        lock (deviceWatchersLock)
+                        {
+                            if (deviceWatchers.TryGetValue(pathStr, out watcher))
+                                deviceWatchers.Remove(pathStr);
+                        }
+
+                        watcher?.Dispose();
+                        RemoveDevicePropsSnapshot(pathStr);
+                    },
+                    ex => _logger.LogDebug(ex, "LinuxBLE scan: InterfacesRemoved error on {Adapter}", adapter));
+                break;
+            }
+            catch (Exception ex) when (attempt < maxWatcherAttachAttempts)
             {
-                var (path, _) = args;
-                var pathStr = path.ToString();
-                if (!pathStr.StartsWith(adapterPath, StringComparison.OrdinalIgnoreCase))
-                    return;
+                BlueZHelpers.InvalidateScanProxies(adapter);
+                var retryDelayMs = attempt * 400;
+                _logger.LogWarning(
+                    ex,
+                    "LinuxBLE scan: failed to attach ObjectManager watchers on {Adapter} (attempt {Attempt}/{MaxAttempts}); retrying in {DelayMs}ms",
+                    adapter,
+                    attempt,
+                    maxWatcherAttachAttempts,
+                    retryDelayMs);
+                await Task.Delay(retryDelayMs);
+            }
+        }
 
-                IDisposable? watcher = null;
-                lock (deviceWatchersLock)
-                {
-                    if (deviceWatchers.TryGetValue(pathStr, out watcher))
-                        deviceWatchers.Remove(pathStr);
-                }
-
-                watcher?.Dispose();
-                RemoveDevicePropsSnapshot(pathStr);
-            },
-            ex => _logger.LogDebug(ex, "LinuxBLE scan: InterfacesRemoved error on {Adapter}", adapter));
+        if (addedSub == null || removedSub == null)
+            throw new InvalidOperationException($"LinuxBLE scan: failed to attach ObjectManager watchers on {adapter}");
 
         // Keep scanning until paused or disposed.
         // BlueZ can occasionally drop out of active discovery without fully tearing down
@@ -153,6 +213,7 @@ public class LinuxNativeScanDevice : IDisposable
                     // watchers/object-state are rebuilt from a clean baseline.
                     if (consecutiveKeepAliveFailures >= 6)
                     {
+                        BlueZHelpers.InvalidateScanProxies(adapter);
                         _logger.LogWarning(
                             "LinuxBLE scan: discovery keepalive failed {Failures} consecutive times on {Adapter}; restarting scan session",
                             consecutiveKeepAliveFailures, adapter);
@@ -183,6 +244,9 @@ public class LinuxNativeScanDevice : IDisposable
         {
             try { w.Dispose(); } catch { /* best-effort */ }
         }
+
+        try { addedSub.Dispose(); } catch { /* best-effort */ }
+        try { removedSub.Dispose(); } catch { /* best-effort */ }
 
         ClearDevicePropsSnapshotForAdapter(adapterPath);
         try
