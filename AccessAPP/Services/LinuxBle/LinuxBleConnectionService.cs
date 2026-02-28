@@ -215,6 +215,27 @@ public class LinuxBleConnectionService : IBleConnectionService
                 }
             }
 
+            // Pre-arm notifications on connect so the first login write does not race StartNotify.
+            if (_notificationService is LinuxBleNotificationService linuxNotify)
+            {
+                try
+                {
+                    int notifyWarmTimeoutMs = Math.Clamp(RuntimeVariables.LINUX_BLE_LOGIN_NOTIFY_READY_TIMEOUT_MS, 1000, 10000);
+                    using var notifyWarmCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    notifyWarmCts.CancelAfter(notifyWarmTimeoutMs);
+                    await linuxNotify.EnsureNotifyingReadyAsync(macAddress, notifyWarmCts.Token).ConfigureAwait(false);
+                    _logger.LogDebug("LinuxBLE: pre-armed notify pipeline for {Mac} on connect", macAddress);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "LinuxBLE: pre-arm notify pipeline failed for {Mac} (non-fatal)", macAddress);
+                }
+            }
+
             // Request shorter connection interval to reduce per-round-trip latency during writes.
             // Disabled by default (LINUX_BLE_ENABLE_CI_UPDATE=false): btmgmt conn-update can cause
             // some device firmware to disconnect immediately after receiving the L2CAP/LLCP request.

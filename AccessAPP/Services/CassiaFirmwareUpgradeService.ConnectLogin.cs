@@ -178,6 +178,12 @@ namespace AccessAPP.Services
                     var statusText = loginResult.Status?.ToString() ?? "";
                     bool statusOk = string.Equals(statusText, "OK", StringComparison.OrdinalIgnoreCase);
                     bool pinOk = !pincodeReq || loginResult.ResponseBody.PinCodeAccepted;
+                    string responseData = "";
+                    try
+                    {
+                        responseData = loginResult.ResponseBody?.Data?.ToString() ?? "";
+                    }
+                    catch { /* ignore dynamic binding issues */ }
 
                     if (statusOk && pinOk)
                     {
@@ -193,7 +199,18 @@ namespace AccessAPP.Services
                     lastStatus = statusText;
                     lastMessage = pincodeReq && !pinOk
                         ? "Pincode required/invalid."
-                        : $"Status={statusText}";
+                        : string.IsNullOrWhiteSpace(responseData)
+                            ? $"Status={statusText}"
+                            : $"Status={statusText}; Msg={responseData}";
+
+                    bool stopSameSessionRetries =
+                        RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(statusText, "Canceled", StringComparison.OrdinalIgnoreCase);
+                    if (stopSameSessionRetries)
+                    {
+                        AppLog.Debug($"Login attempt for {macAddress}: status=Canceled on attempt {attempt}/{attempts}; stopping same-session retries and forcing reconnect.");
+                        break;
+                    }
                 }
                 catch (OperationCanceledException)
                 {
@@ -202,6 +219,12 @@ namespace AccessAPP.Services
 
                     lastStatus = "Timeout";
                     lastMessage = $"Login timed out after {timeoutMs / 1000}s.";
+
+                    if (RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase))
+                    {
+                        AppLog.Debug($"Login attempt for {macAddress}: timeout on attempt {attempt}/{attempts}; stopping same-session retries and forcing reconnect.");
+                        break;
+                    }
                 }
                 catch (Exception ex)
                 {

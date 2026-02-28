@@ -163,6 +163,12 @@ namespace AccessAPP.Services
                     var statusText = loginResult.Status?.ToString() ?? "";
                     bool statusOk = string.Equals(statusText, "OK", StringComparison.OrdinalIgnoreCase);
                     bool pinOk = !pinReq || loginResult.ResponseBody.PinCodeAccepted;
+                    string responseData = "";
+                    try
+                    {
+                        responseData = loginResult.ResponseBody?.Data?.ToString() ?? "";
+                    }
+                    catch { /* ignore dynamic binding issues */ }
 
                     if (statusOk && pinOk)
                     {
@@ -171,8 +177,20 @@ namespace AccessAPP.Services
                         return true;
                     }
 
-                    AppLog.Debug($"{stageName}: login failed for {macAddress} on attempt {attempt}/{attempts}. Status={statusText}, pinRequired={pinReq}, pinAccepted={loginResult.ResponseBody.PinCodeAccepted}.");
-                    UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Failed (attempt {attempt}/{attempts}) - Status={statusText}", firmwareVersion ?? "");
+                    AppLog.Debug($"{stageName}: login failed for {macAddress} on attempt {attempt}/{attempts}. Status={statusText}, pinRequired={pinReq}, pinAccepted={loginResult.ResponseBody.PinCodeAccepted}, data='{responseData}'.");
+                    if (!string.IsNullOrWhiteSpace(responseData))
+                        UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Failed (attempt {attempt}/{attempts}) - Status={statusText} - {responseData}", firmwareVersion ?? "");
+                    else
+                        UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Failed (attempt {attempt}/{attempts}) - Status={statusText}", firmwareVersion ?? "");
+
+                    bool stopSameSessionRetries =
+                        RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(statusText, "Canceled", StringComparison.OrdinalIgnoreCase);
+                    if (stopSameSessionRetries)
+                    {
+                        AppLog.Debug($"{stageName}: status=Canceled for {macAddress} on attempt {attempt}/{attempts}; stopping same-session retries and forcing reconnect path.");
+                        break;
+                    }
 
                     // If login failed because device transitioned to boot mode, do not keep retrying.
                     if (CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress))
@@ -185,6 +203,12 @@ namespace AccessAPP.Services
                 {
                     AppLog.Debug($"{stageName}: login timeout for {macAddress} on attempt {attempt}/{attempts}.");
                     UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Timeout (attempt {attempt}/{attempts}, {loginTimeoutMs / 1000}s)", firmwareVersion ?? "");
+
+                    if (RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase))
+                    {
+                        AppLog.Debug($"{stageName}: timeout for {macAddress} on attempt {attempt}/{attempts}; stopping same-session retries and forcing reconnect path.");
+                        break;
+                    }
 
                     if (CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress))
                     {
@@ -2437,10 +2461,29 @@ UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
             // ----------------------------
             if (!await LoginWithRetryAsync())
             {
-                response.Success = false;
-                response.StatusCode = 401;
-                response.Message = "Failed to login to the device.";
-                return response;
+                UpgradeLogger.Log(logId, nodeMac, "LoggedIn", "Failed on connected session; fallback Connect+Login", FirmwareVersion);
+                AppLog.Warn($"Actor pre-upgrade login failed on connected session for {nodeMac}. Trying Connect+Login fallback.");
+
+                var fallback = await ConnectAndLoginWithRetryAsync(
+                    _gatewayIpAddress,
+                    _gatewayPort,
+                    nodeMac,
+                    pincode,
+                    logId,
+                    FirmwareVersion,
+                    maxAttempts: Math.Min(3, Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS)),
+                    delayBetweenAttemptsMs: 4000,
+                    bootModeIsRetryable: false).ConfigureAwait(false);
+
+                if (!fallback.Success)
+                {
+                    response.Success = false;
+                    response.StatusCode = fallback.StatusCode == 0 ? 401 : fallback.StatusCode;
+                    response.Message = string.IsNullOrWhiteSpace(fallback.Message)
+                        ? "Failed to login to the device."
+                        : fallback.Message;
+                    return response;
+                }
             }
 
             AppLog.Info($"Logged into device...{nodeMac}");
