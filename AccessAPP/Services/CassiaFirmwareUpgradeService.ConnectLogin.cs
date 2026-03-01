@@ -204,7 +204,7 @@ namespace AccessAPP.Services
                             : $"Status={statusText}; Msg={responseData}";
 
                     bool stopSameSessionRetries =
-                        RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase) &&
+                        _connectService is LinuxBle.LinuxBleConnectionService &&
                         string.Equals(statusText, "Canceled", StringComparison.OrdinalIgnoreCase);
                     if (stopSameSessionRetries)
                     {
@@ -220,7 +220,7 @@ namespace AccessAPP.Services
                     lastStatus = "Timeout";
                     lastMessage = $"Login timed out after {timeoutMs / 1000}s.";
 
-                    if (RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase))
+                    if (_connectService is LinuxBle.LinuxBleConnectionService)
                     {
                         AppLog.Debug($"Login attempt for {macAddress}: timeout on attempt {attempt}/{attempts}; stopping same-session retries and forcing reconnect.");
                         break;

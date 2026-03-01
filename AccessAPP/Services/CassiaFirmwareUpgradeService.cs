@@ -184,7 +184,7 @@ namespace AccessAPP.Services
                         UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Failed (attempt {attempt}/{attempts}) - Status={statusText}", firmwareVersion ?? "");
 
                     bool stopSameSessionRetries =
-                        RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase) &&
+                        _connectService is LinuxBle.LinuxBleConnectionService &&
                         string.Equals(statusText, "Canceled", StringComparison.OrdinalIgnoreCase);
                     if (stopSameSessionRetries)
                     {
@@ -204,7 +204,7 @@ namespace AccessAPP.Services
                     AppLog.Debug($"{stageName}: login timeout for {macAddress} on attempt {attempt}/{attempts}.");
                     UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Timeout (attempt {attempt}/{attempts}, {loginTimeoutMs / 1000}s)", firmwareVersion ?? "");
 
-                    if (RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase))
+                    if (_connectService is LinuxBle.LinuxBleConnectionService)
                     {
                         AppLog.Debug($"{stageName}: timeout for {macAddress} on attempt {attempt}/{attempts}; stopping same-session retries and forcing reconnect path.");
                         break;

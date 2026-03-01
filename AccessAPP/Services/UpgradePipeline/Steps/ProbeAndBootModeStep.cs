@@ -72,7 +72,8 @@ internal sealed class ProbeAndBootModeStep : IDeviceUpgradeStep
         }
 
         ctx.ChipId = svc.GetChipForMac(ctx.MacAddress);
-        string chipOrAdapter = RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase)
+        bool linuxNativeBackend = svc.ConnectService is AccessAPP.Services.LinuxBle.LinuxBleConnectionService;
+        string chipOrAdapter = linuxNativeBackend
             ? AccessAPP.Services.LinuxBle.BlueZHelpers.GetDeviceAdapter(ctx.MacAddress)
             : $"Chip {ctx.ChipId}";
         UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, $"Using {chipOrAdapter}", "info");
