@@ -2006,12 +2006,15 @@ return resp;
             int connectMaxAttempts = Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS);
             const int loginMaxAttempts = 3;
             const int bootJumpMaxAttempts = 5;
+            bool linuxNativeBackend = _connectService is LinuxBle.LinuxBleConnectionService;
 
-            int? BootJumpDiscoverGattOverride()
+            int? BootJumpDiscoverGattOverride(bool forceCassiaBootRefresh = false)
             {
                 int v = RuntimeVariables.UPGRADE_CONNECT_DISCOVER_GATT_AFTER_BOOT_JUMP;
-                if (v < 0) return null;
-                return v <= 0 ? 0 : 1;
+                int? discover = v < 0 ? null : (v <= 0 ? 0 : 1);
+                if (forceCassiaBootRefresh && !linuxNativeBackend)
+                    return 1;
+                return discover;
             }
 
             async Task<bool> ConnectWithRetryAsync(string stepName, int? discoverGattOverride = null)
@@ -2050,7 +2053,7 @@ return resp;
                     int nextAttempt = Math.Min(bootJumpMaxAttempts, currentAttempt + 1);
                     string reconnectStage = $"Connected (jump retry recovery {nextAttempt}/{bootJumpMaxAttempts})";
 
-                    if (!await ConnectWithRetryAsync(reconnectStage, BootJumpDiscoverGattOverride()).ConfigureAwait(false))
+                    if (!await ConnectWithRetryAsync(reconnectStage, BootJumpDiscoverGattOverride(forceCassiaBootRefresh: true)).ConfigureAwait(false))
                     {
                         AppLog.Warn($"EnsureBootMode: recovery connect failed for {nodeMac} before jump attempt {nextAttempt}/{bootJumpMaxAttempts}.");
                         return (false, false);
@@ -2118,7 +2121,7 @@ return resp;
                     await Task.Delay(jumpDelay);
 
                     // Reconnect after jump (robust)
-                    if (!await ConnectWithRetryAsync("Connect After JumpToBoot", BootJumpDiscoverGattOverride()))
+                    if (!await ConnectWithRetryAsync("Connect After JumpToBoot", BootJumpDiscoverGattOverride(forceCassiaBootRefresh: true)))
                     {
                         UpgradeLogger.Log(logId, nodeMac, "Connect After JumpToBoot", $"Failed (attempt {attempt}/{bootJumpMaxAttempts})");
                         await Task.Delay(3000);
@@ -2242,12 +2245,36 @@ return resp;
             {
                 AppLog.Info($"Device is already in boot mode. -> {nodeMac}");
 UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
-                await Task.Delay(3000);
+                if (linuxNativeBackend)
+                {
+                    await Task.Delay(3000).ConfigureAwait(false);
 
-                // Device is already connected by the caller above — skip the redundant reconnect
-                // inside ProcessingSensorUpgrade. Reconnecting would disconnect the working
-                // BlueZ link and then fail to re-establish it (bootloader device not immediately
-                // ready for a new connection attempt).
+                    // Linux-native: keep the live bootloader session to avoid reconnect failures.
+                    return await ProcessingSensorUpgrade(
+                        nodeMac,
+                        bActor,
+                        isBootloader,
+                        DetectorType,
+                        FirmwareVersion,
+                        logId,
+                        pincode,
+                        skipInitialConnect: true,
+                        assumeBootMode: true);
+                }
+
+                // Cassia: force a fresh bootloader connect before programming.
+                try
+                {
+                    AppLog.Info("Cassia boot-mode path: reconnecting before sensor programming.");
+                    await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chip: GetChipForMac(nodeMac)).ConfigureAwait(false);
+                    UpgradeLogger.Log(logId, nodeMac, "Disconnected", "Success (boot-mode reconnect preparation)", FirmwareVersion);
+                }
+                catch (Exception ex)
+                {
+                    UpgradeLogger.Log(logId, nodeMac, "Disconnected", $"Exception (boot-mode reconnect preparation): {ex.Message}", FirmwareVersion);
+                }
+                await Task.Delay(1000).ConfigureAwait(false);
+
                 return await ProcessingSensorUpgrade(
                     nodeMac,
                     bActor,
@@ -2256,7 +2283,7 @@ UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
                     FirmwareVersion,
                     logId,
                     pincode,
-                    skipInitialConnect: true,
+                    skipInitialConnect: false,
                     assumeBootMode: true);
             }
 
@@ -2306,9 +2333,39 @@ UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
                 return response;
             }
 
-            // Once boot mode is achieved, login is no longer possible/required.
-            // Keep the live session and continue straight into programming.
-            UpgradeLogger.Log(logId, nodeMac, "Connected", "Session kept for sensor programming after boot mode", FirmwareVersion);
+            if (linuxNativeBackend)
+            {
+                // Linux-native: login is no longer possible/required in boot mode.
+                // Keep the live session and continue straight into programming.
+                UpgradeLogger.Log(logId, nodeMac, "Connected", "Session kept for sensor programming after boot mode", FirmwareVersion);
+                return await ProcessingSensorUpgrade(
+                    nodeMac,
+                    bActor,
+                    isBootloader,
+                    DetectorType,
+                    FirmwareVersion,
+                    logId,
+                    pincode,
+                    skipInitialConnect: true,
+                    assumeBootMode: true);
+            }
+
+            // Cassia: reconnect after boot jump so GATT is rediscovered before bootloader upload.
+            try
+            {
+                AppLog.Info("Cassia post-jump path: disconnecting before sensor programming reconnect.");
+                await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chip: GetChipForMac(nodeMac)).ConfigureAwait(false);
+                UpgradeLogger.Log(logId, nodeMac, "Disconnected", "Success", FirmwareVersion);
+            }
+            catch (Exception ex)
+            {
+                UpgradeLogger.Log(logId, nodeMac, "Disconnected", $"Exception: {ex.Message}", FirmwareVersion);
+            }
+
+            int bootJumpDelayMs = Math.Max(0, RuntimeVariables.UPGRADE_DELAY_AFTER_BOOT_JUMP_MS);
+            int postDisconnectDelay = 3000 + bootJumpDelayMs;
+            await Task.Delay(postDisconnectDelay).ConfigureAwait(false);
+
             return await ProcessingSensorUpgrade(
                 nodeMac,
                 bActor,
@@ -2317,7 +2374,7 @@ UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
                 FirmwareVersion,
                 logId,
                 pincode,
-                skipInitialConnect: true,
+                skipInitialConnect: false,
                 assumeBootMode: true);
         }
         public async Task<ServiceResponse> UpgradeActorAsync(

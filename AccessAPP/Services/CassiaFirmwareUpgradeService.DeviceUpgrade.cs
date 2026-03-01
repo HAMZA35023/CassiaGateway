@@ -1111,6 +1111,15 @@ var response = new ServiceResponse();
 
             if (!skipInitialConnect)
             {
+                int discoverGattSetting = RuntimeVariables.UPGRADE_CONNECT_DISCOVER_GATT_AFTER_BOOT_JUMP;
+                int? discoverGattOverride = discoverGattSetting < 0
+                    ? null
+                    : (discoverGattSetting <= 0 ? 0 : 1);
+                // Cassia: when caller already knows/assumes boot mode, force GATT rediscovery
+                // so bootloader handles (14/15) are refreshed before programming starts.
+                if (assumeBootMode && !(_connectService is LinuxBle.LinuxBleConnectionService))
+                    discoverGattOverride = 1;
+
                 var connProbe = await ConnectOnlyWithRetryAsync(
                     maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
                     delayMs: 5000,
@@ -1119,9 +1128,7 @@ var response = new ServiceResponse();
                     macAddress: nodeMac,
                     FirmwareVersion: FirmwareVersion,
                     logId: logId,
-                    discoverGattOverride: RuntimeVariables.UPGRADE_CONNECT_DISCOVER_GATT_AFTER_BOOT_JUMP < 0
-                        ? null
-                        : (RuntimeVariables.UPGRADE_CONNECT_DISCOVER_GATT_AFTER_BOOT_JUMP <= 0 ? 0 : 1)
+                    discoverGattOverride: discoverGattOverride
                     ).ConfigureAwait(false);
 
                 if (!connProbe.ok)
