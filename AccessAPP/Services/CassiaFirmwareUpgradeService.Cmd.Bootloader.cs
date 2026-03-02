@@ -55,8 +55,28 @@ namespace AccessAPP.Services
                         var jsonResponse = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
                         var characteristics = JsonConvert.DeserializeObject<List<CharacteristicModel>>(jsonResponse);
 
-                        // Check if the characteristic UUID is present
-                        return characteristics?.Any(charac => charac.Uuid == "00060001-f8ce-11e4-abf4-0002a5d5c51b") == true;
+                        if (characteristics == null || characteristics.Count == 0)
+                            return false;
+
+                        // Cassia can transiently expose a mixed/old characteristic set right after reconnect.
+                        // In that ambiguous state, prefer Application mode to avoid false-positive boot mode
+                        // and a direct programming attempt on the wrong GATT profile.
+                        bool hasBoot = characteristics.Any(charac =>
+                            string.Equals(charac.Uuid, BlueZHelpers.BootNotifyUuid, StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(charac.Uuid, BlueZHelpers.BootWriteUuid, StringComparison.OrdinalIgnoreCase));
+
+                        bool hasApp = characteristics.Any(charac =>
+                            string.Equals(charac.Uuid, BlueZHelpers.AppNotifyUuid, StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(charac.Uuid, BlueZHelpers.AppWriteUuid, StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(charac.Uuid, BlueZHelpers.AppServiceUuid, StringComparison.OrdinalIgnoreCase));
+
+                        if (hasBoot && hasApp)
+                        {
+                            AppLog.Warn($"CheckIfDeviceInBootMode: ambiguous app+boot characteristic set for {nodeMac}; preferring application mode.");
+                            return false;
+                        }
+
+                        return hasBoot;
                     }
 
                     return false;

@@ -1146,9 +1146,18 @@ var response = new ServiceResponse();
             }
 
             bool checkedBootMode = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
-            bool isAlreadyInBootMode = assumeBootMode || checkedBootMode;
+            bool linuxNativeBackend = _connectService is LinuxBle.LinuxBleConnectionService;
+            // For linux-native we can trust caller assumption because login in boot mode is expected to fail.
+            // For Cassia we must trust only the fresh on-session check; stale gateway GATT views can
+            // falsely report boot mode and lead to immediate programming failures.
+            bool isAlreadyInBootMode = checkedBootMode || (assumeBootMode && linuxNativeBackend);
             if (assumeBootMode && !checkedBootMode)
-                AppLog.Warn($"ProcessingSensorUpgrade: assumeBootMode requested but immediate boot mode check failed for {nodeMac}; proceeding with bootloader flow.");
+            {
+                if (linuxNativeBackend)
+                    AppLog.Warn($"ProcessingSensorUpgrade: assumeBootMode requested but immediate boot mode check failed for {nodeMac}; proceeding with bootloader flow (linux-native assumption).");
+                else
+                    AppLog.Warn($"ProcessingSensorUpgrade: assumeBootMode requested but immediate boot mode check failed for {nodeMac}; falling back to login+jump flow.");
+            }
 
             //var notificationService = new CassiaNotificationService(_configuration);
             if (isAlreadyInBootMode)
@@ -1212,7 +1221,7 @@ await Task.Delay(3000); // Delay between attempts
             }
 
             //Step 3: Start Programming the Sensor
-            bool programmingResult = ProgramDevice(_gatewayIpAddress, nodeMac, _notificationService, DetectorType, FirmwareVersion, bActor, isBootloader);
+            bool programmingResult = ProgramDevice(_gatewayIpAddress, nodeMac, _notificationService, DetectorType, FirmwareVersion, bActor, isBootloader, logId, FirmwareVersion);
 
             if (programmingResult)
             {
@@ -1331,7 +1340,7 @@ await Task.Delay(3000); // Delay between attempts
 
             AppLog.Info($"Bootloader mode achieved for {nodeMac}.");
 // Step 3: Start programming the actor
-            var programmingResult = ProgramDevice(_gatewayIpAddress, nodeMac, _notificationService, DetectorType, FirmwareVersion, bActor, false);
+            var programmingResult = ProgramDevice(_gatewayIpAddress, nodeMac, _notificationService, DetectorType, FirmwareVersion, bActor, false, logId, FirmwareVersion);
 
             if (programmingResult)
             {
@@ -1356,7 +1365,16 @@ await Task.Delay(3000); // Delay between attempts
         
         
 
-        public bool ProgramDevice(string gatewayIpAddress, string nodeMac, BleAbstractions.IBleNotificationService cassiaNotificationService, string DetectorType, string FirmwareVersion, bool bActor, bool isBootloader)
+        public bool ProgramDevice(
+            string gatewayIpAddress,
+            string nodeMac,
+            BleAbstractions.IBleNotificationService cassiaNotificationService,
+            string DetectorType,
+            string FirmwareVersion,
+            bool bActor,
+            bool isBootloader,
+            string? logId = null,
+            string? fwForLog = null)
         {
             AppLog.Info($"Actor is going to be programmed? : {bActor}");
 try
@@ -1433,12 +1451,53 @@ m_comm_data.WriteData = WriteSensorData;
                 allRows.TryAdd(nodeMac, allRowsH);
 
 
-                int actorAttempts = bActor ? Math.Max(1, RuntimeVariables.UPGRADE_ACTOR_UPLOAD_MAX_ATTEMPTS) : 1;
-                int actorRetryDelayMs = bActor ? Math.Max(0, RuntimeVariables.UPGRADE_ACTOR_UPLOAD_RETRY_DELAY_MS) : 0;
+                int maxProgramAttempts;
+                int retryDelayMs;
+                if (bActor)
+                {
+                    maxProgramAttempts = Math.Max(1, RuntimeVariables.UPGRADE_ACTOR_UPLOAD_MAX_ATTEMPTS);
+                    retryDelayMs = Math.Max(0, RuntimeVariables.UPGRADE_ACTOR_UPLOAD_RETRY_DELAY_MS);
+                }
+                else if (isBootloader)
+                {
+                    maxProgramAttempts = Math.Max(1, RuntimeVariables.UPGRADE_BOOTLOADER_UPLOAD_MAX_ATTEMPTS);
+                    retryDelayMs = Math.Max(0, RuntimeVariables.UPGRADE_BOOTLOADER_UPLOAD_RETRY_DELAY_MS);
+                }
+                else
+                {
+                    maxProgramAttempts = Math.Max(1, RuntimeVariables.UPGRADE_SENSOR_UPLOAD_MAX_ATTEMPTS);
+                    retryDelayMs = Math.Max(0, RuntimeVariables.UPGRADE_SENSOR_UPLOAD_RETRY_DELAY_MS);
+                }
+
                 local_status = ReturnCodes.CYRET_SUCCESS;
 
-                for (int attempt = 1; attempt <= actorAttempts; attempt++)
+                for (int attempt = 1; attempt <= maxProgramAttempts; attempt++)
                 {
+                    if (attempt > 1)
+                    {
+                        AppLog.Warn($"Programming retry {attempt}/{maxProgramAttempts} for {nodeMac} ({(bActor ? "actor" : isBootloader ? "bootloader" : "sensor")}). Re-initializing notification subscription.");
+                        try
+                        {
+                            InitializeNotificationSubscription(nodeMac, cassiaNotificationService);
+                            if (!(_connectService is LinuxBle.LinuxBleConnectionService))
+                            {
+                                // Cassia path: rewrite CCCD before retry to recover after transient link drops.
+                                _notificationService.EnableNotificationAsync(
+                                    _gatewayIpAddress,
+                                    nodeMac,
+                                    bActor,
+                                    chip: GetChipForMac(nodeMac)).GetAwaiter().GetResult();
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            AppLog.Warn($"Programming retry setup failed for {nodeMac}: {ex.Message}");
+                        }
+
+                        if (retryDelayMs > 0)
+                            Thread.Sleep(retryDelayMs);
+                    }
+
                     local_status = bActor
                         ? (ReturnCodes)Bootloader_Utils.CyBtldr_Program(firmwarePath, null, _appID, ref m_comm_data, Upd)
                         : (ReturnCodes)Bootloader_Utils.CyBtldr_Program(firmwarePath, _securityKey, _appID, ref m_comm_data, Upd);
@@ -1446,14 +1505,24 @@ m_comm_data.WriteData = WriteSensorData;
                     if (local_status == ReturnCodes.CYRET_SUCCESS)
                         break;
 
-                    AppLog.Warn($"Actor programming attempt {attempt}/{actorAttempts} failed: status={local_status}");
-                    if (bActor && attempt < actorAttempts && actorRetryDelayMs > 0)
-                        Thread.Sleep(actorRetryDelayMs);
+                    UpgradeLogger.Log(
+                        logId ?? "",
+                        nodeMac,
+                        bActor ? "ActorProgrammingReturnCode" : (isBootloader ? "BootLoaderProgrammingReturnCode" : "SensorProgrammingReturnCode"),
+                        $"Attempt {attempt}/{maxProgramAttempts}: {local_status}",
+                        fwForLog ?? FirmwareVersion);
+                    AppLog.Warn($"Programming attempt {attempt}/{maxProgramAttempts} failed for {nodeMac} ({(bActor ? "actor" : isBootloader ? "bootloader" : "sensor")}): status={local_status}");
                 }
 
                 // Handle failure
                 if (local_status != ReturnCodes.CYRET_SUCCESS)
                 {
+                    UpgradeLogger.Log(
+                        logId ?? "",
+                        nodeMac,
+                        bActor ? "ActorProgrammingReturnCode" : (isBootloader ? "BootLoaderProgrammingReturnCode" : "SensorProgrammingReturnCode"),
+                        $"Final: {local_status}",
+                        fwForLog ?? FirmwareVersion);
                     AppLog.Warn("Programming failed - status: " + local_status);
 _deviceStorageService.MarkFirmwareFailed(nodeMac);
                 }

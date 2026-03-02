@@ -232,6 +232,13 @@ namespace AccessAPP
         public static int UPGRADE_ACTOR_UPLOAD_MAX_ATTEMPTS = 2;
         public static int UPGRADE_ACTOR_UPLOAD_RETRY_DELAY_MS = 3000;
         public static int UPGRADE_ACTOR_WRITE_SLEEP_MS = 1;
+        // Sensor/bootloader upload retries (non-actor).
+        // Transient notification/gateway hiccups are common; a local retry is cheaper than
+        // restarting the entire device-upgrade attempt.
+        public static int UPGRADE_SENSOR_UPLOAD_MAX_ATTEMPTS = 2;
+        public static int UPGRADE_SENSOR_UPLOAD_RETRY_DELAY_MS = 2000;
+        public static int UPGRADE_BOOTLOADER_UPLOAD_MAX_ATTEMPTS = 2;
+        public static int UPGRADE_BOOTLOADER_UPLOAD_RETRY_DELAY_MS = 2000;
         // Read callback wait for incoming programming notification data (sensor/bootloader/actor).
         public static int UPGRADE_PROGRAMMING_NOTIFICATION_WAIT_MS = 30000;
 
