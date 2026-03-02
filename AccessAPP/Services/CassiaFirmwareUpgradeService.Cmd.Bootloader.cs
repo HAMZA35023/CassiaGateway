@@ -5,6 +5,7 @@ using AccessAPP.Services.LinuxBle;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
@@ -435,11 +436,14 @@ return false;
             {
                 _notificationEvents.TryRemove(macAddress, out _);
                 _notificationQueues.TryRemove(macAddress, out _);
+                _notificationPendingBytes.TryRemove(macAddress, out _);
+                _notificationPendingLocks.TryRemove(macAddress, out _);
                 //_lastNotificationDataRead.TryRemove(macAddress, out _);
             }
 
 
             _notificationQueues.TryAdd(macAddress, new ConcurrentQueue<byte[]>());
+            _notificationPendingBytes.TryAdd(macAddress, new Queue<byte>());
 
             _notificationEvents.TryAdd(macAddress, new ManualResetEvent(false));
 
@@ -487,6 +491,8 @@ cassiaNotificationService.Unsubscribe(macAddress);
                 _notificationQueues.TryRemove(macAddress, out _tmpCheck);
                 ManualResetEvent evt = null;
                 _notificationEvents.TryRemove(macAddress, out evt);
+                _notificationPendingBytes.TryRemove(macAddress, out _);
+                _notificationPendingLocks.TryRemove(macAddress, out _);
                 //_lastNotificationDataRead.TryRemove(macAddress, out _);
             }
         }

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Threading;
 using AccessAPP.Logging;
@@ -10,6 +11,13 @@ namespace AccessAPP.Services
     {
         private readonly ConcurrentDictionary<string, ConcurrentQueue<byte[]>> _notificationQueues = new();
         private readonly ConcurrentDictionary<string, ManualResetEvent> _notificationEvents = new();
+        // Per-MAC pending byte stream used by sensor/bootloader ReadData to assemble
+        // exactly "size" bytes, even if notifications arrive split or coalesced.
+        private readonly ConcurrentDictionary<string, Queue<byte>> _notificationPendingBytes = new();
+        private readonly ConcurrentDictionary<string, object> _notificationPendingLocks = new();
+
+        private object GetPendingLock(string macContext) =>
+            _notificationPendingLocks.GetOrAdd(macContext, _ => new object());
 
         private static int GetProgrammingNotificationWaitMs()
         {
@@ -71,24 +79,69 @@ namespace AccessAPP.Services
                     return ERR_READ;
                 }
 
-                if (!WaitForNotificationOrQueuedData(macContext, notificationQueue, notificationEvent))
+                if (size <= 0)
                     return ERR_READ;
 
-                if (!notificationQueue.TryDequeue(out var notificationData))
+                var pending = _notificationPendingBytes.GetOrAdd(macContext, _ => new Queue<byte>());
+                var pendingLock = GetPendingLock(macContext);
+                var payload = new byte[size];
+                int copied = 0;
+                int timeoutMs = GetProgrammingNotificationWaitMs();
+                var deadlineUtc = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+                var readSw = System.Diagnostics.Stopwatch.StartNew();
+
+                while (copied < size)
                 {
-                    AppLog.Warn("ReadData failed: No data available in queue");
-                    return ERR_READ;
+                    // 1) Consume already buffered bytes first.
+                    lock (pendingLock)
+                    {
+                        while (copied < size && pending.Count > 0)
+                            payload[copied++] = pending.Dequeue();
+                    }
+
+                    if (copied >= size)
+                        break;
+
+                    // 2) Pull next notification chunk (if available) into pending bytes.
+                    if (notificationQueue.TryDequeue(out var chunk) && chunk != null && chunk.Length > 0)
+                    {
+                        lock (pendingLock)
+                        {
+                            foreach (var b in chunk)
+                                pending.Enqueue(b);
+                        }
+                        continue;
+                    }
+
+                    // 3) No new chunk yet -> wait for a notification signal (bounded).
+                    int remainingMs = (int)Math.Max(0, (deadlineUtc - DateTime.UtcNow).TotalMilliseconds);
+                    if (remainingMs <= 0)
+                    {
+                        readSw.Stop();
+                        AppLog.Warn($"ReadData timeout waiting for full frame (mac={macContext}, requested={size}, received={copied}, timeoutMs={timeoutMs}, elapsedMs={readSw.ElapsedMilliseconds})");
+                        return ERR_READ;
+                    }
+
+                    bool signaled = notificationEvent.WaitOne(TimeSpan.FromMilliseconds(remainingMs));
+                    if (!signaled)
+                    {
+                        readSw.Stop();
+                        AppLog.Warn($"ReadData timeout waiting for notification (mac={macContext}, requested={size}, received={copied}, timeoutMs={timeoutMs}, elapsedMs={readSw.ElapsedMilliseconds})");
+                        return ERR_READ;
+                    }
                 }
 
-                AppLog.Verbose($"Read data queue process {macContext} - size: {size} - " + BitConverter.ToString(notificationData).Replace("-", ""));
-                int bytesToCopy = Math.Min(size, notificationData.Length);
-                Marshal.Copy(notificationData, 0, buffer, bytesToCopy);
-                AppLog.Verbose($"ReadData succeeded, bytes read: {bytesToCopy}");
+                Marshal.Copy(payload, 0, buffer, size);
+                readSw.Stop();
+                AppLog.Debug($"[TIMING] ReadData assembled frame: {readSw.ElapsedMilliseconds}ms | mac={macContext} | requested={size}");
+                AppLog.Verbose($"Read data queue process {macContext} - size: {size} - " + BitConverter.ToString(payload).Replace("-", ""));
+                AppLog.Verbose($"ReadData succeeded, bytes read: {size}");
                 return ERR_SUCCESS;
             }
             finally
             {
-                SyncNotificationEventState(notificationQueue, notificationEvent);
+                if (notificationQueue != null && notificationEvent != null)
+                    SyncNotificationEventState(notificationQueue, notificationEvent);
             }
         }
 
