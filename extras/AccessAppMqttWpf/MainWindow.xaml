@@ -5,7 +5,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="AC Controller for AccessAPP - v0.11.1"
+        Title="AC Controller for AccessAPP - v0.14.0"
         Height="941" Width="1715"
         WindowStartupLocation="CenterScreen">
 
@@ -1548,7 +1548,7 @@
                                         <CheckBox Content="Force update" 
                                                   ToolTip="Re-program sensor firmware even if current FW already matches target"
                                                   IsChecked="{Binding ForceUpdateEnabled, Mode=TwoWay}"
-                                                  Margin="0,0,12,0"
+                                                  Margin="12,0,12,0"
                                                   VerticalAlignment="Center"/>
                                         <CheckBox Content="Auto workers by model"
                                                   ToolTip="Auto-set workers: DALI master only (P47/P48) = 4, mixed/other = 2"
