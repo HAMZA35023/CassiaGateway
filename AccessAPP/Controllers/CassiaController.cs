@@ -1,5 +1,6 @@
 ﻿using AccessAPP.Models;
 using AccessAPP.Services;
+using AccessAPP.Services.BleAbstractions;
 using AccessAPP.Services.HelperClasses;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
@@ -13,7 +14,7 @@ namespace AccessAPP.Controllers
     public class CassiaController : ControllerBase
     {
         private readonly CassiaScanService _scanService;
-        private readonly CassiaConnectService _connectService;
+        private readonly IBleConnectionService _connectService;
         private readonly CassiaPinCodeService _cassiaPinCodeService;
         private readonly DeviceStorageService _deviceStorageService;
         private readonly CassiaFirmwareUpgradeService _firmwareUpgradeService;
@@ -22,12 +23,13 @@ namespace AccessAPP.Controllers
         private readonly IConfiguration _configuration;
         private readonly string _gatewayIpAddress;
         private readonly int _gatewayPort;
-        private readonly CassiaNotificationService _notificationService; // ✅ Injected singleton
+        private readonly IBleNotificationService _notificationService;
+        private readonly IBleReadWriteService _readWriteService;
         private readonly MqttConfigStore _mqttStore;
         private readonly LedRangeLocalStateStore _ledRangeStore;
 
 
-        public CassiaController(IConfiguration configuration, CassiaScanService scanService, CassiaConnectService connectService, CassiaPinCodeService cassiaPinCodeService, DeviceStorageService deviceStorageService, CassiaFirmwareUpgradeService firmwareUpgradeService, FirmwareUploadService firmwareUploadService, FirmwareManifestService firmwareManifestService, CassiaNotificationService notificationService, MqttConfigStore mqttStore, LedRangeLocalStateStore ledRangeStore)
+        public CassiaController(IConfiguration configuration, CassiaScanService scanService, IBleConnectionService connectService, CassiaPinCodeService cassiaPinCodeService, DeviceStorageService deviceStorageService, CassiaFirmwareUpgradeService firmwareUpgradeService, FirmwareUploadService firmwareUploadService, FirmwareManifestService firmwareManifestService, IBleNotificationService notificationService, IBleReadWriteService readWriteService, MqttConfigStore mqttStore, LedRangeLocalStateStore ledRangeStore)
         {
             _configuration = configuration;
             _gatewayIpAddress = _configuration.GetValue<string>("GatewayConfiguration:IpAddress");
@@ -40,6 +42,7 @@ namespace AccessAPP.Controllers
             _firmwareUploadService = firmwareUploadService;
             _firmwareManifestService = firmwareManifestService;
             _notificationService = notificationService;
+            _readWriteService = readWriteService;
             _mqttStore = mqttStore;
             _ledRangeStore = ledRangeStore;
 
@@ -597,7 +600,7 @@ return StatusCode(500, new { error = "Internal Server Error", message = "An unex
 
                     // Step 2: Send the telegram to the BLE device using WriteBleMessage method
                     // Step 2: Send the telegram to the BLE device
-                    CassiaReadWriteService cassiaReadWrite = new CassiaReadWriteService();
+                    var cassiaReadWrite = _readWriteService;
                     try
                     {
                         // IMPORTANT: Always dispose the HTTP response to return the connection to the pool.
@@ -877,9 +880,7 @@ await Task.Delay(500); // Small delay before retrying
         {
             try
             {
-                var currentDir = Directory.GetCurrentDirectory();
-                AppLog.Debug("Current Directory: " + currentDir);
-var logPath = Path.Combine(currentDir, "Logs", "upgrade_logs.txt");
+                var logPath = AccessAppPaths.UpgradeLog;
 
                 if (!System.IO.File.Exists(logPath))
                 {

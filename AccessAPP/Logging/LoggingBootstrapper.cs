@@ -190,7 +190,7 @@ public static class LoggingBootstrapper
         {
             var path = builder.Configuration.GetValue<string>("Mqtt:ConfigPath");
             if (string.IsNullOrWhiteSpace(path))
-                path = "mqtt.json";
+                path = AccessAppPaths.MqttConfig;
             if (!Path.IsPathRooted(path))
                 path = Path.Combine(builder.Environment.ContentRootPath, path);
 

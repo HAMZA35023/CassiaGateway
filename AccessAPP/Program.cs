@@ -1,11 +1,58 @@
+using AccessAPP;
 using AccessAPP.Services;
+using AccessAPP.Services.BleAbstractions;
+using AccessAPP.Services.LinuxBle;
+using AccessAPP.Services.HelperClasses;
 using AccessAPP.Models;
 using AccessAPP.Logging;
 using Serilog;
+using System.Runtime.InteropServices;
 
-const string VERSION = "0.2.0";
+// ── Native library resolver ────────────────────────────────────────────────
+// DllImport("BootloaderUtilMultiThread") targets platform-specific binaries:
+//   Windows : BootloaderUtilMultiThread.dll   (found automatically by the CLR)
+//   Linux x64: libBootloaderUtilMultiThread_linux-x64.so
+//   Linux ARM : libBootloaderUtilMultiThread_arm.so
+// SetDllImportResolver must be called from within the assembly that owns
+// the DllImport (AccessAPP), which is also the executing assembly here.
+NativeLibrary.SetDllImportResolver(typeof(Bootloader_Utils).Assembly,
+    (libraryName, assembly, searchPath) =>
+    {
+        if (!libraryName.Equals("BootloaderUtilMultiThread", StringComparison.OrdinalIgnoreCase))
+            return IntPtr.Zero; // let default logic handle everything else
+
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            return IntPtr.Zero; // Windows: CLR finds BootloaderUtilMultiThread.dll automatically
+
+        var arch = RuntimeInformation.ProcessArchitecture;
+        var suffix = (arch == Architecture.Arm || arch == Architecture.Arm64) ? "arm" : "linux-x64";
+        var soName = $"libBootloaderUtilMultiThread_{suffix}.so";
+
+        if (NativeLibrary.TryLoad(soName, assembly, searchPath, out var handle))
+        {
+            AppLog.Info($"Native library loaded: {soName} (arch={arch})");
+            return handle;
+        }
+
+        AppLog.Warn($"Native library not found: {soName} (arch={arch}) — trying generic fallback");
+
+        // Last-resort fallback: try a non-arch-suffixed name
+        if (NativeLibrary.TryLoad("libBootloaderUtilMultiThread.so", assembly, searchPath, out handle))
+        {
+            AppLog.Info("Native library loaded: libBootloaderUtilMultiThread.so (generic fallback)");
+            return handle;
+        }
+
+        AppLog.Error("Native library load failed: neither arch-specific nor generic libBootloaderUtilMultiThread.so found. Deploy directory is missing the .so file.");
+        return IntPtr.Zero;
+    });
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Migrate persistent files from old base-directory location to the state directory on first run after update.
+MigrateToStateDir(Path.Combine(builder.Environment.ContentRootPath, "mqtt.json"),            AccessAppPaths.MqttConfig);
+MigrateToStateDir(Path.Combine(builder.Environment.ContentRootPath, "runtime.json"),         AccessAppPaths.RuntimeConfig);
+MigrateToStateDir(Path.Combine(builder.Environment.ContentRootPath, "Logs", "upgrade_logs.txt"), AccessAppPaths.UpgradeLog);
 
 LoggingBootstrapper.TryConfigureSerilog(builder);
 
@@ -18,12 +65,41 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddHttpClient();
 
 // Register services
+
+// ── Cassia BLE backend (concrete classes) ──────────────────────────────────
+builder.Services.AddSingleton<CassiaConnectService>();
+builder.Services.AddSingleton<CassiaNotificationService>();
+builder.Services.AddSingleton<CassiaReadWriteService>();
+
+// ── Linux native BLE backend ───────────────────────────────────────────────
+builder.Services.AddSingleton<LinuxBleConnectionService>();
+builder.Services.AddSingleton<LinuxBleNotificationService>();
+builder.Services.AddSingleton<LinuxBleReadWriteService>();
+builder.Services.AddSingleton<LinuxNativeScanDevice>();
+
+// ── BLE interface → concrete mapping (resolved lazily after runtime.json) ─
+// Factories run on first resolution, which happens AFTER LoadFromDisk() below,
+// so BLE_BACKEND already reflects any override from runtime.json.
+builder.Services.AddSingleton<IBleConnectionService>(sp =>
+    RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase)
+        ? sp.GetRequiredService<LinuxBleConnectionService>()
+        : (IBleConnectionService)sp.GetRequiredService<CassiaConnectService>());
+
+builder.Services.AddSingleton<IBleNotificationService>(sp =>
+    RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase)
+        ? sp.GetRequiredService<LinuxBleNotificationService>()
+        : (IBleNotificationService)sp.GetRequiredService<CassiaNotificationService>());
+
+builder.Services.AddSingleton<IBleReadWriteService>(sp =>
+    RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase)
+        ? sp.GetRequiredService<LinuxBleReadWriteService>()
+        : (IBleReadWriteService)sp.GetRequiredService<CassiaReadWriteService>());
+
+// ── Shared / always-on services ────────────────────────────────────────────
 builder.Services.AddSingleton<CassiaScanService>();
 builder.Services.AddSingleton<ScanBleDevice>();
-builder.Services.AddSingleton<CassiaConnectService>();
 builder.Services.AddSingleton<CassiaPinCodeService>();
 builder.Services.AddSingleton<DeviceStorageService>();
-builder.Services.AddSingleton<CassiaNotificationService>();
 builder.Services.AddSingleton<CassiaFirmwareUpgradeService>();
 builder.Services.AddScoped<FirmwareUploadService>();
 builder.Services.AddSingleton<FirmwareManifestService>();
@@ -50,10 +126,9 @@ builder.Services.AddSingleton<MqttConfigStore>(sp =>
     var cfg = sp.GetRequiredService<IConfiguration>();
     var env = sp.GetRequiredService<IHostEnvironment>();
 
-    // Put in appsettings.json if you want, fallback is fine on Cassia
     var path = cfg.GetValue<string>("Mqtt:ConfigPath");
     if (string.IsNullOrWhiteSpace(path))
-        path = "mqtt.json";
+        path = AccessAppPaths.MqttConfig;
     if (!Path.IsPathRooted(path))
         path = Path.Combine(env.ContentRootPath, path);
 
@@ -81,14 +156,68 @@ using (var scope = app.Services.CreateScope())
     if (loadResult.errors.Count > 0)
         AppLog.Warn($"Runtime variables load errors: {string.Join(", ", loadResult.errors.Select(kv => $"{kv.Key}={kv.Value}"))}");
 
-    var cassiaConnectService = serviceProvider.GetRequiredService<CassiaConnectService>();
-    var cassiaNotificationService = serviceProvider.GetRequiredService<CassiaNotificationService>();
-    cassiaNotificationService.semaphore = cassiaConnectService.semaphore;
-    var scanBleDevice = serviceProvider.GetRequiredService<ScanBleDevice>();
+    var isLinuxNativeBackend = RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase);
+    var linuxAdapters = RuntimeVariables.GetLinuxBleAdapterList()
+        .Where(a => !string.IsNullOrWhiteSpace(a))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    if (linuxAdapters.Length == 0)
+        linuxAdapters = [RuntimeVariables.LINUX_BLE_ADAPTER];
+
+    var startupWorkersRequested = isLinuxNativeBackend
+        ? Math.Max(1, linuxAdapters.Length)
+        : 2;
+    var startupWorkersValue = CassiaFirmwareUpgradeService.SetParallelProgrammers(startupWorkersRequested);
+    AppLog.Info(
+        isLinuxNativeBackend
+            ? $"Startup workers auto-set to {startupWorkersValue} (linux-native adapters={string.Join(",", linuxAdapters)})."
+            : $"Startup workers auto-set to {startupWorkersValue} (cassia default).");
+
+    // Start the BLE backend chosen by BLE_BACKEND (evaluated after runtime.json is loaded).
+    if (isLinuxNativeBackend)
+    {
+        AppLog.Info("BLE backend: linux-native (BlueZ D-Bus)");
+        // Constructing the singleton starts the BlueZ scan loop.
+        serviceProvider.GetRequiredService<LinuxNativeScanDevice>();
+    }
+    else
+    {
+        AppLog.Info("BLE backend: cassia (REST/SSE)");
+        // Wire the shared semaphore so the notification SSE listener serialises
+        // against the connect service (original behaviour).
+        var cassiaConnectService = serviceProvider.GetRequiredService<CassiaConnectService>();
+        var cassiaNotificationService = serviceProvider.GetRequiredService<CassiaNotificationService>();
+        cassiaNotificationService.semaphore = cassiaConnectService.semaphore;
+        // Constructing the singleton starts the Cassia SSE scan loops.
+        serviceProvider.GetRequiredService<ScanBleDevice>();
+    }
 
     // Start MQTT service
     var mqttService = serviceProvider.GetRequiredService<IMqttService>();
-     _ = mqttService.StartAsync();
+    _ = mqttService.StartAsync();
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            await mqttService.PublishTeleJsonAsync("parallel-programmers", new
+            {
+                success = true,
+                message = "Parallel programmers auto-set at startup.",
+                name = mqttService.CurrentOptions.Name,
+                networkId = mqttService.CurrentOptions.NetworkId,
+                time = DateTimeOffset.UtcNow,
+                source = "startup-auto",
+                backend = RuntimeVariables.BLE_BACKEND,
+                linuxAdapters = isLinuxNativeBackend ? linuxAdapters : Array.Empty<string>(),
+                requested = startupWorkersRequested,
+                value = startupWorkersValue
+            }).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn($"Startup workers MQTT announce failed: {ex.Message}");
+        }
+    });
 
     // Hook incoming MQTT commands to your services
     var firmwareUpgradeService = serviceProvider.GetRequiredService<CassiaFirmwareUpgradeService>();
@@ -117,7 +246,11 @@ using (var scope = app.Services.CreateScope())
                 Pincode = r.Pincode ?? "",
                 DetectotType = r.DetectorType ?? "",
                 FirmwareVersion = r.FirmwareVersion ?? "",
-                ForceUpdate = r.ForceUpdate ?? false
+                ForceUpdate = r.ForceUpdate ?? false,
+                PostUpdateSettings = r.DetectorSettings?.CloneNormalized(),
+                RunDaliAddressAllToZone1AfterUpdate = r.RunDaliAddressAllToZone1AfterUpdate ?? false,
+                RunDali102TotalNewScanAfterUpdate = r.RunDali102TotalNewScanAfterUpdate ?? false,
+                RunDali103TotalNewScanAfterUpdate = r.RunDali103TotalNewScanAfterUpdate ?? false
             })
             .ToList();
 
@@ -173,6 +306,265 @@ using (var scope = app.Services.CreateScope())
         await mqttService.PublishTeleJsonAsync("fw-version", resp);
     };
 
+    mqttService.GetDetectorSettingsRequested += async cmd =>
+    {
+        var requestId = string.IsNullOrWhiteSpace(cmd.RequestId) ? Guid.NewGuid().ToString("N") : cmd.RequestId!;
+        var requested = (cmd.Sensors ?? new List<string>())
+            .Where(m => !string.IsNullOrWhiteSpace(m))
+            .Select(m => m.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (requested.Count == 0)
+        {
+            await mqttService.PublishTeleJsonAsync("detector-settings", new
+            {
+                success = false,
+                action = "get",
+                requestId,
+                message = "No sensors/mac addresses provided.",
+                name = mqttService.CurrentOptions.Name,
+                networkId = mqttService.CurrentOptions.NetworkId,
+                time = DateTimeOffset.UtcNow
+            });
+            return;
+        }
+
+        var knownByMac = DeviceStorageService.GetDeviceListSnapshot()
+            .Where(x => !string.IsNullOrWhiteSpace(x.MacAddress))
+            .ToDictionary(x => x.MacAddress.Trim(), x => x, StringComparer.OrdinalIgnoreCase);
+
+        var pincode = cmd.Pincode ?? "";
+        var defaultDetector = NormalizeDetectorType(cmd.DetectorType);
+        var defaultFw = (cmd.FirmwareVersion ?? "").Trim();
+        var results = new List<object>();
+        var failed = new List<object>();
+
+        foreach (var mac in requested)
+        {
+            var detectorType = defaultDetector;
+            if (string.IsNullOrWhiteSpace(detectorType) && knownByMac.TryGetValue(mac, out var known))
+                detectorType = NormalizeDetectorType(known.DetectorType);
+
+            if (string.IsNullOrWhiteSpace(detectorType))
+                detectorType = "P48";
+
+            var fw = defaultFw;
+
+            try
+            {
+                var cl = await firmwareUpgradeService.ConnectAndLoginWithRetryForPipelineAsync(
+                    firmwareUpgradeService.GatewayIpAddress,
+                    firmwareUpgradeService.GatewayPort,
+                    mac,
+                    pincode,
+                    logId: requestId,
+                    firmwareVersion: fw,
+                    maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
+                    delayBetweenAttemptsMs: 2000,
+                    bootModeIsRetryable: true).ConfigureAwait(false);
+
+                if (!cl.Success)
+                {
+                    failed.Add(new
+                    {
+                        mac,
+                        detectorType,
+                        success = false,
+                        message = $"Connect+login failed: {cl.Message}"
+                    });
+                    continue;
+                }
+
+                var snapshot = await firmwareUpgradeService.SettingsBackupService
+                    .CaptureSnapshotAsync(mac, detectorType, fw).ConfigureAwait(false);
+
+                results.Add(new
+                {
+                    mac,
+                    detectorType,
+                    firmwareVersion = fw,
+                    success = true,
+                    settings = DetectorSettingsPatch.FromSnapshot(snapshot).CloneNormalized()
+                });
+            }
+            catch (Exception ex)
+            {
+                failed.Add(new
+                {
+                    mac,
+                    detectorType,
+                    success = false,
+                    message = ex.Message
+                });
+            }
+            finally
+            {
+                try { await firmwareUpgradeService.DisconnectDeviceAsync(mac).ConfigureAwait(false); } catch { }
+            }
+        }
+
+        await mqttService.PublishTeleJsonAsync("detector-settings", new
+        {
+            success = failed.Count == 0,
+            action = "get",
+            requestId,
+            message = failed.Count == 0
+                ? $"Detector settings loaded for {results.Count} sensor(s)."
+                : $"Detector settings loaded with failures. Success={results.Count}, Failed={failed.Count}.",
+            name = mqttService.CurrentOptions.Name,
+            networkId = mqttService.CurrentOptions.NetworkId,
+            time = DateTimeOffset.UtcNow,
+            requested,
+            results,
+            failed
+        });
+    };
+
+    mqttService.SetDetectorSettingsRequested += async cmd =>
+    {
+        var requestId = string.IsNullOrWhiteSpace(cmd.RequestId) ? Guid.NewGuid().ToString("N") : cmd.RequestId!;
+        var requested = (cmd.Sensors ?? new List<string>())
+            .Where(m => !string.IsNullOrWhiteSpace(m))
+            .Select(m => m.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var patch = cmd.Settings?.CloneNormalized();
+        var writeOnlyChanged = cmd.WriteOnlyChanged ?? true;
+
+        if (requested.Count == 0)
+        {
+            await mqttService.PublishTeleJsonAsync("detector-settings", new
+            {
+                success = false,
+                action = "set",
+                requestId,
+                message = "No sensors/mac addresses provided.",
+                name = mqttService.CurrentOptions.Name,
+                networkId = mqttService.CurrentOptions.NetworkId,
+                time = DateTimeOffset.UtcNow
+            });
+            return;
+        }
+
+        if (patch == null || !patch.HasAnyValue())
+        {
+            await mqttService.PublishTeleJsonAsync("detector-settings", new
+            {
+                success = false,
+                action = "set",
+                requestId,
+                message = "No detector setting changes provided. Send payload with settings.{userConfigHex|pushButtonsHex|daliPushButtonsHex|daliDeviceCommonParamHex|blePushButtonsHex|tunableWhiteListHex|tunableWhitePresetHex|tunableWhiteDefaultKelvinHex} (optionally with matching *MaskHex fields for section-based settings).",
+                name = mqttService.CurrentOptions.Name,
+                networkId = mqttService.CurrentOptions.NetworkId,
+                time = DateTimeOffset.UtcNow
+            });
+            return;
+        }
+
+        var knownByMac = DeviceStorageService.GetDeviceListSnapshot()
+            .Where(x => !string.IsNullOrWhiteSpace(x.MacAddress))
+            .ToDictionary(x => x.MacAddress.Trim(), x => x, StringComparer.OrdinalIgnoreCase);
+
+        var pincode = cmd.Pincode ?? "";
+        var defaultDetector = NormalizeDetectorType(cmd.DetectorType);
+        var defaultFw = (cmd.FirmwareVersion ?? "").Trim();
+        var results = new List<object>();
+        var failed = new List<object>();
+
+        foreach (var mac in requested)
+        {
+            var detectorType = defaultDetector;
+            if (string.IsNullOrWhiteSpace(detectorType) && knownByMac.TryGetValue(mac, out var known))
+                detectorType = NormalizeDetectorType(known.DetectorType);
+            if (string.IsNullOrWhiteSpace(detectorType))
+                detectorType = "P48";
+
+            var fw = defaultFw;
+
+            try
+            {
+                var cl = await firmwareUpgradeService.ConnectAndLoginWithRetryForPipelineAsync(
+                    firmwareUpgradeService.GatewayIpAddress,
+                    firmwareUpgradeService.GatewayPort,
+                    mac,
+                    pincode,
+                    logId: requestId,
+                    firmwareVersion: fw,
+                    maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
+                    delayBetweenAttemptsMs: 2000,
+                    bootModeIsRetryable: true).ConfigureAwait(false);
+
+                if (!cl.Success)
+                {
+                    failed.Add(new
+                    {
+                        mac,
+                        detectorType,
+                        success = false,
+                        message = $"Connect+login failed: {cl.Message}"
+                    });
+                    continue;
+                }
+
+                var apply = await firmwareUpgradeService.SettingsBackupService
+                    .ApplyOverridesAsync(mac, detectorType, fw, patch, writeOnlyChanged).ConfigureAwait(false);
+
+                var current = await firmwareUpgradeService.SettingsBackupService
+                    .CaptureSnapshotAsync(mac, detectorType, fw).ConfigureAwait(false);
+
+                var row = new
+                {
+                    mac,
+                    detectorType,
+                    firmwareVersion = fw,
+                    success = apply.Success,
+                    statusCode = apply.StatusCode,
+                    message = apply.Message,
+                    settings = DetectorSettingsPatch.FromSnapshot(current).CloneNormalized()
+                };
+
+                if (apply.Success)
+                    results.Add(row);
+                else
+                    failed.Add(row);
+            }
+            catch (Exception ex)
+            {
+                failed.Add(new
+                {
+                    mac,
+                    detectorType,
+                    success = false,
+                    message = ex.Message
+                });
+            }
+            finally
+            {
+                try { await firmwareUpgradeService.DisconnectDeviceAsync(mac).ConfigureAwait(false); } catch { }
+            }
+        }
+
+        await mqttService.PublishTeleJsonAsync("detector-settings", new
+        {
+            success = failed.Count == 0,
+            action = "set",
+            requestId,
+            message = failed.Count == 0
+                ? $"Detector settings applied for {results.Count} sensor(s)."
+                : $"Detector settings apply finished with failures. Success={results.Count}, Failed={failed.Count}.",
+            name = mqttService.CurrentOptions.Name,
+            networkId = mqttService.CurrentOptions.NetworkId,
+            time = DateTimeOffset.UtcNow,
+            requested,
+            writeOnlyChanged,
+            requestedSettings = patch,
+            results,
+            failed
+        });
+    };
+
     mqttService.DisconnectDevicesRequested += async cmd =>
     {
         var macs = (cmd.Sensors ?? new List<string>())
@@ -213,6 +605,23 @@ using (var scope = app.Services.CreateScope())
 
         await mqttService.PublishTeleJsonAsync("disconnect", resp);
     };
+
+    static string NormalizeDetectorType(string? value)
+    {
+        var s = (value ?? "").Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(s))
+            return "";
+
+        if (s.Length >= 3 && (s[0] == 'P' || s[0] == 'M') && char.IsDigit(s[1]) && char.IsDigit(s[2]))
+            s = $"{s[0]}{s[1]}{s[2]}";
+
+        if (s.StartsWith("M", StringComparison.Ordinal))
+            s = "P" + s[1..];
+        if (s == "P49")
+            s = "P46";
+
+        return s;
+    }
 
     mqttService.IdentifyRequested += async cmd =>
     {
@@ -531,4 +940,19 @@ app.Lifetime.ApplicationStopping.Register(() =>
 
 app.Run();
 
+static void MigrateToStateDir(string oldPath, string newPath)
+{
+    if (!File.Exists(oldPath) || File.Exists(newPath))
+        return;
+    try
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(newPath)!);
+        File.Move(oldPath, newPath);
+        Console.WriteLine($"[info] Migrated {oldPath} -> {newPath}");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[warn] Could not migrate {oldPath}: {ex.Message}");
+    }
+}
 

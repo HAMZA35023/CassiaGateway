@@ -35,7 +35,7 @@ namespace AccessAPP
         public static int UPGRADE_CONNECT_DISCOVER_GATT_AFTER_BOOT_JUMP = 0;
 
         // Scan for BLE devices while programming more than 1 device.
-        public static bool BLE_SCAN_UNDER_PROGRAMMING = false;
+        public static bool BLE_SCAN_UNDER_PROGRAMMING = true;
         // BLE scan chip mode for /gap/nodes SSE:
         // -1 = gateway default (no chip query), 0 = chip 0, 1 = chip 1, 2 = both chips.
         public static int BLE_SCAN_CHIP_MODE = 0;
@@ -51,6 +51,8 @@ namespace AccessAPP
         public static bool RestoreSettingsAfterUpgrade = true;
         // Temporarily set DALI SysFail level during update (usually to 0xFF).
         public static bool AutoSetSysFailLevelUnderUpdate = true;
+        // Seconds offset applied when syncing UnixTime after a Tunable White list write.
+        public static int TUNABLE_WHITE_UNIX_TIME_OFFSET_SECONDS = 0;
 
         // MQTT telemetry
         // Periodic status publish interval for tele/.../status (seconds).
@@ -64,7 +66,10 @@ namespace AccessAPP
         // Extra delay added after a failed connect (in addition to backoff).
         public static int UPGRADE_DELAY_AFTER_FAILED_CONNECT_MS = 1500;
         // Timeout per connect attempt.
-        public static int UPGRADE_CONNECT_ATTEMPT_TIMEOUT_MS = 12000;
+        // Must exceed: pre-disconnect wait (6 s) + ConnectAsync (5 s) + Connected poll (1.5 s)
+        // + LINUX_BLE_SERVICES_RESOLVED_TIMEOUT_MS (10 s) + stabilize (1.2 s) + login (8 s) = ~32 s.
+        // 35 s gives a comfortable margin.
+        public static int UPGRADE_CONNECT_ATTEMPT_TIMEOUT_MS = 35000;
         // Delay after connect before login (session stabilization).
         public static int UPGRADE_CONNECT_STABILIZATION_DELAY_MS = 1200;
         // Number of /gap/nodes state checks after a non-OK connect.
@@ -107,6 +112,12 @@ namespace AccessAPP
         public static int UPGRADE_LOGIN_DELAY_AFTER_CONNECT_MS = 800;
         // Delay after login before reading firmware version.
         public static int UPGRADE_DELAY_AFTER_LOGIN_BEFORE_FW_READ_MS = 5000;
+        // Precheck FW-read login timeout (connected-session path).
+        public static int UPGRADE_PRECHECK_LOGIN_ATTEMPT_TIMEOUT_MS = 2000;
+        // Precheck FW-read: extra settle delay before login.
+        public static int UPGRADE_PRECHECK_LOGIN_SETTLE_DELAY_MS = 0;
+        // Precheck FW-read: delay after login before first FW read.
+        public static int UPGRADE_PRECHECK_DELAY_AFTER_LOGIN_BEFORE_FW_READ_MS = 0;
         // Delay before post-upgrade firmware verification read.
         public static int UPGRADE_POST_UPGRADE_FW_READ_DELAY_MS = 3000;
         // Firmware read attempts (per part).
@@ -127,8 +138,20 @@ namespace AccessAPP
         public static int UPGRADE_SETTINGS_BACKUP_RETRY_ROUNDS = 2;
         // Settings backup: delay between backup rounds.
         public static int UPGRADE_SETTINGS_BACKUP_RETRY_DELAY_MS = 2000;
+        // Settings restore/apply: max wait per BLE write action before the attempt is failed.
+        public static int UPGRADE_SETTINGS_RESTORE_WRITE_TIMEOUT_MS = 15000;
         // Max connect attempts per step.
         public static int UPGRADE_CONNECT_MAX_ATTEMPTS = 10;
+        // Precheck probe connect: tighter cap to avoid long stalls before upgrade starts.
+        public static int UPGRADE_PRECHECK_PROBE_CONNECT_MAX_ATTEMPTS = 2;
+        // Delay between precheck probe connect retries.
+        public static int UPGRADE_PRECHECK_PROBE_CONNECT_RETRY_DELAY_MS = 500;
+        // Timeout per precheck probe connect attempt.
+        public static int UPGRADE_PRECHECK_PROBE_CONNECT_ATTEMPT_TIMEOUT_MS = 4500;
+        // Timeout per pipeline probe connect attempt (Connected (probe) / retry).
+        public static int UPGRADE_PROBE_CONNECT_ATTEMPT_TIMEOUT_MS = 10000;
+        // Max Connect+Login attempts for FW-precheck reconnect fallback.
+        public static int UPGRADE_PRECHECK_FW_READ_CONNECT_LOGIN_MAX_ATTEMPTS = 3;
         // Enable optimized flow that reuses sessions and reduces reconnects.
         public static bool UPGRADE_OPTIMIZE_RECONNECT_FLOW = true;
         // Trust /gap/nodes connected state to recover after connect errors.
@@ -187,6 +210,18 @@ namespace AccessAPP
         public static int BOOTMODE_RETRY_COUNT = 3;
         // Delay between boot mode check retries.
         public static int BOOTMODE_RETRY_DELAY_MS = 3000;
+        // Linux-native boot mode check: per-attempt timeout for GATT mode detection.
+        public static int LINUX_BLE_BOOTMODE_CHECK_TIMEOUT_MS = 5000;
+        // Linux-native boot mode check: retries when mode is unknown or transiently unavailable.
+        public static int LINUX_BLE_BOOTMODE_RETRY_COUNT = 1;
+        // Linux-native boot mode check: delay between retries.
+        public static int LINUX_BLE_BOOTMODE_RETRY_DELAY_MS = 250;
+        // Linux-native boot mode check: fallback UUID lookup timeout when mode is Unknown.
+        public static int LINUX_BLE_BOOTMODE_CHAR_LOOKUP_TIMEOUT_MS = 2500;
+        // Sensor upgrade: post-jump bootmode verify total budget (hard-capped to 10s in flow).
+        public static int UPGRADE_SENSOR_BOOTMODE_VERIFY_BUDGET_MS = 10000;
+        // Sensor upgrade: delay between post-jump bootmode verify polls.
+        public static int UPGRADE_SENSOR_BOOTMODE_VERIFY_POLL_MS = 750;
 
         // Actor upgrade: wait for sensor to return to application mode if boot mode detected.
         public static int UPGRADE_ACTOR_APP_MODE_WAIT_ATTEMPTS = 6;
@@ -198,10 +233,77 @@ namespace AccessAPP
         public static int UPGRADE_ACTOR_BOOTMODE_CHECK_TIMEOUT_MS = 120000; // ms
         public static int UPGRADE_ACTOR_POST_BOOTMODE_DELAY_MS = 5000;
         // Actor upload retries and pacing (actor-only)
-        public static int UPGRADE_ACTOR_UPLOAD_MAX_ATTEMPTS = 1;
+        public static int UPGRADE_ACTOR_UPLOAD_MAX_ATTEMPTS = 2;
         public static int UPGRADE_ACTOR_UPLOAD_RETRY_DELAY_MS = 3000;
         public static int UPGRADE_ACTOR_WRITE_SLEEP_MS = 1;
+        // Sensor/bootloader upload retries (non-actor).
+        // Transient notification/gateway hiccups are common; a local retry is cheaper than
+        // restarting the entire device-upgrade attempt.
+        public static int UPGRADE_SENSOR_UPLOAD_MAX_ATTEMPTS = 2;
+        public static int UPGRADE_SENSOR_UPLOAD_RETRY_DELAY_MS = 2000;
+        public static int UPGRADE_BOOTLOADER_UPLOAD_MAX_ATTEMPTS = 2;
+        public static int UPGRADE_BOOTLOADER_UPLOAD_RETRY_DELAY_MS = 2000;
+        // Read callback wait for incoming programming notification data (sensor/bootloader/actor).
+        public static int UPGRADE_PROGRAMMING_NOTIFICATION_WAIT_MS = 30000;
 
-        
+        // BLE backend selection.
+        // "cassia"       = use the Cassia gateway REST/SSE API (default).
+        // "linux-native" = use Linux BlueZ via D-Bus (Tmds.DBus) directly.
+        public static string BLE_BACKEND = "cassia";
+
+        // Linux native BLE: HCI adapter name exposed by BlueZ (e.g. "hci0", "hci1").
+        // Used as the default adapter for connections and as the fallback when LINUX_BLE_ADAPTERS is empty.
+        public static string LINUX_BLE_ADAPTER = "hci0";
+
+        // Linux native BLE: comma-separated list of HCI adapters to scan simultaneously (e.g. "hci0,hci1").
+        // When non-empty this overrides LINUX_BLE_ADAPTER for scanning; LINUX_BLE_ADAPTER is still used
+        // as the fallback for connection if no per-device adapter has been recorded by the scanner.
+        public static string LINUX_BLE_ADAPTERS = "hci0";
+
+        /// <summary>
+        /// Returns the effective HCI adapter list for scanning.
+        /// Uses LINUX_BLE_ADAPTERS (comma-separated) when set; falls back to LINUX_BLE_ADAPTER.
+        /// </summary>
+        public static string[] GetLinuxBleAdapterList() =>
+            !string.IsNullOrWhiteSpace(LINUX_BLE_ADAPTERS)
+                ? LINUX_BLE_ADAPTERS.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                : [LINUX_BLE_ADAPTER];
+
+        // Linux native BLE: MAC address prefix filter for scanning (empty = no filter).
+        public static string LINUX_BLE_MAC_PREFIX = "10:B9:F7";
+
+        // Linux native BLE: how long to wait for BlueZ ServicesResolved=true after connect (ms).
+        // In normal conditions GATT discovery finishes within 5-10 s.  Post-firmware-boot can
+        // take longer, but the connect+login retry loop now handles that via bootModeIsRetryable.
+        // 10 s is a balanced default; raise if devices in your environment are consistently slow.
+        public static int LINUX_BLE_SERVICES_RESOLVED_TIMEOUT_MS = 10000;
+        // Linux native BLE: additional short wait in mode detection when ServicesResolved is still false.
+        // Helps avoid false "not boot mode" results right after reconnect/jump transitions.
+        public static int LINUX_BLE_MODE_DETECT_SR_GRACE_MS = 1200;
+
+        // Linux native BLE: characteristic handle used for BLE write/notify operations.
+        // This is the GATT handle number (decimal) of the main control characteristic.
+        public static int LINUX_BLE_CONTROL_HANDLE = 19;
+
+        // Linux native BLE: characteristic handle for enabling sensor notifications (CCCD).
+        public static int LINUX_BLE_NOTIFY_CCCD_SENSOR_HANDLE = 15;
+
+        // Linux native BLE: characteristic handle for enabling actor notifications (CCCD).
+        public static int LINUX_BLE_NOTIFY_CCCD_ACTOR_HANDLE = 16;
+
+        // Linux native BLE: when writing, how long to wait for the characteristic handle to appear after connect (ms).
+        public static int LINUX_BLE_WRITE_FIND_CHAR_TIMEOUT_MS = 1500;
+        // Linux native BLE: max time to wait for command notification after a write (ms).
+        public static int LINUX_BLE_DATA_NOTIFICATION_TIMEOUT_MS = 12000;
+        // Linux native BLE: max time to wait for notify pipeline readiness before login write (ms).
+        public static int LINUX_BLE_LOGIN_NOTIFY_READY_TIMEOUT_MS = 5000;
+
+        // Linux native BLE: request a shorter BLE connection interval after connecting using btmgmt/hcitool.
+        // Reduces per-packet write latency from ~45 ms to 15–30 ms at the cost of slightly higher radio duty cycle.
+        // WARNING: some device firmware disconnects when it receives a connection parameter update request it does
+        //          not expect (especially during the upgrade login phase).  Disabled by default; enable only after
+        //          confirming the target firmware handles conn-update correctly.
+        public static bool LINUX_BLE_ENABLE_CI_UPDATE = false;
+
     }
 }

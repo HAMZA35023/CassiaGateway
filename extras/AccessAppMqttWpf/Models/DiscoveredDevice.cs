@@ -189,7 +189,6 @@ private void UpdateRowFlagsFromProcess()
 
         var best = CassiaRssi.OrderByDescending(kv => kv.Value).FirstOrDefault();
         BestCassia = best.Key ?? cassia;
-        OnPropertyChanged(nameof(RssiAll));
         BestRssi = (best.Key == null) ? rssi : best.Value;
         OnPropertyChanged(nameof(RssiAll));
 

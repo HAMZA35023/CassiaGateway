@@ -61,6 +61,9 @@ public partial class MainViewModel : ObservableObject
     private static readonly Regex LogLineTimeRx =
         new(@"\btime=(?<time>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    private static readonly Regex LogLineChipUsedRx =
+        new(@"\busing(?:\s+chip)?\s+(?<c>hci\d+|all|\d+)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     private static string ExtractDeviceName(string? stage, string? status, string? nameFromLine)
     {
         if (!string.IsNullOrWhiteSpace(nameFromLine))
@@ -323,6 +326,12 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        if (kind == "tele" && leaf == "detector-settings")
+        {
+            HandleDetectorSettingsTele(cassia, payload);
+            return;
+        }
+
         if (kind == "tele" && leaf == "led-range")
         {
             HandleLedRangeTele(cassia, payload);
@@ -339,14 +348,8 @@ if (kind == "tele" && leaf == "progress")
                 using var doc = JsonDocument.Parse(payload);
                 var root = doc.RootElement;
 
+                // Use local arrival time for ordering to avoid gateway clock skew issues.
                 var ts = DateTimeOffset.UtcNow;
-                if (root.TryGetProperty("time", out var tEl))
-                {
-                    if (tEl.ValueKind == JsonValueKind.String && DateTimeOffset.TryParse(tEl.GetString(), out var dto))
-                        ts = dto;
-                    else if (tEl.TryGetDateTimeOffset(out var dto2))
-                        ts = dto2;
-                }
 
                 var mac = root.TryGetProperty("mac", out var macEl) ? (macEl.GetString() ?? "") : "";
                 if (string.IsNullOrWhiteSpace(mac))
@@ -354,6 +357,30 @@ if (kind == "tele" && leaf == "progress")
 
                 var stage = root.TryGetProperty("stage", out var stEl) ? (stEl.GetString() ?? "") : "";
                 var fwTarget = root.TryGetProperty("firmwareTarget", out var ftEl) ? (ftEl.GetString() ?? "") : "";
+                var chipUsed = "";
+
+                if (root.TryGetProperty("chipUsed", out var cuEl))
+                {
+                    if (cuEl.ValueKind == JsonValueKind.String)
+                        chipUsed = (cuEl.GetString() ?? "").Trim();
+                    else if (cuEl.ValueKind == JsonValueKind.Number && cuEl.TryGetInt32(out var cuNum))
+                        chipUsed = cuNum.ToString();
+                }
+
+                if (string.IsNullOrWhiteSpace(chipUsed) && root.TryGetProperty("chip", out var chEl))
+                {
+                    if (chEl.ValueKind == JsonValueKind.String)
+                        chipUsed = (chEl.GetString() ?? "").Trim();
+                    else if (chEl.ValueKind == JsonValueKind.Number && chEl.TryGetInt32(out var chNum))
+                        chipUsed = chNum.ToString();
+                }
+
+                if (string.IsNullOrWhiteSpace(chipUsed) && !string.IsNullOrWhiteSpace(stage))
+                {
+                    var cm = LogLineChipUsedRx.Match(stage);
+                    if (cm.Success)
+                        chipUsed = cm.Groups["c"].Value.Trim();
+                }
 
                 double pct = 0;
                 if (root.TryGetProperty("progressPercent", out var pEl))
@@ -376,11 +403,23 @@ if (kind == "tele" && leaf == "progress")
                         bp = new BufferedProgress { Mac = mac };
                         _progressByMac[mac] = bp;
                     }
+                    else if (bp.TimeUtc != DateTimeOffset.MinValue && ts < bp.TimeUtc)
+                    {
+                        // Ignore stale out-of-order progress samples for this MAC.
+                        return;
+                    }
+
                     bp.Cassia = cassia;
                     bp.Stage = stage;
+                    bp.QueueStatus = "";
                     bp.FirmwareTarget = fwTarget;
+                    bp.HasProgressPercent = true;
                     bp.ProgressPercent = pct;
+                    bp.HasSpeedPctPerMin = true;
                     bp.SpeedPctPerMin = speedPctPerMin;
+                    bp.ClearSpeed = false;
+                    if (!string.IsNullOrWhiteSpace(chipUsed))
+                        bp.ChipUsed = chipUsed;
                     bp.TimeUtc = ts;
                 }
             }

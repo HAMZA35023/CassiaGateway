@@ -21,9 +21,11 @@ private static bool IsTerminalStatus(string? status)
     if (s.Equals("done", StringComparison.OrdinalIgnoreCase)) return true;
     if (s.Equals("success", StringComparison.OrdinalIgnoreCase)) return true;
     if (s.Equals("warn", StringComparison.OrdinalIgnoreCase) || s.Equals("warning", StringComparison.OrdinalIgnoreCase)) return true;
+    if (s.Equals("no fw", StringComparison.OrdinalIgnoreCase) || s.Equals("nofwread", StringComparison.OrdinalIgnoreCase)) return true;
     if (s.Equals("failed", StringComparison.OrdinalIgnoreCase) || s.Equals("fail", StringComparison.OrdinalIgnoreCase)) return true;
     if (s.Equals("error", StringComparison.OrdinalIgnoreCase)) return true;
     if (s.Contains("complete", StringComparison.OrdinalIgnoreCase)) return true;
+    if (s.Contains("no fw", StringComparison.OrdinalIgnoreCase) || s.Contains("nofw", StringComparison.OrdinalIgnoreCase)) return true;
     if (s.Contains("fail", StringComparison.OrdinalIgnoreCase) || s.Contains("error", StringComparison.OrdinalIgnoreCase)) return true;
 
     return false;

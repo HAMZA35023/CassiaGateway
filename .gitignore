@@ -364,3 +364,4 @@ FodyWeavers.xsd
 /temp_build/AccessAppMqttWpf
 AccessAPP/wwwroot/*
 /extras/CassiaDeployerLib_fixed/CassiaDeployerLib/temp_build
+/.claude

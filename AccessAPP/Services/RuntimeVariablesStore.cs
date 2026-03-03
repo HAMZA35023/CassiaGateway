@@ -19,6 +19,10 @@ public sealed class RuntimeVariablesStore
     private static readonly FieldInfo[] Fields =
         typeof(RuntimeVariables).GetFields(BindingFlags.Public | BindingFlags.Static);
 
+    // Snapshot of RuntimeVariables defaults, captured before any LoadFromDisk call.
+    private static readonly Dictionary<string, object?> Defaults =
+        Fields.ToDictionary(f => f.Name, f => f.GetValue(null), StringComparer.OrdinalIgnoreCase);
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -31,19 +35,19 @@ public sealed class RuntimeVariablesStore
 
     public RuntimeVariablesStore()
     {
-        FilePath = "runtime.json";
+        FilePath = AccessAppPaths.RuntimeConfig;
     }
 
     public RuntimeVariablesStore(string filePath)
     {
-        FilePath = string.IsNullOrWhiteSpace(filePath) ? "runtime.json" : filePath;
+        FilePath = string.IsNullOrWhiteSpace(filePath) ? AccessAppPaths.RuntimeConfig : filePath;
     }
 
     public RuntimeVariablesStore(IConfiguration cfg, IHostEnvironment env)
     {
         var path = cfg.GetValue<string>("RuntimeVariables:ConfigPath");
         if (string.IsNullOrWhiteSpace(path))
-            path = "runtime.json";
+            path = AccessAppPaths.RuntimeConfig;
         if (!Path.IsPathRooted(path))
             path = Path.Combine(env.ContentRootPath, path);
 
@@ -58,7 +62,21 @@ public sealed class RuntimeVariablesStore
         return dict;
     }
 
-    public bool SetSingle(string name, JsonElement value, out string? error)
+    /// <summary>Returns only fields whose current value differs from the startup default.</summary>
+    public Dictionary<string, object?> GetNonDefault()
+    {
+        var dict = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var f in Fields)
+        {
+            var current = f.GetValue(null);
+            if (Defaults.TryGetValue(f.Name, out var def) && Equals(current, def))
+                continue;
+            dict[f.Name] = current;
+        }
+        return dict;
+    }
+
+    public bool SetSingle(string name, JsonElement value, out string? error, bool allowStartupOnlyFields = false)
     {
         error = null;
 
@@ -72,6 +90,17 @@ public sealed class RuntimeVariablesStore
         if (field == null)
         {
             error = $"Unknown runtime variable '{name}'.";
+            return false;
+        }
+
+        // Backend service binding is resolved once when DI singletons are first created.
+        // Changing BLE_BACKEND at runtime can leave the app in a mixed state
+        // (Cassia flow decisions with Linux connection service, or vice versa).
+        // Allow BLE_BACKEND only when loading from disk during startup.
+        if (!allowStartupOnlyFields &&
+            string.Equals(field.Name, nameof(RuntimeVariables.BLE_BACKEND), StringComparison.OrdinalIgnoreCase))
+        {
+            error = $"'{nameof(RuntimeVariables.BLE_BACKEND)}' is startup-only. Update runtime.json and restart the service.";
             return false;
         }
 
@@ -102,7 +131,10 @@ public sealed class RuntimeVariablesStore
     /// <summary>
     /// Apply variables from a JSON object payload: { "WRITE_SLEEP_MS": 50, "FOO": true }
     /// </summary>
-    public (List<string> applied, Dictionary<string, string> errors) SetFromJsonObject(JsonElement root, ISet<string>? ignoreNames = null)
+    public (List<string> applied, Dictionary<string, string> errors) SetFromJsonObject(
+        JsonElement root,
+        ISet<string>? ignoreNames = null,
+        bool allowStartupOnlyFields = false)
     {
         var applied = new List<string>();
         var errors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -118,7 +150,7 @@ public sealed class RuntimeVariablesStore
             if (ignoreNames != null && ignoreNames.Contains(prop.Name))
                 continue;
 
-            if (SetSingle(prop.Name, prop.Value, out var err))
+            if (SetSingle(prop.Name, prop.Value, out var err, allowStartupOnlyFields))
                 applied.Add(prop.Name);
             else
                 errors[prop.Name] = err ?? "Unknown error";
@@ -142,7 +174,7 @@ public sealed class RuntimeVariablesStore
 
                 var json = File.ReadAllText(FilePath);
                 using var doc = JsonDocument.Parse(json);
-                return SetFromJsonObject(doc.RootElement);
+                return SetFromJsonObject(doc.RootElement, ignoreNames: null, allowStartupOnlyFields: true);
             }
             catch (Exception ex)
             {
@@ -165,7 +197,7 @@ public sealed class RuntimeVariablesStore
                 if (!string.IsNullOrWhiteSpace(dir))
                     Directory.CreateDirectory(dir);
 
-                var json = JsonSerializer.Serialize(GetAll(), JsonOptions);
+                var json = JsonSerializer.Serialize(GetNonDefault(), JsonOptions);
                 File.WriteAllText(FilePath, json);
                 return true;
             }

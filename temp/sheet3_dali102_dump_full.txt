@@ -1,0 +1,167 @@
+﻿   1 | 1.1.1        0x0411 - DaliSetDevicesMaxLevel |  |  |  |  |  |  | 
+   2 | This telegram sets the common device parameter MAX LEVEL in the database and in all connected control gear on the bus  |  |  |  |  |  |  | 
+   3 | BLE device -> Sensor |  |  |  |  |  |  | 
+   4 | Byte  | Field  | Field  | Example | Example  |  |  | 
+   5 | no. | Size | Description |  | Description |  |  | 
+   6 | 0 | 1 | Protocol Version | 0x01 | Protocol Id |  |  | 
+   7 | 1 | 2 | Telegram Type |  | DaliSetDeviceMaxLevel Id |  |  | 
+   8 | 3 | 2 | Total Length | 0x08 | Total Length of 8 bytes |  |  | 
+   9 | 5 | 2 | CRC16 | 0x0CBE | Calculated value, see section 4.5 |  |  | 
+  10 | 7 | 1 | MaxLevel |  | Range: 0x00 – 0xFE  ( 0-254 ) |  |  | 
+  11 |  |  |  |  |  |  |  | 
+  12 | 1.1.2        0x042E - DaliSetDeviceMaxLevelReply |  |  |  |  |  |  | 
+  13 | This telegram is a reply for the DaliSetDeviceMaxLevel telegram |  |  |  |  |  |  | 
+  14 | Sensor -> BLE device |  |  |  |  |  |  | 
+  15 | Byte  | Field  | Field  | Example | Example  |  |  | 
+  16 | no. | Size | Description |  | Description |  |  | 
+  17 | 0 | 1 | Protocol Version | 0x01 | Protocol Id |  |  | 
+  18 | 1 | 2 | Telegram Type |  | DaliSetDeviceMaxLevelReply Id |  |  | 
+  19 | 3 | 2 | Total Length | 0x09 | Total Length of 9 bytes |  |  | 
+  20 | 5 | 2 | CRC16 | 0xC788 | Calculated value, see section 4.5 |  |  | 
+  21 | 7 | 1 | Status | 0x00 | ACK = 0  |  |  | 
+  22 |  |  |  |  | - validated OK. |  |  | 
+  23 |  |  |  |  | NACK_COMMISSIONING_RUNNING = 3  |  |  | 
+  24 |  |  |  |  |  - Commissioning running |  |  | 
+  25 | 8 | 1 | Data | 0x00 | Not used |  |  | 
+  26 |  |  |  |  |  |  |  | 
+  28 |  |  |  |  |  |  |  | 
+  29 | 1.1.3        0x0412 - DaliSetDevicesMinLevel |  |  |  |  |  |  | 
+  30 | This datatype sets the common device parameter MIN LEVEL in the database and in all connected control gear on the bus  |  |  |  |  |  |  | 
+  31 | BLE device -> Sensor |  |  |  |  |  |  | 
+  32 | Byte  | Field  | Field  | Example | Example  |  |  | 
+  33 | no. | Size | Description |  | Description |  |  | 
+  34 | 0 | 1 | Protocol Version | 0x01 | Protocol Id |  |  | 
+  35 | 1 | 2 | Telegram Type |  | DaliSetDeviceMinLevel Id |  |  | 
+  36 | 3 | 2 | Total Length | 0x08 | Total Length of 8 bytes |  |  | 
+  37 | 5 | 2 | CRC16 | 0x9762 | Calculated value, see section 4.5 |  |  | 
+  38 | 7 | 1 | MinLevel |  | Range: 0x00 – 0xFE  ( 0-254 ) |  |  | 
+  39 |  |  |  |  |  |  |  | 
+  40 | 1.1.4        0x042F - DaliSetDeviceMinLevelReply |  |  |  |  |  |  | 
+  41 | This telegram is a reply for the DaliSetDeviceMinLevel telegram |  |  |  |  |  |  | 
+  42 | Sensor -> BLE device |  |  |  |  |  |  | 
+  43 | Byte  | Field  | Field  | Example | Example  |  |  | 
+  44 | no. | Size | Description |  | Description |  |  | 
+  45 | 0 | 1 | Protocol Version | 0x01 | Protocol Id |  |  | 
+  46 | 1 | 2 | Telegram Type |  | DaliSetDeviceMinLevelReply Id |  |  | 
+  47 | 3 | 2 | Total Length | 0x09 | Total Length of 9 bytes |  |  | 
+  48 | 5 | 2 | CRC16 | 0xB13C | Calculated value, see section 4.5 |  |  | 
+  49 | 7 | 1 | Status | 0x00 | ACK = 0 - validated OK. |  |  | 
+  50 |  |  |  |  | NACK_COMMISSIONING_RUNNING = 3   |  |  | 
+  51 |  |  |  |  | - Commissioning running |  |  | 
+  52 | 8 | 1 | Data | 0x00 | Not used |  |  | 
+  53 |  |  |  |  |  |  |  | 
+  55 |  |  |  |  |  |  |  | 
+  56 | 1.1.5        0x0413 - DaliSetDevicesPowerOnLevel |  |  |  |  |  |  | 
+  57 | This datatype sets the common device parameter POWER ON LEVEL in the database and in all connected control gear on the bus  |  |  |  |  |  |  | 
+  58 | BLE device -> Sensor |  |  |  |  |  |  | 
+  59 | Byte  | Field  | Field  | Example | Example  |  |  | 
+  60 | no. | Size | Description |  | Description |  |  | 
+  61 | 0 | 1 | Protocol Version | 0x01 | Protocol Id |  |  | 
+  62 | 1 | 2 | Telegram Type |  | DaliSetDevicePowerOn Id |  |  | 
+  63 | 3 | 2 | Total Length | 0x08 | Total Length of 8 bytes |  |  | 
+  64 | 5 | 2 | CRC16 | 0xE1D6 | Calculated value, see section 4.5 |  |  | 
+  65 | 7 | 1 | PowerOnLevel |  | Range: 0x00 – 0xFF (0-255)  |  |  | 
+  66 |  |  |  |  | 255 = highest lightLevel |  |  | 
+  67 |  |  |  |  |  |  |  | 
+  68 | 1.1.6        0x0430 - DaliSetDevicePowerOnReply |  |  |  |  |  |  | 
+  69 | This telegram is a reply for the DaliSetDevicePowerOn telegram |  |  |  |  |  |  | 
+  70 | Sensor -> BLE device |  |  |  |  |  |  | 
+  71 | Byte  | Field  | Field  | Example | Example  |  |  | 
+  72 | no. | Size | Description |  | Description |  |  | 
+  73 | 0 | 1 | Protocol Version | 0x01 | Protocol Id |  |  | 
+  74 | 1 | 2 | Telegram Type |  | DaliSetDevicePowerOnReply Id |  |  | 
+  75 | 3 | 2 | Total Length | 0x09 | Total Length of 9 bytes |  |  | 
+  76 | 5 | 2 | CRC16 | 0x7E75 | Calculated value, see section 4.5 |  |  | 
+  77 | 7 | 1 | Status | 0x00 | ACK = 0  |  |  | 
+  78 |  |  |  |  | - validated OK. |  |  | 
+  79 |  |  |  |  | NACK_COMMISSIONING_RUNNING = 3  |  |  | 
+  80 |  |  |  |  | - Commissioning running |  |  | 
+  81 | 8 | 1 | Data | 0x00 | Not used |  |  | 
+  82 |  |  |  |  |  |  |  | 
+  84 |  |  |  |  |  |  |  | 
+  85 | 1.1.7        0x0414 - DaliSetDevicesSysFailLevel |  |  |  |  |  |  | 
+  86 | This datatype sets the common device parameter SYSTEM FAILURE LEVEL in the database and in all connected control gear on the bus  |  |  |  |  |  |  | 
+  87 | BLE device -> Sensor |  |  |  |  |  |  | 
+  88 | Byte  | Field  | Field  | Example | Example  |  |  | 
+  89 | no. | Size | Description |  | Description |  |  | 
+  90 | 0 | 1 | Protocol Version | 0x01 | Protocol Id |  |  | 
+  91 | 1 | 2 | Telegram Type |  | DaliSetDeviceSysFailLevel Id |  |  | 
+  92 | 3 | 2 | Total Length | 0x08 | Total Length of 8 bytes |  |  | 
+  93 | 5 | 2 | CRC16 | 0xB0FB | Calculated value, see section 4.5 |  |  | 
+  94 | 7 | 1 | SysFailLevel |  | Range: 0x00 – 0xFF  (0-255)  |  |  | 
+  95 |  |  |  |  | 255 = no change in system level |  |  | 
+  96 |  |  |  |  |  |  |  | 
+  97 | 1.1.8        0x0431 - DaliSetDeviceSysFailLevelReply |  |  |  |  |  |  | 
+  98 | This telegram is a reply for the DaliSetDeviceSysFailLevel telegram |  |  |  |  |  |  | 
+  99 | Sensor -> BLE device |  |  |  |  |  |  | 
+ 100 | Byte  | Field  | Field  | Example | Example  |  |  | 
+ 101 | no. | Size | Description |  | Description |  |  | 
+ 102 | 0 | 1 | Protocol Version | 0x01 | Protocol Id |  |  | 
+ 103 | 1 | 2 | Telegram Type |  | DaliSetDeviceSysFailLevelReply Id |  |  | 
+ 104 | 3 | 2 | Total Length | 0x09 | Total Length of 9 bytes |  |  | 
+ 105 | 5 | 2 | CRC16 | 0x08C1 | Calculated value, see section 4.5 |  |  | 
+ 106 | 7 | 1 | Status | 0x00 | ACK = 0 - validated OK. |  |  | 
+ 107 |  |  |  |  | NACK_COMMISSIONING_RUNNING = 3   |  |  | 
+ 108 |  |  |  |  | - Commissioning running |  |  | 
+ 109 | 8 | 1 | Data | 0x00 | Not used |  |  | 
+ 110 |  |  |  |  |  |  |  | 
+ 112 |  |  |  |  |  |  |  | 
+ 113 | 1.1.9        0x0415 - DaliSetDevicesFadeTime |  |  |  |  |  |  | 
+ 114 | This datatype sets the common device parameter FADE TIME in the database and in all connected control gear on the bus  |  |  |  |  |  |  | 
+ 115 | BLE device -> Sensor |  |  |  |  |  |  | 
+ 116 | Byte  | Field  | Field  | Example | Example  |  |  | 
+ 117 | no. | Size | Description |  | Description |  |  | 
+ 118 | 0 | 1 | Protocol Version | 0x01 | Protocol Id |  |  | 
+ 119 | 1 | 2 | Telegram Type |  | DaliSetDeviceFadeTime Id |  |  | 
+ 120 | 3 | 2 | Total Length | 0x09 | Total Length of 9 bytes |  |  | 
+ 121 | 5 | 2 | CRC16 | 0xC64F | Calculated value, see section 4.5 |  |  | 
+ 122 | 7 | 1 | FadeTime |  | Range: 0x00 – 0x0F (0-15). (See Table 4) |  |  | 
+ 123 | 8 | 1 | ExtendedFadeTime |  | Range: 0x00 – 0x4F (0-79)  |  |  | 
+ 124 |  |  |  |  | Bitwise: 0YYYAAAAb |  |  | 
+ 125 |  |  |  |  | YYY = fade time multiplier. (See Table 7) |  |  | 
+ 126 |  |  |  |  | AAAA = fade time base. (See Table 6) |  |  | 
+ 127 |  |  |  |  |  |  |  | 
+ 129 |  |  |  |  |  |  |  | 
+ 130 | 1.1.10    0x0432 - DaliSetDeviceFadeTimeReply |  |  |  |  |  |  | 
+ 131 | This telegram is a reply for the DaliSetDeviceFadeTime telegram |  |  |  |  |  |  | 
+ 132 | Sensor -> BLE device |  |  |  |  |  |  | 
+ 133 | Byte  | Field  | Field  | Example | Example  |  |  | 
+ 134 | no. | Size | Description |  | Description |  |  | 
+ 135 | 0 | 1 | Protocol Version | 0x01 | Protocol Id |  |  | 
+ 136 | 1 | 2 | Telegram Type |  | DaliSetDeviceFadeTimeReply Id |  |  | 
+ 137 | 3 | 2 | Total Length | 0x09 | Total Length of 9 bytes |  |  | 
+ 138 | 5 | 2 | CRC16 | 0x931D | Calculated value, see section 4.5 |  |  | 
+ 139 | 7 | 1 | Status | 0x00 | ACK = 0  |  |  | 
+ 140 |  |  |  |  | - validated OK. |  |  | 
+ 141 |  |  |  |  | NACK_RANGE_CHECK = 1 |  |  | 
+ 142 |  |  |  |  |  - parameter has invalid range. |  |  | 
+ 143 |  |  |  |  | NACK_COMMISSIONING_RUNNING = 3   |  |  | 
+ 144 |  |  |  |  | - Commissioning running |  |  | 
+ 145 | 8 | 1 | Data | 0x00 | Not used |  |  | 
+ 146 | 1.1.11    0x0416 - DaliSetDevicesFadeRate |  |  |  |  |  |  | 
+ 147 | This datatype sets the common device parameter FADE RATE in the database and in all connected control gear on the bus  |  |  |  |  |  |  | 
+ 148 | BLE device -> Sensor |  |  |  |  |  |  | 
+ 149 | Byte  | Field  | Field  | Example | Example  |  |  | 
+ 150 | no. | Size | Description |  | Description |  |  | 
+ 151 | 0 | 1 | Protocol Version | 0x01 | Protocol Id |  |  | 
+ 152 | 1 | 2 | Telegram Type |  | DaliSetDeviceFadeRate Id |  |  | 
+ 153 | 3 | 2 | Total Length | 0x08 | Total Length of 8 bytes |  |  | 
+ 154 | 5 | 2 | CRC16 | 0x5D93 | Calculated value, see section 4.5 |  |  | 
+ 155 | 7 | 1 | FadeRate |  | Range: 0x01 – 0x0F (1-15). (See Table 5) |  |  | 
+ 156 |  |  |  |  |  |  |  | 
+ 158 |  |  |  |  |  |  |  | 
+ 159 | 1.1.12    0x0433 - DaliSetDeviceFadeRateReply |  |  |  |  |  |  | 
+ 160 | This telegram is a reply for the DaliSetDeviceFadeTime telegram |  |  |  |  |  |  | 
+ 161 | Sensor -> BLE device |  |  |  |  |  |  | 
+ 162 | Byte  | Field  | Field  | Example | Example  |  |  | 
+ 163 | no. | Size | Description |  | Description |  |  | 
+ 164 | 0 | 1 | Protocol Version | 0x01 | Protocol Id |  |  | 
+ 165 | 1 | 2 | Telegram Type |  | DaliSetDeviceFadeRateReply Id |  |  | 
+ 166 | 3 | 2 | Total Length | 0x09 | Total Length of 9 bytes |  |  | 
+ 167 | 5 | 2 | CRC16 | 0xE5A9 | Calculated value, see section 4.5 |  |  | 
+ 168 | 7 | 1 | Status | 0x00 | ACK = 0 - validated OK. |  |  | 
+ 169 |  |  |  |  | NACK_RANGE_CHECK = 1  |  |  | 
+ 170 |  |  |  |  | - parameter has invalid range. |  |  | 
+ 171 |  |  |  |  | NACK_COMMISSIONING_RUNNING = 3   |  |  | 
+ 172 |  |  |  |  | - Commissioning running |  |  | 
+ 173 | 8 | 1 | Data | 0x00 | Not used |  |  | 

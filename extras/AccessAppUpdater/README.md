@@ -13,13 +13,20 @@ Run the updater before `AccessAPP` starts:
 5. Preserve device-specific files (default: `mqtt.json`).
 6. Atomically replace `/home/cassia/FWUpgrade`.
 
-## Build (publish for Cassia Linux ARM)
+## Build (publish for Linux ARM and Linux x64)
 
 ```bash
+# linux-arm
 dotnet publish extras/AccessAppUpdater/AccessAppUpdater.csproj \
   -c Release -r linux-arm --self-contained true \
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
-  -o publish-updater
+  -o publish-updater/linux-arm
+
+# linux-x64 (packaged/runtime-tagged as linux-64 in the AccessAPP update feed)
+dotnet publish extras/AccessAppUpdater/AccessAppUpdater.csproj \
+  -c Release -r linux-x64 --self-contained true \
+  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
+  -o publish-updater/linux-x64
 ```
 
 ## Config
@@ -91,3 +98,34 @@ Example:
 ```powershell
 .\scripts\publish-accessapp-update-feed.ps1 -Version 0.7.9
 ```
+
+
+## First-run setup (interactive)
+
+If `/etc/accessapp-updater.json` does not exist (or you pass `--setup`), the updater will:
+
+- Ask for channel (stable/test/develop)
+- Ask for system (linux-arm or linux-64)
+- Optionally ask for a pinned 
+- Write:
+  - `/etc/accessapp-updater.json`
+  - `/etc/accessapp-updater.channel`
+  - `/etc/accessapp-updater.system`
+- Install `/etc/init.d/AccessApp` and enable autostart using available init tooling:
+  - `update-rc.d` (SysV)
+  - `systemctl` (systemd)
+
+Then you can start AccessAPP with:
+
+```bash
+/etc/init.d/AccessApp start
+```
+
+## Manifest schema
+
+The update feed now supports multiple builds per version via:
+
+- `latest.builds.{runtime}`
+- `releases[].builds.{runtime}`
+
+Legacy fields (`latest.url`, etc.) are still written and point to the linux-arm build for backwards compatibility.

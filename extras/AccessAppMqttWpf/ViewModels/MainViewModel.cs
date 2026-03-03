@@ -128,6 +128,7 @@ public partial class MainViewModel : ObservableObject
             if (!string.IsNullOrWhiteSpace(cs.ProcessStatus)) dev.ProcessStatus = cs.ProcessStatus;
             if (!string.IsNullOrWhiteSpace(cs.ProcessCassia)) dev.ProcessCassia = cs.ProcessCassia;
             if (!string.IsNullOrWhiteSpace(cs.ProcessFirmware)) dev.ProcessFirmware = cs.ProcessFirmware;
+            if (!string.IsNullOrWhiteSpace(cs.ChipUsed)) dev.ChipUsed = cs.ChipUsed;
             if (cs.ProcessProgress > 0) dev.ProcessProgress = cs.ProcessProgress;
             if (cacheTs != DateTimeOffset.MinValue) dev.ProcessLastUpdateUtc = cacheTs;
         }
@@ -145,12 +146,10 @@ public partial class MainViewModel : ObservableObject
             dev.IsUpgradeSuccess = true;
             dev.LastUpgradeSuccessUtc = cs.LastUpgradeSuccessUtc ?? dev.LastUpgradeSuccessUtc;
             if (!string.IsNullOrWhiteSpace(cs.LastTargetFw)) dev.LastTargetFw = cs.LastTargetFw;
-            dev.IsInQueue = false;
         }
-        else
-        {
-            dev.IsInQueue = cs.IsInQueue;
-        }
+
+        // Queue state is authoritative for row color precedence.
+        dev.IsInQueue = cs.IsInQueue;
     }
 
 
@@ -225,6 +224,10 @@ public partial class MainViewModel : ObservableObject
     // If true, we include forceUpdate=true in start-update payloads.
     // Default is false on startup.
     [ObservableProperty] private bool forceUpdateEnabled = false;
+    // Runtime-only flags for post-update DALI commissioning scans.
+    // These are intentionally not persisted in appsettings.
+    [ObservableProperty] private bool runDali102TotalNewScanAfterUpdateEnabled = false;
+    [ObservableProperty] private bool runDali103TotalNewScanAfterUpdateEnabled = false;
 
     // If true, auto-adjust workers from queued model mix:
     // DALI master only (P47/P48) => 4, otherwise => 2.
@@ -245,11 +248,24 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string selectedFirmwareP47 = "";
     [ObservableProperty] private string selectedFirmwareP48 = "";
 
+    [ObservableProperty] private string selectedDetectorSettingsProfileP41 = "";
+    [ObservableProperty] private string selectedDetectorSettingsProfileP42 = "";
+    [ObservableProperty] private string selectedDetectorSettingsProfileP46 = "";
+    [ObservableProperty] private string selectedDetectorSettingsProfileP47 = "";
+    [ObservableProperty] private string selectedDetectorSettingsProfileP48 = "";
+
     partial void OnSelectedFirmwareP41Changed(string value) => PersistSelectedFirmware("P41", value);
     partial void OnSelectedFirmwareP42Changed(string value) => PersistSelectedFirmware("P42", value);
     partial void OnSelectedFirmwareP46Changed(string value) => PersistSelectedFirmware("P46", value);
     partial void OnSelectedFirmwareP47Changed(string value) => PersistSelectedFirmware("P47", value);
     partial void OnSelectedFirmwareP48Changed(string value) => PersistSelectedFirmware("P48", value);
+
+    // Detector settings profile selections are runtime-only.
+    partial void OnSelectedDetectorSettingsProfileP41Changed(string value) { }
+    partial void OnSelectedDetectorSettingsProfileP42Changed(string value) { }
+    partial void OnSelectedDetectorSettingsProfileP46Changed(string value) { }
+    partial void OnSelectedDetectorSettingsProfileP47Changed(string value) { }
+    partial void OnSelectedDetectorSettingsProfileP48Changed(string value) { }
 
     [ObservableProperty] private string connectionStatus = "Disconnected";
     [ObservableProperty] private bool isConnected;
@@ -315,6 +331,7 @@ public partial class MainViewModel : ObservableObject
         ForceUpdateEnabled = s.accessapp.forceUpdate;
         AutoSetWorkersByModelEnabled = s.accessapp.autoSetWorkersByModel;
         ProductionUpdateEnabled = s.accessapp.productionUpdate;
+        HostBleAutoRemoveStaleDevices = s.accessapp.hostBleAutoRemoveStaleDevices;
 
         // Firmware selections: remember across restarts/resync.
         try
@@ -325,6 +342,8 @@ public partial class MainViewModel : ObservableObject
             if (fwMap.TryGetValue("P46", out var fw46)) SelectedFirmwareP46 = fw46 ?? "";
             if (fwMap.TryGetValue("P47", out var fw47)) SelectedFirmwareP47 = fw47 ?? "";
             if (fwMap.TryGetValue("P48", out var fw48)) SelectedFirmwareP48 = fw48 ?? "";
+
+            // Detector settings profile selections are runtime-only (not loaded from persisted settings).
         }
         catch { /* best-effort */ }
 
@@ -636,6 +655,146 @@ public partial class MainViewModel : ObservableObject
             "P48" => SelectedFirmwareP48,
             _ => ""
         };
+    }
+
+    private string GetDetectorSettingsProfileForModel(string model)
+    {
+        model = (model ?? "").ToUpperInvariant();
+        return model switch
+        {
+            "P41" => SelectedDetectorSettingsProfileP41,
+            "P42" => SelectedDetectorSettingsProfileP42,
+            "P46" => SelectedDetectorSettingsProfileP46,
+            "P47" => SelectedDetectorSettingsProfileP47,
+            "P48" => SelectedDetectorSettingsProfileP48,
+            _ => ""
+        };
+    }
+
+    private void SetDetectorSettingsProfileForModel(string model, string? path)
+    {
+        var value = (path ?? "").Trim();
+        model = (model ?? "").Trim().ToUpperInvariant();
+        switch (model)
+        {
+            case "P41":
+                SelectedDetectorSettingsProfileP41 = value;
+                break;
+            case "P42":
+                SelectedDetectorSettingsProfileP42 = value;
+                break;
+            case "P46":
+                SelectedDetectorSettingsProfileP46 = value;
+                break;
+            case "P47":
+                SelectedDetectorSettingsProfileP47 = value;
+                break;
+            case "P48":
+                SelectedDetectorSettingsProfileP48 = value;
+                break;
+        }
+    }
+
+    private bool TryResolveModelProfilePatch(
+        string model,
+        out DetectorSettingsPatchModel? patch,
+        out bool runDaliAddressAllToZone1AfterUpdate,
+        out bool runDali102TotalNewScanAfterUpdate,
+        out bool runDali103TotalNewScanAfterUpdate,
+        out string error)
+    {
+        patch = null;
+        runDaliAddressAllToZone1AfterUpdate = false;
+        runDali102TotalNewScanAfterUpdate = false;
+        runDali103TotalNewScanAfterUpdate = false;
+        error = string.Empty;
+
+        var path = GetDetectorSettingsProfileForModel(model);
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+
+        path = path.Trim();
+        if (!File.Exists(path))
+        {
+            error = $"Detector settings profile for {model} was not found: {path}";
+            return false;
+        }
+
+        try
+        {
+            var json = File.ReadAllText(path);
+            var profile = DetectorSettingsProfileModel.Parse(json);
+            if (profile == null)
+            {
+                error = $"Detector settings profile for {model} could not be parsed: {path}";
+                return false;
+            }
+
+            runDaliAddressAllToZone1AfterUpdate = profile.RunDaliAddressAllToZone1AfterUpdate;
+            runDali102TotalNewScanAfterUpdate = profile.RunDali102TotalNewScanAfterUpdate;
+            runDali103TotalNewScanAfterUpdate = profile.RunDali103TotalNewScanAfterUpdate;
+
+            var normalized = (profile.Settings ?? new DetectorSettingsPatchModel()).CloneNormalized();
+            if (!normalized.HasAnyValue)
+            {
+                if (!runDaliAddressAllToZone1AfterUpdate
+                    && !runDali102TotalNewScanAfterUpdate
+                    && !runDali103TotalNewScanAfterUpdate)
+                {
+                    error = $"Detector settings profile for {model} has no selected fields or post-update scans: {path}";
+                    return false;
+                }
+
+                patch = null;
+                return true;
+            }
+
+            patch = normalized;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = $"Detector settings profile load failed for {model}: {ex.Message}";
+            return false;
+        }
+    }
+
+    [RelayCommand]
+    private void BrowseDetectorSettingsProfile(string? model)
+    {
+        model = (model ?? "").Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(model))
+            return;
+
+        try
+        {
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Filter = "Detector settings profile (*.json)|*.json|All files (*.*)|*.*",
+                CheckFileExists = true
+            };
+
+            if (dlg.ShowDialog() != true)
+                return;
+
+            SetDetectorSettingsProfileForModel(model, dlg.FileName);
+            ConnectionStatus = $"Selected detector settings profile for {model}.";
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = $"Select profile failed ({model}): {ex.Message}";
+        }
+    }
+
+    [RelayCommand]
+    private void ClearDetectorSettingsProfile(string? model)
+    {
+        model = (model ?? "").Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(model))
+            return;
+
+        SetDetectorSettingsProfileForModel(model, "");
+        ConnectionStatus = $"Cleared detector settings profile for {model}.";
     }
 
     private void LoadFirmwareOptions()
@@ -1386,6 +1545,7 @@ public partial class MainViewModel : ObservableObject
             forceUpdate = ForceUpdateEnabled,
             autoSetWorkersByModel = AutoSetWorkersByModelEnabled,
             productionUpdate = ProductionUpdateEnabled,
+            hostBleAutoRemoveStaleDevices = HostBleAutoRemoveStaleDevices,
             selectedFirmwareByModel = fwMap
         };
 
@@ -1411,10 +1571,6 @@ public partial class MainViewModel : ObservableObject
             // ignore persistence errors
         }
     }
-
-    
-
-
 
     [RelayCommand]
     private void ClearDevices()

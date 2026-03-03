@@ -371,6 +371,18 @@ public partial class MainViewModel : ObservableObject
                     var namePart = string.IsNullOrWhiteSpace(name) ? "" : $" name={name}";
                     line = $"[logId={logId}] stage={stage} time={timeStr} mac={mac}{namePart} fw={fw} status={status}";
                 }
+                else
+                {
+                    // Keep line parser-compatible even when gateway sends a compact/non-keyed "line".
+                    if (!string.IsNullOrWhiteSpace(logId) && !LogLineIdRx.IsMatch(line))
+                        line = $"[logId={logId}] {line}";
+                    if (!string.IsNullOrWhiteSpace(mac) && !LogLineMacRx.IsMatch(line))
+                        line = $"{line} mac={mac}";
+                    if (!string.IsNullOrWhiteSpace(stage) && !LogLineStageRx.IsMatch(line))
+                        line = $"{line} stage={stage} time={timeStr}";
+                    if (!string.IsNullOrWhiteSpace(status) && !LogLineStatusRx.IsMatch(line))
+                        line = $"{line} status={status}";
+                }
 
                 var entry = new UpgradeLogEntry
                 {
@@ -655,6 +667,9 @@ public partial class MainViewModel : ObservableObject
             return progressPercent <= 5;
 
             var s = stage.Trim();
+            // Linux-native/cassia chip-selection marker at run start (e.g. "Using hci0", "Using chip 1").
+            if (LogLineChipUsedRx.IsMatch(s)) return true;
+
             if (progressPercent <= 5)
             {
                 if (s.Contains("Process Start", StringComparison.OrdinalIgnoreCase)) return true;
@@ -688,14 +703,65 @@ public partial class MainViewModel : ObservableObject
             return true;
         }
 
+        private string ResolveMacFromLogLine(string cassia, string line)
+        {
+            var macMatch = LogLineMacRx.Match(line);
+            if (macMatch.Success)
+            {
+                var direct = macMatch.Groups["mac"].Value?.Trim() ?? "";
+                if (!string.IsNullOrWhiteSpace(direct))
+                    return direct;
+            }
+
+            var idMatch = LogLineIdRx.Match(line);
+            if (!idMatch.Success)
+                return "";
+
+            var logId = idMatch.Groups["id"].Value?.Trim() ?? "";
+            if (string.IsNullOrWhiteSpace(logId))
+                return "";
+
+            var cassiaName = (cassia ?? "").Trim();
+            var key = $"{cassiaName}||{logId}";
+            if (_upgradeLogGroupByKey.TryGetValue(key, out var groupedByKey))
+            {
+                var groupedMac = (groupedByKey.Mac ?? "").Trim();
+                if (!string.IsNullOrWhiteSpace(groupedMac))
+                    return groupedMac;
+            }
+
+            var grouped = UpgradeLogGroups.FirstOrDefault(g =>
+                g != null
+                && string.Equals((g.LogId ?? "").Trim(), logId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals((g.Cassia ?? "").Trim(), cassiaName, StringComparison.OrdinalIgnoreCase));
+
+            return (grouped?.Mac ?? "").Trim();
+        }
+
+        private void ApplyChipUsedHint(string mac, string chipUsed)
+        {
+            if (string.IsNullOrWhiteSpace(mac) || string.IsNullOrWhiteSpace(chipUsed))
+                return;
+
+            var chip = chipUsed.Trim();
+            var cs = GetOrCreateCache(mac);
+            cs.ChipUsed = chip;
+
+            var dev = FindDiscoveredDevice(mac);
+            if (dev != null)
+                dev.ChipUsed = chip;
+
+            var qi = QueueItems.FirstOrDefault(x => x.Mac.Equals(mac, StringComparison.OrdinalIgnoreCase));
+            if (qi != null)
+                qi.ChipUsed = chip;
+        }
+
 
         private void ApplyStatusFromUpgradeLogLine(string cassia, string line)
         {
             try
             {
-                var mm = LogLineMacRx.Match(line);
-                if (!mm.Success) return;
-                var mac = mm.Groups["mac"].Value;
+                var mac = ResolveMacFromLogLine(cassia, line);
                 if (string.IsNullOrWhiteSpace(mac)) return;
 
                 var stage = "";
@@ -763,7 +829,7 @@ public partial class MainViewModel : ObservableObject
                         cs.IsUpgradeNoFwRead = isNoFwRead;
 
                         // Completion implies no longer in queue unless queue snapshot says otherwise later.
-                        if (isSuccess || isWarn || isFailed)
+                        if (isSuccess || isWarn || isFailed || isNoFwRead)
                         cs.IsInQueue = false;
 
                         var fwm = LogLineFwRx.Match(line);
@@ -799,7 +865,7 @@ public partial class MainViewModel : ObservableObject
                     dev.IsUpgradeNoFwRead = cs.IsUpgradeNoFwRead;
                     dev.IsUpgradeFailed = cs.IsUpgradeFailed;
 
-                    if (cs.IsUpgradeSuccess || cs.IsUpgradeWarn || cs.IsUpgradeFailed)
+                    if (cs.IsUpgradeSuccess || cs.IsUpgradeWarn || cs.IsUpgradeFailed || cs.IsUpgradeNoFwRead)
                     dev.IsInQueue = false;
                 }
             }
@@ -814,10 +880,7 @@ public partial class MainViewModel : ObservableObject
         {
             try
             {
-                var mm = LogLineMacRx.Match(line);
-                if (!mm.Success) return;
-
-                var mac = mm.Groups["mac"].Value?.Trim();
+                var mac = ResolveMacFromLogLine(cassia, line);
                 if (string.IsNullOrWhiteSpace(mac)) return;
 
                 var stage = "";
@@ -833,11 +896,19 @@ public partial class MainViewModel : ObservableObject
 
                 // chip from stage text (optional)
                 var chipUsed = "";
-                if (!string.IsNullOrWhiteSpace(stage))
+                var chipSource = !string.IsNullOrWhiteSpace(stage) ? stage : status;
+                if (string.IsNullOrWhiteSpace(chipSource))
+                    chipSource = line;
+                if (!string.IsNullOrWhiteSpace(chipSource))
                 {
-                    var cm = Regex.Match(stage, @"using\s+chip\s+(?<c>\d+)", RegexOptions.IgnoreCase);
+                    var cm = LogLineChipUsedRx.Match(chipSource);
                     if (cm.Success) chipUsed = cm.Groups["c"].Value.Trim();
                 }
+
+                // Apply chip as soon as we see it so it cannot be lost by later
+                // progress ordering/de-dup heuristics.
+                if (!string.IsNullOrWhiteSpace(chipUsed))
+                    ApplyChipUsedHint(mac, chipUsed);
 
                 // prefer stage; fallback to status
                 var text = !string.IsNullOrWhiteSpace(stage) ? stage : status;
@@ -868,87 +939,48 @@ public partial class MainViewModel : ObservableObject
                 ? (isSuccess ? "Done" : (isNoFwRead ? "No FW" : (isWarn ? "Warn" : (isFailed ? "Failed" : text))))
                 : text;
 
-                Application.Current.Dispatcher.Invoke(() =>
+                lock (_progressBufLock)
                 {
-                    // Update queue row (if exists)
-                    var qi = QueueItems.FirstOrDefault(q => q.Mac.Equals(mac, StringComparison.OrdinalIgnoreCase));
-                    if (qi != null)
+                    var isNew = false;
+                    if (!_progressByMac.TryGetValue(mac, out var bp))
                     {
-                        // Use arrivalUtc for ordering (prevents clock skew dropping new lines)
-                        if (qi.LastUpdateUtc != default && arrivalUtc < qi.LastUpdateUtc)
+                        bp = new BufferedProgress { Mac = mac, HasProgressPercent = false, HasSpeedPctPerMin = false };
+                        _progressByMac[mac] = bp;
+                        isNew = true;
+                    }
+                    else if (bp.TimeUtc != DateTimeOffset.MinValue && arrivalUtc < bp.TimeUtc)
+                    {
                         return;
-
-                        qi.Cassia = cassia;
-                        qi.Status = queueText.Trim();
-                        if (!string.IsNullOrWhiteSpace(chipUsed))
-                        qi.ChipUsed = chipUsed;
-
-                        if (isCompletion)
-                        qi.Progress = 100;
-                        if (isCompletion)
-                        qi.SpeedPctPerMin = null;
-
-                        if (LooksLikeFirmwareVersion(fw))
-                        qi.FirmwareVersion = fw;
-
-                        qi.LastUpdateUtc = arrivalUtc;
-
-                        RequestQueueRefresh();
                     }
 
-                    // Cache + device list mirror (without creating devices from logs)
-                    var cs = GetOrCreateCache(mac);
-                    if (cs.LastUpdateUtc != default && arrivalUtc < cs.LastUpdateUtc)
-                    return;
-
-                    cs.ProcessCassia = cassia;
-                    cs.ProcessStatus = text.Trim();
-                    if (!string.IsNullOrWhiteSpace(chipUsed))
-                    cs.ChipUsed = chipUsed;
-
-                    if (isCompletion)
-                    cs.ProcessProgress = 100;
+                    bp.Cassia = cassia;
+                    bp.Stage = text.Trim();
+                    bp.QueueStatus = queueText.Trim();
+                    bp.ChipUsed = chipUsed;
 
                     if (LooksLikeFirmwareVersion(fw))
-                    cs.ProcessFirmware = fw;
-
-                    // IMMEDIATE completion result flags (this is what drives row color)
-                    if (isCompletion)
-                    {
-                        cs.IsUpgradeSuccess = isSuccess;
-                        cs.IsUpgradeWarn = isWarn;
-                        cs.IsUpgradeFailed = isFailed;
-                        cs.IsUpgradeNoFwRead = isNoFwRead;
-
-                        // completion implies not in queue unless queue snapshot later says otherwise
-                        if (isSuccess || isWarn || isFailed)
-                        cs.IsInQueue = false;
-                    }
-
-                    cs.LastUpdateUtc = arrivalUtc;
-
-                    var dev = FindDiscoveredDevice(mac);
-                    if (dev == null) return;
-
-                    dev.ProcessCassia = cassia;
-                    dev.ProcessStatus = cs.ProcessStatus;
-                    dev.ChipUsed = cs.ChipUsed;
-                    if (!string.IsNullOrWhiteSpace(cs.ProcessFirmware))
-                    dev.ProcessFirmware = cs.ProcessFirmware;
-
-                    dev.ProcessLastUpdateUtc = arrivalUtc;
+                        bp.FirmwareTarget = fw;
 
                     if (isCompletion)
                     {
-                        dev.IsUpgradeSuccess = isSuccess;
-                        dev.IsUpgradeWarn = isWarn;
-                        dev.IsUpgradeFailed = isFailed;
-                        dev.IsUpgradeNoFwRead = isNoFwRead;
-
-                        if (isSuccess || isWarn || isFailed)
-                        dev.IsInQueue = false; // queue snapshot can set back to true (blue)
+                        bp.HasProgressPercent = true;
+                        bp.ProgressPercent = 100;
+                        bp.HasSpeedPctPerMin = true;
+                        bp.SpeedPctPerMin = null;
+                        bp.ClearSpeed = true;
                     }
-                });
+                    else
+                    {
+                        if (isNew)
+                        {
+                            bp.HasProgressPercent = false;
+                            bp.HasSpeedPctPerMin = false;
+                        }
+                        bp.ClearSpeed = false;
+                    }
+
+                    bp.TimeUtc = arrivalUtc;
+                }
             }
             catch
             {

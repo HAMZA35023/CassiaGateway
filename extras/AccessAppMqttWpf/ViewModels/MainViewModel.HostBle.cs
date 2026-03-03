@@ -108,6 +108,7 @@ public partial class MainViewModel : ObservableObject
     // Host BLE extra filters
     [ObservableProperty] private bool hostBleHideCompleted;
     [ObservableProperty] private bool hostBleHideInQueue;
+    [ObservableProperty] private bool hostBleAutoRemoveStaleDevices = false;
     [ObservableProperty] private string hostBleSearchText = "";
 
     [ObservableProperty] private string hostBleUiStatusText = "";
@@ -232,6 +233,23 @@ partial void OnHostBleUiUpdateSecondsChanged(int value)
         try { HostBleDevicesView.Refresh(); } catch { }
     }
 
+    partial void OnHostBleAutoRemoveStaleDevicesChanged(bool value)
+    {
+        if (_isInitializing) return;
+
+        try
+        {
+            var s = _store.Load();
+            _store.Save(BuildSettingsSnapshot(s));
+        }
+        catch
+        {
+            // best effort
+        }
+
+        try { HostBleRefreshUi(); } catch { }
+    }
+
     [RelayCommand]
     private void HostBleRefreshUi()
     {
@@ -354,15 +372,18 @@ partial void OnHostBleUiUpdateSecondsChanged(int value)
             }
         }
 
-        // Remove stale rows not present in latest set (keeps grid tight)
-        for (int i = HostBleDevices.Count - 1; i >= 0; i--)
+        if (HostBleAutoRemoveStaleDevices)
         {
-            var r = HostBleDevices[i];
-            if (r == null) continue;
-            if (!alive.Contains(r.Mac))
+            // Optional: remove rows not present in latest set (keeps grid tight)
+            for (int i = HostBleDevices.Count - 1; i >= 0; i--)
             {
-                HostBleDevices.RemoveAt(i);
-                _hostBleRowsByMac.Remove(r.Mac);
+                var r = HostBleDevices[i];
+                if (r == null) continue;
+                if (!alive.Contains(r.Mac))
+                {
+                    HostBleDevices.RemoveAt(i);
+                    _hostBleRowsByMac.Remove(r.Mac);
+                }
             }
         }
 

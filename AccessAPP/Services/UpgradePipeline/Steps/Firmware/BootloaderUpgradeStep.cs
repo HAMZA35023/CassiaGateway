@@ -24,8 +24,14 @@ internal sealed class BootloaderUpgradeStep : IDeviceUpgradeStep
         ctx.Stopwatch.Restart();
         bool reuseExistingConnection =
             RuntimeVariables.UPGRADE_OPTIMIZE_RECONNECT_FLOW &&
-            ctx.ActorUpdatedBeforeFirmware &&
-            !ctx.ActorConnectionReuseConsumed;
+            ((ctx.ActorUpdatedBeforeFirmware && !ctx.ActorConnectionReuseConsumed) ||
+             // Reuse the precheck connection when the device was already in bootloader mode at
+             // the start of this upgrade attempt (first bootloader retry only).
+             // Disconnecting from a bootloader-mode device and reconnecting is unreliable:
+             // the bootloader stops advertising shortly after a disconnect, so the reconnect
+             // attempt hangs until timeout and the device becomes permanently unreachable.
+             // Using the live precheck session avoids the disconnect/reconnect cycle entirely.
+             (dev.PrecheckSessionAlive && dev.PrecheckBootMode && dev.RetryCountBootloader == 1));
 
         var bootloaderUpgradeResult = await svc.UpgradeSensorAsync(
             ctx.MacAddress,

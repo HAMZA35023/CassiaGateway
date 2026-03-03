@@ -509,7 +509,51 @@ public partial class MainViewModel : ObservableObject
             if (res != MessageBoxResult.Yes)
                 return;
         }
+
+        // In Production Update mode, force scan-under-programming off before each query-selected action.
+        await ApplyProductionRuntimeForSelectedQueryAsync(selected).ConfigureAwait(false);
+
         await SendGetFwVersionAsync(selected);
+    }
+
+    private static Dictionary<string, object?> BuildProductionUpdateRuntimePayload()
+        => new()
+        {
+            ["RebootDetectorAfterUpgrade"] = false,
+            ["Restore102DBAfterUpgrade"] = false,
+            ["RestoreSettingsAfterUpgrade"] = false,
+            ["AutoSetSysFailLevelUnderUpdate"] = false,
+            ["BLE_SCAN_UNDER_PROGRAMMING"] = false
+        };
+
+    private static Dictionary<string, object?> BuildProductionUpdateResetPayload()
+        => new()
+        {
+            ["RebootDetectorAfterUpgrade"] = true,
+            ["Restore102DBAfterUpgrade"] = true,
+            ["RestoreSettingsAfterUpgrade"] = true,
+            ["AutoSetSysFailLevelUnderUpdate"] = true
+        };
+
+    private async Task ApplyProductionRuntimeForSelectedQueryAsync(IEnumerable<DiscoveredDevice> devices)
+    {
+        if (!ProductionUpdateEnabled)
+            return;
+
+        var cassias = (devices ?? Array.Empty<DiscoveredDevice>())
+            .Where(d => d != null)
+            .Select(ResolveCassiaForCommand)
+            .Where(c => !string.IsNullOrWhiteSpace(c))
+            .Select(c => c.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (cassias.Length == 0)
+            return;
+
+        var runtimePayload = BuildProductionUpdateRuntimePayload();
+        foreach (var cassia in cassias)
+            await SetRuntimeForCassiaAsync(cassia, runtimePayload).ConfigureAwait(false);
     }
 
     [RelayCommand]
@@ -1270,7 +1314,13 @@ public partial class MainViewModel : ObservableObject
         await QueueDeviceAndRequestAsync(device, forceUpdateOverride: true);
     }
 
-    private async Task QueueDeviceAndRequestAsync(DiscoveredDevice d, bool? forceUpdateOverride = null)
+    private async Task QueueDeviceAndRequestAsync(
+        DiscoveredDevice d,
+        bool? forceUpdateOverride = null,
+        DetectorSettingsPatchModel? detectorSettings = null,
+        bool? runDaliAddressAllToZone1AfterUpdateOverride = null,
+        bool? runDali102TotalNewScanAfterUpdateOverride = null,
+        bool? runDali103TotalNewScanAfterUpdateOverride = null)
     {
         if (d == null || string.IsNullOrWhiteSpace(d.Mac))
             return;
@@ -1466,17 +1516,42 @@ public partial class MainViewModel : ObservableObject
 
         if (ProductionUpdateEnabled)
         {
-            var runtimePayload = new Dictionary<string, object?>
-            {
-                ["RebootDetectorAfterUpgrade"] = false,
-                ["Restore102DBAfterUpgrade"] = false,
-                ["RestoreSettingsAfterUpgrade"] = false,
-                ["AutoSetSysFailLevelUnderUpdate"] = false
-            };
+            var runtimePayload = BuildProductionUpdateRuntimePayload();
             await SetRuntimeForCassiaAsync(cassia, runtimePayload).ConfigureAwait(false);
         }
 
         var forceUpdate = forceUpdateOverride ?? ForceUpdateEnabled;
+        var runDaliAddressAllToZone1AfterUpdate = runDaliAddressAllToZone1AfterUpdateOverride ?? false;
+        var runDali102TotalNewScanAfterUpdate = runDali102TotalNewScanAfterUpdateOverride ?? RunDali102TotalNewScanAfterUpdateEnabled;
+        var runDali103TotalNewScanAfterUpdate = runDali103TotalNewScanAfterUpdateOverride ?? RunDali103TotalNewScanAfterUpdateEnabled;
+        var normalizedDetectorSettings = detectorSettings?.CloneNormalized();
+        if (normalizedDetectorSettings != null && !normalizedDetectorSettings.HasAnyValue)
+            normalizedDetectorSettings = null;
+        if (normalizedDetectorSettings == null)
+        {
+            if (!TryResolveModelProfilePatch(
+                    model,
+                    out normalizedDetectorSettings,
+                    out var profileRunDaliAddressAllToZone1,
+                    out var profileRunDali102,
+                    out var profileRunDali103,
+                    out var profileError)
+                && !string.IsNullOrWhiteSpace(profileError))
+            {
+                qi.Status = "Error";
+                qi.Notes = profileError;
+                qi.LastUpdateUtc = DateTimeOffset.UtcNow;
+                MirrorQueueToDevice(qi);
+                RequestQueueRefresh();
+                ConnectionStatus = profileError;
+                return;
+            }
+
+            runDaliAddressAllToZone1AfterUpdate = runDaliAddressAllToZone1AfterUpdate || profileRunDaliAddressAllToZone1;
+            runDali102TotalNewScanAfterUpdate = runDali102TotalNewScanAfterUpdate || profileRunDali102;
+            runDali103TotalNewScanAfterUpdate = runDali103TotalNewScanAfterUpdate || profileRunDali103;
+        }
+
         var payload = new[]
         {
             new
@@ -1485,7 +1560,11 @@ public partial class MainViewModel : ObservableObject
                 FirmwareVersion = fw,
                 MacAddress = d.Mac,
                 Pincode = "",
-                forceUpdate
+                forceUpdate,
+                runDaliAddressAllToZone1AfterUpdate,
+                runDali102TotalNewScanAfterUpdate,
+                runDali103TotalNewScanAfterUpdate,
+                DetectorSettings = normalizedDetectorSettings
             }
         };
 
@@ -1625,9 +1704,17 @@ public partial class MainViewModel : ObservableObject
         // Clear result flags so row coloring always prefers queue state.
         if (dev.IsInQueue)
         {
+            cs.IsUpgradeSuccess = false;
+            cs.IsUpgradeFailed = false;
+            cs.IsUpgradeWarn = false;
+            cs.IsUpgradeNoFwRead = false;
+            cs.LastUpgradeSuccessUtc = null;
+            cs.LastTargetFw = "";
+
             dev.IsUpgradeSuccess = false;
             dev.IsUpgradeFailed = false;
             dev.IsUpgradeWarn = false;
+            dev.IsUpgradeNoFwRead = false;
         }
     }
 
