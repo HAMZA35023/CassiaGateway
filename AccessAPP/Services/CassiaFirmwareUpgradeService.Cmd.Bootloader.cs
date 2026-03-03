@@ -41,7 +41,9 @@ namespace AccessAPP.Services
             string endpoint = $"http://{gatewayIpAddress}/gatt/nodes/{nodeMac}/characteristics?chip={chip}";
             string endpointFresh = $"{endpoint}&discovergatt=1";
 
-            HttpClient _httpClientTmp = new HttpClient();
+            // Use a short timeout so a hanging Cassia HTTP server does not stall the
+            // verify loop for the default 100 s. Each poll will fail fast and retry.
+            HttpClient _httpClientTmp = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
             var maxAttempts = Math.Max(1, RuntimeVariables.BOOTMODE_RETRY_COUNT);
             var retryDelayMs = Math.Max(0, RuntimeVariables.BOOTMODE_RETRY_DELAY_MS);
 
