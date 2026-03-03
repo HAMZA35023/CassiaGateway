@@ -2247,6 +2247,19 @@ return resp;
                     await Task.Delay(3000);
                 }
 
+                try
+                {
+                    if (CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac, preferBootOnAmbiguous: true))
+                    {
+                        UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected (final fallback)");
+                        return true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Debug($"EnsureBootMode: final fallback boot-mode check failed for {nodeMac}: {ex.Message}");
+                }
+
                 UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Failed");
                 return false;
             }
