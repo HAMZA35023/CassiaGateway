@@ -30,7 +30,9 @@ namespace AccessAPP
         // Cassia connect behavior: 1 = use cached GATT when available (faster), 0 = no cache.
         public static int CASSIA_CONNECT_DISCOVER_GATT = 0;
 
-        // After a boot-jump, cached GATT can be stale. Use 0 to force rediscovery on next connect.
+        // Cassia discovergatt value for the connect after a boot-jump.
+        // Cassia API: 0 = fresh BLE GATT discovery (correct after jump — device has new profile),
+        //             1 = use cached GATT database (stale: still shows app-mode characteristics).
         // Set to -1 to fall back to CASSIA_CONNECT_DISCOVER_GATT.
         public static int UPGRADE_CONNECT_DISCOVER_GATT_AFTER_BOOT_JUMP = 0;
 

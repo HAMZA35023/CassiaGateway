@@ -2014,7 +2014,7 @@ return resp;
                 int v = RuntimeVariables.UPGRADE_CONNECT_DISCOVER_GATT_AFTER_BOOT_JUMP;
                 int? discover = v < 0 ? null : (v <= 0 ? 0 : 1);
                 if (forceCassiaBootRefresh && !linuxNativeBackend)
-                    return 1;
+                    return 0; // 0 = fresh GATT discovery (1 = use stale cache — wrong after a boot jump)
                 return discover;
             }
 
