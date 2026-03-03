@@ -177,13 +177,23 @@ namespace AccessAPP.Services
             return "";
         }
 
-        public async Task<string> GetFwVersion(string macAddress, string pincode, bool disconnect_on_finish = false, string? logId = null, string? firmwareVersion = null)
+        public async Task<string> GetFwVersion(
+            string macAddress,
+            string pincode,
+            bool disconnect_on_finish = false,
+            string? logId = null,
+            string? firmwareVersion = null,
+            int? maxConnectLoginAttempts = null)
         {
             try
             {
+                int connectLoginAttempts = maxConnectLoginAttempts.HasValue
+                    ? Math.Max(1, maxConnectLoginAttempts.Value)
+                    : Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS);
+
                 var cl = await ConnectAndLoginWithRetryAsync(
                     _gatewayIpAddress, 80, macAddress, pincode, logId, firmwareVersion,
-                    maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
+                    maxAttempts: connectLoginAttempts,
                     delayBetweenAttemptsMs: 2000).ConfigureAwait(false);
                 if (!cl.Success)
                 {

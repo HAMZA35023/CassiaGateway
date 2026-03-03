@@ -142,14 +142,61 @@ try
                                     // best-effort disconnect before reconnect flow
                                 }
 
-                                dev.CurrentFirmwareVersion = await GetFwVersion(mac, dev.Pincode, disconnect_on_finish: true, logId: logId, firmwareVersion: dev.FirmwareVersion).ConfigureAwait(false);
+                                dev.CurrentFirmwareVersion = await GetFwVersion(
+                                    mac,
+                                    dev.Pincode,
+                                    disconnect_on_finish: true,
+                                    logId: logId,
+                                    firmwareVersion: dev.FirmwareVersion,
+                                    maxConnectLoginAttempts: Math.Max(1, RuntimeVariables.UPGRADE_PRECHECK_FW_READ_CONNECT_LOGIN_MAX_ATTEMPTS))
+                                    .ConfigureAwait(false);
                                 precheckSessionAlive = false;
                             }
                         }
                         else
                         {
                             // Fallback only when probe connect was not available.
-                            dev.CurrentFirmwareVersion = await GetFwVersion(mac, dev.Pincode, disconnect_on_finish: true, logId: logId, firmwareVersion: dev.FirmwareVersion).ConfigureAwait(false);
+                            // First do a lightweight boot-mode hint check to avoid spending
+                            // a full connect+login retry budget on devices that are already
+                            // in bootloader mode.
+                            bool bootModeHint = false;
+                            try
+                            {
+                                bootModeHint = CheckIfDeviceInBootMode(_gatewayIpAddress, mac);
+                            }
+                            catch (Exception ex)
+                            {
+                                AppLog.Debug($"[{mac}] Precheck boot-mode hint failed after probe-connect miss: {ex.Message}");
+                            }
+
+                            if (bootModeHint)
+                            {
+                                isInBootMode = true;
+                                if (!dev.ForceUpdate)
+                                {
+                                    dev.ForceUpdate = true;
+                                    autoForceFromBootMode = true;
+                                }
+
+                                UpgradeLogger.Log(
+                                    logId,
+                                    mac,
+                                    "FW precheck",
+                                    "Boot mode detected (probe unavailable); skipping reconnect+login FW read.",
+                                    dev.FirmwareVersion);
+                            }
+                            else
+                            {
+                                dev.CurrentFirmwareVersion = await GetFwVersion(
+                                    mac,
+                                    dev.Pincode,
+                                    disconnect_on_finish: true,
+                                    logId: logId,
+                                    firmwareVersion: dev.FirmwareVersion,
+                                    maxConnectLoginAttempts: Math.Max(1, RuntimeVariables.UPGRADE_PRECHECK_FW_READ_CONNECT_LOGIN_MAX_ATTEMPTS))
+                                    .ConfigureAwait(false);
+                            }
+
                             precheckSessionAlive = false;
                         }
                         if (!string.IsNullOrWhiteSpace(dev.CurrentFirmwareVersion))
@@ -228,11 +275,11 @@ try
                     if (!dev.ForceUpdate)
                     {
                         dev.ForceUpdate = true;
-                        dev.LastFailureReason = "Current FW could not be read while device is not in bootloader. ForceUpdate auto-enabled; continuing.";
+                        dev.LastFailureReason = "Current FW could not be read and boot mode could not be confirmed. ForceUpdate auto-enabled; continuing.";
                     }
                     else
                     {
-                        dev.LastFailureReason = "Current FW could not be read while device is not in bootloader. Continuing because ForceUpdate=true.";
+                        dev.LastFailureReason = "Current FW could not be read and boot mode could not be confirmed. Continuing because ForceUpdate=true.";
                     }
 
                     UpgradeLogger.Log(logId, mac, "FW precheck", dev.LastFailureReason, dev.FirmwareVersion);

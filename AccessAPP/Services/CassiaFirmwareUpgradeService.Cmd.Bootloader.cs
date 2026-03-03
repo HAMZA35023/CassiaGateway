@@ -32,7 +32,7 @@ namespace AccessAPP.Services
             return response.IsSuccessStatusCode;
         }
 
-        public bool CheckIfDeviceInBootMode(string gatewayIpAddress, string nodeMac)
+        public bool CheckIfDeviceInBootMode(string gatewayIpAddress, string nodeMac, bool preferBootOnAmbiguous = false)
         {
             if (RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase))
                 return CheckIfDeviceInBootModeLinux(nodeMac);
@@ -73,6 +73,12 @@ namespace AccessAPP.Services
 
                         if (hasBoot && hasApp)
                         {
+                            if (preferBootOnAmbiguous)
+                            {
+                                AppLog.Warn($"CheckIfDeviceInBootMode: ambiguous app+boot characteristic set for {nodeMac}; preferring boot mode (transition context).");
+                                return true;
+                            }
+
                             AppLog.Warn($"CheckIfDeviceInBootMode: ambiguous app+boot characteristic set for {nodeMac}; preferring application mode.");
                             return false;
                         }

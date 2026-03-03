@@ -148,6 +148,10 @@ namespace AccessAPP
         public static int UPGRADE_PRECHECK_PROBE_CONNECT_RETRY_DELAY_MS = 500;
         // Timeout per precheck probe connect attempt.
         public static int UPGRADE_PRECHECK_PROBE_CONNECT_ATTEMPT_TIMEOUT_MS = 4500;
+        // Timeout per pipeline probe connect attempt (Connected (probe) / retry).
+        public static int UPGRADE_PROBE_CONNECT_ATTEMPT_TIMEOUT_MS = 10000;
+        // Max Connect+Login attempts for FW-precheck reconnect fallback.
+        public static int UPGRADE_PRECHECK_FW_READ_CONNECT_LOGIN_MAX_ATTEMPTS = 3;
         // Enable optimized flow that reuses sessions and reduces reconnects.
         public static bool UPGRADE_OPTIMIZE_RECONNECT_FLOW = true;
         // Trust /gap/nodes connected state to recover after connect errors.

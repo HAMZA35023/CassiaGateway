@@ -115,9 +115,10 @@ namespace AccessAPP.Services
             string? logId,
             string? firmwareVersion,
             string stageName = "LoggedIn",
-            int maxAttempts = 3)
+            int maxAttempts = 3,
+            bool preferBootOnAmbiguous = false)
         {
-            if (CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress))
+            if (CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress, preferBootOnAmbiguous))
             {
                 UpgradeLogger.Log(logId ?? "", macAddress, stageName, "Skipped (bootloader mode)", firmwareVersion ?? "");
                 return true;
@@ -133,7 +134,7 @@ namespace AccessAPP.Services
                 {
                     // Mode can flip between attempts (especially right after jump/reconnect).
                     // Re-check every round so we stop trying login as soon as boot mode is active.
-                    if (CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress))
+                    if (CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress, preferBootOnAmbiguous))
                     {
                         UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Skipped (bootloader mode, attempt {attempt}/{attempts})", firmwareVersion ?? "");
                         return true;
@@ -193,7 +194,7 @@ namespace AccessAPP.Services
                     }
 
                     // If login failed because device transitioned to boot mode, do not keep retrying.
-                    if (CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress))
+                    if (CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress, preferBootOnAmbiguous))
                     {
                         UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Skipped (bootloader mode detected after failed login attempt {attempt}/{attempts})", firmwareVersion ?? "");
                         return true;
@@ -210,7 +211,7 @@ namespace AccessAPP.Services
                         break;
                     }
 
-                    if (CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress))
+                    if (CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress, preferBootOnAmbiguous))
                     {
                         UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Skipped (bootloader mode detected after timeout attempt {attempt}/{attempts})", firmwareVersion ?? "");
                         return true;
@@ -221,7 +222,7 @@ namespace AccessAPP.Services
                     AppLog.Debug($"{stageName}: login exception for {macAddress} on attempt {attempt}/{attempts}: {ex.Message}");
                     UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Exception (attempt {attempt}/{attempts}): {ex.Message}", firmwareVersion ?? "");
 
-                    if (CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress))
+                    if (CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress, preferBootOnAmbiguous))
                     {
                         UpgradeLogger.Log(logId ?? "", macAddress, stageName, $"Skipped (bootloader mode detected after exception attempt {attempt}/{attempts})", firmwareVersion ?? "");
                         return true;
@@ -236,7 +237,7 @@ namespace AccessAPP.Services
             // If we are actually in boot mode, treat login as "not required".
             try
             {
-                if (CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress))
+                if (CheckIfDeviceInBootMode(_gatewayIpAddress, macAddress, preferBootOnAmbiguous))
                 {
                     UpgradeLogger.Log(logId ?? "", macAddress, stageName, "Skipped (bootloader mode detected after login failure)", firmwareVersion ?? "");
                     return true;
@@ -2043,7 +2044,8 @@ return resp;
                     logId,
                     FirmwareVersion,
                     stageName: "LoggedIn",
-                    maxAttempts: loginMaxAttempts).ConfigureAwait(false);
+                    maxAttempts: loginMaxAttempts,
+                    preferBootOnAmbiguous: true).ConfigureAwait(false);
             }
 
             async Task<bool> EnsureBootModeAsync()
@@ -2060,7 +2062,7 @@ return resp;
                     }
 
                     // Recovery connect may reveal that the device did enter boot mode after all.
-                    if (CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac))
+                    if (CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac, preferBootOnAmbiguous: true))
                     {
                         UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Achieved during recovery reconnect");
                         return (true, true);
@@ -2139,7 +2141,7 @@ return resp;
                         bool isBoot = false;
                         try
                         {
-                            isBoot = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
+                            isBoot = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac, preferBootOnAmbiguous: true);
                         }
                         catch (Exception ex)
                         {
@@ -2180,7 +2182,7 @@ return resp;
                         bool lateBootDetected = false;
                         try
                         {
-                            lateBootDetected = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
+                            lateBootDetected = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac, preferBootOnAmbiguous: true);
                         }
                         catch { }
                         if (lateBootDetected)
@@ -2197,7 +2199,8 @@ return resp;
                             logId,
                             FirmwareVersion,
                             stageName: "LoggedIn",
-                            maxAttempts: 1).ConfigureAwait(false);
+                            maxAttempts: 1,
+                            preferBootOnAmbiguous: true).ConfigureAwait(false);
                         if (!reloginOk)
                         {
                             AppLog.Warn($"EnsureBootMode: re-login failed for {nodeMac} on attempt {attempt}/{bootJumpMaxAttempts}. Running recovery reconnect+login before next jump.");
