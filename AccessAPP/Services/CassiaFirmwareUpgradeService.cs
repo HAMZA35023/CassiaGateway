@@ -2074,8 +2074,9 @@ return resp;
                     // Cassia: allow GATT rediscovery to complete before checking boot mode.
                     // Cassia begins GATT discovery asynchronously on connect; querying the
                     // characteristics endpoint too early still returns stale app-mode data.
+                    // Empirically, Cassia needs ~23 s from reconnect; wait 25 s to be safe.
                     if (!linuxNativeBackend)
-                        await Task.Delay(8000).ConfigureAwait(false);
+                        await Task.Delay(25000).ConfigureAwait(false);
 
                     // Recovery connect may reveal that the device did enter boot mode after all.
                     if (CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac, preferBootOnAmbiguous: true))
@@ -2422,7 +2423,8 @@ UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
                         if (await ConnectWithRetryAsync("Connected (post-EnsureBoot restart)", BootJumpDiscoverGattOverride(forceCassiaBootRefresh: true)).ConfigureAwait(false))
                         {
                             // Allow Cassia time to complete GATT rediscovery before querying.
-                            await Task.Delay(10000).ConfigureAwait(false);
+                            // Cassia needs ~23 s from reconnect; wait 25 s to be safe.
+                            await Task.Delay(25000).ConfigureAwait(false);
                             lateBootDetected = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac, preferBootOnAmbiguous: true);
                         }
                     }
