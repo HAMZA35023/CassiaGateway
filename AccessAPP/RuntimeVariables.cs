@@ -219,12 +219,18 @@ namespace AccessAPP
         // Linux-native boot mode check: fallback UUID lookup timeout when mode is Unknown.
         public static int LINUX_BLE_BOOTMODE_CHAR_LOOKUP_TIMEOUT_MS = 2500;
         // Sensor upgrade: post-jump bootmode verify total budget.
-        // Cassia path allows up to 30 s (capped in flow); linux-native stays at 10 s.
-        // Cassia needs ~23 s from a clean disconnect→reconnect for GATT re-discovery to
-        // complete, so the default is set to 25 s to reliably catch it on the first attempt.
         public static int UPGRADE_SENSOR_BOOTMODE_VERIFY_BUDGET_MS = 25000;
         // Sensor upgrade: delay between post-jump bootmode verify polls.
         public static int UPGRADE_SENSOR_BOOTMODE_VERIFY_POLL_MS = 750;
+        // Cassia sensor upgrade: wait after disconnect before reconnecting post-jump.
+        // Gives the device time to fully restart in bootloader mode before Cassia
+        // attempts a new BLE connection and GATT discovery.
+        public static int UPGRADE_SENSOR_BOOT_PRE_RECONNECT_SETTLE_MS = 5000;
+        // Cassia sensor upgrade: wait after connect (discovergatt=1) before querying
+        // characteristics. discovergatt=1 in the connect body triggers a fresh BLE GATT
+        // scan; this delay lets that scan complete without restarting it via URL probes.
+        // 5 s is sufficient because the device is in boot mode within ~5 s of the jump.
+        public static int UPGRADE_SENSOR_BOOT_GATT_SETTLE_MS = 5000;
 
         // Actor upgrade: wait for sensor to return to application mode if boot mode detected.
         public static int UPGRADE_ACTOR_APP_MODE_WAIT_ATTEMPTS = 6;
