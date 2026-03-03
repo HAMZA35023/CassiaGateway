@@ -2071,8 +2071,21 @@ return resp;
                     bool loginOk = await LoginWithRetryAsync().ConfigureAwait(false);
                     if (!loginOk)
                     {
-                        AppLog.Warn($"EnsureBootMode: recovery login failed for {nodeMac} before jump attempt {nextAttempt}/{bootJumpMaxAttempts}.");
-                        return (false, false);
+                        bool bootDetectedAfterLoginFailure = false;
+                        try
+                        {
+                            bootDetectedAfterLoginFailure = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac, preferBootOnAmbiguous: true);
+                        }
+                        catch { }
+
+                        if (bootDetectedAfterLoginFailure)
+                        {
+                            UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Achieved during recovery reconnect (after login failure)");
+                            return (true, true);
+                        }
+
+                        AppLog.Warn($"EnsureBootMode: recovery login failed for {nodeMac} before jump attempt {nextAttempt}/{bootJumpMaxAttempts}; continuing with next jump attempt.");
+                        return (true, false);
                     }
 
                     return (true, false);
@@ -2108,8 +2121,7 @@ return resp;
                                 return true;
                             if (!recovery.ok)
                             {
-                                UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", $"Abort retries after jump failure (attempt {attempt}/{bootJumpMaxAttempts}); recovery connect/login failed");
-                                return false;
+                                UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", $"Recovery connect/login failed after jump failure (attempt {attempt}/{bootJumpMaxAttempts}); continuing retries");
                             }
                         }
                         await Task.Delay(3000);
@@ -2202,8 +2214,7 @@ return resp;
                                 return true;
                             if (!recovery.ok)
                             {
-                                UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", $"Abort retries after linux-native recovery failure (attempt {attempt}/{bootJumpMaxAttempts})");
-                                return false;
+                                UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", $"Linux-native recovery failed (attempt {attempt}/{bootJumpMaxAttempts}); continuing retries");
                             }
                         }
                         else
@@ -2226,8 +2237,7 @@ return resp;
                                 return true;
                             if (!recovery.ok)
                             {
-                                UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", $"Abort retries after re-login failure (attempt {attempt}/{bootJumpMaxAttempts}); recovery connect/login failed");
-                                return false;
+                                UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", $"Recovery connect/login failed after re-login failure (attempt {attempt}/{bootJumpMaxAttempts}); continuing retries");
                             }
                         }
                         }
