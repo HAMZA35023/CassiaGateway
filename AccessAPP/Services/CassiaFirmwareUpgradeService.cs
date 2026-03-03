@@ -2371,6 +2371,51 @@ UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
             // ----------------------------
             if (!await EnsureBootModeAsync())
             {
+                // Cassia-only: the device may have entered boot mode during the JumpToBootloader
+                // attempts, but the Cassia gateway needs a fresh reconnect to re-discover GATT
+                // and expose the boot characteristics. Restart the update task (reconnect) and
+                // perform one final boot-mode check before giving up.
+                if (!linuxNativeBackend)
+                {
+                    bool lateBootDetected = false;
+                    try
+                    {
+                        AppLog.Info($"EnsureBootMode failed for {nodeMac}; restarting update task with fresh reconnect to detect late boot mode.");
+                        if (await ConnectWithRetryAsync("Connected (post-EnsureBoot restart)", BootJumpDiscoverGattOverride(forceCassiaBootRefresh: true)).ConfigureAwait(false))
+                            lateBootDetected = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac, preferBootOnAmbiguous: true);
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLog.Warn($"Post-EnsureBootMode restart check exception for {nodeMac}: {ex.Message}");
+                    }
+
+                    if (lateBootDetected)
+                    {
+                        UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected (post-EnsureBoot restart)");
+                        try
+                        {
+                            await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chip: GetChipForMac(nodeMac)).ConfigureAwait(false);
+                            UpgradeLogger.Log(logId, nodeMac, "Disconnected", "Success (boot-mode reconnect preparation)", FirmwareVersion);
+                        }
+                        catch (Exception ex)
+                        {
+                            UpgradeLogger.Log(logId, nodeMac, "Disconnected", $"Exception (boot-mode reconnect preparation): {ex.Message}", FirmwareVersion);
+                        }
+                        await Task.Delay(1000).ConfigureAwait(false);
+
+                        return await ProcessingSensorUpgrade(
+                            nodeMac,
+                            bActor,
+                            isBootloader,
+                            DetectorType,
+                            FirmwareVersion,
+                            logId,
+                            pincode,
+                            skipInitialConnect: false,
+                            assumeBootMode: true);
+                    }
+                }
+
                 response.Success = false;
                 response.StatusCode = 417;
                 response.Message = "Failed to enter boot mode.";
