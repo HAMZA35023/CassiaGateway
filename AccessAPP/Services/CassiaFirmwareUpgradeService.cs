@@ -2055,11 +2055,27 @@ return resp;
                     int nextAttempt = Math.Min(bootJumpMaxAttempts, currentAttempt + 1);
                     string reconnectStage = $"Connected (jump retry recovery {nextAttempt}/{bootJumpMaxAttempts})";
 
+                    // Cassia: disconnect the stale session first so Cassia properly re-discovers
+                    // GATT on reconnect. Without this, the characteristics endpoint keeps
+                    // returning cached app-mode data even though the device is in boot mode.
+                    if (!linuxNativeBackend)
+                    {
+                        try { await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chip: GetChipForMac(nodeMac)).ConfigureAwait(false); }
+                        catch { }
+                        await Task.Delay(1000).ConfigureAwait(false);
+                    }
+
                     if (!await ConnectWithRetryAsync(reconnectStage, BootJumpDiscoverGattOverride(forceCassiaBootRefresh: true)).ConfigureAwait(false))
                     {
                         AppLog.Warn($"EnsureBootMode: recovery connect failed for {nodeMac} before jump attempt {nextAttempt}/{bootJumpMaxAttempts}.");
                         return (false, false);
                     }
+
+                    // Cassia: allow GATT rediscovery to complete before checking boot mode.
+                    // Cassia begins GATT discovery asynchronously on connect; querying the
+                    // characteristics endpoint too early still returns stale app-mode data.
+                    if (!linuxNativeBackend)
+                        await Task.Delay(8000).ConfigureAwait(false);
 
                     // Recovery connect may reveal that the device did enter boot mode after all.
                     if (CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac, preferBootOnAmbiguous: true))
@@ -2134,6 +2150,16 @@ return resp;
                     int jumpDelay = 10000 + Math.Max(0, RuntimeVariables.UPGRADE_DELAY_AFTER_BOOT_JUMP_MS);
                     await Task.Delay(jumpDelay);
 
+                    // Cassia: disconnect the stale app-mode session before reconnecting in boot
+                    // mode so Cassia performs a clean GATT re-discovery rather than serving
+                    // cached app-mode characteristics on the next characteristics query.
+                    if (!linuxNativeBackend)
+                    {
+                        try { await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chip: GetChipForMac(nodeMac)).ConfigureAwait(false); }
+                        catch (Exception ex) { AppLog.Warn($"EnsureBootMode: pre-reconnect Cassia disconnect failed for {nodeMac}: {ex.Message}"); }
+                        await Task.Delay(1000).ConfigureAwait(false);
+                    }
+
                     // Reconnect after jump (robust)
                     if (!await ConnectWithRetryAsync("Connect After JumpToBoot", BootJumpDiscoverGattOverride(forceCassiaBootRefresh: true)))
                     {
@@ -2143,7 +2169,12 @@ return resp;
                     }
 
                     // Verify boot mode with a hard bounded budget so this step does not stall.
-                    int verifyBudgetMs = Math.Clamp(RuntimeVariables.UPGRADE_SENSOR_BOOTMODE_VERIFY_BUDGET_MS, 1000, 10000);
+                    // Cassia performs GATT discovery asynchronously after connect, so allow a
+                    // longer budget on the Cassia path (30 s) than on linux-native (10 s).
+                    int verifyBudgetMs = Math.Clamp(
+                        RuntimeVariables.UPGRADE_SENSOR_BOOTMODE_VERIFY_BUDGET_MS,
+                        1000,
+                        linuxNativeBackend ? 10000 : 30000);
                     int verifyPollMs = Math.Max(100, RuntimeVariables.UPGRADE_SENSOR_BOOTMODE_VERIFY_POLL_MS);
                     var verifyDeadlineUtc = DateTime.UtcNow.AddMilliseconds(verifyBudgetMs);
                     int verify = 0;
@@ -2380,9 +2411,20 @@ UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
                     bool lateBootDetected = false;
                     try
                     {
-                        AppLog.Info($"EnsureBootMode failed for {nodeMac}; restarting update task with fresh reconnect to detect late boot mode.");
+                        AppLog.Info($"EnsureBootMode failed for {nodeMac}; disconnecting then reconnecting to detect late boot mode.");
+                        // Disconnect first: Cassia only exposes the boot GATT profile after a
+                        // clean disconnect → reconnect cycle.  Reconnecting without disconnecting
+                        // first leaves Cassia serving stale app-mode characteristics.
+                        try { await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chip: GetChipForMac(nodeMac)).ConfigureAwait(false); }
+                        catch (Exception ex) { AppLog.Warn($"Post-EnsureBootMode disconnect exception for {nodeMac}: {ex.Message}"); }
+                        await Task.Delay(1000).ConfigureAwait(false);
+
                         if (await ConnectWithRetryAsync("Connected (post-EnsureBoot restart)", BootJumpDiscoverGattOverride(forceCassiaBootRefresh: true)).ConfigureAwait(false))
+                        {
+                            // Allow Cassia time to complete GATT rediscovery before querying.
+                            await Task.Delay(10000).ConfigureAwait(false);
                             lateBootDetected = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac, preferBootOnAmbiguous: true);
+                        }
                     }
                     catch (Exception ex)
                     {
