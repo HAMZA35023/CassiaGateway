@@ -81,10 +81,11 @@ namespace AccessAPP.Services
         private static int GetGatewayStateInitialDelayOn500PreRetryMs()
             => Math.Max(0, RuntimeVariables.UPGRADE_CONNECT_GATEWAY_STATE_CHECK_INITIAL_DELAY_MS_ON_500_PRE_RETRY);
 
-        private static bool ShouldSkipDisconnectAfterFailedConnect(HttpStatusCode connectStatus)
+        private static bool ShouldSkipDisconnectAfterFailedConnect(HttpStatusCode connectStatus, int attempt)
             => RuntimeVariables.UPGRADE_OPTIMIZE_RECONNECT_FLOW &&
                RuntimeVariables.UPGRADE_CONNECT_SKIP_DISCONNECT_ON_500 &&
-               connectStatus == HttpStatusCode.InternalServerError;
+               connectStatus == HttpStatusCode.InternalServerError &&
+               attempt <= 1;
 
         private static bool ShouldUsePerChipConnectGate()
         {
@@ -486,7 +487,7 @@ namespace AccessAPP.Services
                         failedThisAttempt = true;
                         int retryDelayMs = CalculateRetryDelayMs(delayBetweenAttemptsMs, attempt, connectStatus);
                         AppLog.Debug($"Connect+Login connect not established for {macAddress} on attempt {attempt}/{maxAttempts}. Retry delay={retryDelayMs}ms, lastStatus={(int)connectStatus} {connectStatus}.");
-                        bool skipDisconnect = ShouldSkipDisconnectAfterFailedConnect(connectStatus);
+                        bool skipDisconnect = ShouldSkipDisconnectAfterFailedConnect(connectStatus, attempt);
 
                         if (touchedGateway && !skipDisconnect)
                         {
@@ -805,7 +806,7 @@ namespace AccessAPP.Services
                     lastMsg = $"Connect failed ({last}) {connectData}";
                     failedThisAttempt = true;
                     AppLog.Debug($"{stageName}: connect not established for {macAddress} on attempt {attempt}/{maxAttempts}. lastStatus={(int)last} {last}.");
-                    bool skipDisconnect = ShouldSkipDisconnectAfterFailedConnect(last);
+                    bool skipDisconnect = ShouldSkipDisconnectAfterFailedConnect(last, attempt);
 
                     if (touchedGateway && !skipDisconnect)
                     {
