@@ -5,6 +5,7 @@ using AccessAPP.Services.LinuxBle;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
@@ -31,7 +32,7 @@ namespace AccessAPP.Services
             return response.IsSuccessStatusCode;
         }
 
-        public bool CheckIfDeviceInBootMode(string gatewayIpAddress, string nodeMac)
+        public bool CheckIfDeviceInBootMode(string gatewayIpAddress, string nodeMac, bool preferBootOnAmbiguous = false)
         {
             if (RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase))
                 return CheckIfDeviceInBootModeLinux(nodeMac);
@@ -55,8 +56,34 @@ namespace AccessAPP.Services
                         var jsonResponse = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
                         var characteristics = JsonConvert.DeserializeObject<List<CharacteristicModel>>(jsonResponse);
 
-                        // Check if the characteristic UUID is present
-                        return characteristics?.Any(charac => charac.Uuid == "00060001-f8ce-11e4-abf4-0002a5d5c51b") == true;
+                        if (characteristics == null || characteristics.Count == 0)
+                            return false;
+
+                        // Cassia can transiently expose a mixed/old characteristic set right after reconnect.
+                        // In that ambiguous state, prefer Application mode to avoid false-positive boot mode
+                        // and a direct programming attempt on the wrong GATT profile.
+                        bool hasBoot = characteristics.Any(charac =>
+                            string.Equals(charac.Uuid, BlueZHelpers.BootNotifyUuid, StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(charac.Uuid, BlueZHelpers.BootWriteUuid, StringComparison.OrdinalIgnoreCase));
+
+                        bool hasApp = characteristics.Any(charac =>
+                            string.Equals(charac.Uuid, BlueZHelpers.AppNotifyUuid, StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(charac.Uuid, BlueZHelpers.AppWriteUuid, StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(charac.Uuid, BlueZHelpers.AppServiceUuid, StringComparison.OrdinalIgnoreCase));
+
+                        if (hasBoot && hasApp)
+                        {
+                            if (preferBootOnAmbiguous)
+                            {
+                                AppLog.Warn($"CheckIfDeviceInBootMode: ambiguous app+boot characteristic set for {nodeMac}; preferring boot mode (transition context).");
+                                return true;
+                            }
+
+                            AppLog.Warn($"CheckIfDeviceInBootMode: ambiguous app+boot characteristic set for {nodeMac}; preferring application mode.");
+                            return false;
+                        }
+
+                        return hasBoot;
                     }
 
                     return false;
@@ -84,8 +111,10 @@ namespace AccessAPP.Services
         {
             var devicePath = BlueZHelpers.DevicePath(BlueZHelpers.GetDeviceAdapter(nodeMac), nodeMac);
 
-            var maxAttempts = Math.Max(1, RuntimeVariables.BOOTMODE_RETRY_COUNT);
-            var retryDelayMs = Math.Max(0, RuntimeVariables.BOOTMODE_RETRY_DELAY_MS);
+            var maxAttempts = Math.Max(1, RuntimeVariables.LINUX_BLE_BOOTMODE_RETRY_COUNT);
+            var retryDelayMs = Math.Max(0, RuntimeVariables.LINUX_BLE_BOOTMODE_RETRY_DELAY_MS);
+            var gattModeTimeoutMs = Math.Max(500, RuntimeVariables.LINUX_BLE_BOOTMODE_CHECK_TIMEOUT_MS);
+            var bootCharLookupTimeoutMs = Math.Max(500, RuntimeVariables.LINUX_BLE_BOOTMODE_CHAR_LOOKUP_TIMEOUT_MS);
 
             for (int attempt = 1; attempt <= maxAttempts; attempt++)
             {
@@ -97,15 +126,41 @@ namespace AccessAPP.Services
                     // with zero D-Bus calls — no delay between connect and login.
                     // On cache miss (e.g. ServicesResolved timed out during connect) it
                     // falls back to a full GATT scan bounded by a 5-second timeout.
-                    using var bootCheckCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    using var bootCheckCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(gattModeTimeoutMs));
                     var mode = BlueZHelpers.DetectModeByGattAsync(devicePath, bootCheckCts.Token)
                         .WaitAsync(bootCheckCts.Token).GetAwaiter().GetResult();
 
-                    return mode == BlueZHelpers.BleMode.Bootloader;
+                    if (mode == BlueZHelpers.BleMode.Bootloader)
+                        return true;
+
+                    // Fallback: when mode is still unknown right after reconnect/jump,
+                    // do a direct boot characteristic lookup before concluding "not boot mode".
+                    if ((mode == BlueZHelpers.BleMode.Unknown || mode == BlueZHelpers.BleMode.Application) &&
+                        TryDetectBootCharacteristicLinux(devicePath, nodeMac, bootCharLookupTimeoutMs))
+                    {
+                        AppLog.Debug($"CheckIfDeviceInBootModeLinux: boot characteristic fallback detected for {nodeMac}.");
+                        return true;
+                    }
+
+                    // Definitive non-boot result.
+                    if (mode == BlueZHelpers.BleMode.Application)
+                        return false;
+
+                    // mode == Unknown without fallback hit: retry if attempts remain.
+                    if (attempt < maxAttempts)
+                    {
+                        BlueZHelpers.InvalidateCharCache(devicePath);
+                        if (retryDelayMs > 0)
+                            Thread.Sleep(retryDelayMs);
+                        continue;
+                    }
+
+                    return false;
                 }
                 catch (Exception ex) when (attempt < maxAttempts)
                 {
                     AppLog.Warn($"CheckIfDeviceInBootModeLinux: attempt {attempt} failed for {nodeMac}: {ex.Message}");
+                    BlueZHelpers.InvalidateCharCache(devicePath);
                     if (retryDelayMs > 0) Thread.Sleep(retryDelayMs);
                 }
                 catch (Exception ex)
@@ -116,6 +171,38 @@ namespace AccessAPP.Services
             }
 
             return false;
+        }
+
+        private static bool TryDetectBootCharacteristicLinux(string devicePath, string nodeMac, int timeoutMs)
+        {
+            try
+            {
+                BlueZHelpers.ClearNotFoundUuidCache(devicePath, BlueZHelpers.BootNotifyUuid);
+                BlueZHelpers.ClearNotFoundUuidCache(devicePath, BlueZHelpers.BootWriteUuid);
+
+                using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(Math.Max(250, timeoutMs)));
+                var notify = BlueZHelpers.GetCharacteristicByUuidAsync(
+                    devicePath,
+                    BlueZHelpers.BootServiceUuid,
+                    BlueZHelpers.BootNotifyUuid,
+                    cts.Token).WaitAsync(cts.Token).GetAwaiter().GetResult();
+
+                if (notify.characteristic != null)
+                    return true;
+
+                var write = BlueZHelpers.GetCharacteristicByUuidAsync(
+                    devicePath,
+                    BlueZHelpers.BootServiceUuid,
+                    BlueZHelpers.BootWriteUuid,
+                    cts.Token).WaitAsync(cts.Token).GetAwaiter().GetResult();
+
+                return write.characteristic != null;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Debug($"CheckIfDeviceInBootModeLinux: fallback characteristic probe failed for {nodeMac}: {ex.Message}");
+                return false;
+            }
         }
 
         public async Task<bool> ActorBootCheck(string gatewayIpAddress, string nodeMac)
@@ -355,11 +442,14 @@ return false;
             {
                 _notificationEvents.TryRemove(macAddress, out _);
                 _notificationQueues.TryRemove(macAddress, out _);
+                _notificationPendingBytes.TryRemove(macAddress, out _);
+                _notificationPendingLocks.TryRemove(macAddress, out _);
                 //_lastNotificationDataRead.TryRemove(macAddress, out _);
             }
 
 
             _notificationQueues.TryAdd(macAddress, new ConcurrentQueue<byte[]>());
+            _notificationPendingBytes.TryAdd(macAddress, new Queue<byte>());
 
             _notificationEvents.TryAdd(macAddress, new ManualResetEvent(false));
 
@@ -407,6 +497,8 @@ cassiaNotificationService.Unsubscribe(macAddress);
                 _notificationQueues.TryRemove(macAddress, out _tmpCheck);
                 ManualResetEvent evt = null;
                 _notificationEvents.TryRemove(macAddress, out evt);
+                _notificationPendingBytes.TryRemove(macAddress, out _);
+                _notificationPendingLocks.TryRemove(macAddress, out _);
                 //_lastNotificationDataRead.TryRemove(macAddress, out _);
             }
         }

@@ -1,0 +1,179 @@
+  23 | 7 | 1 | CFG_VERSION | 0x0A | Indicates the version of the user config structure. | 
+  24 |  |  |  |  | The version number is controlled by the sensor. Any time structural changes have been made to the user config structure, then the CFG_VERSION will be incremented. | 
+  25 |  |  |  |  | Range (10) | 
+  26 | 8 | 1 | CFG_SYSTEM_CONFIGSTATE | 0x00 | Indicates the state of the User Configuration | 
+  27 |  |  |  |  | 0=Out Of The Box | 
+  28 |  |  |  |  | 1=FS_DK  (Fact.Reset Denmark) | 
+  29 |  |  |  |  | 2=FS_SV  (Fact.Reset Sweden) | 
+  30 |  |  |  |  | 3=FS_NO  (Fact.Reset Norway) | 
+  31 |  |  |  |  | 4=FS_DE  (Fact.Reset Germany) | 
+  32 |  |  |  |  | 5=FS_BE  (Fact.Reset Belgium) | 
+  33 |  |  |  |  | 255=USER ( The user has made changes to the configuration) | 
+  34 | 9 | 1 | CFG_SYSTEM_NETWORK_ID | 0x00 | Identifies the ID of the BLE network | 
+  35 |  |  |  |  | Range (0..253)=user network Id’s | 
+  36 | 10 | 1 | CFG_SYSTEM_COMMON_FUNC0 | 0x00 |  | 
+  37 | 11 | 1 | CFG_SYSTEM_COMMON_FUNC1 | 0x00 | See section 4.2.6 for a detailed descr. | 
+  38 | 12 | 1 | CFG_SYSTEM_DALI_FUNC2 | 0x00 |  | 
+  39 | 13 | 1 | CFG_SYSTEM_RESERVED1 |  | Not Used | 
+  40 | 14 | 1 | CFG_SYSTEM_RESERVED2 |  | Not Used | 
+  41 | 15 | 1 | CFG_V_PIRA | 0x00 | Indicates the sensitivity Level for Pir | 
+  42 |  |  |  |  | 0=OFF, 1=MIN,  | 
+  43 | 16 | 1 | CFG_V_PIRB |  | 2=LOW, 3=HIGH,  | 
+  44 | 17 | 1 | CFG_V_PIRC |  | 4=MAX | 
+  45 | 18 | 2 | CFG_T_SP |  | Indicate the time to recognize a short press.  | 
+  46 |  |  |  |  | ms. (150-10000) | 
+  47 |  |  |  |  | 500 | 
+  48 |  |  |  |  | 1000 | 
+  49 |  |  |  |  | 2000 | 
+  50 | 20 | 2 | CFG_T_LP |  | Indicate the time to recognize a long press.  | 
+  51 |  |  |  |  | ms. (500-17000) | 
+  52 |  |  |  |  | >CFG_T_SP | 
+  53 | 22 | 2 | CFG_T_VLP |  | Very long push timing. | 
+  54 |  |  |  |  | ms. (10000-30000) | 
+  55 |  |  |  |  | 10500 | 
+  56 |  |  |  |  | 11000 | 
+  57 |  |  |  |  | 12000 | 
+  58 | 24 | 2 | CFG_T_LP_FAIL |  | Long push fail time. | 
+  59 |  |  |  |  | ms. (>=30001) | 
+  60 | 26 | 2 | CFG_T_HVACCON_DELAY |  | Indicate the time for the HVAC to turn On after motion detection | 
+  61 |  |  |  |  | Sec. (120..7200) | 
+  62 | 28 | 2 | CFG_T_HVACOFF_DELAY |  | Indicate the time for the HVAC to turn Off after the last motion detection | 
+  63 |  |  |  |  | Sec. (0..7200) | 
+  64 | 30 | 2 | CFG_T_STDBY_MIN_DELAY |  | Delay for Std.By Min. | 
+  65 |  |  |  |  | Sec. (0..7200) | 
+  66 | Zone 1 |  |  |  |  | 
+  67 | 32 | 1 | CFG_ZONE_COMMON_FUNC1 |  |  | 
+  68 | 33 | 1 | CFG_ZONE_ONOFF_FUNC2 |  | See section 4.2.6 for a detailed descr. | 
+  69 | 34 | 1 | CFG_ZONE_DALI_FUNC1 |  |  | 
+  70 | 35 | 2 | CFG_ZONE_T_OFFPIR_DELAY |  | Range (1..65535) sec., Default: 15min | 
+  71 |  |  |  |  | States the Off-Delay duration. | 
+  72 |  |  |  |  | See section 4.2.1 for a detailed description of this field. | 
+  73 | 37 | 2 | CFG_ZONE_T_PRESENCE_DELAY |  | Range (1..65535) sec, Default: 15min | 
+  74 |  |  |  |  | States the Presence-delay duration during 2-level control. | 
+  75 |  |  |  |  | See section 4.2.1 for a detailed description of this field. | 
+  76 | 39 | 2 | CFG_ZONE_T_NON_PRESENCE_DELAY |  | Range (1..65535) sec., Default:65535 | 
+  77 |  |  |  |  | States the Non presence-delay duration during 2-level control. | 
+  78 |  |  |  |  | See section 4.2.1 for a detailed description of this field. | 
+  79 | 41 | 2 | CFG_ZONE_T_ORIENTATION_DELAY |  | Range (0..65535) sec., Default: 10min | 
+  80 |  |  |  |  | States the Orientation light Period. | 
+  81 | 43 | 2 | CFG_ZONE_T_ON_DELAY |  | Range (0..3600) sec. | 
+  82 |  |  |  |  | States the delay after movement detection. | 
+  83 |  |  |  |  | 0   sec (no delay) | 
+  84 |  |  |  |  | 60  sec | 
+  85 |  |  |  |  | 120 sec | 
+  86 |  |  |  |  | 180 sec | 
+  87 |  |  |  |  | 240 sec | 
+  88 |  |  |  |  | 300 sec | 
+  89 | 45 | 1 | CFG_ZONE_TYPE |  | Range (0..4) enum. | 
+  90 |  |  |  |  | Indicates the zone type. | 
+  91 |  |  |  |  | 0=Zone not used (disabled) | 
+  92 |  |  |  |  | 1=DLZ (Daylight zone) | 
+  93 |  |  |  |  | 2=SEZ (Secondary zone / OnOff zone) | 
+  94 |  |  |  |  | 3=MUZ (Multi zone) | 
+  95 |  |  |  |  | 4=HVAC (HVAC Control. OnOff Sensors | 
+  96 | 46 | 1 | CFG_ZONE_RESERVED |  | Not Used | 
+  97 | 47 | 2 | CFG_ZONE_DESKDAYLIGHTFACTORPCT |  | Range (0..1000) % | 
+  98 | 49 | 2 | CFG_ZONE_DESKMAXARTIFICIALLIGHT |  | Range (1..2000) Lux | 
+  99 | 51 | 2 | CFG_ZONE_V_SETPOINT |  | Range (0..65535) Lux | 
+ 100 |  |  |  |  | States the Lux set point. | 
+ 101 |  |  |  |  | See section 4.2.2 for a detailed description of accepted lux values. | 
+ 102 | 53 | 2 | CFG_ZONE_DAYLIGHT |  | Range (0..65535) Lux | 
+ 103 | 55 | 1 | CFG_ZONE_PRESENCE_LEVEL |  | Range (0..100) %  | 
+ 104 |  |  |  |  | States the lux level (in %) for presence in the 2-Level function. | 
+ 105 |  |  |  |  | See section 4.2.2 for a detailed description of accepted lux values. | 
+ 106 | 56 | 1 | CFG_ZONE_NON_PRESENCE_LEVEL |  | Range (0..100) % | 
+ 107 |  |  |  |  | States the lux level (in %)for non-presence in the 2-Level function. | 
+ 108 | 57 | 1 | CFG_ZONE_ORIENTATION_LEVEL |  | Range (0..100) % | 
+ 109 |  |  |  |  | States the lux level (in %) for orientation light. | 
+ 110 |  |  |  |  | Not in Zone 5. | 
+ 111 | 58 | 1 | CFG_ZONE_TURNON_LEVEL |  | Range (1..100) %,  default:100 | 
+ 112 |  |  |  |  | Not in Zone 5. | 
+ 113 | Zone 2 |  |  |  |  | 
+ 114 | 59 | 1 | CFG_ZONE_COMMON_FUNC1 |  |  | 
+ 115 | 60 | 1 | CFG_ZONE_ONOFF_FUNC2 |  | See decription for Zone 1 | 
+ 116 | 61 | 1 | CFG_ZONE_DALI_FUNC1 |  |  | 
+ 117 | 62 | 2 | CFG_ZONE_T_OFFPIR_DELAY |  |  | 
+ 118 | 64 | 2 | CFG_ZONE_T_PRESENCE_DELAY |  |  | 
+ 119 | 66 | 2 | CFG_ZONE_T_NON_PRESENCE_DELAY |  |  | 
+ 120 | 68 | 2 | CFG_ZONE_T_ORIENTATION_DELAY |  |  | 
+ 121 | 70 | 2 | CFG_ZONE_T_ON_DELAY |  |  | 
+ 122 | 72 | 1 | CFG_ZONE_TYPE |  |  | 
+ 123 | 73 | 1 | CFG_ZONE_RESERVED |  |  | 
+ 124 | 74 | 2 | CFG_ZONE_DESKDAYLIGHTFACTORPCT |  |  | 
+ 125 | 76 | 2 | CFG_ZONE_DESKMAXARTIFICIALLIGHT |  |  | 
+ 126 | 78 | 2 | CFG_ZONE_V_SETPOINT |  |  | 
+ 127 | 80 | 2 | CFG_ZONE_DAYLIGHT |  |  | 
+ 128 | 82 | 1 | CFG_ZONE_PRESENCE_LEVEL |  |  | 
+ 129 | 83 | 1 | CFG_ZONE_NON_PRESENCE_LEVEL |  |  | 
+ 130 | 84 | 1 | CFG_ZONE_ORIENTATION_LEVEL |  |  | 
+ 131 | 85 | 1 | CFG_ZONE_TURNON_LEVEL |  |  | 
+ 132 | Zone 3 |  |  |  |  | 
+ 133 | 86 | 1 | CFG_ZONE_COMMON_FUNC1 |  |  | 
+ 134 | 87 | 1 | CFG_ZONE_ONOFF_FUNC2 |  | See decription for Zone 1 | 
+ 135 | 88 | 1 | CFG_ZONE_DALI_FUNC1 |  |  | 
+ 136 | 89 | 2 | CFG_ZONE_T_OFFPIR_DELAY |  |  | 
+ 137 | 91 | 2 | CFG_ZONE_T_PRESENCE_DELAY |  |  | 
+ 138 | 93 | 2 | CFG_ZONE_T_NON_PRESENCE_DELAY |  |  | 
+ 139 | 95 | 2 | CFG_ZONE_T_ORIENTATION_DELAY |  |  | 
+ 140 | 97 | 2 | CFG_ZONE_T_ON_DELAY |  |  | 
+ 141 | 99 | 1 | CFG_ZONE_TYPE |  |  | 
+ 142 | 100 | 1 | CFG_ZONE_RESERVED |  |  | 
+ 143 | 101 | 2 | CFG_ZONE_DESKDAYLIGHTFACTORPCT |  |  | 
+ 144 | 103 | 2 | CFG_ZONE_DESKMAXARTIFICIALLIGHT |  |  | 
+ 145 | 105 | 2 | CFG_ZONE_V_SETPOINT |  |  | 
+ 146 | 107 | 2 | CFG_ZONE_DAYLIGHT |  |  | 
+ 147 | 109 | 1 | CFG_ZONE_PRESENCE_LEVEL |  |  | 
+ 148 | 110 | 1 | CFG_ZONE_NON_PRESENCE_LEVEL |  |  | 
+ 149 | 111 | 1 | CFG_ZONE_ORIENTATION_LEVEL |  |  | 
+ 150 | 112 | 1 | CFG_ZONE_TURNON_LEVEL |  |  | 
+ 151 | Zone 4 |  |  |  |  | 
+ 152 | 113 | 1 | CFG_ZONE_COMMON_FUNC1 |  |  | 
+ 153 | 114 | 1 | CFG_ZONE_ONOFF_FUNC2 |  | See decription for Zone 1 | 
+ 154 | 115 | 1 | CFG_ZONE_DALI_FUNC1 |  |  | 
+ 155 | 116 | 2 | CFG_ZONE_T_OFFPIR_DELAY |  |  | 
+ 156 | 118 | 2 | CFG_ZONE_T_PRESENCE_DELAY |  |  | 
+ 157 | 120 | 2 | CFG_ZONE_T_NON_PRESENCE_DELAY |  |  | 
+ 158 | 122 | 2 | CFG_ZONE_T_ORIENTATION_DELAY |  |  | 
+ 159 | 124 | 2 | CFG_ZONE_T_ON_DELAY |  |  | 
+ 160 | 126 | 1 | CFG_ZONE_TYPE |  |  | 
+ 161 | 127 | 1 | CFG_ZONE_RESERVED |  |  | 
+ 162 | 128 | 2 | CFG_ZONE_DESKDAYLIGHTFACTORPCT |  |  | 
+ 163 | 130 | 2 | CFG_ZONE_DESKMAXARTIFICIALLIGHT |  |  | 
+ 164 | 132 | 2 | CFG_ZONE_V_SETPOINT |  |  | 
+ 165 | 134 | 2 | CFG_ZONE_DAYLIGHT |  |  | 
+ 166 | 136 | 1 | CFG_ZONE_PRESENCE_LEVEL |  |  | 
+ 167 | 137 | 1 | CFG_ZONE_NON_PRESENCE_LEVEL |  |  | 
+ 168 | 138 | 1 | CFG_ZONE_ORIENTATION_LEVEL |  |  | 
+ 169 | 139 | 1 | CFG_ZONE_TURNON_LEVEL |  |  | 
+ 170 | Zone 5 |  |  |  |  | 
+ 171 | 140 | 1 | CFG_ZONE_COMMON_FUNC1 |  |  | 
+ 172 | 141 | 1 | CFG_ZONE_ONOFF_FUNC2 |  | See decription for Zone 1 | 
+ 173 | 142 | 1 | CFG_ZONE_DALI_FUNC1 |  |  | 
+ 174 | 143 | 2 | CFG_ZONE_T_OFFPIR_DELAY |  |  | 
+ 175 | 145 | 2 | CFG_ZONE_T_PRESENCE_DELAY |  |  | 
+ 176 | 147 | 2 | CFG_ZONE_T_NON_PRESENCE_DELAY |  |  | 
+ 177 | 149 | 2 | CFG_ZONE_T_ORIENTATION_DELAY |  |  | 
+ 178 | 151 | 2 | CFG_ZONE_T_ON_DELAY |  |  | 
+ 179 | 153 | 1 | CFG_ZONE_TYPE |  |  | 
+ 180 | 154 | 1 | CFG_ZONE_RESERVED |  |  | 
+ 181 | 155 | 2 | CFG_ZONE_DESKDAYLIGHTFACTORPCT |  |  | 
+ 182 | 157 | 2 | CFG_ZONE_DESKMAXARTIFICIALLIGHT |  |  | 
+ 183 | 159 | 2 | CFG_ZONE_V_SETPOINT |  |  | 
+ 184 | 161 | 2 | CFG_ZONE_DAYLIGHT |  |  | 
+ 185 | 163 | 1 | CFG_ZONE_PRESENCE_LEVEL |  |  | 
+ 186 | 164 | 1 | CFG_ZONE_NON_PRESENCE_LEVEL |  |  | 
+ 187 | 165 | 1 | CFG_ZONE_ORIENTATION_LEVEL |  |  | 
+ 188 | 166 | 1 | CFG_ZONE_TURNON_LEVEL |  |  | 
+ 192 | 1.1.3        0x010D - SetUserConfig |  |  |  |  | 
+ 193 | With this telegram, the app can configure each zone/channel. This telegram contains parameters for all sensor variants.  |  |  |  |  | 
+ 194 | The telegram can also be used to set Factory settings for a specific country.  |  |  |  |  | 
+ 195 | ·         If Config State is set to 255, then this tells the sensor, that the user has made changes to the user configuration.  |  |  |  |  | 
+ 196 | ·         If Config State is set to a number between 1..254, then the telegram is handled as a factory reset command towards the sensor. All parameter settings in this telegram will then be stored as factory setting in the sensor. |  |  |  |  | 
+ 197 | BLE device -> Sensor |  |  |  |  | 
+ 198 | Byte  | Field  | Field  | Example | Example  | 
+ 199 | no. | Size | Description |  | Description | 
+ 200 | 0 | 1 | Protocol Version | 0x01 | Protocol Id | 
+ 201 | 1 | 2 | Telegram Type |  | SetUserConfig Id | 
+ 202 | 3 | 2 | Total Length | 0xA7 | Total length of 167 bytes | 
+ 203 | 5 | 2 | CRC16 | ToBeCalc | Calculated value, see section 4.5 | 
+ 204 | 7 | 160 | See definition from Byte no. 7 in section 4.4.12 |  |  | 

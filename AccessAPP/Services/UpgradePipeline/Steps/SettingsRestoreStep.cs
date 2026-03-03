@@ -149,6 +149,13 @@ internal sealed class SettingsRestoreStep : IDeviceUpgradeStep
             ServiceResponse restore = new() { Success = false, StatusCode = 500, Message = "Restore not attempted" };
             for (int attempt = 1; attempt <= 3; attempt++)
             {
+                UpgradeLogger.Log(
+                    ctx.LogId,
+                    ctx.MacAddress,
+                    $"Settings restore attempt {attempt}/3: Starting",
+                    "Info",
+                    ctx.FirmwareVersion);
+
                 restore = await svc.SettingsBackupService.RestoreFromFileAsync(
                         ctx.MacAddress,
                         ctx.Pincode,

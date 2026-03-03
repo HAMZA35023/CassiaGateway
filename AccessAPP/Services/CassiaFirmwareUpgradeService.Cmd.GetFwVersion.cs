@@ -24,8 +24,8 @@ namespace AccessAPP.Services
             {
                 int loginAttempts = Math.Max(1, RuntimeVariables.UPGRADE_LOGIN_RETRIES_PER_CONNECTED_SESSION);
                 int loginDelayMs = Math.Max(100, RuntimeVariables.UPGRADE_LOGIN_RETRY_DELAY_MS);
-                int loginTimeoutMs = Math.Max(2000, RuntimeVariables.UPGRADE_LOGIN_ATTEMPT_TIMEOUT_MS);
-                int settleBeforeLoginMs = GetConnectStabilizationDelayMs();
+                int loginTimeoutMs = Math.Max(500, RuntimeVariables.UPGRADE_PRECHECK_LOGIN_ATTEMPT_TIMEOUT_MS);
+                int settleBeforeLoginMs = Math.Max(0, RuntimeVariables.UPGRADE_PRECHECK_LOGIN_SETTLE_DELAY_MS);
 
                 bool loggedIn = false;
                 for (int loginAttempt = 1; loginAttempt <= loginAttempts; loginAttempt++)
@@ -92,7 +92,7 @@ namespace AccessAPP.Services
                 if (!loggedIn)
                     return "";
 
-                int delayBeforeReadMs = Math.Max(0, RuntimeVariables.UPGRADE_DELAY_AFTER_LOGIN_BEFORE_FW_READ_MS);
+                int delayBeforeReadMs = Math.Max(0, RuntimeVariables.UPGRADE_PRECHECK_DELAY_AFTER_LOGIN_BEFORE_FW_READ_MS);
                 if (delayBeforeReadMs > 0)
                 {
                     AppLog.Debug($"FW precheck read delay for {macAddress}: waiting {delayBeforeReadMs}ms after login before first FW read.");
@@ -177,13 +177,23 @@ namespace AccessAPP.Services
             return "";
         }
 
-        public async Task<string> GetFwVersion(string macAddress, string pincode, bool disconnect_on_finish = false, string? logId = null, string? firmwareVersion = null)
+        public async Task<string> GetFwVersion(
+            string macAddress,
+            string pincode,
+            bool disconnect_on_finish = false,
+            string? logId = null,
+            string? firmwareVersion = null,
+            int? maxConnectLoginAttempts = null)
         {
             try
             {
+                int connectLoginAttempts = maxConnectLoginAttempts.HasValue
+                    ? Math.Max(1, maxConnectLoginAttempts.Value)
+                    : Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS);
+
                 var cl = await ConnectAndLoginWithRetryAsync(
                     _gatewayIpAddress, 80, macAddress, pincode, logId, firmwareVersion,
-                    maxAttempts: Math.Max(1, RuntimeVariables.UPGRADE_CONNECT_MAX_ATTEMPTS),
+                    maxAttempts: connectLoginAttempts,
                     delayBetweenAttemptsMs: 2000).ConfigureAwait(false);
                 if (!cl.Success)
                 {

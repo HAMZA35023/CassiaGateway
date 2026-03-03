@@ -136,6 +136,21 @@ public partial class MainWindow : Window
             vm.MqttPassword = pb.Password;
     }
 
+    private void DetectorSettingsProfileTextBox_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (DataContext is not MainViewModel vm || sender is not FrameworkElement fe)
+            return;
+
+        var model = (fe.Tag as string ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(model))
+            return;
+
+        if (vm.BrowseDetectorSettingsProfileCommand.CanExecute(model))
+            vm.BrowseDetectorSettingsProfileCommand.Execute(model);
+
+        e.Handled = true;
+    }
+
     private void ClearDevices_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is not MainViewModel vm)
@@ -590,6 +605,13 @@ public partial class MainWindow : Window
                 try { vm.OpenWriteReadCommand?.Execute(device); } catch { }
             };
             cm.Items.Add(wr);
+
+            var detectorSettings = new MenuItem { Header = "Detector settings..." };
+            detectorSettings.Click += (_, __) =>
+            {
+                try { vm.OpenDetectorSettingsCommand?.Execute(device); } catch { }
+            };
+            cm.Items.Add(detectorSettings);
 
             cm.Items.Add(new Separator());
 

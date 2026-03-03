@@ -169,6 +169,7 @@ internal static class Program
         // Write /etc/init.d/accessapp script that:
         // - Always runs updater before starting AccessAPP (so service restarts/boots can update too).
         // - Uses an explicit PATH so start-stop-daemon is found even with a restricted root PATH.
+        // - Stores pidfile in a user-writable location, so start/stop also works when invoked by a normal user.
         var initPath = "/etc/init.d/accessapp";
         var updaterPath = Environment.ProcessPath ?? "/usr/local/bin/AccessAppUpdater";
         var appPath = Path.Combine(cfg.InstallDir, cfg.ExecutableName);
@@ -186,26 +187,86 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 NAME=AccessApp
 APP=""{appPath}""
+APP_DIR=""{cfg.InstallDir}""
 UPDATER=""{updaterPath}""
 CONFIG=""{configPath}""
-PIDFILE=/var/run/accessapp.pid
+
+resolve_run_user() {{
+  if [ ""$(id -u)"" -ne 0 ]; then
+    id -un
+    return
+  fi
+
+  case ""$APP_DIR"" in
+    /home/*/*)
+      candidate=""$(printf ""%s\n"" ""$APP_DIR"" | cut -d/ -f3)""
+      if id ""$candidate"" >/dev/null 2>&1; then
+        echo ""$candidate""
+        return
+      fi
+      ;;
+  esac
+
+  owner=""$(stat -c '%U' ""$APP_DIR"" 2>/dev/null)""
+  if [ -n ""$owner"" ] && [ ""$owner"" != ""UNKNOWN"" ] && [ ""$owner"" != ""root"" ]; then
+    echo ""$owner""
+    return
+  fi
+
+  echo root
+}}
+
+[ -r /etc/default/accessapp ] && . /etc/default/accessapp
+RUN_AS=""${{ACCESSAPP_USER:-$(resolve_run_user)}}""
+PIDDIR=""/tmp/accessapp-${{RUN_AS}}""
+PIDFILE=""$PIDDIR/accessapp.pid""
+
+run_updater() {{
+  if [ ""$(id -u)"" -eq 0 ] && [ ""$RUN_AS"" != ""root"" ]; then
+    su -s /bin/sh ""$RUN_AS"" -c ""$UPDATER --config $CONFIG"" && return 0
+    echo ""[init] WARN: could not run updater as $RUN_AS, retrying as root...""
+  fi
+
+  ""$UPDATER"" --config ""$CONFIG""
+}}
 
 start_app() {{
+  mkdir -p ""$PIDDIR"" || exit 1
+  if [ ""$(id -u)"" -eq 0 ] && [ ""$RUN_AS"" != ""root"" ]; then
+    chown ""$RUN_AS"":""$RUN_AS"" ""$PIDDIR"" 2>/dev/null || true
+  fi
+
+  if [ -f ""$PIDFILE"" ] && ! kill -0 ""$(cat ""$PIDFILE"")"" 2>/dev/null; then
+    rm -f ""$PIDFILE""
+  fi
+
   echo ""[init] Running updater...""
-  ""$UPDATER"" --config ""$CONFIG"" || exit 1
+  run_updater || exit 1
 
   echo ""[init] Starting AccessAPP...""
-  start-stop-daemon --start --background --make-pidfile --pidfile ""$PIDFILE"" --chdir ""{cfg.InstallDir}"" --exec ""$APP""
+  if [ ""$(id -u)"" -eq 0 ] && [ ""$RUN_AS"" != ""root"" ]; then
+    start-stop-daemon --start --background --make-pidfile --pidfile ""$PIDFILE"" --chdir ""$APP_DIR"" --chuid ""$RUN_AS"" --exec ""$APP""
+  else
+    start-stop-daemon --start --background --make-pidfile --pidfile ""$PIDFILE"" --chdir ""$APP_DIR"" --exec ""$APP""
+  fi
+
+  rc=$?
+  if [ ""$rc"" -eq 0 ] && [ ""$(id -u)"" -eq 0 ] && [ -f ""$PIDFILE"" ] && [ ""$RUN_AS"" != ""root"" ]; then
+    chown ""$RUN_AS"":""$RUN_AS"" ""$PIDFILE"" 2>/dev/null || true
+  fi
+  return ""$rc""
 }}
 
 stop_app() {{
   echo ""[init] Stopping AccessAPP...""
   start-stop-daemon --stop --pidfile ""$PIDFILE"" --retry=TERM/10/KILL/5
-  rm -f ""$PIDFILE""
+  rc=$?
+  rm -f ""$PIDFILE"" 2>/dev/null || true
+  return ""$rc""
 }}
 
 status_app() {{
-  if [ -f ""$PIDFILE"" ] && kill -0 $(cat ""$PIDFILE"") 2>/dev/null; then
+  if [ -f ""$PIDFILE"" ] && kill -0 ""$(cat ""$PIDFILE"")"" 2>/dev/null; then
     echo ""AccessAPP running (pid $(cat ""$PIDFILE""))""
     exit 0
   fi
@@ -221,7 +282,7 @@ case ""$1"" in
     stop_app
     ;;
   restart)
-    stop_app
+    stop_app || true
     start_app
     ;;
   status)
@@ -238,9 +299,11 @@ exit 0
         TryWriteTextFile(initPath, script);
         TryChmodX(initPath);
 
-        // Enable autostart (Debian/Ubuntu). Ignore errors if unavailable.
-        TryRun("update-rc.d", "accessapp defaults");
-        TryRun("systemctl", "daemon-reload");
+        ConfigureAutostart(initPath);
+
+        // Best-effort immediate start. Allow enough time for updater + download.
+        var startTimeoutMs = Math.Clamp((cfg.HttpTimeoutSeconds + 120) * 1000, 30_000, 3_600_000);
+        TryStartService(initPath, startTimeoutMs);
         Log($"Installed init.d script: {initPath}");
     }
 
@@ -661,7 +724,110 @@ exit 0
         }
     }
 
-    private static void TryRun(string fileName, string args)
+    private static void ConfigureAutostart(string initPath)
+    {
+        var autostartConfigured = false;
+
+        var updateRcD = FindCommandAbsolute(
+            "/usr/sbin/update-rc.d",
+            "/sbin/update-rc.d",
+            "/usr/bin/update-rc.d",
+            "/bin/update-rc.d");
+        if (updateRcD is not null)
+        {
+            var defaultsOk = TryRun(updateRcD, "accessapp defaults");
+            var enableOk = TryRun(updateRcD, "accessapp enable");
+            autostartConfigured = defaultsOk || enableOk;
+        }
+        else
+        {
+            Log("[WARN] update-rc.d not found on this system.");
+        }
+
+        var systemctl = FindCommandAbsolute(
+            "/usr/bin/systemctl",
+            "/bin/systemctl",
+            "/usr/sbin/systemctl",
+            "/sbin/systemctl");
+        if (systemctl is not null)
+        {
+            TryRun(systemctl, "daemon-reload");
+
+            if (IsSystemdRunning())
+            {
+                var enableOk = TryRun(systemctl, "enable accessapp")
+                    || TryRun(systemctl, "enable accessapp.service");
+                autostartConfigured = autostartConfigured || enableOk;
+            }
+            else
+            {
+                Log("[WARN] systemctl found but systemd is not active as PID 1; skipping systemctl enable.");
+            }
+        }
+        else
+        {
+            Log("[WARN] systemctl not found on this system.");
+        }
+
+        if (!autostartConfigured)
+        {
+            Log($"[WARN] Could not enable autostart automatically. You can still use: {initPath} start");
+        }
+    }
+
+    private static bool TryStartService(string initPath, int timeoutMs)
+    {
+        var systemctl = FindCommandAbsolute(
+            "/usr/bin/systemctl",
+            "/bin/systemctl",
+            "/usr/sbin/systemctl",
+            "/sbin/systemctl");
+
+        if (systemctl is not null && IsSystemdRunning())
+        {
+            if (TryRun(systemctl, "start accessapp", timeoutMs))
+                return true;
+            if (TryRun(systemctl, "start accessapp.service", timeoutMs))
+                return true;
+        }
+
+        return TryRun(initPath, "start", timeoutMs);
+    }
+
+    private static bool IsSystemdRunning()
+    {
+        try
+        {
+            return Directory.Exists("/run/systemd/system");
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string? FindCommandAbsolute(params string[] candidates)
+    {
+        foreach (var candidate in candidates)
+        {
+            if (string.IsNullOrWhiteSpace(candidate))
+                continue;
+
+            try
+            {
+                if (File.Exists(candidate))
+                    return candidate;
+            }
+            catch
+            {
+                // ignore probing errors
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryRun(string fileName, string args, int timeoutMs = 15000)
     {
         try
         {
@@ -672,12 +838,46 @@ exit 0
                 UseShellExecute = false
             };
             using var p = Process.Start(psi);
-            if (p is null) return;
-            p.WaitForExit(5000);
+            if (p is null)
+            {
+                Log($"[WARN] Could not start command: {fileName} {args}");
+                return false;
+            }
+
+            if (!p.WaitForExit(timeoutMs))
+            {
+                try
+                {
+                    p.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // best effort
+                }
+
+                Log($"[WARN] Command timed out: {fileName} {args}");
+                return false;
+            }
+
+            var stdOut = p.StandardOutput.ReadToEnd().Trim();
+            var stdErr = p.StandardError.ReadToEnd().Trim();
+            if (!string.IsNullOrWhiteSpace(stdOut))
+                Log($"[cmd] {fileName} {args}: {stdOut}");
+            if (!string.IsNullOrWhiteSpace(stdErr))
+                Log($"[cmd] {fileName} {args} [stderr]: {stdErr}");
+
+            if (p.ExitCode != 0)
+            {
+                Log($"[WARN] Command exit code {p.ExitCode}: {fileName} {args}");
+                return false;
+            }
+
+            return true;
         }
-        catch
+        catch (Exception ex)
         {
-            // ignore (platform differences)
+            Log($"[WARN] Command failed: {fileName} {args} ({ex.Message})");
+            return false;
         }
     }
 

@@ -81,13 +81,21 @@ namespace AccessAPP.Services
         private static int GetGatewayStateInitialDelayOn500PreRetryMs()
             => Math.Max(0, RuntimeVariables.UPGRADE_CONNECT_GATEWAY_STATE_CHECK_INITIAL_DELAY_MS_ON_500_PRE_RETRY);
 
-        private static bool ShouldSkipDisconnectAfterFailedConnect(HttpStatusCode connectStatus)
+        private static bool ShouldSkipDisconnectAfterFailedConnect(HttpStatusCode connectStatus, int attempt)
             => RuntimeVariables.UPGRADE_OPTIMIZE_RECONNECT_FLOW &&
                RuntimeVariables.UPGRADE_CONNECT_SKIP_DISCONNECT_ON_500 &&
-               connectStatus == HttpStatusCode.InternalServerError;
+               connectStatus == HttpStatusCode.InternalServerError &&
+               attempt <= 1;
 
         private static bool ShouldUsePerChipConnectGate()
-            => RuntimeVariables.UPGRADE_CONNECT_LOGIN_USE_PER_CHIP_GATE;
+        {
+            if (!RuntimeVariables.UPGRADE_CONNECT_LOGIN_USE_PER_CHIP_GATE)
+                return false;
+
+            // Linux-native connects are already adapter-aware; chip gating can
+            // serialize devices that are actually on different HCI adapters.
+            return !RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase);
+        }
 
         private static SemaphoreSlim GetConnectFlowGateForChip(int chip)
             => chip == 1 ? Chip1ConnectLoginGate : Chip0ConnectLoginGate;
@@ -171,6 +179,12 @@ namespace AccessAPP.Services
                     var statusText = loginResult.Status?.ToString() ?? "";
                     bool statusOk = string.Equals(statusText, "OK", StringComparison.OrdinalIgnoreCase);
                     bool pinOk = !pincodeReq || loginResult.ResponseBody.PinCodeAccepted;
+                    string responseData = "";
+                    try
+                    {
+                        responseData = loginResult.ResponseBody?.Data?.ToString() ?? "";
+                    }
+                    catch { /* ignore dynamic binding issues */ }
 
                     if (statusOk && pinOk)
                     {
@@ -186,7 +200,18 @@ namespace AccessAPP.Services
                     lastStatus = statusText;
                     lastMessage = pincodeReq && !pinOk
                         ? "Pincode required/invalid."
-                        : $"Status={statusText}";
+                        : string.IsNullOrWhiteSpace(responseData)
+                            ? $"Status={statusText}"
+                            : $"Status={statusText}; Msg={responseData}";
+
+                    bool stopSameSessionRetries =
+                        _connectService is LinuxBle.LinuxBleConnectionService &&
+                        string.Equals(statusText, "Canceled", StringComparison.OrdinalIgnoreCase);
+                    if (stopSameSessionRetries)
+                    {
+                        AppLog.Debug($"Login attempt for {macAddress}: status=Canceled on attempt {attempt}/{attempts}; stopping same-session retries and forcing reconnect.");
+                        break;
+                    }
                 }
                 catch (OperationCanceledException)
                 {
@@ -195,6 +220,12 @@ namespace AccessAPP.Services
 
                     lastStatus = "Timeout";
                     lastMessage = $"Login timed out after {timeoutMs / 1000}s.";
+
+                    if (_connectService is LinuxBle.LinuxBleConnectionService)
+                    {
+                        AppLog.Debug($"Login attempt for {macAddress}: timeout on attempt {attempt}/{attempts}; stopping same-session retries and forcing reconnect.");
+                        break;
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -456,10 +487,14 @@ namespace AccessAPP.Services
                         failedThisAttempt = true;
                         int retryDelayMs = CalculateRetryDelayMs(delayBetweenAttemptsMs, attempt, connectStatus);
                         AppLog.Debug($"Connect+Login connect not established for {macAddress} on attempt {attempt}/{maxAttempts}. Retry delay={retryDelayMs}ms, lastStatus={(int)connectStatus} {connectStatus}.");
-                        bool skipDisconnect = ShouldSkipDisconnectAfterFailedConnect(connectStatus);
+                        bool skipDisconnect = ShouldSkipDisconnectAfterFailedConnect(connectStatus, attempt);
 
                         if (touchedGateway && !skipDisconnect)
+                        {
                             await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, chip).ConfigureAwait(false);
+                            if (attempt >= 2)
+                                await _connectService.CleanupAfterFailedConnectAsync(macAddress).ConfigureAwait(false);
+                        }
                         else if (touchedGateway && skipDisconnect)
                             AppLog.Debug($"Connect+Login connect failure for {macAddress}: skipping per-attempt disconnect because status={(int)connectStatus} {connectStatus}.");
 
@@ -551,7 +586,11 @@ namespace AccessAPP.Services
                                 AppLog.Debug($"Connect+Login login failed for {macAddress} on attempt {attempt}/{maxAttempts}. Detail='{loginResult.Message}'. Retry delay={retryDelayMs}ms.");
 
                                 if (touchedGateway)
+                                {
                                     await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, chip).ConfigureAwait(false);
+                                    if (attempt >= 2)
+                                        await _connectService.CleanupAfterFailedConnectAsync(macAddress).ConfigureAwait(false);
+                                }
 
                                 UpgradeLogger.Log(logId, macAddress,
                                     $"Connect+Login failed on attempt {attempt}/{maxAttempts}. Disconnected chip {chip}. Retrying after {RetryDelayText(retryDelayMs)}.",
@@ -586,6 +625,8 @@ namespace AccessAPP.Services
                     if (touchedGateway)
                     {
                         await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, chip).ConfigureAwait(false);
+                        if (attempt >= 2)
+                            await _connectService.CleanupAfterFailedConnectAsync(macAddress).ConfigureAwait(false);
 
                         UpgradeLogger.Log(logId, macAddress,
                             $"Connect+Login timeout on attempt {attempt}/{maxAttempts}. Disconnected chip {chip}. Retrying after {RetryDelayText(retryDelayMs)}.",
@@ -611,7 +652,11 @@ namespace AccessAPP.Services
                         "Warn", firmwareVersion);
 
                     if (touchedGateway)
+                    {
                         await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, chip).ConfigureAwait(false);
+                        if (attempt >= 2)
+                            await _connectService.CleanupAfterFailedConnectAsync(macAddress).ConfigureAwait(false);
+                    }
 
                     if (touchedGateway)
                     {
@@ -643,6 +688,8 @@ namespace AccessAPP.Services
 
             int finalChip = GetChipForMac(macAddress);
             await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, macAddress, 1, finalChip).ConfigureAwait(false);
+            if (maxAttempts >= 2)
+                await _connectService.CleanupAfterFailedConnectAsync(macAddress).ConfigureAwait(false);
 
             UpgradeLogger.Log(logId, macAddress,
                 $"All Connect+Login attempts failed. Disconnected chip {finalChip}.",
@@ -665,7 +712,8 @@ namespace AccessAPP.Services
                 string FirmwareVersion,
                 string logId,
                 bool logSuccess = true,
-                int? discoverGattOverride = null)
+                int? discoverGattOverride = null,
+                int? connectAttemptTimeoutMsOverride = null)
         {
             HttpStatusCode last = 0;
             string lastMsg = "Connect failed";
@@ -680,7 +728,9 @@ namespace AccessAPP.Services
 
                 try
                 {
-                    int timeoutMs = GetConnectAttemptTimeoutMs();
+                    int timeoutMs = connectAttemptTimeoutMsOverride.HasValue
+                        ? Math.Max(1000, connectAttemptTimeoutMsOverride.Value)
+                        : GetConnectAttemptTimeoutMs();
                     using var cts = new CancellationTokenSource(timeoutMs);
 
                     if (ShouldUsePerChipConnectGate())
@@ -756,7 +806,7 @@ namespace AccessAPP.Services
                     lastMsg = $"Connect failed ({last}) {connectData}";
                     failedThisAttempt = true;
                     AppLog.Debug($"{stageName}: connect not established for {macAddress} on attempt {attempt}/{maxAttempts}. lastStatus={(int)last} {last}.");
-                    bool skipDisconnect = ShouldSkipDisconnectAfterFailedConnect(last);
+                    bool skipDisconnect = ShouldSkipDisconnectAfterFailedConnect(last, attempt);
 
                     if (touchedGateway && !skipDisconnect)
                     {

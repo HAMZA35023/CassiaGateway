@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using Tmds.DBus;
 
 namespace AccessAPP.Services.LinuxBle;
@@ -52,6 +53,10 @@ internal static class BlueZHelpers
 
     // Serialize GetManagedObjectsAsync to reduce transient decode issues under load.
     private static readonly SemaphoreSlim _managedObjectsSem = new(1, 1);
+    // Serialize discovery control per adapter so scan keepalive and connect paths
+    // cannot race StartDiscovery/StopDiscovery on the same HCI adapter.
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> _discoverySemByAdapter =
+        new(StringComparer.OrdinalIgnoreCase);
 
     // ── MAC → adapter tracking ────────────────────────────────────────────────
     // Updated by the scanner whenever a device advertisement is received.
@@ -127,7 +132,15 @@ internal static class BlueZHelpers
             {
                 // "Does Not Exist" is expected if the device was already removed or
                 // never discovered in this session — not an error worth logging loudly.
-                Console.WriteLine($"[BlueZHelpers] TryRemoveDevice: D-Bus error removing {macAddress}: {dbex.ErrorName} — {dbex.Message}");
+                if (dbex.ErrorName == "org.bluez.Error.DoesNotExist" ||
+                    dbex.ErrorName == "org.freedesktop.DBus.Error.UnknownObject")
+                {
+                    Console.WriteLine($"[BlueZHelpers] TryRemoveDevice: {macAddress} already absent in {adapter} ({dbex.ErrorName})");
+                }
+                else
+                {
+                    Console.WriteLine($"[BlueZHelpers] TryRemoveDevice: D-Bus error removing {macAddress}: {dbex.ErrorName} - {dbex.Message}");
+                }
             }
         }
         catch (Exception ex)
@@ -155,9 +168,10 @@ internal static class BlueZHelpers
     /// Priority:
     /// <list type="number">
     ///   <item>Active-connection pin (<see cref="SetConnectedAdapter"/>) — never disturb a live session.</item>
-    ///   <item>Round-robin across all adapters in <see cref="RuntimeVariables.LINUX_BLE_ADAPTERS"/>
-    ///         when more than one adapter is configured.  Each call advances the counter so that
-    ///         parallel upgrade workers are spread evenly across adapters.</item>
+    ///   <item>Least-loaded adapter among <see cref="RuntimeVariables.LINUX_BLE_ADAPTERS"/>, based on
+    ///         active connection pins in <c>_connectedAdapters</c>.</item>
+    ///   <item>If load ties, prefer the last-scanned adapter for this MAC when available, else
+    ///         round-robin across the tied set.</item>
     ///   <item>Last-scanned adapter (<c>_macToAdapter</c>) / global default — single-adapter fallback.</item>
     /// </list>
     /// </para>
@@ -168,8 +182,8 @@ internal static class BlueZHelpers
         if (_connectedAdapters.TryGetValue(mac, out var pinned))
             return pinned;
 
-        var adapters = RuntimeVariables.GetLinuxBleAdapterList();
-        if (adapters.Length <= 1)
+        var configuredAdapters = RuntimeVariables.GetLinuxBleAdapterList();
+        if (configuredAdapters.Length <= 1)
         {
             // Single-adapter config: keep existing behaviour (last-scanned or default).
             return _macToAdapter.TryGetValue(mac, out var scanned)
@@ -177,9 +191,65 @@ internal static class BlueZHelpers
                 : RuntimeVariables.LINUX_BLE_ADAPTER;
         }
 
-        // Round-robin across all configured adapters to spread parallel workers.
-        var idx = (uint)Interlocked.Increment(ref _connectRoundRobin) % (uint)adapters.Length;
-        return adapters[(int)idx];
+        var adapters = new List<string>(configuredAdapters.Length);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var adapter in configuredAdapters)
+        {
+            if (string.IsNullOrWhiteSpace(adapter))
+                continue;
+            if (seen.Add(adapter))
+                adapters.Add(adapter);
+        }
+
+        if (adapters.Count == 0)
+            return RuntimeVariables.LINUX_BLE_ADAPTER;
+
+        if (adapters.Count == 1)
+            return adapters[0];
+
+        // Count active pinned sessions per configured adapter.
+        var loadByAdapter = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var adapter in adapters)
+            loadByAdapter[adapter] = 0;
+
+        foreach (var (_, connectedAdapter) in _connectedAdapters)
+        {
+            if (!string.IsNullOrWhiteSpace(connectedAdapter) &&
+                loadByAdapter.TryGetValue(connectedAdapter, out var inUse))
+            {
+                loadByAdapter[connectedAdapter] = inUse + 1;
+            }
+        }
+
+        var minLoad = int.MaxValue;
+        foreach (var adapter in adapters)
+        {
+            int inUse = loadByAdapter[adapter];
+            if (inUse < minLoad)
+                minLoad = inUse;
+        }
+
+        var leastLoaded = new List<string>(adapters.Count);
+        foreach (var adapter in adapters)
+        {
+            if (loadByAdapter[adapter] == minLoad)
+                leastLoaded.Add(adapter);
+        }
+
+        // If the scanner already sees this MAC on one of the least-loaded adapters,
+        // keep that path to reduce adapter hopping between retries.
+        if (_macToAdapter.TryGetValue(mac, out var scannedAdapter))
+        {
+            foreach (var adapter in leastLoaded)
+            {
+                if (string.Equals(adapter, scannedAdapter, StringComparison.OrdinalIgnoreCase))
+                    return adapter;
+            }
+        }
+
+        // Tie-break with round-robin among least-loaded adapters.
+        var idx = (uint)Interlocked.Increment(ref _connectRoundRobin) % (uint)leastLoaded.Count;
+        return leastLoaded[(int)idx];
     }
 
     /// <summary>
@@ -204,6 +274,213 @@ internal static class BlueZHelpers
         finally { _proxySem.Release(); }
     }
 
+    private static void InvalidateAdapterProxy(string adapter)
+    {
+        if (string.IsNullOrWhiteSpace(adapter))
+            return;
+        _adapterProxies.TryRemove(adapter, out _);
+    }
+
+    private static void InvalidateObjectManagerProxy()
+        => _objectManagerProxy = null;
+
+    /// <summary>
+    /// Drop cached adapter/object-manager proxies used by scanner paths so the next
+    /// call recreates them from a fresh D-Bus proxy instance.
+    /// </summary>
+    public static void InvalidateScanProxies(string? adapter = null)
+    {
+        if (!string.IsNullOrWhiteSpace(adapter))
+            InvalidateAdapterProxy(adapter);
+
+        InvalidateObjectManagerProxy();
+    }
+
+    /// <summary>
+    /// Best-effort guard to ensure LE discovery is running on the adapter.
+    /// Useful when BlueZ reports a device path as UnknownObject and we need
+    /// ObjectManager to rediscover the device path quickly.
+    /// </summary>
+    public static async Task EnsureDiscoveryRunningAsync(
+        string adapter,
+        ILogger? logger = null,
+        CancellationToken ct = default)
+    {
+        adapter = string.IsNullOrWhiteSpace(adapter)
+            ? RuntimeVariables.LINUX_BLE_ADAPTER
+            : adapter;
+
+        var discoveryGate = _discoverySemByAdapter.GetOrAdd(adapter, _ => new SemaphoreSlim(1, 1));
+        await discoveryGate.WaitAsync(ct);
+        try
+        {
+            var adapterObj = await GetAdapterAsync(adapter);
+
+            static bool IsRecoverableStartError(Tmds.DBus.DBusException ex) =>
+                ex.ErrorName == "org.bluez.Error.Failed" ||
+                ex.ErrorName == "org.bluez.Error.NotReady" ||
+                ex.ErrorName == "org.bluez.Error.NotAuthorized";
+
+            async Task<bool> IsAlreadyDiscoveringAsync(IAdapter1 adp)
+            {
+                try
+                {
+                    using var discoveringCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    discoveringCts.CancelAfter(TimeSpan.FromSeconds(2));
+                    return await adp.GetAsync<bool>("Discovering").WaitAsync(discoveringCts.Token);
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+
+            async Task TrySetDiscoveryFilterAsync(IAdapter1 adp)
+            {
+                try
+                {
+                    await adp.SetDiscoveryFilterAsync(new Dictionary<string, object>
+                    {
+                        ["Transport"] = "le",
+                        ["DuplicateData"] = true
+                    });
+                }
+                catch (Exception ex)
+                {
+                    logger?.LogDebug(ex, "LinuxBLE scan: SetDiscoveryFilter failed on {Adapter}; continuing", adapter);
+                }
+            }
+
+            // Fast path: avoid churn when discovery is already active.
+            if (await IsAlreadyDiscoveringAsync(adapterObj))
+            {
+                logger?.LogDebug("LinuxBLE scan: discovery already active on {Adapter}", adapter);
+                return;
+            }
+
+            await TrySetDiscoveryFilterAsync(adapterObj);
+
+            try
+            {
+                using var startCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                startCts.CancelAfter(TimeSpan.FromSeconds(5));
+                await adapterObj.StartDiscoveryAsync().WaitAsync(startCts.Token);
+                logger?.LogInformation("LinuxBLE scan: discovery started on {Adapter}", adapter);
+                return;
+            }
+            catch (Tmds.DBus.DBusException ex) when (ex.ErrorName == "org.bluez.Error.InProgress")
+            {
+                if (await IsAlreadyDiscoveringAsync(adapterObj))
+                {
+                    logger?.LogDebug("LinuxBLE scan: discovery already active on {Adapter}", adapter);
+                    return;
+                }
+
+                logger?.LogWarning(
+                    "LinuxBLE scan: StartDiscovery returned InProgress but Discovering=false on {Adapter}; forcing restart",
+                    adapter);
+            }
+            catch (Tmds.DBus.DBusException ex) when (IsRecoverableStartError(ex))
+            {
+                if (await IsAlreadyDiscoveringAsync(adapterObj))
+                {
+                    logger?.LogDebug(
+                        "LinuxBLE scan: StartDiscovery returned {ErrorName} on {Adapter} but Discovering=true; continuing",
+                        ex.ErrorName, adapter);
+                    return;
+                }
+
+                logger?.LogWarning(
+                    "LinuxBLE scan: StartDiscovery transient failure on {Adapter} ({ErrorName}) - forcing restart",
+                    adapter, ex.ErrorName);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger?.LogDebug(ex, "LinuxBLE scan: StartDiscovery failed on {Adapter}; forcing restart", adapter);
+            }
+
+            // Restart path (best effort): stop, refresh adapter proxy, and start again.
+            try
+            {
+                using var stopCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                stopCts.CancelAfter(TimeSpan.FromSeconds(2));
+                await adapterObj.StopDiscoveryAsync().WaitAsync(stopCts.Token);
+            }
+            catch
+            {
+                // best-effort
+            }
+
+            try
+            {
+                await Task.Delay(150, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
+            InvalidateAdapterProxy(adapter);
+            adapterObj = await GetAdapterAsync(adapter);
+            await TrySetDiscoveryFilterAsync(adapterObj);
+
+            try
+            {
+                using var restartCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                restartCts.CancelAfter(TimeSpan.FromSeconds(5));
+                await adapterObj.StartDiscoveryAsync().WaitAsync(restartCts.Token);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Tmds.DBus.DBusException ex)
+            {
+                if (await IsAlreadyDiscoveringAsync(adapterObj))
+                {
+                    logger?.LogDebug(
+                        "LinuxBLE scan: restart StartDiscovery returned {ErrorName} on {Adapter} but Discovering=true; continuing",
+                        ex.ErrorName, adapter);
+                    return;
+                }
+
+                logger?.LogWarning(
+                    "LinuxBLE scan: discovery restart failed on {Adapter} ({ErrorName}); continuing without throw",
+                    adapter, ex.ErrorName);
+                return;
+            }
+            catch (Exception ex)
+            {
+                if (await IsAlreadyDiscoveringAsync(adapterObj))
+                {
+                    logger?.LogDebug(
+                        ex,
+                        "LinuxBLE scan: restart StartDiscovery failed on {Adapter} but Discovering=true; continuing",
+                        adapter);
+                    return;
+                }
+
+                logger?.LogWarning(
+                    ex,
+                    "LinuxBLE scan: discovery restart failed on {Adapter}; continuing without throw",
+                    adapter);
+                return;
+            }
+
+            if (await IsAlreadyDiscoveringAsync(adapterObj))
+                logger?.LogInformation("LinuxBLE scan: discovery restarted on {Adapter}", adapter);
+            else
+                logger?.LogWarning("LinuxBLE scan: discovery restart issued on {Adapter} but Discovering=false", adapter);
+        }
+        finally
+        {
+            discoveryGate.Release();
+        }
+    }
     /// <summary>
     /// Return the cached IObjectManager proxy for the BlueZ root ("/").
     /// Created once; CreateProxy is never called a second time for this interface.
@@ -230,16 +507,40 @@ internal static class BlueZHelpers
     public static async Task<IDictionary<ObjectPath, IDictionary<string, IDictionary<string, object>>>>
         GetManagedObjectsSafeAsync(CancellationToken ct = default)
     {
-        var objMgr = await GetObjectManagerAsync();
-        await _managedObjectsSem.WaitAsync(ct);
-        try
+        Exception? lastError = null;
+        const int maxAttempts = 4;
+
+        for (int attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            return await objMgr.GetManagedObjectsAsync();
+            ct.ThrowIfCancellationRequested();
+            var objMgr = await GetObjectManagerAsync();
+            await _managedObjectsSem.WaitAsync(ct);
+            try
+            {
+                return await objMgr.GetManagedObjectsAsync();
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+                if (attempt >= maxAttempts)
+                    throw;
+
+                // ObjectManager proxies can become stale after BlueZ hiccups; refresh.
+                InvalidateObjectManagerProxy();
+            }
+            finally
+            {
+                _managedObjectsSem.Release();
+            }
+
+            await Task.Delay(Math.Min(800, attempt * 200), ct);
         }
-        finally
-        {
-            _managedObjectsSem.Release();
-        }
+
+        throw lastError ?? new InvalidOperationException("GetManagedObjectsSafeAsync failed without exception.");
     }
 
     // ── Per-device proxy cache ────────────────────────────────────────────────
@@ -406,13 +707,40 @@ internal static class BlueZHelpers
 
         // Guard: if BlueZ has not finished service discovery, the ObjectManager may still expose
         // GATT objects from the *previous* connection session (e.g. stale bootloader services after
-        // a firmware upload and reboot). Only trust the GATT tree once ServicesResolved=true;
-        // otherwise return Unknown so the caller retries without caching the wrong mode.
+        // a firmware upload and reboot). Only trust the GATT tree once ServicesResolved=true.
+        // Use a short grace window because ServicesResolved often flips shortly after reconnect.
         try
         {
             var dev = await GetDeviceAsync(devicePath);
-            if (!await dev.GetAsync<bool>("ServicesResolved"))
-                return BleMode.Unknown;
+            int srGraceMs = Math.Max(0, RuntimeVariables.LINUX_BLE_MODE_DETECT_SR_GRACE_MS);
+            var srDeadline = DateTime.UtcNow.AddMilliseconds(srGraceMs);
+            while (true)
+            {
+                ct.ThrowIfCancellationRequested();
+                bool servicesResolved;
+                try
+                {
+                    using var srPollCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    srPollCts.CancelAfter(TimeSpan.FromSeconds(2));
+                    servicesResolved = await dev.GetAsync<bool>("ServicesResolved").WaitAsync(srPollCts.Token);
+                }
+                catch
+                {
+                    return BleMode.Unknown;
+                }
+
+                if (servicesResolved)
+                    break;
+
+                if (DateTime.UtcNow >= srDeadline)
+                    return BleMode.Unknown;
+
+                int remainingMs = (int)Math.Max(0, (srDeadline - DateTime.UtcNow).TotalMilliseconds);
+                int sleepMs = Math.Min(150, remainingMs);
+                if (sleepMs <= 0)
+                    return BleMode.Unknown;
+                await Task.Delay(sleepMs, ct);
+            }
         }
         catch
         {
@@ -1012,3 +1340,4 @@ private static async Task<string> RunProcessAsync(string command, string args, i
 }
 
 }
+

@@ -79,8 +79,8 @@ public class LinuxBleNotificationService : IBleNotificationService
             if (map.IsEmpty)
             {
                 _handlers.TryRemove(macAddress, out _);
-                _logger.LogDebug("LinuxBLE Notify: last handler removed for {Mac} — calling StopNotify", macAddress);
-                _ = StopNotifyingAsync(macAddress);
+                _logger.LogDebug("LinuxBLE Notify: last handler removed for {Mac} — disposing D-Bus WatchProperties synchronously", macAddress);
+                DisposeNotifySubscriptionSync(macAddress, "Unsubscribe(token)");
             }
         }
     }
@@ -121,7 +121,38 @@ public class LinuxBleNotificationService : IBleNotificationService
 
     // ── Notify management ───────────────────────────────────────────────────
 
-    private async Task EnsureNotifyingAsync(string macAddress)
+    /// <summary>
+    /// Ensures StartNotify + WatchProperties are active before a caller sends a write that
+    /// expects a fast response notification (for example login telegrams).
+    /// </summary>
+    public async Task EnsureNotifyingReadyAsync(string macAddress, CancellationToken ct = default)
+    {
+        await EnsureNotifyingAsync(macAddress, ct).ConfigureAwait(false);
+        if (await IsNotifyingActiveAsync(macAddress, ct).ConfigureAwait(false))
+            return;
+
+        _logger.LogDebug("LinuxBLE Notify: EnsureNotifyingReady {Mac} - Notifying=false after first pass; resetting and retrying", macAddress);
+        DisposeNotifySubscriptionSync(macAddress, "EnsureNotifyingReady(first-pass-notifying-false)");
+
+        await EnsureNotifyingAsync(macAddress, ct).ConfigureAwait(false);
+        if (await IsNotifyingActiveAsync(macAddress, ct).ConfigureAwait(false))
+            return;
+
+        DisposeNotifySubscriptionSync(macAddress, "EnsureNotifyingReady(final-notifying-false)");
+        throw new InvalidOperationException($"LinuxBLE notify pipeline not ready for {macAddress} (Notifying=false).");
+    }
+
+    private void DisposeNotifySubscriptionSync(string macAddress, string source)
+    {
+        if (_notifySubscriptions.TryRemove(macAddress, out var sub))
+        {
+            _notifyCharacteristics.TryRemove(macAddress, out _);
+            try { sub.Dispose(); } catch { /* ignore */ }
+            _logger.LogDebug("LinuxBLE Notify: {Source} {Mac} - D-Bus WatchProperties disposed synchronously", source, macAddress);
+        }
+    }
+
+    private async Task EnsureNotifyingAsync(string macAddress, CancellationToken ct = default)
     {
         if (_notifySubscriptions.ContainsKey(macAddress))
         {
@@ -132,7 +163,7 @@ public class LinuxBleNotificationService : IBleNotificationService
         _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — acquiring per-MAC subLock", macAddress);
         var subLock = GetSubLock(macAddress);
         var lockSw = System.Diagnostics.Stopwatch.StartNew();
-        await subLock.WaitAsync();
+        await subLock.WaitAsync(ct).ConfigureAwait(false);
         lockSw.Stop();
         _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — per-MAC subLock acquired after {Ms}ms", macAddress, lockSw.ElapsedMilliseconds);
         try
@@ -154,7 +185,7 @@ public class LinuxBleNotificationService : IBleNotificationService
                 // (common after a firmware reboot or mode switch) before choosing the UUIDs.
                 _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — mode Unknown, waiting for ServicesResolved (max {Timeout}ms)", macAddress, RuntimeVariables.LINUX_BLE_SERVICES_RESOLVED_TIMEOUT_MS);
                 var servicesReady = await BlueZHelpers.WaitForServicesResolvedAsync(
-                    devicePath, RuntimeVariables.LINUX_BLE_SERVICES_RESOLVED_TIMEOUT_MS, 200, CancellationToken.None);
+                    devicePath, RuntimeVariables.LINUX_BLE_SERVICES_RESOLVED_TIMEOUT_MS, 200, ct);
                 if (servicesReady)
                     mode = await BlueZHelpers.DetectModeByGattAsync(devicePath);
 
@@ -204,6 +235,7 @@ public class LinuxBleNotificationService : IBleNotificationService
 
             _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — calling StartNotify (mode={Mode})", macAddress, mode);
             var startSw = System.Diagnostics.Stopwatch.StartNew();
+            bool notifyActive = false;
             try
             {
                 // Guard against an indefinite D-Bus hang: if BlueZ is unresponsive (e.g. after
@@ -212,10 +244,16 @@ public class LinuxBleNotificationService : IBleNotificationService
                 // EnsureNotifyingAsync call from acquiring the lock, silently breaking
                 // notifications for all future login attempts.  A 10-second ceiling releases the
                 // lock in the worst case and lets the retry loop reconnect cleanly.
-                using var startNotifyCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                await characteristic.StartNotifyAsync().WaitAsync(startNotifyCts.Token);
+                using var startNotifyCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                startNotifyCts.CancelAfter(TimeSpan.FromSeconds(10));
+                await characteristic.StartNotifyAsync().WaitAsync(startNotifyCts.Token).ConfigureAwait(false);
                 startSw.Stop();
+                notifyActive = await WaitForNotifyingTrueAsync(characteristic, 1500, ct).ConfigureAwait(false);
                 _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — StartNotify OK ({Ms}ms)", macAddress, startSw.ElapsedMilliseconds);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
             }
             catch (OperationCanceledException)
             {
@@ -232,10 +270,13 @@ public class LinuxBleNotificationService : IBleNotificationService
                 _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — StartNotify InProgress after {Ms}ms; cycling StopNotify→StartNotify to reset stale CCCD", macAddress, startSw.ElapsedMilliseconds);
                 try
                 {
-                    using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                    using var stopCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    stopCts.CancelAfter(TimeSpan.FromSeconds(3));
                     await characteristic.StopNotifyAsync().WaitAsync(stopCts.Token).ConfigureAwait(false);
-                    using var restartCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                    using var restartCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    restartCts.CancelAfter(TimeSpan.FromSeconds(10));
                     await characteristic.StartNotifyAsync().WaitAsync(restartCts.Token).ConfigureAwait(false);
+                    notifyActive = await WaitForNotifyingTrueAsync(characteristic, 1500, ct).ConfigureAwait(false);
                     _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — StopNotify→StartNotify cycle OK", macAddress);
                 }
                 catch (Exception cycleEx)
@@ -249,6 +290,25 @@ public class LinuxBleNotificationService : IBleNotificationService
                 _logger.LogWarning(ex, "LinuxBLE Notify: EnsureNotifying {Mac} — StartNotify failed after {Ms}ms (may already be notifying)", macAddress, startSw.ElapsedMilliseconds);
             }
 
+            if (!notifyActive)
+            {
+                try
+                {
+                    notifyActive = await WaitForNotifyingTrueAsync(characteristic, 1000, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+            }
+
+            if (!notifyActive)
+            {
+                try { sub.Dispose(); } catch { /* ignore */ }
+                _logger.LogWarning("LinuxBLE Notify: EnsureNotifying {Mac} - Notifying=false after StartNotify; dropping subscription so caller can retry cleanly", macAddress);
+                return;
+            }
+
             _notifySubscriptions[macAddress] = sub;
             _notifyCharacteristics[macAddress] = characteristic;
             _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — subscription registered OK", macAddress);
@@ -258,6 +318,46 @@ public class LinuxBleNotificationService : IBleNotificationService
             GetSubLock(macAddress).Release();
             _logger.LogDebug("LinuxBLE Notify: EnsureNotifying {Mac} — per-MAC subLock released", macAddress);
         }
+    }
+
+    private async Task<bool> IsNotifyingActiveAsync(string macAddress, CancellationToken ct)
+    {
+        if (!_notifyCharacteristics.TryGetValue(macAddress, out var characteristic))
+            return false;
+
+        return await WaitForNotifyingTrueAsync(characteristic, 1000, ct).ConfigureAwait(false);
+    }
+
+    private static async Task<bool> WaitForNotifyingTrueAsync(IGattCharacteristic1 characteristic, int timeoutMs, CancellationToken ct)
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(Math.Max(200, timeoutMs));
+        while (DateTime.UtcNow < deadline)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                using var pollCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                pollCts.CancelAfter(TimeSpan.FromSeconds(2));
+                if (await characteristic.GetAsync<bool>("Notifying").WaitAsync(pollCts.Token).ConfigureAwait(false))
+                    return true;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                // Keep polling until timeout; BlueZ may transiently reject reads while reconnecting.
+            }
+
+            var remainingMs = (int)(deadline - DateTime.UtcNow).TotalMilliseconds;
+            if (remainingMs <= 0)
+                break;
+
+            await Task.Delay(Math.Min(100, remainingMs), ct).ConfigureAwait(false);
+        }
+
+        return false;
     }
 
     private async Task StopNotifyingAsync(string macAddress)
@@ -308,3 +408,4 @@ public class LinuxBleNotificationService : IBleNotificationService
         }
     }
 }
+

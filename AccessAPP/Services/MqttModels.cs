@@ -1,5 +1,7 @@
 ﻿using System.Text.Json.Serialization;
 
+using AccessAPP.Models;
+
 namespace AccessAPP.Services;
 
 public enum MqttCommandType
@@ -37,6 +39,34 @@ public sealed class StartUpdateRequest
     /// </summary>
     [JsonPropertyName("ForceUpdate")]
     public bool? ForceUpdate { get; set; }
+
+    /// <summary>
+    /// Optional detector settings patch to apply after successful upgrade.
+    /// </summary>
+    [JsonPropertyName("DetectorSettings")]
+    public DetectorSettingsPatch? DetectorSettings { get; set; }
+
+    /// <summary>
+    /// If true, run DALI commissioning 0x0400 with SearchType=0x00 after update
+    /// (address all control gear devices and assign to zone 1).
+    /// Default is false when omitted.
+    /// </summary>
+    [JsonPropertyName("RunDaliAddressAllToZone1AfterUpdate")]
+    public bool? RunDaliAddressAllToZone1AfterUpdate { get; set; }
+
+    /// <summary>
+    /// If true, run DALI commissioning total-new 102 scan (0x0400, SearchType=0x01) after update.
+    /// Default is false when omitted.
+    /// </summary>
+    [JsonPropertyName("RunDali102TotalNewScanAfterUpdate")]
+    public bool? RunDali102TotalNewScanAfterUpdate { get; set; }
+
+    /// <summary>
+    /// If true, run DALI commissioning total-new 103 scan (0x0400, SearchType=0x03) after update.
+    /// Default is false when omitted.
+    /// </summary>
+    [JsonPropertyName("RunDali103TotalNewScanAfterUpdate")]
+    public bool? RunDali103TotalNewScanAfterUpdate { get; set; }
 }
 
 // NEW: change MQTT scope (only NetworkId) at runtime
@@ -52,6 +82,17 @@ public sealed class GetFwVersionCommand
 
     // Optional: if your devices require a pincode for Connect+Login.
     public string? Pincode { get; set; }
+}
+
+public sealed class DetectorSettingsCommand
+{
+    public string? RequestId { get; set; }
+    public List<string> Sensors { get; set; } = new();
+    public string? Pincode { get; set; }
+    public string? DetectorType { get; set; }
+    public string? FirmwareVersion { get; set; }
+    public DetectorSettingsPatch? Settings { get; set; }
+    public bool? WriteOnlyChanged { get; set; }
 }
 
 public sealed class DisconnectDevicesCommand

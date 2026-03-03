@@ -35,6 +35,8 @@ public interface IMqttService : IAsyncDisposable
     // Events when commands arrive
     event Func<StartUpdateCommand, Task>? StartUpdateRequested;
     event Func<GetFwVersionCommand, Task>? GetFwVersionRequested;
+    event Func<DetectorSettingsCommand, Task>? GetDetectorSettingsRequested;
+    event Func<DetectorSettingsCommand, Task>? SetDetectorSettingsRequested;
 
     // Disconnect devices via MQTT (single or list)
     event Func<DisconnectDevicesCommand, Task>? DisconnectDevicesRequested;

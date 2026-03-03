@@ -57,7 +57,7 @@ public sealed class AccessAppSettings
 
     // If true, auto-set parallel programmers based on queued model mix:
     // DALI master only (P47/P48) => 4, otherwise => 2.
-    public bool autoSetWorkersByModel { get; set; } = true;
+    public bool autoSetWorkersByModel { get; set; } = false;
 
     // If true, force specific runtime variables to false before every start-update.
     public bool productionUpdate { get; set; } = false;
@@ -70,4 +70,11 @@ public sealed class AccessAppSettings
     /// Keys are typically "P41", "P42", "P46", "P47", "P48".
     /// </summary>
     public Dictionary<string, string> selectedFirmwareByModel { get; set; } = new();
+
+    /// <summary>
+    /// Optional detector settings profile file path per detector model.
+    /// When configured, the profile patch is included as DetectorSettings in start-update payload.
+    /// Keys are typically "P41", "P42", "P46", "P47", "P48".
+    /// </summary>
+    public Dictionary<string, string> detectorSettingsProfileByModel { get; set; } = new();
 }
