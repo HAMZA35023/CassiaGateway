@@ -2191,6 +2191,23 @@ return resp;
                             return true;
                         }
 
+                        if (linuxNativeBackend)
+                        {
+                            // Linux-native: after a jump, a connected session can disappear while
+                            // BlueZ still reports the previous state for a short period.
+                            // Do recovery reconnect immediately instead of trying a same-session login.
+                            AppLog.Info($"EnsureBootMode: linux-native recovery reconnect for {nodeMac} after verify budget expiration (attempt {attempt}/{bootJumpMaxAttempts}).");
+                            var recovery = await RecoverSessionForNextJumpAttemptAsync(attempt).ConfigureAwait(false);
+                            if (recovery.bootAchieved)
+                                return true;
+                            if (!recovery.ok)
+                            {
+                                UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", $"Abort retries after linux-native recovery failure (attempt {attempt}/{bootJumpMaxAttempts})");
+                                return false;
+                            }
+                        }
+                        else
+                        {
                         // Keep this re-login light; if it fails, recovery reconnect below
                         // performs another boot-mode check before deciding next action.
                         var reloginOk = await EnsureLoginOnConnectedSessionUnlessBootModeAsync(
@@ -2212,6 +2229,7 @@ return resp;
                                 UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", $"Abort retries after re-login failure (attempt {attempt}/{bootJumpMaxAttempts}); recovery connect/login failed");
                                 return false;
                             }
+                        }
                         }
                     }
 
