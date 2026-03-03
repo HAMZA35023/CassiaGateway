@@ -57,7 +57,7 @@ public sealed class AccessAppSettings
 
     // If true, auto-set parallel programmers based on queued model mix:
     // DALI master only (P47/P48) => 4, otherwise => 2.
-    public bool autoSetWorkersByModel { get; set; } = true;
+    public bool autoSetWorkersByModel { get; set; } = false;
 
     // If true, force specific runtime variables to false before every start-update.
     public bool productionUpdate { get; set; } = false;

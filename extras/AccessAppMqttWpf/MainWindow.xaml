@@ -748,6 +748,7 @@
                             Content="Workers"
                             Margin="0,0,0,4"
                             ToolTip="Set parallel programmers"
+                            Visibility="{Binding DataContext.DeveloperModeUnlocked, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"
                             Command="{Binding DataContext.SetParallelProgrammersForCassiaPromptCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                             CommandParameter="{Binding}"/>
 
@@ -1536,6 +1537,13 @@
                                 </StackPanel>
 
                                 <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                                    <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center">
+                                        <Button Style="{StaticResource PrimaryButton}" Content="Update / Queue selected" Padding="12,6" Margin="0,0,8,0" Command="{Binding QueueSelectedCommand}"/>
+                                        <Button Style="{StaticResource DangerButton}" Content="Clear queue" Padding="12,6" Margin="0,0,8,0" Command="{Binding ClearQueueCommand}"/>
+                                        <Button Style="{StaticResource GhostButton}" Content="Default sort" Padding="12,6" Click="QueueDefaultSort_Click"/>
+                                        <Button Style="{StaticResource WarningButton}" Content="Rebalance" Padding="12,6" Margin="8,0,0,0" Command="{Binding RebalanceQueuedItemsCommand}"/>
+                                        <Button Style="{StaticResource DangerButton}" Content="Remove completed" Padding="12,6" Margin="10,0,0,0" Command="{Binding RemoveCompletedFromQueueCommand}"/>
+                                    </StackPanel>
                                     <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center">
                                         <CheckBox Content="Force update" 
                                                   ToolTip="Re-program sensor firmware even if current FW already matches target"
@@ -1546,22 +1554,20 @@
                                                   ToolTip="Auto-set workers: DALI master only (P47/P48) = 4, mixed/other = 2"
                                                   IsChecked="{Binding AutoSetWorkersByModelEnabled, Mode=TwoWay}"
                                                   Margin="0,0,12,0"
-                                                  VerticalAlignment="Center"/>
+                                                  VerticalAlignment="Center"
+                                                  Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"/>
                                         <CheckBox Content="Post-update DALI 102 total new scan"
                                                   ToolTip="After update: run DALI commissioning 0x0400, SearchType 0x01."
                                                   IsChecked="{Binding RunDali102TotalNewScanAfterUpdateEnabled, Mode=TwoWay}"
                                                   Margin="0,0,12,0"
-                                                  VerticalAlignment="Center"/>
+                                                  VerticalAlignment="Center"
+                                                  Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"/>
                                         <CheckBox Content="Post-update DALI 103 total new scan"
                                                   ToolTip="After update: run DALI commissioning 0x0400, SearchType 0x03."
                                                   IsChecked="{Binding RunDali103TotalNewScanAfterUpdateEnabled, Mode=TwoWay}"
                                                   Margin="0,0,12,0"
-                                                  VerticalAlignment="Center"/>
-                                        <Button Style="{StaticResource PrimaryButton}" Content="Update / Queue selected" Padding="12,6" Margin="0,0,8,0" Command="{Binding QueueSelectedCommand}"/>
-                                        <Button Style="{StaticResource DangerButton}" Content="Clear queue" Padding="12,6" Margin="0,0,8,0" Command="{Binding ClearQueueCommand}"/>
-                                        <Button Style="{StaticResource GhostButton}" Content="Default sort" Padding="12,6" Click="QueueDefaultSort_Click"/>
-                                        <Button Style="{StaticResource WarningButton}" Content="Rebalance" Padding="12,6" Margin="8,0,0,0" Command="{Binding RebalanceQueuedItemsCommand}"/>
-                                        <Button Style="{StaticResource DangerButton}" Content="Remove completed" Padding="12,6" Margin="10,0,0,0" Command="{Binding RemoveCompletedFromQueueCommand}"/>
+                                                  VerticalAlignment="Center"
+                                                  Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"/>
                                     </StackPanel>
                                 </DockPanel>
 
@@ -1772,6 +1778,13 @@
                     </StackPanel>
 
                     <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                        <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center">
+                            <!-- no "Update / Queue selected" here -->
+                            <Button Style="{StaticResource DangerButton}" Content="Clear queue" Padding="12,6" Margin="0,0,8,0" Command="{Binding ClearQueueCommand}"/>
+                            <Button Style="{StaticResource GhostButton}" Content="Default sort" Padding="12,6" Click="QueueDefaultSort_Click"/>
+                            <Button Style="{StaticResource WarningButton}" Content="Rebalance" Padding="12,6" Margin="8,0,0,0" Command="{Binding RebalanceQueuedItemsCommand}"/>
+                            <Button Style="{StaticResource DangerButton}" Content="Remove completed" Padding="12,6" Margin="10,0,0,0" Command="{Binding RemoveCompletedFromQueueCommand}"/>
+                        </StackPanel>
                         <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center">
                             <CheckBox Content="Force update" 
                                       ToolTip="Re-program sensor firmware even if current FW already matches target"
@@ -1782,23 +1795,21 @@
                                       ToolTip="Auto-set workers: DALI master only (P47/P48) = 4, mixed/other = 2"
                                       IsChecked="{Binding AutoSetWorkersByModelEnabled, Mode=TwoWay}"
                                       Margin="0,0,12,0"
-                                      VerticalAlignment="Center"/>
+                                      VerticalAlignment="Center"
+                                      Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"/>
                             <CheckBox Content="Post-update DALI 102 total new scan"
                                       ToolTip="After update: run DALI commissioning 0x0400, SearchType 0x01."
                                       IsChecked="{Binding RunDali102TotalNewScanAfterUpdateEnabled, Mode=TwoWay}"
                                       Margin="0,0,12,0"
-                                      VerticalAlignment="Center"/>
+                                      VerticalAlignment="Center"
+                                      Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"/>
                             <CheckBox Content="Post-update DALI 103 total new scan"
                                       ToolTip="After update: run DALI commissioning 0x0400, SearchType 0x03."
                                       IsChecked="{Binding RunDali103TotalNewScanAfterUpdateEnabled, Mode=TwoWay}"
                                       Margin="0,0,12,0"
-                                      VerticalAlignment="Center"/>
-                            <!-- no "Update / Queue selected" here -->
-                            <Button Style="{StaticResource DangerButton}" Content="Clear queue" Padding="12,6" Margin="0,0,8,0" Command="{Binding ClearQueueCommand}"/>
-                            <Button Style="{StaticResource GhostButton}" Content="Default sort" Padding="12,6" Click="QueueDefaultSort_Click"/>
-                            <Button Style="{StaticResource WarningButton}" Content="Rebalance" Padding="12,6" Margin="8,0,0,0" Command="{Binding RebalanceQueuedItemsCommand}"/>
-                            <Button Style="{StaticResource DangerButton}" Content="Remove completed" Padding="12,6" Margin="10,0,0,0" Command="{Binding RemoveCompletedFromQueueCommand}"/>
-</StackPanel>
+                                      VerticalAlignment="Center"
+                                      Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"/>
+                        </StackPanel>
                     </DockPanel>
 
                     <DataGrid x:Name="QueueGridHostInline"

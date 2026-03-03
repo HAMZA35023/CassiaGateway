@@ -156,8 +156,25 @@ using (var scope = app.Services.CreateScope())
     if (loadResult.errors.Count > 0)
         AppLog.Warn($"Runtime variables load errors: {string.Join(", ", loadResult.errors.Select(kv => $"{kv.Key}={kv.Value}"))}");
 
+    var isLinuxNativeBackend = RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase);
+    var linuxAdapters = RuntimeVariables.GetLinuxBleAdapterList()
+        .Where(a => !string.IsNullOrWhiteSpace(a))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    if (linuxAdapters.Length == 0)
+        linuxAdapters = [RuntimeVariables.LINUX_BLE_ADAPTER];
+
+    var startupWorkersRequested = isLinuxNativeBackend
+        ? Math.Max(1, linuxAdapters.Length)
+        : 2;
+    var startupWorkersValue = CassiaFirmwareUpgradeService.SetParallelProgrammers(startupWorkersRequested);
+    AppLog.Info(
+        isLinuxNativeBackend
+            ? $"Startup workers auto-set to {startupWorkersValue} (linux-native adapters={string.Join(",", linuxAdapters)})."
+            : $"Startup workers auto-set to {startupWorkersValue} (cassia default).");
+
     // Start the BLE backend chosen by BLE_BACKEND (evaluated after runtime.json is loaded).
-    if (RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase))
+    if (isLinuxNativeBackend)
     {
         AppLog.Info("BLE backend: linux-native (BlueZ D-Bus)");
         // Constructing the singleton starts the BlueZ scan loop.
@@ -177,7 +194,30 @@ using (var scope = app.Services.CreateScope())
 
     // Start MQTT service
     var mqttService = serviceProvider.GetRequiredService<IMqttService>();
-     _ = mqttService.StartAsync();
+    _ = mqttService.StartAsync();
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            await mqttService.PublishTeleJsonAsync("parallel-programmers", new
+            {
+                success = true,
+                message = "Parallel programmers auto-set at startup.",
+                name = mqttService.CurrentOptions.Name,
+                networkId = mqttService.CurrentOptions.NetworkId,
+                time = DateTimeOffset.UtcNow,
+                source = "startup-auto",
+                backend = RuntimeVariables.BLE_BACKEND,
+                linuxAdapters = isLinuxNativeBackend ? linuxAdapters : Array.Empty<string>(),
+                requested = startupWorkersRequested,
+                value = startupWorkersValue
+            }).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn($"Startup workers MQTT announce failed: {ex.Message}");
+        }
+    });
 
     // Hook incoming MQTT commands to your services
     var firmwareUpgradeService = serviceProvider.GetRequiredService<CassiaFirmwareUpgradeService>();
