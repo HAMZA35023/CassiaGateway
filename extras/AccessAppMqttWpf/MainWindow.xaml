@@ -602,6 +602,17 @@
                     <TextBlock Text="🌐" Style="{StaticResource MenuIconGlyph}"/>
                 </MenuItem.Icon>
             </MenuItem>
+            <MenuItem Header="Move to MQTT host preset">
+                <MenuItem Header="FREE #2 (tls=true)"
+                          Command="{Binding PlacementTarget.Tag.SetCassiaMqttBrokerFree2Command, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                          CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                <MenuItem Header="FREE #1 (tls=true)"
+                          Command="{Binding PlacementTarget.Tag.SetCassiaMqttBrokerFree1Command, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                          CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                <MenuItem Header="NIKO-TEST (tls=false)"
+                          Command="{Binding PlacementTarget.Tag.SetCassiaMqttBrokerNikoTestCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                          CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+            </MenuItem>
             <Separator Visibility="{Binding PlacementTarget.Tag.DeveloperModeUnlocked, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}"/>
             <MenuItem Header="Set runtime variables..."
                       Visibility="{Binding PlacementTarget.Tag.DeveloperModeUnlocked, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}"
@@ -936,6 +947,14 @@
 
                     <TextBlock Text="Port" Style="{StaticResource MetaLabel}"/>
                     <TextBox Text="{Binding MqttPort}"/>
+
+                    <TextBlock Text="Broker preset"
+                               Style="{StaticResource MetaLabel}"
+                               Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"/>
+                    <ComboBox ItemsSource="{Binding MqttHostPresets}"
+                              SelectedItem="{Binding SelectedMqttHostPreset, Mode=TwoWay}"
+                              DisplayMemberPath="Label"
+                              Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"/>
 
                     <TextBlock Text="Topic" Style="{StaticResource MetaLabel}" Visibility="Collapsed"/>
                     <TextBox Text="{Binding MqttTopic}" Visibility="Collapsed"/>

@@ -2014,7 +2014,7 @@ return resp;
                 int v = RuntimeVariables.UPGRADE_CONNECT_DISCOVER_GATT_AFTER_BOOT_JUMP;
                 int? discover = v < 0 ? null : (v <= 0 ? 0 : 1);
                 if (forceCassiaBootRefresh && !linuxNativeBackend)
-                    return 1;
+                    return 0; // 0 = fresh GATT discovery (1 = use stale cache — wrong after a boot jump)
                 return discover;
             }
 
@@ -2055,14 +2055,31 @@ return resp;
                     int nextAttempt = Math.Min(bootJumpMaxAttempts, currentAttempt + 1);
                     string reconnectStage = $"Connected (jump retry recovery {nextAttempt}/{bootJumpMaxAttempts})";
 
+                    // Cassia: disconnect the stale session first so Cassia properly re-discovers
+                    // GATT on reconnect. Without this, the characteristics endpoint keeps
+                    // returning cached app-mode data even though the device is in boot mode.
+                    if (!linuxNativeBackend)
+                    {
+                        try { await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chip: GetChipForMac(nodeMac)).ConfigureAwait(false); }
+                        catch { }
+                        // Let the device fully settle before Cassia reconnects.
+                        await Task.Delay(Math.Max(0, RuntimeVariables.UPGRADE_SENSOR_BOOT_PRE_RECONNECT_SETTLE_MS)).ConfigureAwait(false);
+                    }
+
                     if (!await ConnectWithRetryAsync(reconnectStage, BootJumpDiscoverGattOverride(forceCassiaBootRefresh: true)).ConfigureAwait(false))
                     {
                         AppLog.Warn($"EnsureBootMode: recovery connect failed for {nodeMac} before jump attempt {nextAttempt}/{bootJumpMaxAttempts}.");
                         return (false, false);
                     }
 
+                    // Cassia: wait for the fresh GATT discovery (triggered by discovergatt=1 in
+                    // the connect body) to complete. Do NOT use &discovergatt=1 on the
+                    // characteristics URL — that restarts the BLE scan and prevents completion.
+                    if (!linuxNativeBackend)
+                        await Task.Delay(Math.Max(0, RuntimeVariables.UPGRADE_SENSOR_BOOT_GATT_SETTLE_MS)).ConfigureAwait(false);
+
                     // Recovery connect may reveal that the device did enter boot mode after all.
-                    if (CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac, preferBootOnAmbiguous: true))
+                    if (CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac, preferBootOnAmbiguous: false))
                     {
                         UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Achieved during recovery reconnect");
                         return (true, true);
@@ -2071,8 +2088,21 @@ return resp;
                     bool loginOk = await LoginWithRetryAsync().ConfigureAwait(false);
                     if (!loginOk)
                     {
-                        AppLog.Warn($"EnsureBootMode: recovery login failed for {nodeMac} before jump attempt {nextAttempt}/{bootJumpMaxAttempts}.");
-                        return (false, false);
+                        bool bootDetectedAfterLoginFailure = false;
+                        try
+                        {
+                            bootDetectedAfterLoginFailure = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac, preferBootOnAmbiguous: false);
+                        }
+                        catch { }
+
+                        if (bootDetectedAfterLoginFailure)
+                        {
+                            UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Achieved during recovery reconnect (after login failure)");
+                            return (true, true);
+                        }
+
+                        AppLog.Warn($"EnsureBootMode: recovery login failed for {nodeMac} before jump attempt {nextAttempt}/{bootJumpMaxAttempts}; continuing with next jump attempt.");
+                        return (true, false);
                     }
 
                     return (true, false);
@@ -2108,8 +2138,7 @@ return resp;
                                 return true;
                             if (!recovery.ok)
                             {
-                                UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", $"Abort retries after jump failure (attempt {attempt}/{bootJumpMaxAttempts}); recovery connect/login failed");
-                                return false;
+                                UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", $"Recovery connect/login failed after jump failure (attempt {attempt}/{bootJumpMaxAttempts}); continuing retries");
                             }
                         }
                         await Task.Delay(3000);
@@ -2122,7 +2151,20 @@ return resp;
                     int jumpDelay = 10000 + Math.Max(0, RuntimeVariables.UPGRADE_DELAY_AFTER_BOOT_JUMP_MS);
                     await Task.Delay(jumpDelay);
 
-                    // Reconnect after jump (robust)
+                    // Cassia: disconnect the stale app-mode session before reconnecting in boot
+                    // mode so Cassia performs a clean GATT re-discovery rather than serving
+                    // cached app-mode characteristics on the next characteristics query.
+                    if (!linuxNativeBackend)
+                    {
+                        try { await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chip: GetChipForMac(nodeMac)).ConfigureAwait(false); }
+                        catch (Exception ex) { AppLog.Warn($"EnsureBootMode: pre-reconnect Cassia disconnect failed for {nodeMac}: {ex.Message}"); }
+                        // Give the device time to fully restart in bootloader mode before
+                        // Cassia attempts a new BLE connection.
+                        await Task.Delay(Math.Max(0, RuntimeVariables.UPGRADE_SENSOR_BOOT_PRE_RECONNECT_SETTLE_MS)).ConfigureAwait(false);
+                    }
+
+                    // Reconnect after jump (robust). discovergatt=1 in the CONNECT body tells
+                    // Cassia to perform a fresh over-the-air GATT discovery (not cached).
                     if (!await ConnectWithRetryAsync("Connect After JumpToBoot", BootJumpDiscoverGattOverride(forceCassiaBootRefresh: true)))
                     {
                         UpgradeLogger.Log(logId, nodeMac, "Connect After JumpToBoot", $"Failed (attempt {attempt}/{bootJumpMaxAttempts})");
@@ -2130,8 +2172,18 @@ return resp;
                         continue;
                     }
 
+                    // Cassia: wait for the GATT discovery (triggered by discovergatt=1 in the
+                    // connect body) to complete before querying characteristics.
+                    // DO NOT call discovergatt=1 via the characteristics URL during this wait —
+                    // doing so restarts the BLE scan and prevents it from ever completing.
+                    if (!linuxNativeBackend)
+                        await Task.Delay(Math.Max(0, RuntimeVariables.UPGRADE_SENSOR_BOOT_GATT_SETTLE_MS)).ConfigureAwait(false);
+
                     // Verify boot mode with a hard bounded budget so this step does not stall.
-                    int verifyBudgetMs = Math.Clamp(RuntimeVariables.UPGRADE_SENSOR_BOOTMODE_VERIFY_BUDGET_MS, 1000, 10000);
+                    int verifyBudgetMs = Math.Clamp(
+                        RuntimeVariables.UPGRADE_SENSOR_BOOTMODE_VERIFY_BUDGET_MS,
+                        1000,
+                        linuxNativeBackend ? 10000 : 30000);
                     int verifyPollMs = Math.Max(100, RuntimeVariables.UPGRADE_SENSOR_BOOTMODE_VERIFY_POLL_MS);
                     var verifyDeadlineUtc = DateTime.UtcNow.AddMilliseconds(verifyBudgetMs);
                     int verify = 0;
@@ -2141,7 +2193,11 @@ return resp;
                         bool isBoot = false;
                         try
                         {
-                            isBoot = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac, preferBootOnAmbiguous: true);
+                            // preferBootOnAmbiguous: false — do NOT trigger the secondary
+                            // &discovergatt=1 URL probe.  That probe restarts Cassia's GATT
+                            // scan mid-flight, causing it to never complete.  The connect
+                            // body already requested a fresh discovery; just read the cache.
+                            isBoot = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac, preferBootOnAmbiguous: false);
                         }
                         catch (Exception ex)
                         {
@@ -2202,8 +2258,7 @@ return resp;
                                 return true;
                             if (!recovery.ok)
                             {
-                                UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", $"Abort retries after linux-native recovery failure (attempt {attempt}/{bootJumpMaxAttempts})");
-                                return false;
+                                UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", $"Linux-native recovery failed (attempt {attempt}/{bootJumpMaxAttempts}); continuing retries");
                             }
                         }
                         else
@@ -2226,8 +2281,7 @@ return resp;
                                 return true;
                             if (!recovery.ok)
                             {
-                                UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", $"Abort retries after re-login failure (attempt {attempt}/{bootJumpMaxAttempts}); recovery connect/login failed");
-                                return false;
+                                UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", $"Recovery connect/login failed after re-login failure (attempt {attempt}/{bootJumpMaxAttempts}); continuing retries");
                             }
                         }
                         }
@@ -2235,6 +2289,19 @@ return resp;
 
                     // Try again
                     await Task.Delay(3000);
+                }
+
+                try
+                {
+                    if (CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac, preferBootOnAmbiguous: true))
+                    {
+                        UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected (final fallback)");
+                        return true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Debug($"EnsureBootMode: final fallback boot-mode check failed for {nodeMac}: {ex.Message}");
                 }
 
                 UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Failed");
@@ -2348,6 +2415,65 @@ UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
             // ----------------------------
             if (!await EnsureBootModeAsync())
             {
+                // Cassia-only: the device may have entered boot mode during the JumpToBootloader
+                // attempts, but the Cassia gateway needs a fresh reconnect to re-discover GATT
+                // and expose the boot characteristics. Restart the update task (reconnect) and
+                // perform one final boot-mode check before giving up.
+                if (!linuxNativeBackend)
+                {
+                    bool lateBootDetected = false;
+                    try
+                    {
+                        AppLog.Info($"EnsureBootMode failed for {nodeMac}; disconnecting then reconnecting to detect late boot mode.");
+                        // Disconnect first: Cassia only exposes the boot GATT profile after a
+                        // clean disconnect → reconnect cycle.  Reconnecting without disconnecting
+                        // first leaves Cassia serving stale app-mode characteristics.
+                        try { await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chip: GetChipForMac(nodeMac)).ConfigureAwait(false); }
+                        catch (Exception ex) { AppLog.Warn($"Post-EnsureBootMode disconnect exception for {nodeMac}: {ex.Message}"); }
+                        // Let the device fully settle in bootloader mode before reconnecting.
+                        await Task.Delay(Math.Max(0, RuntimeVariables.UPGRADE_SENSOR_BOOT_PRE_RECONNECT_SETTLE_MS)).ConfigureAwait(false);
+
+                        if (await ConnectWithRetryAsync("Connected (post-EnsureBoot restart)", BootJumpDiscoverGattOverride(forceCassiaBootRefresh: true)).ConfigureAwait(false))
+                        {
+                            // Let Cassia complete the fresh GATT discovery requested by
+                            // discovergatt=1 in the connect body.  Do NOT use &discovergatt=1
+                            // on the characteristics URL — it restarts the BLE scan mid-flight.
+                            await Task.Delay(Math.Max(0, RuntimeVariables.UPGRADE_SENSOR_BOOT_GATT_SETTLE_MS)).ConfigureAwait(false);
+                            lateBootDetected = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac, preferBootOnAmbiguous: false);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLog.Warn($"Post-EnsureBootMode restart check exception for {nodeMac}: {ex.Message}");
+                    }
+
+                    if (lateBootDetected)
+                    {
+                        UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected (post-EnsureBoot restart)");
+                        try
+                        {
+                            await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chip: GetChipForMac(nodeMac)).ConfigureAwait(false);
+                            UpgradeLogger.Log(logId, nodeMac, "Disconnected", "Success (boot-mode reconnect preparation)", FirmwareVersion);
+                        }
+                        catch (Exception ex)
+                        {
+                            UpgradeLogger.Log(logId, nodeMac, "Disconnected", $"Exception (boot-mode reconnect preparation): {ex.Message}", FirmwareVersion);
+                        }
+                        await Task.Delay(1000).ConfigureAwait(false);
+
+                        return await ProcessingSensorUpgrade(
+                            nodeMac,
+                            bActor,
+                            isBootloader,
+                            DetectorType,
+                            FirmwareVersion,
+                            logId,
+                            pincode,
+                            skipInitialConnect: false,
+                            assumeBootMode: true);
+                    }
+                }
+
                 response.Success = false;
                 response.StatusCode = 417;
                 response.Message = "Failed to enter boot mode.";

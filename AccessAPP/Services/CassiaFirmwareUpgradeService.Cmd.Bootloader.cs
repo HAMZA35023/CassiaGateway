@@ -39,8 +39,11 @@ namespace AccessAPP.Services
 
             int chip = GetChipForMac(nodeMac);
             string endpoint = $"http://{gatewayIpAddress}/gatt/nodes/{nodeMac}/characteristics?chip={chip}";
+            string endpointFresh = $"{endpoint}&discovergatt=1";
 
-            HttpClient _httpClientTmp = new HttpClient();
+            // Use a short timeout so a hanging Cassia HTTP server does not stall the
+            // verify loop for the default 100 s. Each poll will fail fast and retry.
+            HttpClient _httpClientTmp = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
             var maxAttempts = Math.Max(1, RuntimeVariables.BOOTMODE_RETRY_COUNT);
             var retryDelayMs = Math.Max(0, RuntimeVariables.BOOTMODE_RETRY_DELAY_MS);
 
@@ -48,11 +51,15 @@ namespace AccessAPP.Services
             {
                 try
                 {
-                    // Use synchronous version of HttpClient with GetAwaiter().GetResult()
-                    using var response = _httpClientTmp.GetAsync(endpoint).GetAwaiter().GetResult();
-
-                    if (response.StatusCode == HttpStatusCode.OK)
+                    bool ProbeEndpoint(string requestEndpoint, string sourceLabel, out bool hasResult)
                     {
+                        hasResult = false;
+                        using var response = _httpClientTmp.GetAsync(requestEndpoint).GetAwaiter().GetResult();
+
+                        if (response.StatusCode != HttpStatusCode.OK)
+                            return false;
+
+                        hasResult = true;
                         var jsonResponse = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
                         var characteristics = JsonConvert.DeserializeObject<List<CharacteristicModel>>(jsonResponse);
 
@@ -75,15 +82,34 @@ namespace AccessAPP.Services
                         {
                             if (preferBootOnAmbiguous)
                             {
-                                AppLog.Warn($"CheckIfDeviceInBootMode: ambiguous app+boot characteristic set for {nodeMac}; preferring boot mode (transition context).");
+                                AppLog.Warn($"CheckIfDeviceInBootMode: ambiguous app+boot characteristic set for {nodeMac} ({sourceLabel}); preferring boot mode (transition context).");
                                 return true;
                             }
 
-                            AppLog.Warn($"CheckIfDeviceInBootMode: ambiguous app+boot characteristic set for {nodeMac}; preferring application mode.");
+                            AppLog.Warn($"CheckIfDeviceInBootMode: ambiguous app+boot characteristic set for {nodeMac} ({sourceLabel}); preferring application mode.");
                             return false;
                         }
 
                         return hasBoot;
+                    }
+
+                    bool hasPrimaryResult;
+                    bool primaryBoot = ProbeEndpoint(endpoint, "cached", out hasPrimaryResult);
+                    if (!hasPrimaryResult)
+                        return false;
+
+                    if (primaryBoot)
+                        return true;
+
+                    if (preferBootOnAmbiguous)
+                    {
+                        bool hasFreshResult;
+                        bool freshBoot = ProbeEndpoint(endpointFresh, "discovergatt=1", out hasFreshResult);
+                        if (hasFreshResult && freshBoot)
+                        {
+                            AppLog.Info($"CheckIfDeviceInBootMode: forced discovergatt refresh detected boot mode for {nodeMac}.");
+                            return true;
+                        }
                     }
 
                     return false;
