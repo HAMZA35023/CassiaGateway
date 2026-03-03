@@ -2062,7 +2062,8 @@ return resp;
                     {
                         try { await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chip: GetChipForMac(nodeMac)).ConfigureAwait(false); }
                         catch { }
-                        await Task.Delay(1000).ConfigureAwait(false);
+                        // 10 s: let the device fully settle before Cassia reconnects.
+                        await Task.Delay(10000).ConfigureAwait(false);
                     }
 
                     if (!await ConnectWithRetryAsync(reconnectStage, BootJumpDiscoverGattOverride(forceCassiaBootRefresh: true)).ConfigureAwait(false))
@@ -2071,15 +2072,14 @@ return resp;
                         return (false, false);
                     }
 
-                    // Cassia: allow GATT rediscovery to complete before checking boot mode.
-                    // Cassia begins GATT discovery asynchronously on connect; querying the
-                    // characteristics endpoint too early still returns stale app-mode data.
-                    // Empirically, Cassia needs ~23 s from reconnect; wait 25 s to be safe.
+                    // Cassia: wait for the fresh GATT discovery (triggered by discovergatt=1 in
+                    // the connect body) to complete. Do NOT use &discovergatt=1 on the
+                    // characteristics URL — that restarts the BLE scan and prevents completion.
                     if (!linuxNativeBackend)
-                        await Task.Delay(25000).ConfigureAwait(false);
+                        await Task.Delay(15000).ConfigureAwait(false);
 
                     // Recovery connect may reveal that the device did enter boot mode after all.
-                    if (CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac, preferBootOnAmbiguous: true))
+                    if (CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac, preferBootOnAmbiguous: false))
                     {
                         UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Achieved during recovery reconnect");
                         return (true, true);
@@ -2091,7 +2091,7 @@ return resp;
                         bool bootDetectedAfterLoginFailure = false;
                         try
                         {
-                            bootDetectedAfterLoginFailure = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac, preferBootOnAmbiguous: true);
+                            bootDetectedAfterLoginFailure = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac, preferBootOnAmbiguous: false);
                         }
                         catch { }
 
@@ -2158,10 +2158,13 @@ return resp;
                     {
                         try { await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chip: GetChipForMac(nodeMac)).ConfigureAwait(false); }
                         catch (Exception ex) { AppLog.Warn($"EnsureBootMode: pre-reconnect Cassia disconnect failed for {nodeMac}: {ex.Message}"); }
-                        await Task.Delay(1000).ConfigureAwait(false);
+                        // Wait 10 s: give the device time to fully restart in bootloader mode
+                        // before Cassia attempts a new BLE connection.
+                        await Task.Delay(10000).ConfigureAwait(false);
                     }
 
-                    // Reconnect after jump (robust)
+                    // Reconnect after jump (robust). discovergatt=1 in the CONNECT body tells
+                    // Cassia to perform a fresh over-the-air GATT discovery (not cached).
                     if (!await ConnectWithRetryAsync("Connect After JumpToBoot", BootJumpDiscoverGattOverride(forceCassiaBootRefresh: true)))
                     {
                         UpgradeLogger.Log(logId, nodeMac, "Connect After JumpToBoot", $"Failed (attempt {attempt}/{bootJumpMaxAttempts})");
@@ -2169,9 +2172,14 @@ return resp;
                         continue;
                     }
 
+                    // Cassia: wait for the GATT discovery (triggered by discovergatt=1 in the
+                    // connect body) to complete before querying characteristics.
+                    // DO NOT call discovergatt=1 via the characteristics URL during this wait —
+                    // doing so restarts the BLE scan and prevents it from ever completing.
+                    if (!linuxNativeBackend)
+                        await Task.Delay(15000).ConfigureAwait(false);
+
                     // Verify boot mode with a hard bounded budget so this step does not stall.
-                    // Cassia performs GATT discovery asynchronously after connect, so allow a
-                    // longer budget on the Cassia path (30 s) than on linux-native (10 s).
                     int verifyBudgetMs = Math.Clamp(
                         RuntimeVariables.UPGRADE_SENSOR_BOOTMODE_VERIFY_BUDGET_MS,
                         1000,
@@ -2185,7 +2193,11 @@ return resp;
                         bool isBoot = false;
                         try
                         {
-                            isBoot = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac, preferBootOnAmbiguous: true);
+                            // preferBootOnAmbiguous: false — do NOT trigger the secondary
+                            // &discovergatt=1 URL probe.  That probe restarts Cassia's GATT
+                            // scan mid-flight, causing it to never complete.  The connect
+                            // body already requested a fresh discovery; just read the cache.
+                            isBoot = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac, preferBootOnAmbiguous: false);
                         }
                         catch (Exception ex)
                         {
@@ -2418,14 +2430,16 @@ UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
                         // first leaves Cassia serving stale app-mode characteristics.
                         try { await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, nodeMac, 0, chip: GetChipForMac(nodeMac)).ConfigureAwait(false); }
                         catch (Exception ex) { AppLog.Warn($"Post-EnsureBootMode disconnect exception for {nodeMac}: {ex.Message}"); }
-                        await Task.Delay(1000).ConfigureAwait(false);
+                        // 10 s: let the device fully settle in bootloader mode before reconnecting.
+                        await Task.Delay(10000).ConfigureAwait(false);
 
                         if (await ConnectWithRetryAsync("Connected (post-EnsureBoot restart)", BootJumpDiscoverGattOverride(forceCassiaBootRefresh: true)).ConfigureAwait(false))
                         {
-                            // Allow Cassia time to complete GATT rediscovery before querying.
-                            // Cassia needs ~23 s from reconnect; wait 25 s to be safe.
-                            await Task.Delay(25000).ConfigureAwait(false);
-                            lateBootDetected = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac, preferBootOnAmbiguous: true);
+                            // 15 s: let Cassia complete the fresh GATT discovery requested by
+                            // discovergatt=1 in the connect body.  Do NOT use &discovergatt=1
+                            // on the characteristics URL — it restarts the BLE scan mid-flight.
+                            await Task.Delay(15000).ConfigureAwait(false);
+                            lateBootDetected = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac, preferBootOnAmbiguous: false);
                         }
                     }
                     catch (Exception ex)
