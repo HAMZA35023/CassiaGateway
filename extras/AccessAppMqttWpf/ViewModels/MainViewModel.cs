@@ -27,6 +27,51 @@ public partial class MainViewModel : ObservableObject
 {
     private readonly MqttClientService _mqtt = new();
     private readonly SettingsStore _store = new();
+    private const string DefaultPresetMqttUser = "accessapp";
+    private const string DefaultPresetMqttPassword = "Niko1234!";
+
+    public sealed class MqttHostPresetOption
+    {
+        public string Key { get; }
+        public string Label { get; }
+        public string Host { get; }
+        public int Port { get; }
+        public bool UseTls { get; }
+
+        public MqttHostPresetOption(string key, string label, string host, int port, bool useTls)
+        {
+            Key = key;
+            Label = label;
+            Host = host;
+            Port = port;
+            UseTls = useTls;
+        }
+    }
+
+    public ObservableCollection<MqttHostPresetOption> MqttHostPresets { get; } = new()
+    {
+        new MqttHostPresetOption(
+            "free-2",
+            "acd270e774e848e8a55de829dc58bc6c.s1.eu.hivemq.cloud:8883 - tls=true - FREE #2",
+            "acd270e774e848e8a55de829dc58bc6c.s1.eu.hivemq.cloud",
+            8883,
+            true),
+        new MqttHostPresetOption(
+            "free-1",
+            "1f151f3a931d4a208bc35ff23ed83e0b.s1.eu.hivemq.cloud:8883 - tls=true - FREE #1",
+            "1f151f3a931d4a208bc35ff23ed83e0b.s1.eu.hivemq.cloud",
+            8883,
+            true),
+        new MqttHostPresetOption(
+            "niko-test",
+            "prod.statistics.niko-test.nu:18883 - tls=false - NIKO-TEST",
+            "prod.statistics.niko-test.nu",
+            18883,
+            false)
+    };
+
+    private bool _suppressMqttHostPresetSelectionChange;
+    private bool _isApplyingMqttHostPreset;
 
     private CancellationTokenSource? _autoReconnectCts;
     private Task? _autoReconnectTask;
@@ -207,6 +252,7 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string? mqttPassword = "Niko1234!";
     [ObservableProperty] private bool useTls = true;
     [ObservableProperty] private bool ignoreTlsErrors = false;
+    [ObservableProperty] private MqttHostPresetOption? selectedMqttHostPreset;
 
     [ObservableProperty] private string notesText = "";
 
@@ -266,6 +312,15 @@ public partial class MainViewModel : ObservableObject
     partial void OnSelectedDetectorSettingsProfileP46Changed(string value) { }
     partial void OnSelectedDetectorSettingsProfileP47Changed(string value) { }
     partial void OnSelectedDetectorSettingsProfileP48Changed(string value) { }
+    partial void OnMqttHostChanged(string value) => SyncSelectedMqttHostPreset();
+    partial void OnMqttPortChanged(int value) => SyncSelectedMqttHostPreset();
+    partial void OnUseTlsChanged(bool value) => SyncSelectedMqttHostPreset();
+    partial void OnSelectedMqttHostPresetChanged(MqttHostPresetOption? value)
+    {
+        if (_suppressMqttHostPresetSelectionChange) return;
+        if (value == null) return;
+        _ = ApplyMqttHostPresetAndReconnectAsync(value);
+    }
 
     [ObservableProperty] private string connectionStatus = "Disconnected";
     [ObservableProperty] private bool isConnected;
@@ -313,6 +368,9 @@ public partial class MainViewModel : ObservableObject
         MqttPassword = s.mqtt.password;
         UseTls = s.mqtt.useTls;
         IgnoreTlsErrors = s.mqtt.ignoreTlsErrors;
+        _suppressMqttHostPresetSelectionChange = true;
+        SelectedMqttHostPreset = FindMatchingMqttHostPreset(MqttHost, MqttPort, UseTls);
+        _suppressMqttHostPresetSelectionChange = false;
 
         // Notes: load autosaved content (survives restarts)
         NotesText = NotesService.LoadAutoNotes();
@@ -922,6 +980,93 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+    private MqttHostPresetOption? FindMatchingMqttHostPreset(string? host, int port, bool useTls)
+    {
+        var h = (host ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(h)) return null;
+        return MqttHostPresets.FirstOrDefault(p =>
+            p.Port == port
+            && p.UseTls == useTls
+            && string.Equals(p.Host, h, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private void SyncSelectedMqttHostPreset()
+    {
+        if (_suppressMqttHostPresetSelectionChange) return;
+
+        var match = FindMatchingMqttHostPreset(MqttHost, MqttPort, UseTls);
+        if (ReferenceEquals(match, SelectedMqttHostPreset)) return;
+
+        _suppressMqttHostPresetSelectionChange = true;
+        SelectedMqttHostPreset = match;
+        _suppressMqttHostPresetSelectionChange = false;
+    }
+
+    private async Task ApplyMqttHostPresetAndReconnectAsync(MqttHostPresetOption preset)
+    {
+        if (preset == null) return;
+        if (_isApplyingMqttHostPreset || _isConnecting) return;
+
+        try
+        {
+            _isApplyingMqttHostPreset = true;
+            _manualDisconnectRequested = true;
+            _autoReconnectEnabled = false;
+            _autoReconnectCts?.Cancel();
+
+            MqttHost = preset.Host;
+            MqttPort = preset.Port;
+            UseTls = preset.UseTls;
+            MqttUser = DefaultPresetMqttUser;
+            MqttPassword = DefaultPresetMqttPassword;
+            IgnoreTlsErrors = false;
+
+            // Persist immediately so next restart uses the selected broker.
+            _store.Save(BuildSettingsSnapshot(_store.Load()));
+
+            if (IsConnected)
+                await _mqtt.DisconnectAsync().ConfigureAwait(false);
+
+            _manualDisconnectRequested = false;
+            _autoReconnectEnabled = true;
+
+            var resetSpeedHistory = ShouldResetSpeedHistoryForCurrentScope();
+            ClearAllUiAndState(resetSpeedHistory);
+
+            _isConnecting = true;
+            try
+            {
+                await _mqtt.ConnectAsync(
+                    MqttHost,
+                    MqttPort,
+                    MqttUser,
+                    MqttPassword ?? "",
+                    UseTls,
+                    IgnoreTlsErrors,
+                    MqttTopic,
+                    _appCts.Token).ConfigureAwait(false);
+            }
+            finally
+            {
+                _isConnecting = false;
+            }
+
+            await ResyncCoreAsync(resetSpeedHistory, clearUi: false).ConfigureAwait(false);
+            ConnectionStatus = $"Connected via preset: {preset.Label}";
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = $"Broker preset switch failed: {ex.Message}";
+            _manualDisconnectRequested = false;
+            _autoReconnectEnabled = true;
+            StartAutoReconnect();
+        }
+        finally
+        {
+            _isApplyingMqttHostPreset = false;
+        }
+    }
+
     private void StartAutoReconnect()
     {
         if (!_autoReconnectEnabled || _manualDisconnectRequested || !_hasEverConnected || _isConnecting) return;
@@ -1083,6 +1228,45 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private async Task SetMqttBrokerForAllCassiasPrompt()
         => await SetCassiaMqttBroker("all");
+
+    [RelayCommand]
+    private async Task SetCassiaMqttBrokerFree2(string cassiaName)
+        => await SetCassiaMqttBrokerByPresetAsync(cassiaName, "free-2").ConfigureAwait(false);
+
+    [RelayCommand]
+    private async Task SetCassiaMqttBrokerFree1(string cassiaName)
+        => await SetCassiaMqttBrokerByPresetAsync(cassiaName, "free-1").ConfigureAwait(false);
+
+    [RelayCommand]
+    private async Task SetCassiaMqttBrokerNikoTest(string cassiaName)
+        => await SetCassiaMqttBrokerByPresetAsync(cassiaName, "niko-test").ConfigureAwait(false);
+
+    private async Task SetCassiaMqttBrokerByPresetAsync(string cassiaName, string presetKey)
+    {
+        cassiaName = (cassiaName ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(cassiaName)) return;
+        if (!IsConnected) { ConnectionStatus = "Not connected"; return; }
+
+        var preset = MqttHostPresets.FirstOrDefault(p =>
+            string.Equals(p.Key, presetKey, StringComparison.OrdinalIgnoreCase));
+        if (preset == null)
+        {
+            ConnectionStatus = $"Unknown MQTT broker preset: {presetKey}";
+            return;
+        }
+
+        try
+        {
+            var topic = BuildCmdTopic(cassiaName, "set-mqtt-broker");
+            var payload = new { host = preset.Host, port = preset.Port, useTls = preset.UseTls };
+            await _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+            ConnectionStatus = $"Sent set-mqtt-broker to {cassiaName} -> {preset.Host}:{preset.Port} tls={preset.UseTls} (applies after restart)";
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = "Error: " + ex.Message;
+        }
+    }
 
     [RelayCommand]
     private async Task SetCassiaName(string cassiaName)
