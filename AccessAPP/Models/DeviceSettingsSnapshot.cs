@@ -10,6 +10,10 @@
         public string? UserConfigHex { get; set; }
         public string? PushButtonsHex { get; set; }
         public string? DaliPushButtonsHex { get; set; }
+        public string? DaliDeviceCommonParamHex { get; set; }
         public string? BlePushButtonsHex { get; set; }
+        public string? TunableWhiteListHex { get; set; }
+        public string? TunableWhitePresetHex { get; set; }
+        public string? TunableWhiteDefaultKelvinHex { get; set; }
     }
 }

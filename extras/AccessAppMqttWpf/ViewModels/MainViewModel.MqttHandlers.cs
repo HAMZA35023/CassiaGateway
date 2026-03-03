@@ -202,6 +202,22 @@ public partial class MainViewModel : ObservableObject
             cassia = (cassia ?? "").Trim();
             model = NormalizeDetectorModel(model);
             var topic = BuildCmdTopic(cassia, DefaultCommand);
+            var runDaliAddressAllToZone1AfterUpdate = false;
+            var runDali102TotalNewScanAfterUpdate = RunDali102TotalNewScanAfterUpdateEnabled;
+            var runDali103TotalNewScanAfterUpdate = RunDali103TotalNewScanAfterUpdateEnabled;
+
+            if (TryResolveModelProfilePatch(
+                    model,
+                    out _,
+                    out var profileRunDaliAddressAllToZone1,
+                    out var profileRunDali102,
+                    out var profileRunDali103,
+                    out _))
+            {
+                runDaliAddressAllToZone1AfterUpdate = runDaliAddressAllToZone1AfterUpdate || profileRunDaliAddressAllToZone1;
+                runDali102TotalNewScanAfterUpdate = runDali102TotalNewScanAfterUpdate || profileRunDali102;
+                runDali103TotalNewScanAfterUpdate = runDali103TotalNewScanAfterUpdate || profileRunDali103;
+            }
 
             // Keep legacy start-update shape (raw request array) for maximum backend compatibility.
             // Include routing hints inside each request so newer backends can use them.
@@ -213,7 +229,10 @@ public partial class MainViewModel : ObservableObject
                     FirmwareVersion = fw,
                     MacAddress = mac,
                     Pincode = "",
-                    forceUpdate = ForceUpdateEnabled
+                    forceUpdate = ForceUpdateEnabled,
+                    runDaliAddressAllToZone1AfterUpdate,
+                    runDali102TotalNewScanAfterUpdate,
+                    runDali103TotalNewScanAfterUpdate
                 }
             };
 

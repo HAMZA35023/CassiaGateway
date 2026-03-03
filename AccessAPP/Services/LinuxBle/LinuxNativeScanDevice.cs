@@ -22,6 +22,8 @@ public class LinuxNativeScanDevice : IDisposable
     private readonly DeviceStorageService _deviceStorageService;
     private readonly CassiaFirmwareUpgradeService _firmUpgradeService;
     private readonly ILogger<LinuxNativeScanDevice> _logger;
+    private readonly object _devicePropsLock = new();
+    private readonly Dictionary<string, Dictionary<string, object>> _devicePropsByPath = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly string _macPrefix;
     private bool _disposed;
@@ -46,16 +48,27 @@ public class LinuxNativeScanDevice : IDisposable
 
     private async Task RunAdapterScanLoopAsync(string adapter)
     {
+        int consecutiveFailures = 0;
         while (!_disposed)
         {
             try
             {
                 await ScanAsync(adapter);
+                consecutiveFailures = 0;
             }
             catch (Exception ex) when (!_disposed)
             {
-                _logger.LogError(ex, "LinuxBLE scan: error in scan loop for {Adapter}, retrying in 5s", adapter);
-                await Task.Delay(5000);
+                consecutiveFailures++;
+                BlueZHelpers.InvalidateScanProxies(adapter);
+
+                var retryDelayMs = Math.Min(30000, 5000 * Math.Max(1, consecutiveFailures));
+                _logger.LogError(
+                    ex,
+                    "LinuxBLE scan: error in scan loop for {Adapter}, retrying in {DelayMs}ms (failure {FailureCount})",
+                    adapter,
+                    retryDelayMs,
+                    consecutiveFailures);
+                await Task.Delay(retryDelayMs);
             }
         }
     }
@@ -63,68 +76,153 @@ public class LinuxNativeScanDevice : IDisposable
     private async Task ScanAsync(string adapter)
     {
         var adapterObj = await BlueZHelpers.GetAdapterAsync(adapter);
-        var objMgr = await BlueZHelpers.GetObjectManagerAsync();
+        var deviceWatchers = new Dictionary<string, IDisposable>(StringComparer.OrdinalIgnoreCase);
+        var deviceWatchersLock = new object();
 
         // The BlueZ adapter path prefix used to filter devices belonging to this adapter.
         var adapterPath = $"/org/bluez/{adapter}/";
 
-        // Set BLE-only discovery filter.
-        await adapterObj.SetDiscoveryFilterAsync(new Dictionary<string, object>
+        // Set BLE-only discovery filter (best effort). If BlueZ is temporarily
+        // unstable, continue and let keepalive retry instead of restarting
+        // the whole scan loop immediately.
+        try
         {
-            ["Transport"] = "le",
-            ["DuplicateData"] = true // receive updates for already-known devices
-        });
-
-        await adapterObj.StartDiscoveryAsync();
-        _logger.LogInformation("LinuxBLE scan: discovery started on {Adapter}", adapter);
+            await BlueZHelpers.EnsureDiscoveryRunningAsync(adapter, _logger);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "LinuxBLE scan: initial discovery ensure failed on {Adapter}; continuing with keepalive retries", adapter);
+        }
 
         // Process devices that were already cached in BlueZ from prior scans.
-        var existing = await objMgr.GetManagedObjectsAsync();
+        IDictionary<Tmds.DBus.ObjectPath, IDictionary<string, IDictionary<string, object>>> existing;
+        try
+        {
+            existing = await BlueZHelpers.GetManagedObjectsSafeAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "LinuxBLE scan: failed to read initial object snapshot on {Adapter}; continuing with live watchers only",
+                adapter);
+            BlueZHelpers.InvalidateScanProxies(adapter);
+            existing = new Dictionary<Tmds.DBus.ObjectPath, IDictionary<string, IDictionary<string, object>>>();
+        }
+
         foreach (var (path, interfaces) in existing)
         {
             var pathStr = path.ToString();
             if (!pathStr.StartsWith(adapterPath, StringComparison.OrdinalIgnoreCase)) continue;
             if (interfaces.TryGetValue("org.bluez.Device1", out var props))
-                TryProcessDevice(pathStr, props, adapter);
-        }
-
-        // Watch for new devices — filter to this adapter's path prefix.
-        using var addedSub = await objMgr.WatchInterfacesAddedAsync(
-            args =>
             {
-                var (path, interfaces) = args;
-                var pathStr = path.ToString();
-                if (!pathStr.StartsWith(adapterPath, StringComparison.OrdinalIgnoreCase)) return;
-                if (interfaces.TryGetValue("org.bluez.Device1", out var props))
-                    TryProcessDevice(pathStr, props, adapter);
-            },
-            ex => _logger.LogError(ex, "LinuxBLE scan: InterfacesAdded error on {Adapter}", adapter));
-
-        // Also watch PropertiesChanged on all Device1 objects so we pick up RSSI and ad updates.
-        var deviceWatchers = new List<IDisposable>();
-        foreach (var (path, interfaces) in existing)
-        {
-            var pathStr = path.ToString();
-            if (!pathStr.StartsWith(adapterPath, StringComparison.OrdinalIgnoreCase)) continue;
-            if (!interfaces.ContainsKey("org.bluez.Device1")) continue;
-
-            var dev = await BlueZHelpers.GetDeviceAsync(pathStr);
-
-            var sub = await dev.WatchPropertiesAsync(
-                changes =>
-                {
-                    // PropertiesChanged only carries the changed fields (no "Address").
-                    var updatedProps = changes.Changed.ToDictionary(kv => kv.Key, kv => kv.Value);
-                    TryProcessDevice(pathStr, updatedProps, adapter);
-                },
-                ex => _logger.LogDebug(ex, "LinuxBLE scan: PropertiesChanged error on {Path}", pathStr));
-
-            deviceWatchers.Add(sub);
+                var mergedProps = MergeDevicePropsSnapshot(pathStr, props);
+                TryProcessDevice(pathStr, mergedProps, adapter);
+                await EnsureDeviceWatcherAsync(pathStr, adapter, deviceWatchers, deviceWatchersLock);
+            }
         }
+
+        // Watch for new/removed devices — filter to this adapter's path prefix.
+        IDisposable? addedSub = null;
+        IDisposable? removedSub = null;
+        const int maxWatcherAttachAttempts = 5;
+        for (int attempt = 1; attempt <= maxWatcherAttachAttempts && !_disposed; attempt++)
+        {
+            try
+            {
+                var objMgr = await BlueZHelpers.GetObjectManagerAsync();
+                addedSub = await objMgr.WatchInterfacesAddedAsync(
+                    args =>
+                    {
+                        var (path, interfaces) = args;
+                        var pathStr = path.ToString();
+                        if (!pathStr.StartsWith(adapterPath, StringComparison.OrdinalIgnoreCase)) return;
+                        if (interfaces.TryGetValue("org.bluez.Device1", out var props))
+                        {
+                            var mergedProps = MergeDevicePropsSnapshot(pathStr, props);
+                            TryProcessDevice(pathStr, mergedProps, adapter);
+                            _ = Task.Run(() => EnsureDeviceWatcherAsync(pathStr, adapter, deviceWatchers, deviceWatchersLock));
+                        }
+                    },
+                    ex => _logger.LogError(ex, "LinuxBLE scan: InterfacesAdded error on {Adapter}", adapter));
+
+                removedSub = await objMgr.WatchInterfacesRemovedAsync(
+                    args =>
+                    {
+                        var (path, _) = args;
+                        var pathStr = path.ToString();
+                        if (!pathStr.StartsWith(adapterPath, StringComparison.OrdinalIgnoreCase))
+                            return;
+
+                        IDisposable? watcher = null;
+                        lock (deviceWatchersLock)
+                        {
+                            if (deviceWatchers.TryGetValue(pathStr, out watcher))
+                                deviceWatchers.Remove(pathStr);
+                        }
+
+                        watcher?.Dispose();
+                        RemoveDevicePropsSnapshot(pathStr);
+                    },
+                    ex => _logger.LogDebug(ex, "LinuxBLE scan: InterfacesRemoved error on {Adapter}", adapter));
+                break;
+            }
+            catch (Exception ex) when (attempt < maxWatcherAttachAttempts)
+            {
+                BlueZHelpers.InvalidateScanProxies(adapter);
+                var retryDelayMs = attempt * 400;
+                _logger.LogWarning(
+                    ex,
+                    "LinuxBLE scan: failed to attach ObjectManager watchers on {Adapter} (attempt {Attempt}/{MaxAttempts}); retrying in {DelayMs}ms",
+                    adapter,
+                    attempt,
+                    maxWatcherAttachAttempts,
+                    retryDelayMs);
+                await Task.Delay(retryDelayMs);
+            }
+        }
+
+        if (addedSub == null || removedSub == null)
+            throw new InvalidOperationException($"LinuxBLE scan: failed to attach ObjectManager watchers on {adapter}");
 
         // Keep scanning until paused or disposed.
+        // BlueZ can occasionally drop out of active discovery without fully tearing down
+        // our watchers; periodically re-assert discovery so manual "scan on" is not needed.
+        var nextDiscoveryKeepAliveUtc = DateTime.UtcNow;
+        int consecutiveKeepAliveFailures = 0;
         while (!_disposed)
         {
+            if (DateTime.UtcNow >= nextDiscoveryKeepAliveUtc)
+            {
+                try
+                {
+                    await BlueZHelpers.EnsureDiscoveryRunningAsync(adapter, _logger);
+                    if (consecutiveKeepAliveFailures > 0)
+                    {
+                        _logger.LogInformation(
+                            "LinuxBLE scan: discovery keepalive recovered on {Adapter} after {Failures} failure(s)",
+                            adapter, consecutiveKeepAliveFailures);
+                    }
+                    consecutiveKeepAliveFailures = 0;
+                }
+                catch (Exception ex)
+                {
+                    consecutiveKeepAliveFailures++;
+                    _logger.LogDebug(ex, "LinuxBLE scan: discovery keepalive failed on {Adapter}", adapter);
+                    // If keepalive keeps failing, restart the whole adapter scan session so
+                    // watchers/object-state are rebuilt from a clean baseline.
+                    if (consecutiveKeepAliveFailures >= 6)
+                    {
+                        BlueZHelpers.InvalidateScanProxies(adapter);
+                        _logger.LogWarning(
+                            "LinuxBLE scan: discovery keepalive failed {Failures} consecutive times on {Adapter}; restarting scan session",
+                            consecutiveKeepAliveFailures, adapter);
+                        throw;
+                    }
+                }
+                nextDiscoveryKeepAliveUtc = DateTime.UtcNow.AddSeconds(10);
+            }
+
             if (ShouldPauseScan())
             {
                 await Task.Delay(2000);
@@ -135,8 +233,38 @@ public class LinuxNativeScanDevice : IDisposable
         }
 
         // Cleanup.
-        foreach (var w in deviceWatchers) w.Dispose();
-        try { await adapterObj.StopDiscoveryAsync(); } catch { /* best-effort */ }
+        List<IDisposable> watchersToDispose;
+        lock (deviceWatchersLock)
+        {
+            watchersToDispose = deviceWatchers.Values.ToList();
+            deviceWatchers.Clear();
+        }
+
+        foreach (var w in watchersToDispose)
+        {
+            try { w.Dispose(); } catch { /* best-effort */ }
+        }
+
+        try { addedSub.Dispose(); } catch { /* best-effort */ }
+        try { removedSub.Dispose(); } catch { /* best-effort */ }
+
+        ClearDevicePropsSnapshotForAdapter(adapterPath);
+        try
+        {
+            await adapterObj.StopDiscoveryAsync();
+        }
+        catch (Tmds.DBus.DBusException ex) when (
+            ex.ErrorName == "org.bluez.Error.Failed" ||
+            ex.ErrorName == "org.bluez.Error.NotReady" ||
+            ex.ErrorName == "org.bluez.Error.InProgress")
+        {
+            // Best-effort cleanup: scan may already be stopped or adapter is transitioning.
+            _logger.LogDebug("LinuxBLE scan: StopDiscovery skipped on {Adapter} ({ErrorName})", adapter, ex.ErrorName);
+        }
+        catch
+        {
+            // best-effort
+        }
     }
 
     // ── Device processing ────────────────────────────────────────────────────
@@ -164,7 +292,7 @@ public class LinuxNativeScanDevice : IDisposable
 
             int rssi = props.TryGetValue("RSSI", out var r) ? Convert.ToInt32(r) : -127;
 
-            // Build ad-data hex for storage / ScanDataParser fallback.
+            // Keep reconstructed ad-data for diagnostics/storage, but decode only manufacturer data.
             string adData = BlueZHelpers.BuildAdDataFromBlueZProps(props);
             string scanData = adData;
 
@@ -172,62 +300,41 @@ public class LinuxNativeScanDevice : IDisposable
             string lockedHex = null;
             bool? isLocked = null;
 
-            string name = props.TryGetValue("Name", out var n) && n is string nm ? nm : string.Empty;
+            string name = string.Empty;
             var meta = new DetectorMeta();
 
-            // Prefer direct parsing of Cassia manufacturer payload when present + valid.
+            // Linux-native discovery must decode from ManufacturerData only.
             byte[] mfBytes = ExtractManufacturerDataBytes(props);
-
-            if (mfBytes != null &&mfBytes.Length >= 3 && (mfBytes[0] != 0x10 || mfBytes[1] != 0xB9 || mfBytes[2] != 0xF7))
-            {
-
-                //_logger.LogInformation("LinuxBLE scan: skipping non-Cassia manufacturer data for {Mac} on {Adapter}, MfData={Hex}",
-                //    mac, adapter, Convert.ToHexString(mfBytes));
-
+            if (mfBytes == null)
                 return;
 
+            if (mfBytes.Length >= 3 && (mfBytes[0] != 0x10 || mfBytes[1] != 0xB9 || mfBytes[2] != 0xF7))
+            {
+                return;
             }
 
-            if (mfBytes != null)
-            {
-                TryParseManufacturerData(
-                    mfBytes,
-                    mac,
-                    ref name,
-                    out productNumber,
-                    out lockedHex,
-                    out isLocked,
-                    out meta);
-            }
+            TryParseManufacturerData(
+                mfBytes,
+                mac,
+                ref name,
+                out productNumber,
+                out lockedHex,
+                out isLocked,
+                out meta);
 
             // Log raw manufacturer data when product number is still unknown for a Cassia-OUI device —
             // helps diagnose payload format issues. Skip non-Cassia devices (different OUI).
-            if (string.IsNullOrEmpty(productNumber) && mfBytes != null)
-                {
+            if (string.IsNullOrWhiteSpace(productNumber))
+            {
                 _logger.LogInformation("LinuxBLE scan: unknown product for {Mac}, MfData={Hex}",
                     mac, Convert.ToHexString(mfBytes));
-                    return;
-                }
-            // If direct parsing didn't yield anything useful, fall back to ScanDataParser on TLV-wrapped hex.
-            if ((string.IsNullOrEmpty(productNumber) && string.IsNullOrEmpty(name)) && !string.IsNullOrEmpty(scanData))
-            {
-                productNumber = ScanDataParser.ExtractProductNumber(scanData);
-
-                if (scanData.Length >= 50)
-                    name = ScanDataParser.GetName(scanData.Substring(20, 30));
-
-                lockedHex = ScanDataParser.GetLockedInfo(scanData);
-                isLocked = ScanDataParser.IsLocked(scanData);
-                meta = ScanDataParser.GetDetectorMeta(scanData);
+                return;
             }
-            else
-            {
-                // Ensure meta is enriched if we ended up with a productNumber.
-                if (!string.IsNullOrEmpty(productNumber) && string.IsNullOrEmpty(meta.DetectorType))
-                    meta = ScanDataParser.GetDetectorMeta(productNumber);
-            }
+            // Ensure metadata is available even for product-number-only payloads.
+            if (string.IsNullOrEmpty(meta.DetectorType))
+                meta = ScanDataParser.GetDetectorMeta(productNumber);
 
-            if (productNumber == "Unknown")
+            if (productNumber.Equals("Unknown", StringComparison.OrdinalIgnoreCase))
                 return;
 
             // Normalize: if still empty name but we do have product number, show it.
@@ -265,6 +372,90 @@ public class LinuxNativeScanDevice : IDisposable
     }
 
     // ── Manufacturer data helpers ────────────────────────────────────────────
+
+    private async Task EnsureDeviceWatcherAsync(
+        string devicePath,
+        string adapter,
+        Dictionary<string, IDisposable> deviceWatchers,
+        object deviceWatchersLock)
+    {
+        lock (deviceWatchersLock)
+        {
+            if (deviceWatchers.ContainsKey(devicePath))
+                return;
+        }
+
+        try
+        {
+            var dev = await BlueZHelpers.GetDeviceAsync(devicePath);
+            var sub = await dev.WatchPropertiesAsync(
+                changes =>
+                {
+                    var updatedProps = changes.Changed.ToDictionary(kv => kv.Key, kv => kv.Value);
+                    var mergedProps = MergeDevicePropsSnapshot(devicePath, updatedProps);
+                    TryProcessDevice(devicePath, mergedProps, adapter);
+                },
+                ex => _logger.LogDebug(ex, "LinuxBLE scan: PropertiesChanged error on {Path}", devicePath));
+
+            lock (deviceWatchersLock)
+            {
+                if (deviceWatchers.ContainsKey(devicePath))
+                {
+                    sub.Dispose();
+                    return;
+                }
+
+                deviceWatchers[devicePath] = sub;
+            }
+
+            // Immediately process full properties once after watcher attach; InterfacesAdded can be partial.
+            var fullProps = await dev.GetAllAsync();
+            var mergedFullProps = MergeDevicePropsSnapshot(devicePath, fullProps);
+            TryProcessDevice(devicePath, mergedFullProps, adapter);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "LinuxBLE scan: failed to attach device watcher for {Path}", devicePath);
+        }
+    }
+
+    private IDictionary<string, object> MergeDevicePropsSnapshot(string devicePath, IDictionary<string, object> incoming)
+    {
+        lock (_devicePropsLock)
+        {
+            if (!_devicePropsByPath.TryGetValue(devicePath, out var snapshot))
+            {
+                snapshot = new Dictionary<string, object>(incoming, StringComparer.OrdinalIgnoreCase);
+                _devicePropsByPath[devicePath] = snapshot;
+            }
+            else
+            {
+                foreach (var kv in incoming)
+                    snapshot[kv.Key] = kv.Value;
+            }
+
+            return new Dictionary<string, object>(snapshot, StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private void RemoveDevicePropsSnapshot(string devicePath)
+    {
+        lock (_devicePropsLock)
+            _devicePropsByPath.Remove(devicePath);
+    }
+
+    private void ClearDevicePropsSnapshotForAdapter(string adapterPath)
+    {
+        lock (_devicePropsLock)
+        {
+            var toRemove = _devicePropsByPath.Keys
+                .Where(path => path.StartsWith(adapterPath, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            foreach (var path in toRemove)
+                _devicePropsByPath.Remove(path);
+        }
+    }
 
     /// <summary>
     /// Extract the raw manufacturer data byte array from BlueZ Device1 properties.
@@ -397,3 +588,4 @@ private static void TryParseManufacturerData(
 
     public void Dispose() => _disposed = true;
 }
+

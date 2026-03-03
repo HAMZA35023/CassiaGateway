@@ -51,7 +51,8 @@ internal sealed class ProbeAndBootModeStep : IDeviceUpgradeStep
                 logSuccess: false,
                 macAddress: ctx.MacAddress,
                 firmwareVersion: ctx.FirmwareVersion,
-                logId: ctx.LogId
+                logId: ctx.LogId,
+                connectAttemptTimeoutMsOverride: Math.Max(1000, RuntimeVariables.UPGRADE_PROBE_CONNECT_ATTEMPT_TIMEOUT_MS)
             ).ConfigureAwait(false);
 
             if (!connProbe.ok)
@@ -72,7 +73,8 @@ internal sealed class ProbeAndBootModeStep : IDeviceUpgradeStep
         }
 
         ctx.ChipId = svc.GetChipForMac(ctx.MacAddress);
-        string chipOrAdapter = RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase)
+        bool linuxNativeBackend = svc.ConnectService is AccessAPP.Services.LinuxBle.LinuxBleConnectionService;
+        string chipOrAdapter = linuxNativeBackend
             ? AccessAPP.Services.LinuxBle.BlueZHelpers.GetDeviceAdapter(ctx.MacAddress)
             : $"Chip {ctx.ChipId}";
         UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, $"Using {chipOrAdapter}", "info");
@@ -127,7 +129,8 @@ internal sealed class ProbeAndBootModeStep : IDeviceUpgradeStep
                     logSuccess: true,
                     macAddress: ctx.MacAddress,
                     firmwareVersion: ctx.FirmwareVersion,
-                    logId: ctx.LogId
+                    logId: ctx.LogId,
+                    connectAttemptTimeoutMsOverride: Math.Max(1000, RuntimeVariables.UPGRADE_PROBE_CONNECT_ATTEMPT_TIMEOUT_MS)
                 ).ConfigureAwait(false);
 
                 if (!connProbe.ok)

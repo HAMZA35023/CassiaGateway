@@ -51,6 +51,18 @@ public class LinuxBleConnectionService : IBleConnectionService
             // Round-robin across configured HCI adapters so that parallel upgrade workers
             // are spread evenly instead of all piling onto the same adapter.
             var bleAdapter = BlueZHelpers.GetNextConnectAdapter(macAddress);
+            try
+            {
+                await BlueZHelpers.EnsureDiscoveryRunningAsync(bleAdapter, _logger, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "LinuxBLE: failed to ensure discovery on {Adapter}; continuing connect flow", bleAdapter);
+            }
             var devicePath = BlueZHelpers.DevicePath(bleAdapter, macAddress);
             _ctbDevicePath = devicePath;
             var device = await BlueZHelpers.GetDeviceAsync(devicePath);
@@ -118,6 +130,7 @@ public class LinuxBleConnectionService : IBleConnectionService
                 // This happens after TryRemoveDeviceAsync clears stale HCI state — BlueZ
                 // re-adds the device automatically once it sees a new advertisement.
                 // Poll the ObjectManager for up to 15 s (or until the caller's CT expires).
+                await BlueZHelpers.EnsureDiscoveryRunningAsync(bleAdapter, _logger, ct).ConfigureAwait(false);
                 _logger.LogDebug("LinuxBLE: {Mac} not in BlueZ object tree — waiting up to 15 s for re-discovery", macAddress);
                 bool rediscovered = await WaitForDeviceInObjectManagerAsync(devicePath, ct, timeoutMs: 15000);
                 if (!rediscovered)
@@ -202,6 +215,27 @@ public class LinuxBleConnectionService : IBleConnectionService
                 }
             }
 
+            // Pre-arm notifications on connect so the first login write does not race StartNotify.
+            if (_notificationService is LinuxBleNotificationService linuxNotify)
+            {
+                try
+                {
+                    int notifyWarmTimeoutMs = Math.Clamp(RuntimeVariables.LINUX_BLE_LOGIN_NOTIFY_READY_TIMEOUT_MS, 1000, 10000);
+                    using var notifyWarmCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    notifyWarmCts.CancelAfter(notifyWarmTimeoutMs);
+                    await linuxNotify.EnsureNotifyingReadyAsync(macAddress, notifyWarmCts.Token).ConfigureAwait(false);
+                    _logger.LogDebug("LinuxBLE: pre-armed notify pipeline for {Mac} on connect", macAddress);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "LinuxBLE: pre-arm notify pipeline failed for {Mac} (non-fatal)", macAddress);
+                }
+            }
+
             // Request shorter connection interval to reduce per-round-trip latency during writes.
             // Disabled by default (LINUX_BLE_ENABLE_CI_UPDATE=false): btmgmt conn-update can cause
             // some device firmware to disconnect immediately after receiving the L2CAP/LLCP request.
@@ -282,10 +316,11 @@ public class LinuxBleConnectionService : IBleConnectionService
     public async Task<ResponseModel> DisconnectFromBleDevice(
         string gatewayIpAddress, string macAddress, int retries = 1, int chip = -1)
     {
+        string? devicePath = null;
         try
         {
             var bleAdapter = BlueZHelpers.GetDeviceAdapter(macAddress);
-            var devicePath = BlueZHelpers.DevicePath(bleAdapter, macAddress);
+            devicePath = BlueZHelpers.DevicePath(bleAdapter, macAddress);
             var device = await BlueZHelpers.GetDeviceAsync(devicePath);
 
             // Guard against a hung D-Bus call — BlueZ can be unresponsive after a firmware
@@ -295,16 +330,28 @@ public class LinuxBleConnectionService : IBleConnectionService
             using var disconnectCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             await device.DisconnectAsync().WaitAsync(disconnectCts.Token);
 
-            BlueZHelpers.ClearConnectedAdapter(macAddress);
-            BlueZHelpers.InvalidateCharCache(devicePath);
-            _notificationService.Unsubscribe(macAddress);
-
             return new ResponseModel { MacAddress = macAddress, Status = HttpStatusCode.OK, Data = "disconnected" };
+        }
+        catch (Tmds.DBus.DBusException ex) when (IsDeviceAlreadyGoneDbusError(ex))
+        {
+            // Benign: object disappeared before disconnect was sent.
+            _logger.LogDebug(
+                "LinuxBLE: DisconnectFromBleDevice {Mac} skipped because device object is gone ({ErrorName})",
+                macAddress, ex.ErrorName);
+            return new ResponseModel { MacAddress = macAddress, Status = HttpStatusCode.OK, Data = "already disconnected" };
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "LinuxBLE: DisconnectFromBleDevice failed for {Mac}", macAddress);
             return new ResponseModel { MacAddress = macAddress, Status = HttpStatusCode.OK, Data = "disconnect attempted" };
+        }
+        finally
+        {
+            // Always clear local state even if BlueZ object already disappeared.
+            BlueZHelpers.ClearConnectedAdapter(macAddress);
+            if (!string.IsNullOrWhiteSpace(devicePath))
+                BlueZHelpers.InvalidateCharCache(devicePath);
+            _notificationService.Unsubscribe(macAddress);
         }
     }
 
@@ -363,6 +410,43 @@ public class LinuxBleConnectionService : IBleConnectionService
                     });
                 }
             });
+
+            // Avoid first-login races: ensure StartNotify is active before the first write.
+            if (_notificationService is LinuxBleNotificationService linuxNotify)
+            {
+                int notifyReadyTimeoutMs = Math.Max(1000, RuntimeVariables.LINUX_BLE_LOGIN_NOTIFY_READY_TIMEOUT_MS);
+                _logger.LogDebug("LinuxBLE Login: {Mac} - waiting for notify readiness before login write (timeout={TimeoutMs}ms)", macAddress, notifyReadyTimeoutMs);
+                try
+                {
+                    // Bound notify readiness wait so slow ServicesResolved/StartNotify paths do not
+                    // consume the entire login timeout budget before we even send the login write.
+                    using var notifyReadyCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    notifyReadyCts.CancelAfter(notifyReadyTimeoutMs);
+                    await linuxNotify.EnsureNotifyingReadyAsync(macAddress, notifyReadyCts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (OperationCanceledException)
+                {
+                    _logger.LogWarning("LinuxBLE Login: {Mac} notify readiness timed out after {TimeoutMs}ms; aborting login write", macAddress, notifyReadyTimeoutMs);
+                    return MakeLoginTimeout(
+                        macAddress,
+                        $"Notify readiness timeout before login write ({notifyReadyTimeoutMs} ms).",
+                        HttpStatusCode.RequestTimeout,
+                        "Canceled");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "LinuxBLE Login: {Mac} notify readiness wait failed; aborting login write", macAddress);
+                    return MakeLoginTimeout(
+                        macAddress,
+                        "Notify readiness failed before login write.",
+                        HttpStatusCode.RequestTimeout,
+                        "Canceled");
+                }
+            }
 
             // Write the login telegram to the control characteristic.
             var rw = new LinuxBleReadWriteService(
@@ -439,15 +523,9 @@ public class LinuxBleConnectionService : IBleConnectionService
         var rw = new LinuxBleReadWriteService(
             _logger.CreateLogger<LinuxBleReadWriteService>());
 
-        HttpStatusCode writeStatus;
-        using (var wr = await rw.WriteBleMessageAsync(gatewayIpAddress, macAddress,
-                   RuntimeVariables.LINUX_BLE_CONTROL_HANDLE, value, "?noresponse=1"))
-        {
-            writeStatus = wr.StatusCode;
-        }
-
         var tcs = new TaskCompletionSource<DataResponseModel>();
         Guid token = Guid.Empty;
+        HttpStatusCode writeStatus = HttpStatusCode.RequestTimeout;
 
         token = _notificationService.Subscribe(macAddress, (_, data) =>
         {
@@ -461,18 +539,50 @@ public class LinuxBleConnectionService : IBleConnectionService
             });
         });
 
-        var completed = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromSeconds(120)));
-        _notificationService.Unsubscribe(macAddress, token);
-
-        if (completed == tcs.Task) return await tcs.Task;
-
-        return new DataResponseModel
+        try
         {
-            MacAddress = macAddress,
-            Data = "Timeout",
-            Status = HttpStatusCode.RequestTimeout,
-            Time = DateTimeOffset.Now.ToUnixTimeMilliseconds()
-        };
+            // Subscribe before write to avoid missing a fast response notification.
+            using (var wr = await rw.WriteBleMessageAsync(
+                       gatewayIpAddress,
+                       macAddress,
+                       RuntimeVariables.LINUX_BLE_CONTROL_HANDLE,
+                       value,
+                       "?noresponse=1"))
+            {
+                writeStatus = wr.StatusCode;
+            }
+
+            if (writeStatus != HttpStatusCode.OK)
+            {
+                return new DataResponseModel
+                {
+                    MacAddress = macAddress,
+                    Data = "WriteFailed",
+                    Status = writeStatus,
+                    Time = DateTimeOffset.Now.ToUnixTimeMilliseconds()
+                };
+            }
+
+            int timeoutMs = Math.Clamp(RuntimeVariables.LINUX_BLE_DATA_NOTIFICATION_TIMEOUT_MS, 2000, 120000);
+            var completed = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromMilliseconds(timeoutMs)));
+
+            if (completed == tcs.Task)
+                return await tcs.Task;
+
+            _logger.LogWarning("LinuxBLE DataRead: timeout waiting for notification for {Mac} after {TimeoutMs}ms", macAddress, timeoutMs);
+            return new DataResponseModel
+            {
+                MacAddress = macAddress,
+                Data = "Timeout",
+                Status = HttpStatusCode.RequestTimeout,
+                Time = DateTimeOffset.Now.ToUnixTimeMilliseconds()
+            };
+        }
+        finally
+        {
+            if (token != Guid.Empty)
+                _notificationService.Unsubscribe(macAddress, token);
+        }
     }
 
     // ── Light control ────────────────────────────────────────────────────────
@@ -576,6 +686,10 @@ public class LinuxBleConnectionService : IBleConnectionService
     // ── Helper: ILogger<T> for child services ───────────────────────────────
 
     private ILogger<T> CreateLogger<T>() => _logger.CreateLogger<T>();
+
+    private static bool IsDeviceAlreadyGoneDbusError(Tmds.DBus.DBusException ex)
+        => ex.ErrorName == "org.freedesktop.DBus.Error.UnknownObject" ||
+           ex.ErrorName == "org.bluez.Error.DoesNotExist";
 
     // ── Helper: wait for a device path to appear in BlueZ's object tree ─────
 
