@@ -167,6 +167,7 @@ public partial class MainViewModel : ObservableObject
                                 _upgradeLogSb.AppendLine(line2);
                                 UpgradeLogReceivedLines++;
                                 ApplyStatusFromUpgradeLogLine(cassia, line2);
+                                ApplyLiveProcessStatusFromUpgradeLogLine(cassia, line2);
                                 RequestUpgradeLogTextRefresh();
                             }
                             UpgradeLogStatus = "upgrade-log";
