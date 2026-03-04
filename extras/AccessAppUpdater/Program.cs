@@ -50,6 +50,17 @@ internal static class Program
                 ?? throw new InvalidOperationException($"No compatible build found for runtime '{runtimeTag}' in version '{release.Version}'.");
 
             var currentVersion = ReadCurrentVersion(cfg);
+
+            // Always ensure the install dir has correct ownership and permissions so
+            // AccessAPP can create subdirectories (e.g. logs/) regardless of whether
+            // an update is being installed this run.
+            if (!dryRun && Directory.Exists(cfg.InstallDir))
+            {
+                var runUser = ResolveRunUser(cfg);
+                TryChownR(cfg.InstallDir, runUser);
+                TryChmodR("777", cfg.InstallDir);
+            }
+
             if (!cfg.AllowDowngrade && CompareVersions(release.Version, currentVersion) <= 0)
             {
                 Log($"No update needed. current={currentVersion}, target={release.Version}");

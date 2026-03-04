@@ -27,10 +27,10 @@ public static class LoggingBootstrapper
         LevelSwitch.MinimumLevel = minLevel;
         AppLog.MinimumLevel = minLevel;
 
-        var logDir = ResolveWritableLogDirectory(builder.Environment.ContentRootPath);
-
-        if (!string.IsNullOrEmpty(logDir))
-            EnableSerilogSelfLog(logDir);
+        var logDir = ResolveLogDirectory(builder.Environment.ContentRootPath);
+        Directory.CreateDirectory(logDir);
+        CleanupOldLogs(logDir, TimeSpan.FromDays(3));
+        EnableSerilogSelfLog(logDir);
 
         var otlpResources = BuildOtlpResourceAttributes(builder);
 
@@ -47,11 +47,8 @@ public static class LoggingBootstrapper
                .Enrich.WithEnvironmentName()
                .Enrich.WithProcessId()
                .Enrich.WithThreadId()
-               .WriteTo.Console(outputTemplate: consoleTemplate);
-
-            if (!string.IsNullOrEmpty(logDir))
-            {
-                cfg.WriteTo.File(
+               .WriteTo.Console(outputTemplate: consoleTemplate)
+               .WriteTo.File(
                     path: Path.Combine(logDir, "accessapp-.log"),
                     rollingInterval: RollingInterval.Day,
                     retainedFileCountLimit: 10,
@@ -59,7 +56,6 @@ public static class LoggingBootstrapper
                     flushToDiskInterval: TimeSpan.FromSeconds(1),
                     outputTemplate: fileTemplate
                 );
-            }
 
             ConfigureOtlpSink(cfg, otlpResources);
         });
@@ -312,36 +308,14 @@ public static class LoggingBootstrapper
         return v == "1" || v.Equals("true", StringComparison.OrdinalIgnoreCase) || v.Equals("yes", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string ResolveWritableLogDirectory(string contentRoot)
+    private static string ResolveLogDirectory(string contentRoot)
     {
-        var candidates = new List<string>();
-
         var env = Environment.GetEnvironmentVariable("ACCESSAPP_LOG_DIR");
         if (!string.IsNullOrWhiteSpace(env))
-            candidates.Add(env.Trim());
+            return env.Trim();
 
-        candidates.Add(Path.Combine(contentRoot, "logs"));
-        candidates.Add(Path.Combine(Path.GetTempPath(), "accessapp-logs"));
-
-        foreach (var dir in candidates)
-        {
-            try
-            {
-                Directory.CreateDirectory(dir);
-                var probe = Path.Combine(dir, $".write-test-{Guid.NewGuid():N}");
-                File.WriteAllText(probe, "ok");
-                File.Delete(probe);
-                CleanupOldLogs(dir, TimeSpan.FromDays(3));
-                return dir;
-            }
-            catch
-            {
-                Console.WriteLine($"[warn] Log directory not writable, skipping: {dir}");
-            }
-        }
-
-        // Last resort: console-only (no file sink), return empty string handled below.
-        return string.Empty;
+        // Default: ./logs (next to app)
+        return Path.Combine(contentRoot, "logs");
     }
 
     private static void CleanupOldLogs(string logDir, TimeSpan maxAge)
