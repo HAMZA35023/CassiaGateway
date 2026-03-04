@@ -164,6 +164,9 @@ internal static class Program
             TryChmod("777", installParent);
         }
 
+        // Allow run user to control the service without a password.
+        InstallSudoersEntry(ResolveRunUser(cfg));
+
         // Install init.d script and enable autostart
         InstallInitDScript(cfg, configPath);
 
@@ -245,6 +248,22 @@ RUN_AS=""${{ACCESSAPP_USER:-$(resolve_run_user)}}""
 PIDDIR=""/tmp/accessapp-${{RUN_AS}}""
 PIDFILE=""$PIDDIR/accessapp.pid""
 
+use_systemctl() {{
+  command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]
+}}
+
+service_is_active() {{
+  use_systemctl && systemctl is-active --quiet accessapp.service 2>/dev/null
+}}
+
+run_systemctl() {{
+  if [ ""$(id -u)"" -eq 0 ]; then
+    systemctl ""$@""
+  else
+    sudo systemctl ""$@""
+  fi
+}}
+
 run_updater() {{
   if [ ""$(id -u)"" -eq 0 ] && [ ""$RUN_AS"" != ""root"" ]; then
     su -s /bin/sh ""$RUN_AS"" -c ""$UPDATER --config $CONFIG"" && return 0
@@ -255,6 +274,11 @@ run_updater() {{
 }}
 
 start_app() {{
+  if use_systemctl; then
+    run_systemctl start accessapp.service
+    return $?
+  fi
+
   mkdir -p ""$PIDDIR"" || exit 1
   if [ ""$(id -u)"" -eq 0 ] && [ ""$RUN_AS"" != ""root"" ]; then
     chown ""$RUN_AS"":""$RUN_AS"" ""$PIDDIR"" 2>/dev/null || true
@@ -283,6 +307,11 @@ start_app() {{
 
 stop_app() {{
   echo ""[init] Stopping AccessAPP...""
+  if service_is_active; then
+    run_systemctl stop accessapp.service
+    return $?
+  fi
+
   start-stop-daemon --stop --pidfile ""$PIDFILE"" --retry=TERM/10/KILL/5
   rc=$?
   rm -f ""$PIDFILE"" 2>/dev/null || true
@@ -290,6 +319,11 @@ stop_app() {{
 }}
 
 status_app() {{
+  if use_systemctl; then
+    run_systemctl status accessapp.service
+    return $?
+  fi
+
   if [ -f ""$PIDFILE"" ] && kill -0 ""$(cat ""$PIDFILE"")"" 2>/dev/null; then
     echo ""AccessAPP running (pid $(cat ""$PIDFILE""))""
     exit 0
@@ -306,6 +340,10 @@ case ""$1"" in
     stop_app
     ;;
   restart)
+    if service_is_active; then
+      run_systemctl restart accessapp.service
+      exit $?
+    fi
     stop_app || true
     start_app
     ;;
@@ -333,6 +371,19 @@ exit 0
         var startTimeoutMs = Math.Clamp((cfg.HttpTimeoutSeconds + 120) * 1000, 30_000, 3_600_000);
         TryStartService(initPath, startTimeoutMs);
         Log($"Installed init.d script: {initPath}");
+    }
+
+    private static void InstallSudoersEntry(string runUser)
+    {
+        if (OperatingSystem.IsWindows() || string.IsNullOrWhiteSpace(runUser) || runUser == "root")
+            return;
+
+        // Grant the run user passwordless sudo for systemctl accessapp.service commands.
+        var sudoersPath = "/etc/sudoers.d/accessapp";
+        var entry = $"{runUser} ALL=(root) NOPASSWD: /usr/bin/systemctl start accessapp.service, /usr/bin/systemctl stop accessapp.service, /usr/bin/systemctl restart accessapp.service, /usr/bin/systemctl status accessapp.service\n";
+        TryWriteTextFile(sudoersPath, entry.Replace("\r\n", "\n"));
+        TryChmod("440", sudoersPath);
+        Log($"Installed sudoers entry: {sudoersPath}");
     }
 
     private static void InstallSystemdUnit(UpdaterConfig cfg, string configPath)
