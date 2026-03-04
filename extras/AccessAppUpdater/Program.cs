@@ -78,6 +78,12 @@ internal static class Program
                     InstallAtomically(cfg.InstallDir, stageDir);
                     stageDir = string.Empty;
 
+                    // Ensure the run user owns the install directory and has full access
+                    // so it can create subdirectories like 'logs' at runtime.
+                    var runUser = ResolveRunUser(cfg);
+                    TryChownR(cfg.InstallDir, runUser);
+                    TryChmodR("777", cfg.InstallDir);
+
                     // Always make the primary executable runnable regardless of config.
                     TryChmodX(Path.Combine(cfg.InstallDir, cfg.ExecutableName));
 
@@ -141,9 +147,12 @@ internal static class Program
         // Persist channel + system files (handy for scripts/ops)
         TryWriteTextFile(cfg.ChannelFilePath, cfg.Channel + "\n");
         TryWriteTextFile(cfg.SystemFilePath, cfg.System + "\n");
+        TryChmod("666", cfg.ChannelFilePath);
+        TryChmod("666", cfg.SystemFilePath);
 
         // Write config
         WriteConfig(configPath, cfg);
+        TryChmod("666", configPath);
 
         // Install init.d script and enable autostart
         InstallInitDScript(cfg, configPath);
@@ -304,12 +313,56 @@ exit 0
         TryWriteTextFile(initPath, script.Replace("\r\n", "\n"));
         TryChmodX(initPath);
 
+        // Also install a native systemd unit when systemd is present.
+        // This avoids the "transient or generated" problem with sysv-compat units.
+        InstallSystemdUnit(cfg, configPath);
+
         ConfigureAutostart(initPath);
 
         // Best-effort immediate start. Allow enough time for updater + download.
         var startTimeoutMs = Math.Clamp((cfg.HttpTimeoutSeconds + 120) * 1000, 30_000, 3_600_000);
         TryStartService(initPath, startTimeoutMs);
         Log($"Installed init.d script: {initPath}");
+    }
+
+    private static void InstallSystemdUnit(UpdaterConfig cfg, string configPath)
+    {
+        var systemctl = FindCommandAbsolute(
+            "/usr/bin/systemctl", "/bin/systemctl",
+            "/usr/sbin/systemctl", "/sbin/systemctl");
+
+        if (systemctl is null || !IsSystemdRunning())
+            return;
+
+        var updaterPath = Environment.ProcessPath ?? "/usr/local/bin/AccessAppUpdater";
+        var appPath = Path.Combine(cfg.InstallDir, cfg.ExecutableName);
+        var runUser = ResolveRunUser(cfg);
+
+        var unit = $@"[Unit]
+Description=AccessAPP Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={runUser}
+WorkingDirectory={cfg.InstallDir}
+ExecStartPre={updaterPath} --config {configPath}
+ExecStart={appPath}
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target
+";
+        var unitPath = "/etc/systemd/system/accessapp.service";
+        TryWriteTextFile(unitPath, unit.Replace("\r\n", "\n"));
+        Log($"Installed systemd unit: {unitPath}");
+
+        TryRun(systemctl, "daemon-reload");
+        TryRun(systemctl, "enable accessapp.service");
+        Log("Enabled accessapp.service for autostart");
     }
 
     private static string Prompt(string prompt, string defaultValue)
@@ -760,6 +813,71 @@ exit 0
         {
             Log($"[WARN] chmod +x '{path}' failed: {ex.Message}");
         }
+    }
+
+    private static string ResolveRunUser(UpdaterConfig cfg)
+    {
+        // 1. If install dir is /home/<user>/..., try that user first (e.g. cassia).
+        var parts = cfg.InstallDir.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length >= 2 && parts[0] == "home" && UserExists(parts[1]))
+            return parts[1];
+
+        // 2. Fall back to the configured RunUser (default: "user").
+        if (!string.IsNullOrWhiteSpace(cfg.RunUser) && UserExists(cfg.RunUser))
+            return cfg.RunUser;
+
+        return "root";
+    }
+
+    private static bool UserExists(string user)
+    {
+        if (OperatingSystem.IsWindows())
+            return false;
+        try
+        {
+            var psi = new ProcessStartInfo("id", user)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            };
+            using var p = Process.Start(psi);
+            p?.WaitForExit(3000);
+            return p?.ExitCode == 0;
+        }
+        catch { return false; }
+    }
+
+    private static void TryChownR(string path, string user)
+    {
+        if (OperatingSystem.IsWindows() || string.IsNullOrWhiteSpace(user) || user == "root")
+            return;
+
+        if (TryRun("chown", $"-R {user}: \"{path}\""))
+            Log($"chown -R {user}: {path}");
+        else
+            Log($"[WARN] chown -R {user} '{path}' failed");
+    }
+
+    private static void TryChmod(string mode, string path)
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+        if (!File.Exists(path) && !Directory.Exists(path))
+            return;
+        TryRun("chmod", $"{mode} \"{path}\"");
+    }
+
+    private static void TryChmodR(string mode, string path)
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+        if (!Directory.Exists(path) && !File.Exists(path))
+            return;
+        if (TryRun("chmod", $"-R {mode} \"{path}\""))
+            Log($"chmod -R {mode}: {path}");
+        else
+            Log($"[WARN] chmod -R {mode} '{path}' failed");
     }
 
     private static void ConfigureAutostart(string initPath)
