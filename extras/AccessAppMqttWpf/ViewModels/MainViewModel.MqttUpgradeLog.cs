@@ -167,7 +167,6 @@ public partial class MainViewModel : ObservableObject
                                 _upgradeLogSb.AppendLine(line2);
                                 UpgradeLogReceivedLines++;
                                 ApplyStatusFromUpgradeLogLine(cassia, line2);
-                                ApplyLiveProcessStatusFromUpgradeLogLine(cassia, line2);
                                 RequestUpgradeLogTextRefresh();
                             }
                             UpgradeLogStatus = "upgrade-log";
@@ -224,7 +223,6 @@ public partial class MainViewModel : ObservableObject
 
                             AddUpgradeLogEntryFromLine(cassia, l);
                             ApplyStatusFromUpgradeLogLine(cassia, l);
-                            ApplyLiveProcessStatusFromUpgradeLogLine(cassia, l);
                         }
                     });
                     await Task.Delay(1);
@@ -245,7 +243,6 @@ public partial class MainViewModel : ObservableObject
 
                         AddUpgradeLogEntryFromLine(cassia, l);
                         ApplyStatusFromUpgradeLogLine(cassia, l);
-                        ApplyLiveProcessStatusFromUpgradeLogLine(cassia, l);
                     }
                 });
             }
