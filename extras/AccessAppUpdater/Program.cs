@@ -174,7 +174,7 @@ internal static class Program
         var updaterPath = Environment.ProcessPath ?? "/usr/local/bin/AccessAppUpdater";
         var appPath = Path.Combine(cfg.InstallDir, cfg.ExecutableName);
 
-        var script = $@"#!/bin/sh
+        var script = $@"#!/usr/bin/env sh
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ### BEGIN INIT INFO
 # Provides:          AccessApp
@@ -210,6 +210,11 @@ resolve_run_user() {{
   owner=""$(stat -c '%U' ""$APP_DIR"" 2>/dev/null)""
   if [ -n ""$owner"" ] && [ ""$owner"" != ""UNKNOWN"" ] && [ ""$owner"" != ""root"" ]; then
     echo ""$owner""
+    return
+  fi
+
+  if [ -n ""{cfg.RunUser}"" ] && id ""{cfg.RunUser}"" >/dev/null 2>&1; then
+    echo ""{cfg.RunUser}""
     return
   fi
 
@@ -296,7 +301,7 @@ esac
 
 exit 0
 ";
-        TryWriteTextFile(initPath, script);
+        TryWriteTextFile(initPath, script.Replace("\r\n", "\n"));
         TryChmodX(initPath);
 
         ConfigureAutostart(initPath);
@@ -629,7 +634,7 @@ exit 0
         if (Directory.Exists(tempTarget))
             Directory.Delete(tempTarget, recursive: true);
 
-        Directory.Move(stageDir, tempTarget);
+        MoveDirectoryRobust(stageDir, tempTarget);
 
         if (Directory.Exists(installDir))
             Directory.Move(installDir, backup);
@@ -638,6 +643,39 @@ exit 0
 
         // Best effort cleanup of backup
         SafeDeleteDirectory(backup);
+    }
+
+    /// <summary>
+    /// Moves a directory, falling back to recursive copy+delete when the source and
+    /// destination are on different filesystems (cross-device / EXDEV).
+    /// </summary>
+    private static void MoveDirectoryRobust(string source, string dest)
+    {
+        try
+        {
+            Directory.Move(source, dest);
+        }
+        catch (IOException) when (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            // On Linux/macOS, Directory.Move fails with "Invalid cross-device link" when
+            // source and dest are on different mount points.  Fall back to copy + delete.
+            CopyDirectoryRecursive(source, dest);
+            Directory.Delete(source, recursive: true);
+        }
+    }
+
+    private static void CopyDirectoryRecursive(string source, string dest)
+    {
+        Directory.CreateDirectory(dest);
+        foreach (var file in Directory.EnumerateFiles(source))
+        {
+            var destFile = Path.Combine(dest, Path.GetFileName(file));
+            File.Copy(file, destFile, overwrite: true);
+        }
+        foreach (var dir in Directory.EnumerateDirectories(source))
+        {
+            CopyDirectoryRecursive(dir, Path.Combine(dest, Path.GetFileName(dir)));
+        }
     }
 
     private static string ReadCurrentVersion(UpdaterConfig cfg)
@@ -916,6 +954,9 @@ internal sealed class UpdaterConfig
     public string System { get; set; } = "";
     public string SystemFilePath { get; set; } = "/etc/accessapp-updater.system"; 
     public bool AllowDowngrade { get; set; }
+
+    // User to run AccessAPP as (fallback if auto-detection fails, e.g. when cassia user doesn't exist)
+    public string RunUser { get; set; } = "user";
 
     public string InstallDir { get; set; } = "/home/cassia/FWUpgrade";
     public string WorkDir { get; set; } = "/tmp/accessapp-updater";
