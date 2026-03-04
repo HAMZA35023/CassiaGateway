@@ -80,7 +80,7 @@
 
             <Border Grid.Column="1" Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="12" Padding="12">
                 <DockPanel>
-                    <TextBlock DockPanel.Dock="Top" Text="Load summary (Queue + Programming)" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                    <TextBlock DockPanel.Dock="Top" Text="Load summary (Queue + Programming / Workers)" FontWeight="SemiBold" Margin="0,0,0,8"/>
 
                     <DataGrid ItemsSource="{Binding LoadRows}"
                               AutoGenerateColumns="False"
@@ -90,9 +90,10 @@
                               Margin="0,0,0,8">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Cassia" Binding="{Binding Cassia}" Width="*"/>
-                            <DataGridTextColumn Header="Before" Binding="{Binding BeforeLoad}" Width="70"/>
-                            <DataGridTextColumn Header="After" Binding="{Binding AfterLoad}" Width="70"/>
-                            <DataGridTextColumn Header="Î”" Binding="{Binding Delta}" Width="50"/>
+                            <DataGridTextColumn Header="Workers" Binding="{Binding Workers}" Width="60"/>
+                            <DataGridTextColumn Header="Before" Binding="{Binding BeforeLoad}" Width="60"/>
+                            <DataGridTextColumn Header="After" Binding="{Binding AfterLoad}" Width="60"/>
+                            <DataGridTextColumn Header="&#x394;" Binding="{Binding Delta}" Width="50"/>
                         </DataGrid.Columns>
                     </DataGrid>
 
