@@ -154,6 +154,16 @@ internal static class Program
         WriteConfig(configPath, cfg);
         TryChmod("666", configPath);
 
+        // Ensure the install dir's parent (e.g. /home/cassia) is accessible so
+        // the updater can create temp dirs there when run as a non-root user.
+        var installParent = Path.GetDirectoryName(cfg.InstallDir.TrimEnd('/'));
+        if (!string.IsNullOrWhiteSpace(installParent) && Directory.Exists(installParent))
+        {
+            var runUser = ResolveRunUser(cfg);
+            TryChownR(installParent, runUser);
+            TryChmod("777", installParent);
+        }
+
         // Install init.d script and enable autostart
         InstallInitDScript(cfg, configPath);
 
@@ -347,7 +357,7 @@ Wants=network-online.target
 Type=simple
 User={runUser}
 WorkingDirectory={cfg.InstallDir}
-ExecStartPre={updaterPath} --config {configPath}
+ExecStartPre=+{updaterPath} --config {configPath}
 ExecStart={appPath}
 Restart=on-failure
 RestartSec=10
