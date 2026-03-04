@@ -968,6 +968,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                         var root = doc.RootElement;
 
                         int applied = 0;
+                        List<string> appliedNames = new();
                         List<string> errors = new();
                         bool persist = true;
                         bool persisted = false;
@@ -988,8 +989,12 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                             n.ValueKind == JsonValueKind.String &&
                             root.TryGetProperty("value", out var v))
                         {
-                            if (_runtimeStore.SetSingle(n.GetString() ?? "", v, out var err))
+                            var varName = n.GetString() ?? "";
+                            if (_runtimeStore.SetSingle(varName, v, out var err))
+                            {
+                                appliedNames.Add(varName);
                                 applied = 1;
+                            }
                             else if (!string.IsNullOrWhiteSpace(err))
                                 errors.Add(err);
                         }
@@ -997,14 +1002,19 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                         {
                             // Shape B: {"X":..., "Y":...}
                             var ignore = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "persist" };
-                            var (appliedNames, errorMap) = _runtimeStore.SetFromJsonObject(root, ignore);
-                            applied = appliedNames.Count;
+                            var (names, errorMap) = _runtimeStore.SetFromJsonObject(root, ignore);
+                            appliedNames = names;
+                            applied = names.Count;
                             foreach (var kv in errorMap)
                                 errors.Add($"{kv.Key}: {kv.Value}");
                         }
 
                         if (persist && applied > 0)
                             persisted = _runtimeStore.SaveToDisk();
+
+                        var restartRequiredVars = appliedNames
+                            .Where(fn => RuntimeVariablesStore.RestartRequiredFields.Contains(fn))
+                            .ToList();
 
                         var resp = new
                         {
@@ -1013,6 +1023,8 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                             errors,
                             persisted,
                             persistPath = _runtimeStore.FilePath,
+                            restartRequired = restartRequiredVars.Count > 0,
+                            restartRequiredVars,
                             variables = _runtimeStore.GetAll()
                         };
 

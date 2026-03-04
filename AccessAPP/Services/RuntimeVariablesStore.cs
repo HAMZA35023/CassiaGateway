@@ -19,6 +19,16 @@ public sealed class RuntimeVariablesStore
     private static readonly FieldInfo[] Fields =
         typeof(RuntimeVariables).GetFields(BindingFlags.Public | BindingFlags.Static);
 
+    /// <summary>
+    /// Fields that can be set via MQTT/runtime but only take effect after a service restart.
+    /// The value is persisted immediately so the next startup picks it up.
+    /// </summary>
+    public static readonly IReadOnlySet<string> RestartRequiredFields =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            nameof(RuntimeVariables.BLE_BACKEND)
+        };
+
     // Snapshot of RuntimeVariables defaults, captured before any LoadFromDisk call.
     private static readonly Dictionary<string, object?> Defaults =
         Fields.ToDictionary(f => f.Name, f => f.GetValue(null), StringComparer.OrdinalIgnoreCase);
@@ -76,7 +86,7 @@ public sealed class RuntimeVariablesStore
         return dict;
     }
 
-    public bool SetSingle(string name, JsonElement value, out string? error, bool allowStartupOnlyFields = false)
+    public bool SetSingle(string name, JsonElement value, out string? error)
     {
         error = null;
 
@@ -90,17 +100,6 @@ public sealed class RuntimeVariablesStore
         if (field == null)
         {
             error = $"Unknown runtime variable '{name}'.";
-            return false;
-        }
-
-        // Backend service binding is resolved once when DI singletons are first created.
-        // Changing BLE_BACKEND at runtime can leave the app in a mixed state
-        // (Cassia flow decisions with Linux connection service, or vice versa).
-        // Allow BLE_BACKEND only when loading from disk during startup.
-        if (!allowStartupOnlyFields &&
-            string.Equals(field.Name, nameof(RuntimeVariables.BLE_BACKEND), StringComparison.OrdinalIgnoreCase))
-        {
-            error = $"'{nameof(RuntimeVariables.BLE_BACKEND)}' is startup-only. Update runtime.json and restart the service.";
             return false;
         }
 
@@ -133,8 +132,7 @@ public sealed class RuntimeVariablesStore
     /// </summary>
     public (List<string> applied, Dictionary<string, string> errors) SetFromJsonObject(
         JsonElement root,
-        ISet<string>? ignoreNames = null,
-        bool allowStartupOnlyFields = false)
+        ISet<string>? ignoreNames = null)
     {
         var applied = new List<string>();
         var errors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -150,7 +148,7 @@ public sealed class RuntimeVariablesStore
             if (ignoreNames != null && ignoreNames.Contains(prop.Name))
                 continue;
 
-            if (SetSingle(prop.Name, prop.Value, out var err, allowStartupOnlyFields))
+            if (SetSingle(prop.Name, prop.Value, out var err))
                 applied.Add(prop.Name);
             else
                 errors[prop.Name] = err ?? "Unknown error";
@@ -174,7 +172,7 @@ public sealed class RuntimeVariablesStore
 
                 var json = File.ReadAllText(FilePath);
                 using var doc = JsonDocument.Parse(json);
-                return SetFromJsonObject(doc.RootElement, ignoreNames: null, allowStartupOnlyFields: true);
+                return SetFromJsonObject(doc.RootElement, ignoreNames: null);
             }
             catch (Exception ex)
             {
