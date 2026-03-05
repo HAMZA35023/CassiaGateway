@@ -30,7 +30,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        Title = $"AC Controller for AccessAPP - v{Version.AppVersion}";
+        Title = $"AC Controller for AccessAPP - v{AppInfo.AppVersion}";
         Loaded += MainWindow_Loaded;
         DataContext = new MainViewModel();
         PreviewKeyDown += MainWindow_PreviewKeyDown;
