@@ -5,7 +5,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="AC Controller for AccessAPP - v0.14.0"
+        Title="AC Controller for AccessAPP"
         Height="941" Width="1715"
         WindowStartupLocation="CenterScreen">
 
@@ -18,11 +18,11 @@
         </Style>
 
         <conv:StatusToBrushConverter x:Key="StatusToBrush"/>
-        <SolidColorBrush x:Key="DoneRowBrush" Color="#2A22C55E"/>
+        <SolidColorBrush x:Key="DoneRowBrush" Color="#6622C55E"/>
         <SolidColorBrush x:Key="QueueRowBrush" Color="#2A60A5FA"/>
         <SolidColorBrush x:Key="WarnRowBrush" Color="#2AFACC15"/>
         <SolidColorBrush x:Key="NoFwRowBrush" Color="#2A06B6D4"/>
-        <SolidColorBrush x:Key="FailedRowBrush" Color="#2AE74C3C"/>
+        <SolidColorBrush x:Key="FailedRowBrush" Color="#66E74C3C"/>
 
 
         <!-- ONLINE / OFFLINE badge -->

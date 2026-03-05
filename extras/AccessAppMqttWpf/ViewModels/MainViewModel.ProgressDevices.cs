@@ -84,6 +84,10 @@ public partial class MainViewModel : ObservableObject
             if (IsIgnoredDevice(d.Mac))
                 return false;
 
+            // Always hide devices reporting RSSI -127 (invalid/no signal) unless they are in the queue
+            if (d.BestRssi == -127 && !d.IsInQueue)
+                return false;
+
             if (HideCompletedDevices && d.IsUpgradeSuccess)
                 return false;
 
