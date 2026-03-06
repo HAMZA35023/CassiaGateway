@@ -1268,7 +1268,7 @@ await Task.Delay(3000); // Delay between attempts
             }
 
             //Step 3: Start Programming the Sensor
-            bool programmingResult = ProgramDevice(_gatewayIpAddress, nodeMac, _notificationService, DetectorType, FirmwareVersion, bActor, isBootloader, logId, FirmwareVersion);
+            bool programmingResult = ProgramDevice(_gatewayIpAddress, nodeMac, _notificationService, DetectorType, FirmwareVersion, bActor, isBootloader, logId, FirmwareVersion) == ReturnCodes.CYRET_SUCCESS;
 
             if (programmingResult)
             {
@@ -1387,9 +1387,9 @@ await Task.Delay(3000); // Delay between attempts
 
             AppLog.Info($"Bootloader mode achieved for {nodeMac}.");
 // Step 3: Start programming the actor
-            var programmingResult = ProgramDevice(_gatewayIpAddress, nodeMac, _notificationService, DetectorType, FirmwareVersion, bActor, false, logId, FirmwareVersion);
+            var progCode = ProgramDevice(_gatewayIpAddress, nodeMac, _notificationService, DetectorType, FirmwareVersion, bActor, false, logId, FirmwareVersion);
 
-            if (programmingResult)
+            if (progCode == ReturnCodes.CYRET_SUCCESS)
             {
                 UpgradeLogger.Log(logId, nodeMac, "ActorProgrammingComplete", "Success");
                 response.Success = true;
@@ -1403,6 +1403,7 @@ await Task.Delay(3000); // Delay between attempts
                 response.Success = false;
                 response.StatusCode = 500;
                 response.Message = "Programming Failed";
+                response.ProgrammingReturnCode = (int)progCode;
                 return response;
             }
         }
@@ -1412,7 +1413,7 @@ await Task.Delay(3000); // Delay between attempts
         
         
 
-        public bool ProgramDevice(
+        public ReturnCodes ProgramDevice(
             string gatewayIpAddress,
             string nodeMac,
             BleAbstractions.IBleNotificationService cassiaNotificationService,
@@ -1451,7 +1452,7 @@ try
 if (!File.Exists(firmwarePath))
                 {
                     AppLog.Fatal($" Firmware file missing: {firmwarePath}");
-return false;
+return ReturnCodes.CYRET_ERR_FILE;
                 }
                 if (bActor)
                 {
@@ -1574,7 +1575,7 @@ m_comm_data.WriteData = WriteSensorData;
 _deviceStorageService.MarkFirmwareFailed(nodeMac);
                 }
 
-                return local_status == ReturnCodes.CYRET_SUCCESS;
+                return local_status;
             }
             finally
             {

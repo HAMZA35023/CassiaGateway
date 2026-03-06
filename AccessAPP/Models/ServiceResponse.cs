@@ -6,6 +6,7 @@
         public int StatusCode { get; set; }
         public string Message { get; set; }
         public string MacAddress { get; set; }
+        public int? ProgrammingReturnCode { get; set; }
     }
 
 }

@@ -1,5 +1,6 @@
 using System.Threading.Tasks;
 using AccessAPP.Logging;
+using AccessAPP.Services.HelperClasses;
 
 namespace AccessAPP.Services.UpgradePipeline.Steps;
 
@@ -47,6 +48,8 @@ internal sealed class ActorPreUpgradeStep : IDeviceUpgradeStep
 
         if (!actorUpgradeResult.Success)
         {
+            if ((actorUpgradeResult.ProgrammingReturnCode ?? 0) == (int)ReturnCodes.CYRET_ERR_COMM_LENGTH)
+                dev.ActorCommErrCount++;
             ctx.Response.Success = false;
             ctx.Response.StatusCode = actorUpgradeResult.StatusCode;
             ctx.Response.Message = $"Actor upgrade failed before sensor update: {actorUpgradeResult.Message}";
