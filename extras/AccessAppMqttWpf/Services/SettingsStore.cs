@@ -8,7 +8,10 @@ namespace AccessAppMqttWpf.Services;
 public sealed class SettingsStore
 {
     private readonly string _path;
-    public SettingsStore(string? path = null) => _path = path ?? Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+    public SettingsStore(string? path = null) => _path = path ?? Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "AccessAppMqttWpf",
+        "appsettings.json");
 
     public AppSettings Load()
     {
@@ -23,6 +26,8 @@ public sealed class SettingsStore
 
     public void Save(AppSettings settings)
     {
+        var dir = Path.GetDirectoryName(_path);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
         var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
         File.WriteAllText(_path, json);
     }
