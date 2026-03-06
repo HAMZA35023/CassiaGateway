@@ -41,8 +41,8 @@ public partial class MainViewModel : ObservableObject
 
     // ---- RSSI balancing thresholds (requested to be variables at top of the class) ----
     // Note: RSSI values are negative; e.g. -60 is stronger than -80.
-    private const int RssiAllowBalancingThreshold = -65;   // >= -65: allow balancing among eligible Cassias
-    private const int RssiWarnQueueThreshold = -70;        // < -70: show warning before queueing (still allowed)
+    private const int RssiAllowBalancingThreshold = -70;   // >= -65: allow balancing among eligible Cassias
+    private const int RssiWarnQueueThreshold = -75;        // < -70: show warning before queueing (still allowed)
 
     // Weights for balancing: lower score wins. Score = (load * weight) - (rssi * 1). Since RSSI is negative, stronger (less negative) lowers score.
     private const int AssignmentLoadWeight = 10;            // how much 1 queued/programming item counts vs 1 dB RSSI
@@ -154,7 +154,7 @@ public partial class MainViewModel : ObservableObject
             rows: dialogRows,
             loadRows: loadRows,
             footer: "Apply = use suggested assignment - Keep current = use current assignment - Cancel = abort",
-            notes: $"Rules: If best RSSI < {RssiAllowBalancingThreshold} we always pick the closest Cassia. Otherwise we balance using (assigned*{AssignedDetectorsWeight} + queue + programming), preferring ONLINE gateways and using RSSI as tie-break. If best RSSI < {RssiWarnQueueThreshold}, you get a warning.",
+            notes: $"Rules: If best RSSI < {RssiAllowBalancingThreshold} we always pick the closest Cassia. Otherwise we balance using (queue + programming - free workers), preferring ONLINE gateways and using RSSI as tie-break. Cassias with free worker slots (parallel programmers) are preferred. If best RSSI < {RssiWarnQueueThreshold}, you get a warning.",
             showKeepButton: true);
 
         if (dlgResult == AssignmentPlanDialogResult.Cancel) return;
@@ -212,7 +212,7 @@ public partial class MainViewModel : ObservableObject
             rows: rows,
             loadRows: loadRows,
             footer: "Apply = move queue items - Cancel = do nothing",
-            notes: $"Rules: If best RSSI < {RssiAllowBalancingThreshold} we always pick the closest Cassia. Otherwise we balance using (assigned*{AssignedDetectorsWeight} + queue + programming), preferring ONLINE gateways and using RSSI as tie-break. If best RSSI < {RssiWarnQueueThreshold}, you get a warning.",
+            notes: $"Rules: If best RSSI < {RssiAllowBalancingThreshold} we always pick the closest Cassia. Otherwise we balance using (queue + programming - free workers), preferring ONLINE gateways and using RSSI as tie-break. Cassias with free worker slots (parallel programmers) are preferred. If best RSSI < {RssiWarnQueueThreshold}, you get a warning.",
             showKeepButton: false);
 
         if (dlgResult != AssignmentPlanDialogResult.Apply)
@@ -384,6 +384,7 @@ public partial class MainViewModel : ObservableObject
                 Delta = a - b,
                 BeforeQueue = gw?.Queue ?? 0,
                 BeforeProgramming = gw?.Programming ?? 0,
+                Workers = gw?.ParallelProgrammers ?? 0,
             });
         }
         return rows;
@@ -843,8 +844,13 @@ public partial class MainViewModel : ObservableObject
         if (string.IsNullOrWhiteSpace(cassia)) return 0;
         var gw = CassiaGateways.FirstOrDefault(g => g.Name.Equals(cassia, StringComparison.OrdinalIgnoreCase));
         if (gw == null) return 0;
-        // Workload must reflect what Cassia reports (queue + programming). Assigned counts are NOT used here.
-        return Math.Max(0, gw.Queue) + Math.Max(0, gw.Programming);
+        var queue = Math.Max(0, gw.Queue);
+        var programming = Math.Max(0, gw.Programming);
+        var workers = Math.Max(0, gw.ParallelProgrammers);
+        // Reduce effective load by free worker slots so Cassias with spare capacity are preferred.
+        // If workers is 0 (unknown), no adjustment is made.
+        var freeWorkers = workers > 0 ? Math.Max(0, workers - programming) : 0;
+        return queue + programming - freeWorkers;
     }
 
     private bool IsDeviceInWork(DiscoveredDevice d)

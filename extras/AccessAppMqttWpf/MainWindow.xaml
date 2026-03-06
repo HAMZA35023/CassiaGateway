@@ -5,7 +5,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="AC Controller for AccessAPP - v0.14.0"
+        Title="AC Controller for AccessAPP"
         Height="941" Width="1715"
         WindowStartupLocation="CenterScreen">
 
@@ -18,11 +18,11 @@
         </Style>
 
         <conv:StatusToBrushConverter x:Key="StatusToBrush"/>
-        <SolidColorBrush x:Key="DoneRowBrush" Color="#2A22C55E"/>
+        <SolidColorBrush x:Key="DoneRowBrush" Color="#6622C55E"/>
         <SolidColorBrush x:Key="QueueRowBrush" Color="#2A60A5FA"/>
         <SolidColorBrush x:Key="WarnRowBrush" Color="#2AFACC15"/>
         <SolidColorBrush x:Key="NoFwRowBrush" Color="#2A06B6D4"/>
-        <SolidColorBrush x:Key="FailedRowBrush" Color="#2AE74C3C"/>
+        <SolidColorBrush x:Key="FailedRowBrush" Color="#66E74C3C"/>
 
 
         <!-- ONLINE / OFFLINE badge -->
@@ -602,6 +602,17 @@
                     <TextBlock Text="🌐" Style="{StaticResource MenuIconGlyph}"/>
                 </MenuItem.Icon>
             </MenuItem>
+            <MenuItem Header="Move to MQTT host preset">
+                <MenuItem Header="FREE #2 (tls=true)"
+                          Command="{Binding PlacementTarget.Tag.SetCassiaMqttBrokerFree2Command, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                          CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                <MenuItem Header="FREE #1 (tls=true)"
+                          Command="{Binding PlacementTarget.Tag.SetCassiaMqttBrokerFree1Command, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                          CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                <MenuItem Header="NIKO-TEST (tls=false)"
+                          Command="{Binding PlacementTarget.Tag.SetCassiaMqttBrokerNikoTestCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                          CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+            </MenuItem>
             <Separator Visibility="{Binding PlacementTarget.Tag.DeveloperModeUnlocked, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}"/>
             <MenuItem Header="Set runtime variables..."
                       Visibility="{Binding PlacementTarget.Tag.DeveloperModeUnlocked, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}"
@@ -936,6 +947,14 @@
 
                     <TextBlock Text="Port" Style="{StaticResource MetaLabel}"/>
                     <TextBox Text="{Binding MqttPort}"/>
+
+                    <TextBlock Text="Broker preset"
+                               Style="{StaticResource MetaLabel}"
+                               Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"/>
+                    <ComboBox ItemsSource="{Binding MqttHostPresets}"
+                              SelectedItem="{Binding SelectedMqttHostPreset, Mode=TwoWay}"
+                              DisplayMemberPath="Label"
+                              Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"/>
 
                     <TextBlock Text="Topic" Style="{StaticResource MetaLabel}" Visibility="Collapsed"/>
                     <TextBox Text="{Binding MqttTopic}" Visibility="Collapsed"/>

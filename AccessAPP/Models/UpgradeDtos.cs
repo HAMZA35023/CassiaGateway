@@ -22,6 +22,7 @@ namespace AccessAPP.Models
         public int RetryCountActor { get; set; } = 0;
         public int RetryCountBootloader { get; set; } = 0;
         public int RetryCountSensor { get; set; } = 0;
+        public int ActorCommErrCount { get; set; } = 0;
         public string LastFailureReason { get; set; } = string.Empty;
         public bool isActorUpgradeNeeded = true;
 

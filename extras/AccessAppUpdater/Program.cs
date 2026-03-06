@@ -50,6 +50,17 @@ internal static class Program
                 ?? throw new InvalidOperationException($"No compatible build found for runtime '{runtimeTag}' in version '{release.Version}'.");
 
             var currentVersion = ReadCurrentVersion(cfg);
+
+            // Always ensure the install dir has correct ownership and permissions so
+            // AccessAPP can create subdirectories (e.g. logs/) regardless of whether
+            // an update is being installed this run.
+            if (!dryRun && Directory.Exists(cfg.InstallDir))
+            {
+                var runUser = ResolveRunUser(cfg);
+                TryChownR(cfg.InstallDir, runUser);
+                TryChmodR("777", cfg.InstallDir);
+            }
+
             if (!cfg.AllowDowngrade && CompareVersions(release.Version, currentVersion) <= 0)
             {
                 Log($"No update needed. current={currentVersion}, target={release.Version}");
@@ -77,6 +88,12 @@ internal static class Program
 
                     InstallAtomically(cfg.InstallDir, stageDir);
                     stageDir = string.Empty;
+
+                    // Ensure the run user owns the install directory and has full access
+                    // so it can create subdirectories like 'logs' at runtime.
+                    var runUser = ResolveRunUser(cfg);
+                    TryChownR(cfg.InstallDir, runUser);
+                    TryChmodR("777", cfg.InstallDir);
 
                     // Always make the primary executable runnable regardless of config.
                     TryChmodX(Path.Combine(cfg.InstallDir, cfg.ExecutableName));
@@ -141,9 +158,25 @@ internal static class Program
         // Persist channel + system files (handy for scripts/ops)
         TryWriteTextFile(cfg.ChannelFilePath, cfg.Channel + "\n");
         TryWriteTextFile(cfg.SystemFilePath, cfg.System + "\n");
+        TryChmod("666", cfg.ChannelFilePath);
+        TryChmod("666", cfg.SystemFilePath);
 
         // Write config
         WriteConfig(configPath, cfg);
+        TryChmod("666", configPath);
+
+        // Ensure the install dir's parent (e.g. /home/cassia) is accessible so
+        // the updater can create temp dirs there when run as a non-root user.
+        var installParent = Path.GetDirectoryName(cfg.InstallDir.TrimEnd('/'));
+        if (!string.IsNullOrWhiteSpace(installParent) && Directory.Exists(installParent))
+        {
+            var runUser = ResolveRunUser(cfg);
+            TryChownR(installParent, runUser);
+            TryChmod("777", installParent);
+        }
+
+        // Allow run user to control the service without a password.
+        InstallSudoersEntry(ResolveRunUser(cfg));
 
         // Install init.d script and enable autostart
         InstallInitDScript(cfg, configPath);
@@ -174,7 +207,7 @@ internal static class Program
         var updaterPath = Environment.ProcessPath ?? "/usr/local/bin/AccessAppUpdater";
         var appPath = Path.Combine(cfg.InstallDir, cfg.ExecutableName);
 
-        var script = $@"#!/bin/sh
+        var script = $@"#!/usr/bin/env sh
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ### BEGIN INIT INFO
 # Provides:          AccessApp
@@ -213,6 +246,11 @@ resolve_run_user() {{
     return
   fi
 
+  if [ -n ""{cfg.RunUser}"" ] && id ""{cfg.RunUser}"" >/dev/null 2>&1; then
+    echo ""{cfg.RunUser}""
+    return
+  fi
+
   echo root
 }}
 
@@ -220,6 +258,22 @@ resolve_run_user() {{
 RUN_AS=""${{ACCESSAPP_USER:-$(resolve_run_user)}}""
 PIDDIR=""/tmp/accessapp-${{RUN_AS}}""
 PIDFILE=""$PIDDIR/accessapp.pid""
+
+use_systemctl() {{
+  command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]
+}}
+
+service_is_active() {{
+  use_systemctl && systemctl is-active --quiet accessapp.service 2>/dev/null
+}}
+
+run_systemctl() {{
+  if [ ""$(id -u)"" -eq 0 ]; then
+    systemctl ""$@""
+  else
+    sudo systemctl ""$@""
+  fi
+}}
 
 run_updater() {{
   if [ ""$(id -u)"" -eq 0 ] && [ ""$RUN_AS"" != ""root"" ]; then
@@ -231,6 +285,11 @@ run_updater() {{
 }}
 
 start_app() {{
+  if use_systemctl; then
+    run_systemctl start accessapp.service
+    return $?
+  fi
+
   mkdir -p ""$PIDDIR"" || exit 1
   if [ ""$(id -u)"" -eq 0 ] && [ ""$RUN_AS"" != ""root"" ]; then
     chown ""$RUN_AS"":""$RUN_AS"" ""$PIDDIR"" 2>/dev/null || true
@@ -259,6 +318,11 @@ start_app() {{
 
 stop_app() {{
   echo ""[init] Stopping AccessAPP...""
+  if service_is_active; then
+    run_systemctl stop accessapp.service
+    return $?
+  fi
+
   start-stop-daemon --stop --pidfile ""$PIDFILE"" --retry=TERM/10/KILL/5
   rc=$?
   rm -f ""$PIDFILE"" 2>/dev/null || true
@@ -266,6 +330,11 @@ stop_app() {{
 }}
 
 status_app() {{
+  if use_systemctl; then
+    run_systemctl status accessapp.service
+    return $?
+  fi
+
   if [ -f ""$PIDFILE"" ] && kill -0 ""$(cat ""$PIDFILE"")"" 2>/dev/null; then
     echo ""AccessAPP running (pid $(cat ""$PIDFILE""))""
     exit 0
@@ -282,6 +351,10 @@ case ""$1"" in
     stop_app
     ;;
   restart)
+    if service_is_active; then
+      run_systemctl restart accessapp.service
+      exit $?
+    fi
     stop_app || true
     start_app
     ;;
@@ -296,8 +369,12 @@ esac
 
 exit 0
 ";
-        TryWriteTextFile(initPath, script);
+        TryWriteTextFile(initPath, script.Replace("\r\n", "\n"));
         TryChmodX(initPath);
+
+        // Also install a native systemd unit when systemd is present.
+        // This avoids the "transient or generated" problem with sysv-compat units.
+        InstallSystemdUnit(cfg, configPath);
 
         ConfigureAutostart(initPath);
 
@@ -305,6 +382,59 @@ exit 0
         var startTimeoutMs = Math.Clamp((cfg.HttpTimeoutSeconds + 120) * 1000, 30_000, 3_600_000);
         TryStartService(initPath, startTimeoutMs);
         Log($"Installed init.d script: {initPath}");
+    }
+
+    private static void InstallSudoersEntry(string runUser)
+    {
+        if (OperatingSystem.IsWindows() || string.IsNullOrWhiteSpace(runUser) || runUser == "root")
+            return;
+
+        // Grant the run user passwordless sudo for systemctl accessapp.service commands.
+        var sudoersPath = "/etc/sudoers.d/accessapp";
+        var entry = $"{runUser} ALL=(root) NOPASSWD: /usr/bin/systemctl start accessapp.service, /usr/bin/systemctl stop accessapp.service, /usr/bin/systemctl restart accessapp.service, /usr/bin/systemctl status accessapp.service\n";
+        TryWriteTextFile(sudoersPath, entry.Replace("\r\n", "\n"));
+        TryChmod("440", sudoersPath);
+        Log($"Installed sudoers entry: {sudoersPath}");
+    }
+
+    private static void InstallSystemdUnit(UpdaterConfig cfg, string configPath)
+    {
+        var systemctl = FindCommandAbsolute(
+            "/usr/bin/systemctl", "/bin/systemctl",
+            "/usr/sbin/systemctl", "/sbin/systemctl");
+
+        if (systemctl is null || !IsSystemdRunning())
+            return;
+
+        var updaterPath = Environment.ProcessPath ?? "/usr/local/bin/AccessAppUpdater";
+        var appPath = Path.Combine(cfg.InstallDir, cfg.ExecutableName);
+        var runUser = ResolveRunUser(cfg);
+
+        var unit = $@"[Unit]
+Description=AccessAPP Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={runUser}
+WorkingDirectory={cfg.InstallDir}
+ExecStartPre=+{updaterPath} --config {configPath}
+ExecStart={appPath}
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target
+";
+        var unitPath = "/etc/systemd/system/accessapp.service";
+        TryWriteTextFile(unitPath, unit.Replace("\r\n", "\n"));
+        Log($"Installed systemd unit: {unitPath}");
+
+        TryRun(systemctl, "daemon-reload");
+        TryRun(systemctl, "enable accessapp.service");
+        Log("Enabled accessapp.service for autostart");
     }
 
     private static string Prompt(string prompt, string defaultValue)
@@ -629,7 +759,7 @@ exit 0
         if (Directory.Exists(tempTarget))
             Directory.Delete(tempTarget, recursive: true);
 
-        Directory.Move(stageDir, tempTarget);
+        MoveDirectoryRobust(stageDir, tempTarget);
 
         if (Directory.Exists(installDir))
             Directory.Move(installDir, backup);
@@ -638,6 +768,39 @@ exit 0
 
         // Best effort cleanup of backup
         SafeDeleteDirectory(backup);
+    }
+
+    /// <summary>
+    /// Moves a directory, falling back to recursive copy+delete when the source and
+    /// destination are on different filesystems (cross-device / EXDEV).
+    /// </summary>
+    private static void MoveDirectoryRobust(string source, string dest)
+    {
+        try
+        {
+            Directory.Move(source, dest);
+        }
+        catch (IOException) when (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            // On Linux/macOS, Directory.Move fails with "Invalid cross-device link" when
+            // source and dest are on different mount points.  Fall back to copy + delete.
+            CopyDirectoryRecursive(source, dest);
+            Directory.Delete(source, recursive: true);
+        }
+    }
+
+    private static void CopyDirectoryRecursive(string source, string dest)
+    {
+        Directory.CreateDirectory(dest);
+        foreach (var file in Directory.EnumerateFiles(source))
+        {
+            var destFile = Path.Combine(dest, Path.GetFileName(file));
+            File.Copy(file, destFile, overwrite: true);
+        }
+        foreach (var dir in Directory.EnumerateDirectories(source))
+        {
+            CopyDirectoryRecursive(dir, Path.Combine(dest, Path.GetFileName(dir)));
+        }
     }
 
     private static string ReadCurrentVersion(UpdaterConfig cfg)
@@ -722,6 +885,71 @@ exit 0
         {
             Log($"[WARN] chmod +x '{path}' failed: {ex.Message}");
         }
+    }
+
+    private static string ResolveRunUser(UpdaterConfig cfg)
+    {
+        // 1. If install dir is /home/<user>/..., try that user first (e.g. cassia).
+        var parts = cfg.InstallDir.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length >= 2 && parts[0] == "home" && UserExists(parts[1]))
+            return parts[1];
+
+        // 2. Fall back to the configured RunUser (default: "user").
+        if (!string.IsNullOrWhiteSpace(cfg.RunUser) && UserExists(cfg.RunUser))
+            return cfg.RunUser;
+
+        return "root";
+    }
+
+    private static bool UserExists(string user)
+    {
+        if (OperatingSystem.IsWindows())
+            return false;
+        try
+        {
+            var psi = new ProcessStartInfo("id", user)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            };
+            using var p = Process.Start(psi);
+            p?.WaitForExit(3000);
+            return p?.ExitCode == 0;
+        }
+        catch { return false; }
+    }
+
+    private static void TryChownR(string path, string user)
+    {
+        if (OperatingSystem.IsWindows() || string.IsNullOrWhiteSpace(user) || user == "root")
+            return;
+
+        if (TryRun("chown", $"-R {user}: \"{path}\""))
+            Log($"chown -R {user}: {path}");
+        else
+            Log($"[WARN] chown -R {user} '{path}' failed");
+    }
+
+    private static void TryChmod(string mode, string path)
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+        if (!File.Exists(path) && !Directory.Exists(path))
+            return;
+        TryRun("chmod", $"{mode} \"{path}\"");
+    }
+
+    private static void TryChmodR(string mode, string path)
+    {
+        if (OperatingSystem.IsWindows())
+            return;
+        if (!Directory.Exists(path) && !File.Exists(path))
+            return;
+        if (TryRun("chmod", $"-R {mode} \"{path}\""))
+            Log($"chmod -R {mode}: {path}");
+        else
+            Log($"[WARN] chmod -R {mode} '{path}' failed");
     }
 
     private static void ConfigureAutostart(string initPath)
@@ -916,6 +1144,9 @@ internal sealed class UpdaterConfig
     public string System { get; set; } = "";
     public string SystemFilePath { get; set; } = "/etc/accessapp-updater.system"; 
     public bool AllowDowngrade { get; set; }
+
+    // User to run AccessAPP as (fallback if auto-detection fails, e.g. when cassia user doesn't exist)
+    public string RunUser { get; set; } = "user";
 
     public string InstallDir { get; set; } = "/home/cassia/FWUpgrade";
     public string WorkDir { get; set; } = "/tmp/accessapp-updater";

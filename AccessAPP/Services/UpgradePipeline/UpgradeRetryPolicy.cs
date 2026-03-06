@@ -9,7 +9,8 @@ namespace AccessAPP.Services.UpgradePipeline
             // IMPORTANT: RetryCountActor/Sensor/Bootloader are incremented inside UpgradeDeviceAsync
             // before each attempt. We only check here.
             bool actorOk =
-                !dev.isActorUpgradeNeeded || dev.ActorSuccess || dev.RetryCountActor < 2 * maxRetriesPerComponent;
+                !dev.isActorUpgradeNeeded || dev.ActorSuccess ||
+                (dev.RetryCountActor < 2 * maxRetriesPerComponent && dev.ActorCommErrCount < 2);
 
             bool bootOk =
                 !dev.upgradeBootloader || dev.BootloaderSuccess || dev.RetryCountBootloader < maxRetriesPerComponent;
