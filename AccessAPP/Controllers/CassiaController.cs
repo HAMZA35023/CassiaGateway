@@ -1073,6 +1073,8 @@ await Task.Delay(500); // Small delay before retrying
         /// Upload a firmware ZIP file with pattern like 353PK2A238A238A2380604A238A238A238.zip
         /// </summary>
         [HttpPost("firmware/upload")]
+        [Consumes("multipart/form-data")]
+        [Microsoft.AspNetCore.Mvc.ApiExplorerSettings(IgnoreApi = true)]
         public async Task<IActionResult> UploadFirmware([FromForm] IFormFile zipFile)
         {
             try

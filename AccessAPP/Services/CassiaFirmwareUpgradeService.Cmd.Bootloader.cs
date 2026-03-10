@@ -36,6 +36,10 @@ namespace AccessAPP.Services
         {
             if (RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase))
                 return CheckIfDeviceInBootModeLinux(nodeMac);
+#if WINDOWS
+            if (RuntimeVariables.BLE_BACKEND.Equals("windows-native", StringComparison.OrdinalIgnoreCase))
+                return CheckIfDeviceInBootModeWindows(nodeMac);
+#endif
 
             int chip = GetChipForMac(nodeMac);
             string endpoint = $"http://{gatewayIpAddress}/gatt/nodes/{nodeMac}/characteristics?chip={chip}";
@@ -230,6 +234,47 @@ namespace AccessAPP.Services
                 return false;
             }
         }
+
+#if WINDOWS
+        private bool CheckIfDeviceInBootModeWindows(string nodeMac)
+        {
+            var maxAttempts = Math.Max(1, RuntimeVariables.BOOTMODE_RETRY_COUNT);
+            var retryDelayMs = Math.Max(0, RuntimeVariables.BOOTMODE_RETRY_DELAY_MS);
+
+            for (int attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                try
+                {
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+
+                    // Fast path: mode already cached from GATT discovery during connect.
+                    var cached = AccessAPP.Services.WindowsBle.WindowsBleHelpers.GetCachedMode(nodeMac);
+                    if (cached != AccessAPP.Services.WindowsBle.WindowsBleHelpers.BleMode.Unknown)
+                        return cached == AccessAPP.Services.WindowsBle.WindowsBleHelpers.BleMode.Bootloader;
+
+                    // Cache miss: open/re-detect.
+                    var device = AccessAPP.Services.WindowsBle.WindowsBleHelpers
+                        .GetOrOpenDeviceAsync(nodeMac, cts.Token).GetAwaiter().GetResult();
+                    if (device == null) return false;
+
+                    var mode = AccessAPP.Services.WindowsBle.WindowsBleHelpers
+                        .DetectModeAsync(device, cts.Token).GetAwaiter().GetResult();
+                    return mode == AccessAPP.Services.WindowsBle.WindowsBleHelpers.BleMode.Bootloader;
+                }
+                catch (Exception ex) when (attempt < maxAttempts)
+                {
+                    AppLog.Warn($"CheckIfDeviceInBootModeWindows: attempt {attempt} failed for {nodeMac}: {ex.Message}");
+                    if (retryDelayMs > 0) Thread.Sleep(retryDelayMs);
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Error($"CheckIfDeviceInBootModeWindows: error for {nodeMac}", ex);
+                    return false;
+                }
+            }
+            return false;
+        }
+#endif
 
         public async Task<bool> ActorBootCheck(string gatewayIpAddress, string nodeMac)
         {

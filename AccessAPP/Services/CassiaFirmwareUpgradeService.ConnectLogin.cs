@@ -92,9 +92,10 @@ namespace AccessAPP.Services
             if (!RuntimeVariables.UPGRADE_CONNECT_LOGIN_USE_PER_CHIP_GATE)
                 return false;
 
-            // Linux-native connects are already adapter-aware; chip gating can
-            // serialize devices that are actually on different HCI adapters.
-            return !RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase);
+            // Native backends (linux/windows) handle their own device access serialisation;
+            // chip gating would unnecessarily serialize devices on different adapters.
+            return !RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase)
+                && !RuntimeVariables.BLE_BACKEND.Equals("windows-native", StringComparison.OrdinalIgnoreCase);
         }
 
         private static SemaphoreSlim GetConnectFlowGateForChip(int chip)

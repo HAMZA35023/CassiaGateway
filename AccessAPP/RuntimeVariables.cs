@@ -258,9 +258,14 @@ namespace AccessAPP
         public static int UPGRADE_PROGRAMMING_NOTIFICATION_WAIT_MS = 30000;
 
         // BLE backend selection.
-        // "cassia"       = use the Cassia gateway REST/SSE API (default).
-        // "linux-native" = use Linux BlueZ via D-Bus (Tmds.DBus) directly.
-        public static string BLE_BACKEND = "cassia";
+        // "auto"            = auto-detect: cassia (if GatewayConfiguration:IpAddress is set) → windows-native (Windows) → linux-native (Linux x64/ARM).
+        // "cassia"          = use the Cassia gateway REST/SSE API.
+        // "linux-native"    = use Linux BlueZ via D-Bus (Tmds.DBus) directly.
+        // "windows-native"  = use Windows.Devices.Bluetooth WinRT APIs directly (Windows only).
+        public static string BLE_BACKEND = "auto";
+
+        // Windows native BLE: MAC address prefix filter for scanning (empty = no filter).
+        public static string WINDOWS_BLE_MAC_PREFIX = "10:B9:F7";
 
         // Linux native BLE: HCI adapter name exposed by BlueZ (e.g. "hci0", "hci1").
         // Used as the default adapter for connections and as the fallback when LINUX_BLE_ADAPTERS is empty.

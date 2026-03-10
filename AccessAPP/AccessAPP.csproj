@@ -1,13 +1,20 @@
-﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+<Project Sdk="Microsoft.NET.Sdk.Web">
 
 	<PropertyGroup>
-		<TargetFramework>net8.0</TargetFramework>
+		<TargetFrameworks>net8.0-windows10.0.17763.0;net8.0</TargetFrameworks>
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<InvariantGlobalization>true</InvariantGlobalization>
 		<UserSecretsId>a3266c98-7486-4507-aa7a-8415b218daec</UserSecretsId>
 		<DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
 		<DockerfileContext>.</DockerfileContext>
+		<!-- Disable build-time swagger.json generation; Swagger UI works at runtime. -->
+		<OpenApiGenerateDocuments>false</OpenApiGenerateDocuments>
+	</PropertyGroup>
+
+	<!-- BootloaderUtilMultiThread.dll is a 32-bit native DLL; force x86 on Windows so it can load. -->
+	<PropertyGroup Condition="$(TargetFramework.StartsWith('net8.0-windows'))">
+		<PlatformTarget>x86</PlatformTarget>
 	</PropertyGroup>
 
 	<ItemGroup>

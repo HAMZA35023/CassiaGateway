@@ -103,6 +103,8 @@
     border-bottom: 1px solid #e0e0e0;
     text-align: left;
     vertical-align: top;
+    white-space: normal;
+    word-break: break-word;
   }
   
   .logs-table th {
@@ -160,7 +162,8 @@
     padding: 0.75rem;
     border: 1px solid #eee;
     text-align: left;
-    white-space: nowrap;
+    white-space: normal;
+    word-break: break-word;
   }
   
   .success {
