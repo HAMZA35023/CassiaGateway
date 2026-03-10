@@ -9,7 +9,12 @@ export interface FirmwareProgress {
   progress: number;
   status: string;
   lastUpdated: string;
-  showTick :  boolean;
+  showTick: boolean;
+  speedPctPerMin?: number | null;
+  targetFirmwareVersion?: string | null;
+  detectorType?: string | null;
+  /** Set when status is "Device Upgrade Completed." — values: "Success", "Failed", "Warn" */
+  finalResult?: string | null;
 }
 
 @Injectable({
