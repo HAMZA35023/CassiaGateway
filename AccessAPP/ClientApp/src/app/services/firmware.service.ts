@@ -62,17 +62,26 @@ export class FirmwareService {
     return this.apiService.mapFirmwareToDetectors(firmwareVersion, detectorTypes);
   }
 
-  bulkSensorUpgrade(devices: any[], selectedFwVersion: string): Observable<any> {
+  bulkSensorUpgrade(devices: any[], forceUpdate: boolean = false): Observable<any> {
     const payload = devices.map(d => ({
       MacAddress: d.mac,
       Pincode: d.pin ?? '',
       bActor: false,
       DetctorType: d.version,
       FirmwareVersion: d.selectedFirmware,
-      CurrentFirmwareVersion: d.sensorVersion
+      CurrentFirmwareVersion: d.sensorVersion,
+      ForceUpdate: forceUpdate
     }));
 
     return this.apiService.bulkDeviceUpgrade(payload);
+  }
+
+  removeFromQueue(mac: string): Observable<any> {
+    return this.apiService.removeFromQueue(mac);
+  }
+
+  clearQueue(): Observable<any> {
+    return this.apiService.clearQueue();
   }
 
   connectToDevices(macAddresses: string[]): Observable<any> {

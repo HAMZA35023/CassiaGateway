@@ -1,946 +1,829 @@
 <app-tabs></app-tabs>
 
-<div class="loader-overlay" *ngIf="isLoading">
-  <div class="dots-loader">
-    <span></span><span></span><span></span>
-  </div>
+<div class="loader-overlay" *ngIf="isLoading && activeTab === 'devices'">
+  <div class="dots-loader"><span></span><span></span><span></span></div>
 </div>
 
 <div class="dashboard-wrapper">
-  <h1 class="dashboard-title">Detector Upgrades</h1>
+  <div class="dashboard-header">
+    <h1 class="dashboard-title">Detector Upgrades</h1>
+    <button class="settings-btn" (click)="setTab('runtime')" title="Runtime Variables"
+      [class.settings-btn-active]="activeTab === 'runtime'">⚙</button>
+  </div>
 
-  <div class="filters">
-    <!-- <div class="form-group">
-      <label for="upgradeType">Upgrade Type:</label>
-      <select [(ngModel)]="upgradeType" class="dropdown">
-        <option>BootLoader</option>
-        <option>Sensor</option>
-        <option>Actor</option>
-        <option>BootLoader - Sensor</option>
+  <!-- ── Tab bar ─────────────────────────────────────────────────────── -->
+  <div class="inner-tab-bar">
+    <button class="inner-tab" [class.active]="activeTab === 'devices'" (click)="setTab('devices')">
+      Devices <span class="tab-count" *ngIf="devices.length">{{ devices.length }}</span>
+    </button>
+    <button class="inner-tab" [class.active]="activeTab === 'queue'" (click)="setTab('queue')">
+      Queue <span class="tab-count" *ngIf="queueItems.length">{{ queueItems.length }}</span>
+    </button>
+    <button class="inner-tab" [class.active]="activeTab === 'log'" (click)="setTab('log')">
+      Log <span class="tab-count" *ngIf="logEntries.length">{{ logEntries.length }}</span>
+    </button>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════ -->
+  <!-- DEVICES TAB                                                        -->
+  <!-- ══════════════════════════════════════════════════════════════════ -->
+  <div *ngIf="activeTab === 'devices'">
+
+    <!-- Firmware selector cards -->
+    <div class="fw-cards">
+      <div *ngFor="let row of allTypeRows; trackBy: trackByType"
+           class="fw-card" [class.fw-card-off]="!selectedTypeFlags[row.type]">
+        <div class="fw-card-top">
+          <label class="fw-card-check" [title]="row.inManifest ? 'Include in upgrade' : 'No firmware available'">
+            <input type="checkbox" [(ngModel)]="selectedTypeFlags[row.type]"
+              (change)="onTypeToggle(row.type)" [disabled]="!row.inManifest" />
+            <span class="type-badge" [class.type-badge-unknown]="!row.inManifest">{{ row.type }}</span>
+          </label>
+          <span class="fw-card-count" [title]="row.count + ' device(s) of this type'">{{ row.count }}</span>
+        </div>
+        <select *ngIf="row.inManifest && firmwareMap[row.type]?.length"
+          [(ngModel)]="selectedFirmwareByType[row.type]"
+          [disabled]="!selectedTypeFlags[row.type]"
+          class="fw-select">
+          <option *ngFor="let fw of firmwareMap[row.type]" [value]="fw">{{ fw }}</option>
+        </select>
+        <span *ngIf="!row.inManifest" class="no-fw-text">No firmware</span>
+      </div>
+      <div *ngIf="!allTypeRows.length" class="fw-card fw-card-empty">No detector types found</div>
+    </div>
+
+    <!-- Device toolbar -->
+    <div class="device-toolbar">
+      <input type="text" [(ngModel)]="searchTerm" (ngModelChange)="filterDevicesByAllCriteria()"
+        placeholder="Search MAC…" class="search-input" />
+
+      <select [(ngModel)]="minRssiFilter" (ngModelChange)="onRssiFilterChange()" class="rssi-select">
+        <option *ngFor="let opt of rssiOptions" [value]="opt.value">{{ opt.label }}</option>
       </select>
-    </div> -->
 
-    <div class="tooltip-wrapper">
-      <div #firmwareDropdown class="firmware-dropdown-container">
-        <button
-          class="firmware-button"
-          (click)="toggleFirmwarePanel()"
-          title="">
-          Upgrade To Firmware ▾
-        </button>
+      <label class="force-label" title="Force upgrade even if firmware version already matches">
+        <input type="checkbox" [(ngModel)]="forceUpdate" />
+        Force
+      </label>
 
-        <span class="tooltip-text">Select firmware for detector type you want to upgrade.</span>
+      <button class="upgrade-button-glow" (click)="addToQueue()" [disabled]="!selectedCount">
+        Add to Queue{{ selectedCount ? ' (' + selectedCount + ')' : '' }}
+      </button>
 
-        <div class="firmware-panel" *ngIf="showFirmwarePanel">
-          <div *ngFor="let type of detectorTypesInUse" class="accordion-group">
-            <div class="accordion-header">
-              <label
-                [title]="selectedTypeFlags[type] ? 'Deselect if you don\'t want to upgrade this detector type' : 'Select to include this detector type for upgrade'">
-                <input type="checkbox"
-                      [(ngModel)]="selectedTypeFlags[type]"
-                      (change)="onTypeToggle()" />
-                {{ type }}
-              </label>
-              <span class="chevron" (click)="toggleExpanded(type)">
-                {{ expandedGroups[type] ? '▾' : '▸' }}
+      <button class="upgrade-button-glow fetch-fw-btn" (click)="fetchFirmwareForSelectedDevices()"
+        [disabled]="!selectedCount">
+        Fetch FW Ver.
+      </button>
+    </div>
+
+    <!-- Device table -->
+    <div class="table-container">
+      <table class="device-table">
+        <thead>
+          <tr>
+            <th style="width:28px">
+              <input type="checkbox" [checked]="areAllSelected()" (change)="onMasterCheckboxChange($event)"
+                title="Select/Deselect all" />
+            </th>
+            <th style="width:34px" title="Add to queue"></th>
+            <th style="width:18px"></th>
+            <th>Name</th>
+            <th>MAC Address</th>
+            <th>Type</th>
+            <th>FW Version</th>
+            <th>RSSI</th>
+            <th>Status</th>
+            <th>Progress</th>
+            <th style="width:30px"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let device of filteredDevices | filterByMac: searchTerm; trackBy: trackByMac"
+              [class.selected-row]="device.selected"
+              [ngClass]="'row-' + getRowColor(device)">
+            <!-- Checkbox -->
+            <td>
+              <input type="checkbox" [(ngModel)]="device.selected" (change)="onDeviceClick(device, $event)" />
+            </td>
+            <!-- +Q button -->
+            <td>
+              <button class="action-btn queue-btn"
+                (click)="addSingleToQueue(device)"
+                title="Add to upgrade queue">+Q</button>
+            </td>
+            <!-- Lock -->
+            <td>
+              <span class="lock-icon" [title]="device.isLocked ? 'Locked' : 'Unlocked'">
+                {{ device.isLocked ? '🔒' : '' }}
               </span>
-            </div>
+            </td>
+            <!-- Name -->
+            <td>{{ device.Name }}</td>
+            <!-- MAC -->
+            <td class="mac-cell">{{ device.mac }}</td>
+            <!-- Det. Type -->
+            <td>
+              <span class="type-badge" [class.type-badge-unknown]="device.version === 'Unknown'"
+                [title]="device.productNumber || device.version">
+                {{ device.version }}
+              </span>
+            </td>
+            <!-- FW Version -->
+            <td>
+              <ng-container *ngIf="extractAppVersion(device.sensorVersion) as appVer">
+                <a href="#" (click)="refreshFirmwareVersion(device, $event)" class="firmware-link" title="Click to refresh">
+                  {{ appVer }}
+                </a>
+              </ng-container>
+              <ng-container *ngIf="!device.sensorVersion && !device.isFirmwareLoading">
+                <a href="#" (click)="refreshFirmwareVersion(device, $event)" class="firmware-link missing" title="Click to fetch">
+                  Fetch
+                </a>
+              </ng-container>
+              <ng-container *ngIf="device.isFirmwareLoading">
+                <span class="loading-text">Fetching…</span>
+              </ng-container>
+            </td>
+            <!-- RSSI -->
+            <td [class.rssi-weak]="device.rssi != null && device.rssi < -80"
+                [class.rssi-ok]="device.rssi != null && device.rssi >= -75">
+              {{ device.rssi ?? '–' }}
+            </td>
+            <!-- Status -->
+            <td>
+              <ng-container *ngIf="progressMap[device.mac] as prog">
+                <span *ngIf="prog.progress > 0 && prog.progress < 100"
+                  class="dev-status-text" [title]="prog.status">{{ prog.status }}</span>
+                <span *ngIf="prog.status === 'Queued'" class="dev-status-queued">Queued</span>
+              </ng-container>
+            </td>
+            <!-- Progress -->
+            <td>
+              <ng-container *ngIf="progressMap[device.mac] as prog">
+                <ng-container *ngIf="prog.progress > 0 && prog.progress < 100">
+                  <div class="inline-progress">
+                    <div class="inline-bar" [style.width.%]="prog.progress"></div>
+                    <span class="inline-pct">{{ prog.progress | number:'1.0-0' }}%</span>
+                  </div>
+                  <div *ngIf="prog.speedPctPerMin != null" class="inline-speed">
+                    {{ prog.speedPctPerMin | number:'1.1-1' }} %/min
+                  </div>
+                </ng-container>
+              </ng-container>
+            </td>
+            <!-- Identify -->
+            <td>
+              <button class="action-btn identify-btn"
+                (click)="identifyDevice(device)"
+                [disabled]="identifyingMacs.has(device.mac)"
+                title="Identify device (LED flash)">
+                <span *ngIf="identifyingMacs.has(device.mac)">⏳</span>
+                <span *ngIf="!identifyingMacs.has(device.mac)">💡</span>
+              </button>
+            </td>
+          </tr>
+          <tr *ngIf="!filteredDevices.length">
+            <td colspan="11" class="empty-row">No devices found</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
 
-            <div class="accordion-body"
-                *ngIf="expandedGroups[type] && selectedTypeFlags[type]"
-                title="Select the firmware version">
-              <label *ngFor="let fw of firmwareMap[type]" class="radio-option" title="Select firmware version for {{ type }}">
-                <input
-                  type="radio"
-                  name="firmware-{{ type }}"
-                  [value]="fw"
-                  [(ngModel)]="selectedFirmwareByType[type]"
-                />
-                {{ fw }}
-              </label>
-            </div>
-          </div>
+  <!-- ══════════════════════════════════════════════════════════════════ -->
+  <!-- QUEUE TAB                                                          -->
+  <!-- ══════════════════════════════════════════════════════════════════ -->
+  <div *ngIf="activeTab === 'queue'">
+    <div class="queue-toolbar">
+      <span class="queue-count">{{ queueItems.length }} item(s)</span>
+      <button class="upgrade-button-glow danger-btn" (click)="clearQueue()" [disabled]="!queueItems.length"
+        title="Remove all pending (Queued) items">
+        Clear Pending
+      </button>
+    </div>
+
+    <div class="table-container">
+      <table class="device-table">
+        <thead>
+          <tr>
+            <th>MAC Address</th>
+            <th>Type</th>
+            <th>Target FW</th>
+            <th>Current Status</th>
+            <th>Progress</th>
+            <th>Speed</th>
+            <th>Updated</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let item of queueItems; trackBy: trackByMac">
+            <td class="mac-cell">{{ item.macAddress }}</td>
+            <td>
+              <span *ngIf="item.detectorType" class="type-badge">{{ item.detectorType }}</span>
+              <span *ngIf="!item.detectorType">–</span>
+            </td>
+            <td class="fw-ver-cell">
+              {{ item.targetFirmwareVersion || '–' }}
+            </td>
+            <td class="status-cell">
+              <span *ngIf="item.status === 'Queued'" class="status-pill pill-queued">⏳ Queued</span>
+              <span *ngIf="item.status !== 'Queued'" class="status-text" [title]="item.status">{{ item.status }}</span>
+            </td>
+            <td>
+              <div *ngIf="item.progress > 0" class="progress-wrapper">
+                <div class="progress-bar" [style.width.%]="item.progress">
+                  {{ item.progress | number:'1.0-0' }}%
+                </div>
+              </div>
+              <span *ngIf="item.status === 'Queued' || item.progress === 0" class="muted">–</span>
+            </td>
+            <td class="speed-cell">
+              <span *ngIf="item.speedPctPerMin != null">{{ item.speedPctPerMin | number:'1.1-1' }} %/min</span>
+              <span *ngIf="item.speedPctPerMin == null" class="muted">–</span>
+            </td>
+            <td class="time-cell">{{ item.lastUpdated | date:'HH:mm:ss' }}</td>
+            <td>
+              <button *ngIf="canRemoveFromQueue(item)" class="remove-btn" (click)="removeFromQueue(item.macAddress)"
+                title="Remove from queue">✕</button>
+            </td>
+          </tr>
+          <tr *ngIf="!queueItems.length">
+            <td colspan="8" class="empty-row">Queue is empty</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════ -->
+  <!-- LOG TAB                                                            -->
+  <!-- ══════════════════════════════════════════════════════════════════ -->
+  <div *ngIf="activeTab === 'log'">
+    <div class="queue-toolbar">
+      <span class="queue-count">{{ logEntries.length }} entr(ies)</span>
+      <button class="upgrade-button-glow" (click)="clearLog()" [disabled]="!logEntries.length">Clear</button>
+      <button class="upgrade-button-glow" (click)="viewLogs()" title="View detailed application logs">
+        View App Logs
+      </button>
+    </div>
+
+    <div class="table-container">
+      <table class="device-table">
+        <thead>
+          <tr>
+            <th>MAC Address</th>
+            <th>Type</th>
+            <th>Target FW</th>
+            <th>Result</th>
+            <th>Progress</th>
+            <th>Time</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let entry of logEntries; trackBy: trackByMac"
+              [ngClass]="{
+                'log-success': entry.finalResult === 'Success',
+                'log-warn':    entry.finalResult === 'Warn',
+                'log-failed':  entry.finalResult === 'Failed'
+              }">
+            <td class="mac-cell">{{ entry.macAddress }}</td>
+            <td>
+              <span *ngIf="entry.detectorType" class="type-badge">{{ entry.detectorType }}</span>
+              <span *ngIf="!entry.detectorType">–</span>
+            </td>
+            <td class="fw-ver-cell">{{ entry.targetFirmwareVersion || '–' }}</td>
+            <td>
+              <span class="status-pill"
+                [class.pill-success]="entry.finalResult === 'Success'"
+                [class.pill-warn]="entry.finalResult === 'Warn'"
+                [class.pill-failed]="entry.finalResult === 'Failed'">
+                {{ getLogResult(entry) }}
+              </span>
+            </td>
+            <td>
+              <div *ngIf="entry.finalResult === 'Success'" class="tick-circle-wrapper">
+                <div class="tick-circle-outline">✔</div>
+              </div>
+              <div *ngIf="entry.finalResult === 'Warn'" class="tick-circle-wrapper">
+                <div class="tick-circle-outline warn-circle">⚠</div>
+              </div>
+              <div *ngIf="entry.finalResult === 'Failed'" class="progress-wrapper failed">
+                <div class="progress-bar progress-failed" [style.width.%]="100">Failed</div>
+              </div>
+            </td>
+            <td class="time-cell">{{ entry.lastUpdated | date:'HH:mm:ss' }}</td>
+          </tr>
+          <tr *ngIf="!logEntries.length">
+            <td colspan="6" class="empty-row">No completed upgrades yet</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════ -->
+  <!-- RUNTIME TAB                                                        -->
+  <!-- ══════════════════════════════════════════════════════════════════ -->
+  <div *ngIf="activeTab === 'runtime'">
+    <div class="queue-toolbar">
+      <button class="upgrade-button-glow" (click)="setTab('devices')" style="padding:0.3rem 0.8rem;font-size:0.85rem">← Back</button>
+      <span class="queue-count" style="font-weight:600;color:#333">Runtime Variables</span>
+      <button class="upgrade-button-glow" (click)="saveRuntimeVars()" [disabled]="runtimeSaving">
+        {{ runtimeSaving ? 'Saving…' : 'Save Changes' }}
+      </button>
+      <button class="upgrade-button-glow" (click)="loadRuntimeVars()">Reload</button>
+      <span *ngIf="runtimeSaveResult" class="save-result"
+        [class.save-ok]="runtimeSaveResult.startsWith('Saved') && !runtimeSaveResult.includes('error')"
+        [class.save-err]="runtimeSaveResult.includes('fail') || runtimeSaveResult.includes('error')">
+        {{ runtimeSaveResult }}
+      </span>
+    </div>
+
+    <div *ngIf="!runtimeVarKeyList.length" class="empty-row" style="padding:2rem;text-align:center">
+      No runtime variables loaded. Click <strong>Reload</strong>.
+    </div>
+
+    <div class="runtime-grid">
+      <div *ngFor="let key of runtimeVarKeyList; trackBy: trackByKey" class="runtime-row">
+        <label class="runtime-key" [title]="key">{{ key }}</label>
+        <div class="runtime-value">
+          <input *ngIf="getRuntimeVarType(key) === 'bool'" type="checkbox"
+            [(ngModel)]="runtimeVars[key]" class="runtime-checkbox" />
+          <input *ngIf="getRuntimeVarType(key) === 'number'" type="number"
+            [(ngModel)]="runtimeVars[key]" class="runtime-input" />
+          <input *ngIf="getRuntimeVarType(key) === 'string'" type="text"
+            [(ngModel)]="runtimeVars[key]" class="runtime-input" />
         </div>
       </div>
     </div>
-
-    <div class="table-header">
-      <div class="tooltip-wrapper">
-        <input
-          type="text"
-          [(ngModel)]="searchTerm"
-          (ngModelChange)="filterDevicesByAllCriteria()"
-          placeholder="MAC Address"
-          title=""
-          class="search-input"
-          style="width: 250px;"
-        />
-        <span class="tooltip-text">Search by full or partial MAC address</span>
-      </div>
-
-      <div class="tooltip-wrapper">
-        <button class="upgrade-button-glow" (click)="upgrade()">
-          Upgrade
-        </button>
-        <span class="tooltip-text">Begin upgrade for selected detectors with selected firmware</span>
-      </div>
-
-      <div class="tooltip-wrapper">
-        <button class="upgrade-button-glow fetch-fw-btn" (click)="fetchFirmwareForSelectedDevices()">
-          Fetch FW Ver.
-        </button>
-        <span class="tooltip-text">Fetch firmware version for all selected detectors</span>
-      </div>
-
-      <div class="tooltip-wrapper">
-        <button class="upgrade-button-glow connect-btn" (click)="connectSelectedDevices()">
-          Connect
-        </button>
-        <span class="tooltip-text">Connect to all selected detectors</span>
-      </div>
-
-      <div class="tooltip-wrapper">
-        <button class="upgrade-button-glow disconnect-btn" (click)="disconnectSelectedDevices()">
-          Disconnect
-        </button>
-        <span class="tooltip-text">Disconnect from all selected detectors</span>
-      </div>
-    </div>
   </div>
 
-  <div class="table-container">
-    <table class="device-table">
-      <thead>
-        <tr>
-          <th>
-            <input
-              type="checkbox"
-              [checked]="areAllSelected()"
-              (change)="onMasterCheckboxChange($event)"
-              title="Select/Deselect all devices"
-            />
-          </th>
-          <th></th>
-          
-          <th>Name</th>
-          <th>Product Number</th>
-          <th>Mac Address</th>
-          <th>Detector Type</th>
-          <th>Firmware Version</th>
-          <th>RSSI</th>
-          <th>Status</th>
-          <th>Connection</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr
-          *ngFor="let device of filteredDevices | filterByMac: searchTerm; let i = index"
-          [class.selected-row]="device.selected">
-          <td>
-            <input
-              type="checkbox"
-              [(ngModel)]="device.selected"
-              (change)="onDeviceClick(device, $event)"
-              title="Select this device"
-            />
-          </td>
-          <td>
-            <span
-              class="lock-icon"
-              [title]="device.isLocked ? 'Locked' : 'Unlocked'">
-              {{ device.isLocked ? '🔒' : '' }}
-            </span>
-          </td>
-          <td>{{ device.Name }}</td>
-          <td>{{ device.productNumber}}</td>
-          <td>{{ device.mac }}</td>
-          <td>{{ device.version }}</td>
-         <td>
-            <ng-container *ngIf="extractAppVersion(device.sensorVersion) as appVer">
-              <a
-                href="#"
-                (click)="refreshFirmwareVersion(device, $event)"
-                class="firmware-link"
-                title="Click to refresh firmware version">
-                {{ appVer }}
-              </a>
-            </ng-container>
-
-            <ng-container *ngIf="!device.sensorVersion && !device.isFirmwareLoading">
-              <a
-                href="#"
-                (click)="refreshFirmwareVersion(device, $event)"
-                class="firmware-link missing"
-                title="Click to fetch firmware version">
-                Fetch
-              </a>
-            </ng-container>
-
-            <ng-container *ngIf="device.isFirmwareLoading">
-              <span title="Loading..."> Fetching</span>
-            </ng-container>
-          </td>
-
-
-          <td>{{ device.rssi ?? '-' }}</td>
-          
-          <!-- <td>
-            <ng-container *ngIf="progressMap[device.mac] != null">
-              <div class="progress-wrapper">
-                <div class="progress-fill" [style.width.%]="progressMap[device.mac]"></div>
-                <div class="progress-text">{{ progressMap[device.mac] | number: '1.0-0' }}%</div>
-              </div>
-            </ng-container>
-          </td> -->
-
-
-         <td>
-          <!-- ✅ Show queued icon if explicitly queued and progress is still 0 -->
-          <ng-container *ngIf="progressMap[device.mac]?.status === 'Queued' && progressMap[device.mac]?.progress === 0; else showProgress">
-            <div class="queued-circle-wrapper">
-              <div class="queued-circle">⏳</div>
-            </div>
-          </ng-container>
-
-          <!-- ✅ Show actual progress and result -->
-          <ng-template #showProgress>
-            <ng-container *ngIf="progressMap[device.mac] as info">
-              <ng-container *ngIf="info.status === 'Failed'; else successOrInProgress">
-                <div class="progress-wrapper failed">
-                  <div class="progress-bar progress-failed" [style.width.%]="info.progress">
-                    {{ info.progress | number: '1.0-0' }}%
-                  </div>
-                </div>
-                <div class="progress-error-text">
-                  Programming failed.
-                  <a [routerLink]="['/logs-dashboard']" class="view-logs-link">View logs</a>
-                </div>
-              </ng-container>
-
-              <ng-template #successOrInProgress>
-                <div class="progress-wrapper" *ngIf="info.progress > 0 && info.progress < 100">
-                  <div class="progress-bar" [style.width.%]="info.progress">
-                    {{ info.progress | number: '1.0-0' }}%
-                  </div>
-                </div>
-
-                <div *ngIf="info.progress === 100" class="progress-delay-container">
-                  <div class="tick-circle-wrapper">
-                    <div class="tick-circle-outline">✔</div>
-                  </div>
-                </div>
-              </ng-template>
-            </ng-container>
-          </ng-template>
-        </td>
-
-        <td>
-          <div class="connection-actions">
-            <div class="status-badge" [ngClass]="{
-              'status-connected': device.isConnected,
-              'status-disconnected': !device.isConnected && !device.isConnecting && !device.isDisconnecting,
-              'status-loading': device.isConnecting || device.isDisconnecting
-            }">
-              <div class="status-dot"></div>
-              <span class="status-text">{{ device.connectionStatus || 'Disconnected' }}</span>
-            </div>
-            
-            <div class="connection-buttons">
-              <button 
-                class="connection-btn connect-btn-small"
-                (click)="connectToDevice(device)"
-                [disabled]="device.isConnecting || device.isDisconnecting"
-                *ngIf="!device.isConnected"
-                title="Connect to this device">
-                <span *ngIf="device.isConnecting">⏳</span>
-                <span *ngIf="!device.isConnecting">🔌</span>
-              </button>
-              
-              <button 
-                class="connection-btn disconnect-btn-small"
-                (click)="disconnectFromDevice(device)"
-                [disabled]="device.isConnecting || device.isDisconnecting"
-                *ngIf="device.isConnected"
-                title="Disconnect from this device">
-                <span *ngIf="device.isDisconnecting">⏳</span>
-                <span *ngIf="!device.isDisconnecting">🔌⚡</span>
-              </button>
-            </div>
-          </div>
-        </td>
-
-        </tr>
-      </tbody>
-    </table>
-  </div>
-
-  <app-confirmation-modal
-    [showConfirmation]="showConfirmation"
-    [pendingDevices]="pendingDevices"
-    (onConfirm)="confirmUpgrade()"
-    (onCancel)="cancelUpgrade()">
-  </app-confirmation-modal>
 </div>
-  
-  
-  <!-- Enhanced Modern Styling -->
-  <style>
- body {
-  margin: 0;
-  background-size: cover;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-}
+
+<app-confirmation-modal
+  [showConfirmation]="showConfirmation"
+  [pendingDevices]="pendingDevices"
+  (onConfirm)="confirmUpgrade()"
+  (onCancel)="cancelUpgrade()">
+</app-confirmation-modal>
+
+
+<style>
+body { margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
 
 .dashboard-wrapper {
-  background-color: rgba(255, 255, 255, 0.9);
+  background-color: rgba(255,255,255,0.9);
   margin: 2rem;
   border-radius: 12px;
   padding: 2rem;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
 }
 
-.dashboard-title {
-  font-size: 2.5rem;
-  font-weight: 700;
-  color: #333;
-  margin-bottom: 2.5rem;
-}
-
-.filters {
+.dashboard-header {
   display: flex;
-  flex-wrap: wrap;
-  gap: 1.5rem;
   align-items: center;
-  margin-bottom: 2rem;
+  justify-content: space-between;
+  margin-bottom: 1.5rem;
 }
-
-.form-group label {
-  font-weight: 600;
-  margin-right: 0.5rem;
-  font-size: 1rem;
-}
-
-.dropdown {
-  padding: 0.5rem 1rem;
-  border-radius: 6px;
-  border: 1px solid #ccc;
-  background-color: #f8f8f8;
-  font-size: 1rem;
-  transition: all 0.3s ease;
-}
-
-.dropdown:hover {
-  border-color: #888;
-  background-color: #fff;
-}
-
-.table-container {
-  overflow-x: auto;
-}
-
-.device-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 1rem;
-  background: white;
+.dashboard-title { font-size: 2.5rem; font-weight: 700; color: #333; margin: 0; }
+.settings-btn {
+  background: none;
+  border: 1px solid transparent;
   border-radius: 8px;
-  overflow: hidden;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
-}
-
-/* ✅ Center all cells */
-.device-table th,
-.device-table td {
-  padding: 5px;
-  text-align: center;
-  vertical-align: middle;
-  border-bottom: 1px solid #eaeaea;
-}
-
-/* ✅ Force inner content to center too */
-.device-table td > div,
-.device-table td > span {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.device-table th {
-  background-color: #f2f2f2;
-  color: #333;
-  font-weight: 600;
-  text-transform: uppercase;
-}
-
-.device-table tr:hover {
-  background-color: #f9f9f9;
-}
-
-tr.selected-row {
-  background-color: #e6f7ff;
-}
-
-.table-header {
-  display: flex;
-  justify-content: flex-start;
-  align-items: center;
-  gap: 1rem;
-}
-
-.upgrade-button {
-  background-color: #007bff;
-  color: white;
-  padding: 0.6rem 1.2rem;
-  font-size: 1rem;
-  border: none;
-  border-radius: 6px;
+  font-size: 1.4rem;
+  color: #bbb;
   cursor: pointer;
-  transition: background-color 0.3s ease;
+  padding: 4px 8px;
+  transition: all 0.2s;
+  line-height: 1;
 }
+.settings-btn:hover { color: #666; border-color: #ddd; background: #f5f5f5; }
+.settings-btn-active { color: #007bff; border-color: #90cdf4; background: #eff6ff; }
 
-.upgrade-button:hover {
-  background-color: #0056b3;
-}
-
-.tab-container {
+/* ── Inner tab bar ── */
+.inner-tab-bar {
   display: flex;
-  margin: 2rem;
-  border-bottom: 2px solid #ccc;
+  gap: 0;
+  margin-bottom: 1.5rem;
+  border-bottom: 2px solid #ddd;
 }
-
-.tab {
-  padding: 0.75rem 2rem;
-  border: 1px solid #ccc;
+.inner-tab {
+  padding: 0.6rem 1.4rem;
+  background: #f5f5f5;
+  border: 1px solid #ddd;
   border-bottom: none;
-  background: #f1f1f1;
   cursor: pointer;
-  font-weight: 500;
-  transition: background 0.3s ease, border-color 0.3s ease;
+  font-size: 0.95rem;
+  font-family: inherit;
+  transition: background 0.2s;
 }
-
-.tab:not(:last-child) {
-  border-right: none;
-}
-
-.tab.active {
+.inner-tab:not(:last-child) { border-right: none; }
+.inner-tab.active {
   background: white;
   border-top: 3px solid #007bff;
-  border-left: 1px solid #ccc;
-  border-right: 1px solid #ccc;
   font-weight: 600;
   color: #007bff;
 }
-
-.tab:hover {
-  background: #e7e7e7;
+.inner-tab:hover:not(.active) { background: #e9e9e9; }
+.tab-count {
+  background: #007bff;
+  color: white;
+  border-radius: 9999px;
+  font-size: 0.7rem;
+  padding: 1px 6px;
+  margin-left: 5px;
+  font-weight: 700;
 }
 
-.modal-backdrop {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background-color: rgba(0, 0, 0, 0.4);
+/* ── Firmware cards ── */
+.fw-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 1.2rem;
+}
+.fw-card {
+  background: #fafafa;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  min-width: 150px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: opacity 0.2s;
+}
+.fw-card-off { opacity: 0.45; }
+.fw-card-empty { color: #aaa; font-style: italic; font-size: 0.85rem; align-items: center; justify-content: center; }
+.fw-card-top {
   display: flex;
   align-items: center;
-  justify-content: center;
-  z-index: 999;
+  justify-content: space-between;
+  gap: 6px;
 }
-
-.modal-box {
-  background: white;
-  padding: 2rem;
-  border-radius: 12px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-  text-align: center;
-  width: 360px;
+.fw-card-check {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
 }
-
-.modal-box h3 {
-  margin-top: 0;
-  font-size: 1.5rem;
-  margin-bottom: 0.75rem;
+.fw-card-count {
+  font-size: 0.72rem;
+  color: #888;
+  background: #eee;
+  border-radius: 9999px;
+  padding: 1px 7px;
+  font-weight: 600;
 }
-
-.modal-box p {
-  font-size: 1rem;
-  margin-bottom: 1.5rem;
+.fw-select {
+  padding: 3px 6px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  width: 100%;
+  cursor: pointer;
 }
+.no-fw-text { color: #aaa; font-style: italic; font-size: 0.82rem; }
 
-.ok-btn {
-  background-color: #007bff;
-  color: white;
-  padding: 0.6rem 1.4rem;
-  font-size: 1rem;
-  border: none;
+/* ── Type badges ── */
+.type-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: #dbeafe;
+  color: #1e40af;
+  white-space: nowrap;
+}
+.type-badge-unknown { background: #f3f4f6; color: #6b7280; }
+
+/* ── Device toolbar ── */
+.device-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+.search-input {
+  padding: 0.4rem 0.6rem 0.4rem 2rem;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='gray' viewBox='0 0 24 24'%3E%3Cpath d='M21 20l-4.35-4.35a7.5 7.5 0 1 0-1.4 1.4L20 21zM10.5 17a6.5 6.5 0 1 1 0-13 6.5 6.5 0 0 1 0 13z'/%3E%3C/svg%3E") no-repeat 6px center;
+  background-size: 14px;
+  border: 1px solid #ccc;
   border-radius: 6px;
+  font-size: 0.9rem;
+  width: 200px;
+  height: 34px;
+}
+.rssi-select {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  height: 34px;
   cursor: pointer;
 }
 
-.ok-btn:hover {
-  background-color: #0056b3;
+/* ── Force checkbox ── */
+.force-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+  user-select: none;
+  color: #444;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #fafafa;
+}
+.force-label input { cursor: pointer; }
+
+/* ── Table ── */
+.table-container { overflow-x: auto; }
+.device-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  background: white;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+}
+.device-table th, .device-table td {
+  padding: 5px 8px;
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: 1px solid #eaeaea;
+}
+.device-table th {
+  background-color: #f2f2f2;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  color: #333;
+}
+.device-table tr:hover { background-color: rgba(0,0,0,0.02); }
+.mac-cell { font-family: monospace; font-size: 0.85rem; }
+.fw-ver-cell { font-family: monospace; font-size: 0.82rem; color: #444; }
+.time-cell { font-size: 0.82rem; color: #666; white-space: nowrap; }
+.speed-cell { font-size: 0.82rem; color: #555; white-space: nowrap; }
+.status-cell { max-width: 220px; }
+.status-text { font-size: 0.82rem; color: #333; }
+.muted { color: #bbb; }
+.empty-row { color: #aaa; font-style: italic; padding: 2rem 0; text-align: center; }
+
+/* ── Row colors (WPF-style) ── */
+tr.row-queued  { background-color: rgba(96, 165, 250, 0.16) !important; }
+tr.row-failed  { background-color: rgba(231, 76,  60,  0.4)  !important; }
+tr.row-success { background-color: rgba(34,  197, 94,  0.4)  !important; }
+tr.row-warn    { background-color: rgba(250, 204, 21,  0.16) !important; }
+tr.row-nofwread{ background-color: rgba(6,   182, 212, 0.16) !important; }
+tr.selected-row { background-color: #e6f7ff !important; }
+
+/* ── RSSI coloring ── */
+td.rssi-weak { color: #dc2626; font-weight: 600; }
+td.rssi-ok   { color: #16a34a; }
+
+/* ── In-row status indicators ── */
+.dev-status-text {
+  font-size: 0.78rem;
+  color: #1e40af;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
+  display: inline-block;
+}
+.dev-status-queued {
+  font-size: 0.78rem;
+  color: #92400e;
+  background: #fef3c7;
+  padding: 1px 6px;
+  border-radius: 9999px;
 }
 
+/* ── Inline progress bar (device table) ── */
+.inline-progress {
+  position: relative;
+  width: 80px;
+  height: 14px;
+  background: #e5e7eb;
+  border-radius: 7px;
+  overflow: hidden;
+}
+.inline-bar {
+  position: absolute;
+  top: 0; left: 0;
+  height: 100%;
+  background: #3b82f6;
+  border-radius: 7px;
+  transition: width 0.4s ease-in-out;
+}
+.inline-pct {
+  position: absolute;
+  width: 100%;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: #1e3a5f;
+  line-height: 14px;
+  mix-blend-mode: multiply;
+}
+.inline-speed { font-size: 0.72rem; color: #6b7280; margin-top: 2px; white-space: nowrap; }
+
+/* ── Action buttons ── */
+.action-btn {
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 3px 7px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  transition: all 0.15s;
+}
+.action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.identify-btn { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
+.identify-btn:hover:not(:disabled) { background: #fde68a; }
+.queue-btn { background: #dbeafe; color: #1e40af; border: 1px solid #93c5fd; font-weight: 600; font-size: 0.78rem; }
+.queue-btn:hover:not(:disabled) { background: #bfdbfe; }
+
+/* ── Lock icon ── */
+.lock-icon { font-size: 13px; width: 1.2em; text-align: center; display: inline-block; }
+
+/* ── Queue toolbar ── */
+.queue-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+.queue-count { color: #555; font-size: 0.9rem; }
+
+/* ── Buttons ── */
 .upgrade-button-glow {
   background: linear-gradient(135deg, #dbeafe, #bfdbfe);
   color: #003c8f;
-  padding: 0.6rem 1.4rem;
-  font-size: 1rem;
+  padding: 0.5rem 1.2rem;
+  font-size: 0.9rem;
   border: 1px solid #90cdf4;
-  border-radius: 10px;
+  border-radius: 8px;
   cursor: pointer;
-  transition: all 0.3s ease;
-  box-shadow: 0 2px 6px rgba(0, 123, 255, 0.1);
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 6px rgba(0,123,255,0.08);
+  font-family: inherit;
 }
-
-.upgrade-button-glow:hover {
+.upgrade-button-glow:hover:not(:disabled) {
   background: linear-gradient(135deg, #c7e0fc, #a7c9f9);
-  box-shadow: 0 4px 12px rgba(0, 123, 255, 0.25);
-  transform: scale(1.03);
+  box-shadow: 0 4px 12px rgba(0,123,255,0.2);
+  transform: scale(1.02);
 }
+.upgrade-button-glow:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+.danger-btn { background: linear-gradient(135deg, #fee2e2, #fecaca); color: #7f1d1d; border-color: #fca5a5; }
+.danger-btn:hover:not(:disabled) { background: linear-gradient(135deg, #fecaca, #fca5a5); }
+.fetch-fw-btn { background: linear-gradient(135deg, #f0fdf4, #dcfce7); color: #14532d; border-color: #86efac; }
+.fetch-fw-btn:hover:not(:disabled) { background: linear-gradient(135deg, #dcfce7, #bbf7d0); }
 
-
-
-/* Connection Actions Column */
-.connection-actions {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
-  justify-content: space-between;
-  width: 100%;
-}
-
-.status-badge {
+.remove-btn {
+  background: none;
+  border: 1px solid #fca5a5;
+  border-radius: 5px;
+  color: #dc2626;
+  width: 26px;
+  height: 26px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: background 0.15s;
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.375rem 0.75rem;
+  justify-content: center;
+}
+.remove-btn:hover { background: #fee2e2; }
+
+/* ── Status pills ── */
+.status-pill {
+  display: inline-block;
+  padding: 2px 8px;
   border-radius: 9999px;
-  font-size: 0.75rem;
-  font-weight: 500;
-  text-transform: capitalize;
-}
-
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.status-connected {
-  background-color: #d1fae5;
-  color: #065f46;
-}
-
-.status-connected .status-dot {
-  background-color: #10b981;
-  animation: pulse-dot 2s infinite;
-}
-
-.status-disconnected {
-  background-color: #f3f4f6;
-  color: #6b7280;
-}
-
-.status-disconnected .status-dot {
-  background-color: #9ca3af;
-}
-
-.status-loading {
-  background-color: #fef3c7;
-  color: #92400e;
-}
-
-.status-loading .status-dot {
-  background-color: #f59e0b;
-  animation: pulse-dot 1s infinite;
-}
-
-@keyframes pulse-dot {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-
-.connection-buttons {
-  margin-left: auto;
-}
-
-.connection-btn {
-  background: none;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  padding: 6px 8px;
-  cursor: pointer;
-  font-size: 1rem;
-  transition: all 0.2s ease;
-  min-width: 35px;
-  height: 35px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.connection-btn:hover:not(:disabled) {
-  transform: scale(1.1);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-}
-
-.connection-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.connect-btn-small {
-  background: linear-gradient(135deg, #d4f5d4, #a8e6a8);
-  color: #006600;
-  border-color: #66cc66;
-}
-
-.connect-btn-small:hover:not(:disabled) {
-  background: linear-gradient(135deg, #b8f0b8, #8fd68f);
-}
-
-.disconnect-btn-small {
-  background: linear-gradient(135deg, #ffd4d4, #ffb3b3);
-  color: #cc0000;
-  border-color: #ff6666;
-}
-
-.disconnect-btn-small:hover:not(:disabled) {
-  background: linear-gradient(135deg, #ffb8b8, #ff9999);
-}
-
-/* ✅ Queued Spinner */
-.queued-spinner {
-  display: inline-block;
-  position: relative;
-  width: 18px;
-  height: 18px;
-  margin-right: 6px;
-}
-
-.queued-spinner::before {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 6px;
-  height: 6px;
-  background-color: #007bff;
-  border-radius: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 2;
-}
-
-.queued-spinner::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  border: 2px dashed #007bff;
-  border-radius: 50%;
-  animation: rotateArc 1s linear infinite;
-  z-index: 1;
-}
-
-@keyframes rotateArc {
-  0% {
-    transform: rotate(0deg);
-  }
-  100% {
-    transform: rotate(360deg);
-  }
-}
-
-/* ✅ Queued label styling */
-.status-cell {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.status-label {
-  font-size: 14px;
-  color: #333;
-}
-
-
-/* test */
-
-.firmware-dropdown-container {
-  position: relative;
-  display: inline-block;
-  z-index: 1000;
-}
-
-.firmware-button {
-  padding: 0.6rem 1rem;
-  border-radius: 6px;
-  border: 1px solid #ccc;
-  background-color: #f8f8f8;
-  font-size: 1rem;
-  font-family: inherit;
-  color: #333;
-  transition: background-color 0.3s ease, border-color 0.3s ease;
-  cursor: pointer;
-  min-width: 140px;
-  text-align: left;
-}
-
-
-.firmware-button:hover {
-  background-color: #fff;
-  border-color: #888;
-}
-.firmware-panel {
-  position: absolute;
-  top: 120%;
-  left: 0;
-  background: white;
-  border: 1px solid #ddd;
-  border-radius: 10px;
-  padding: 1rem;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
-  min-width: 250px;
-}
-
-.accordion-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.accordion-header label {
-  font-weight: bold;
-}
-
-
-.accordion-body {
-  margin-top: 0.25rem;
-  padding-left: 1rem;
-}
-
-.radio-option {
-  display: flex;
-  align-items: center;
-  margin: 0.25rem 0;
-}
-
-.search-input {
-  padding-left: 2rem;
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='gray' viewBox='0 0 24 24'%3E%3Cpath d='M21 20l-4.35-4.35a7.5 7.5 0 1 0-1.4 1.4L20 21zM10.5 17a6.5 6.5 0 1 1 0-13 6.5 6.5 0 0 1 0 13z'/%3E%3C/svg%3E")
-    no-repeat 8px center;
-  background-size: 16px 16px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  height: 36px;
-}
-
-
-.missing-selection {
-  border-left: 3px solid red;
-  padding-left: 0.5rem;
-  background-color: #fff6f6;
-}
-
-.tooltip-wrapper {
-  position: relative;
-  display: inline-block;
-  overflow: visible;
-  z-index: 10; /* Slightly higher than siblings */
-}
-
-.tooltip-wrapper .tooltip-text {
-  visibility: hidden;
-  background-color: #000;
-  color: #fff;
-  text-align: center;
-  border-radius: 6px;
-  padding: 6px 10px;
-  position: absolute;
-  z-index: 10;
-  bottom: 125%; /* Position above the button */
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 12px;
-  opacity: 0;
-  transition: opacity 0.3s;
+  font-size: 0.78rem;
+  font-weight: 600;
   white-space: nowrap;
 }
+.pill-queued   { background: #fef3c7; color: #92400e; }
+.pill-progress { background: #dbeafe; color: #1e40af; }
+.pill-success  { background: #d1fae5; color: #065f46; }
+.pill-warn     { background: #fef9c3; color: #713f12; }
+.pill-failed   { background: #fee2e2; color: #991b1b; }
 
-/* Tooltip visible on hover */
-.tooltip-wrapper:hover .tooltip-text {
-  visibility: visible;
-  opacity: 1;
-}
-
-
-.tooltip-wrapper[data-align="right"] .tooltip-text {
-  left: auto;
-  right: 0;
-  transform: none;
-}
-
-/* Arrow styling */
-.tooltip-wrapper .tooltip-text::after {
-  content: '';
-  position: absolute;
-  top: 100%; /* Arrow on bottom of tooltip */
-  left: 50%;
-  margin-left: -5px;
-  border-width: 5px;
-  border-style: solid;
-  border-color: black transparent transparent transparent;
-}
-
-.lock-icon,
-.unlock-icon {
-  font-size: 14px;
-  margin-right: 0px;
-  vertical-align: middle;
-  display: inline-block;
-  width: 1.2em; /* Prevent layout shift between lock/unlock */
-  text-align: center;
-}
-
-.mac-text {
-  vertical-align: middle;
-  white-space: nowrap;
-}
-
-
+/* ── Progress bar (queue / log) ── */
 .progress-wrapper {
   position: relative;
   width: 100px;
-  height: 20px;
-  background-color: #e0e0e0;
+  height: 18px;
+  background: #e0e0e0;
   border-radius: 8px;
-  margin: auto;
   overflow: hidden;
 }
-
 .progress-bar {
   position: absolute;
-  top: 0;
-  left: 0;
-  background-color: #4caf50; /* ✅ Green for normal state */
+  top: 0; left: 0;
+  background: #4caf50;
   height: 100%;
   border-radius: 8px;
   transition: width 0.4s ease-in-out;
-  color: Black;
-  font-size: 12px;
-  font-weight: bold;
-  text-align: center;
-  line-height: 20px;
-}
-
-
-
-.progress-text {
-  position: relative;
-  z-index: 1;
-  font-size: 12px;
-  font-weight: bold;
   color: black;
+  font-size: 11px;
+  font-weight: bold;
   text-align: center;
-  line-height: 16px;
+  line-height: 18px;
 }
+.progress-bar.progress-failed { background: #f44336; }
+.progress-wrapper.failed { border: 1px solid #f44336; }
 
-.progress-bar.progress-failed {
-  background-color: #f44336 !important; /* red */
-}
-
-.progress-wrapper.failed {
-  border: 1px solid #f44336;
-}
-
-.progress-error-text {
-  color: #f44336;
-  font-size: 12px;
-  margin-top: 4px;
-}
-
-
-.tick-circle-wrapper {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 24px;
-}
-
+/* ── Tick ── */
+.tick-circle-wrapper { display: flex; justify-content: center; align-items: center; height: 22px; }
+.warn-circle { border-color: #f59e0b; color: #f59e0b; }
 .tick-circle-outline {
-  width: 24px;
-  height: 24px;
+  width: 22px; height: 22px;
   border-radius: 50%;
-  background-color: white;             /* White fill */
-  border: 2px solid #4caf50;           /* Green border */
-  color: #4caf50;                      /* Green checkmark */
-  font-size: 16px;
+  background: white;
+  border: 2px solid #4caf50;
+  color: #4caf50;
+  font-size: 12px;
   font-weight: bold;
   display: flex;
   justify-content: center;
   align-items: center;
-  animation: fadeInTick 0s ease-in 3s forwards;
-  opacity: 0;
-  box-shadow: 0 0 3px rgba(0, 0, 0, 0.1);
-  transition: transform 0.3s ease;
 }
 
-.tick-circle-outline:hover {
-  transform: scale(1.1);
-}
+/* ── Log rows ── */
+tr.log-success { background-color: rgba(34, 197, 94, 0.08); }
+tr.log-warn    { background-color: rgba(250, 204, 21, 0.12); }
+tr.log-failed  { background-color: rgba(231, 76, 60, 0.08); }
 
-.queued-circle-wrapper {
+/* ── Firmware link ── */
+.firmware-link { color: rgb(42,136,23); font-weight: 600; cursor: pointer; text-decoration: underline dotted; }
+.firmware-link:hover { color: rgb(202,125,31); }
+.firmware-link.missing { color: #617fe0; text-decoration: underline; }
+.loading-text { color: #aaa; font-style: italic; font-size: 0.85rem; }
+
+/* ── Runtime variables ── */
+.runtime-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 6px 16px;
+  padding: 4px 0;
+}
+.runtime-row {
   display: flex;
-  justify-content: center;
   align-items: center;
-  height: 24px;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #fafafa;
+  border: 1px solid #eee;
 }
-
-.queued-circle {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background-color: white;
-  border: 2px solid #ff9800; /* orange ring */
-  color: #ff9800;
-  font-weight: bold;
-  font-size: 16px;
-  display: flex;
-  justify-content: center;
-  align-items: center;
+.runtime-key {
+  flex: 1;
+  font-size: 0.82rem;
+  color: #444;
+  font-family: monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: default;
 }
-
-.firmware-link {
-  color: rgb(42, 136, 23);
-  font-weight: 600;
-  cursor: pointer;
-  text-decoration: underline dotted;
-  transition: color 0.3s ease;
+.runtime-value { flex-shrink: 0; }
+.runtime-input {
+  width: 90px;
+  padding: 2px 6px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-family: monospace;
 }
+.runtime-checkbox { width: 16px; height: 16px; cursor: pointer; }
+.save-result { font-size: 0.85rem; font-weight: 600; }
+.save-ok  { color: #16a34a; }
+.save-err { color: #dc2626; }
 
-.firmware-link:hover {
-  color: rgb(202, 125, 31);
+/* ── Loader ── */
+.loader-overlay {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(255,255,255,0.7); display: flex; align-items: center;
+  justify-content: center; z-index: 9999;
 }
-
-.firmware-link.missing {
-  color: #617fe0;
-
-  text-decoration: underline;
+.dots-loader span {
+  display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+  background: #007bff; margin: 0 4px; animation: bounce 1.2s infinite ease-in-out;
 }
-
-
-
-
-@keyframes fadeInTick {
-  to {
-    opacity: 1;
-  }
-}
-
-  </style>
+.dots-loader span:nth-child(2) { animation-delay: 0.2s; }
+.dots-loader span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes bounce { 0%,80%,100% { transform: scale(0); } 40% { transform: scale(1); } }
+</style>

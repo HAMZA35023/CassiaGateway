@@ -98,8 +98,10 @@ public class WindowsNativeScanDevice : IDisposable
                 return;
             }
 
-            if (string.IsNullOrEmpty(meta.DetectorType))
-                meta = ScanDataParser.GetDetectorMeta(productNumber);
+            if (string.IsNullOrEmpty(meta.DetectorType) && !string.IsNullOrWhiteSpace(productNumber))
+                meta = DetectorMetaData.ProductNumberToMetadata.TryGetValue(productNumber, out var m2)
+                    ? m2
+                    : new DetectorMeta { Name = productNumber, DetectorType = "Unknown" };
 
             if (productNumber.Equals("Unknown", StringComparison.OrdinalIgnoreCase))
                 return;
@@ -252,7 +254,9 @@ public class WindowsNativeScanDevice : IDisposable
             {
                 productNumber = pn;
                 if (string.IsNullOrWhiteSpace(name)) name = pn;
-                meta = ScanDataParser.GetDetectorMeta(productNumber);
+                meta = DetectorMetaData.ProductNumberToMetadata.TryGetValue(productNumber, out var mo)
+                    ? mo
+                    : new DetectorMeta { Name = productNumber, DetectorType = "Unknown" };
             }
             return;
         }

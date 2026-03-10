@@ -24,7 +24,7 @@ namespace AccessAPP.Services
             foreach (var d in list)
             {
                 if (string.IsNullOrWhiteSpace(d.MacAddress)) continue;
-                _deviceStorageService.UpdateFirmwareProgress(d.MacAddress, 0, "Queued");
+                _deviceStorageService.UpdateFirmwareProgress(d.MacAddress, 0, "Queued", null, d.FirmwareVersion, d.DetectotType);
             }
 
             // Reuse your existing queue-aware parallel upgrader

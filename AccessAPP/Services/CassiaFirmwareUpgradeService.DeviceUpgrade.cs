@@ -554,6 +554,7 @@ try
                     status: "OK"));
 
                 UpgradeLogger.Log(logId, mac, "Device Upgrade Completed.", dev.finalUpgradeResult);
+                _deviceStorageService.UpdateFirmwareProgress(mac, 100, "Device Upgrade Completed.", null, null, null, dev.finalUpgradeResult);
                 await SendUpgradeResultLogAsync(
                     mac: mac,
                     dev: dev,
