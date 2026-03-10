@@ -170,9 +170,16 @@
             <!-- Status -->
             <td>
               <ng-container *ngIf="progressMap[device.mac] as prog">
-                <span *ngIf="prog.progress > 0 && prog.progress < 100"
-                  class="dev-status-text" [title]="prog.status">{{ prog.status }}</span>
                 <span *ngIf="prog.status === 'Queued'" class="dev-status-queued">Queued</span>
+                <span *ngIf="prog.status !== 'Queued' && prog.status !== 'Device Upgrade Completed.'"
+                  class="dev-status-text" [title]="prog.status">{{ prog.status }}</span>
+                <span *ngIf="prog.status === 'Device Upgrade Completed.'"
+                  class="dev-status-result"
+                  [class.dev-status-success]="prog.finalResult === 'Success'"
+                  [class.dev-status-warn]="prog.finalResult === 'Warn'"
+                  [class.dev-status-failed]="prog.finalResult === 'Failed'">
+                  {{ prog.finalResult }}
+                </span>
               </ng-container>
             </td>
             <!-- Progress -->
@@ -250,11 +257,12 @@
             </td>
             <td>
               <div *ngIf="item.progress > 0" class="progress-wrapper">
-                <div class="progress-bar" [style.width.%]="item.progress">
+                <div class="progress-bar" [style.width.%]="item.progress"
+                  [style.background]="item.progress >= 100 ? '#22c55e' : '#4caf50'">
                   {{ item.progress | number:'1.0-0' }}%
                 </div>
               </div>
-              <span *ngIf="item.status === 'Queued' || item.progress === 0" class="muted">–</span>
+              <span *ngIf="item.progress === 0" class="muted">–</span>
             </td>
             <td class="speed-cell">
               <span *ngIf="item.speedPctPerMin != null">{{ item.speedPctPerMin | number:'1.1-1' }} %/min</span>
@@ -694,6 +702,15 @@ td.rssi-ok   { color: #16a34a; }
   padding: 1px 6px;
   border-radius: 9999px;
 }
+.dev-status-result {
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 9999px;
+}
+.dev-status-success { background: #d1fae5; color: #065f46; }
+.dev-status-warn    { background: #fef9c3; color: #713f12; }
+.dev-status-failed  { background: #fee2e2; color: #991b1b; }
 
 /* ── Inline progress bar (device table) ── */
 .inline-progress {

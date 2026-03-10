@@ -468,7 +468,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   get queueItems(): FirmwareProgress[] {
     return Object.values(this.progressMap)
-      .filter(p => p.progress < 100 && !(p.status ?? '').toLowerCase().includes('fail'))
+      .filter(p => p.status !== 'Device Upgrade Completed.')
       .sort((a, b) => (a.status === 'Queued' ? 1 : 0) - (b.status === 'Queued' ? 1 : 0));
   }
 
