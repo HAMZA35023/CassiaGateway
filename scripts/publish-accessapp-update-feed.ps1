@@ -155,8 +155,7 @@ function Invoke-PublishAndPackage {
         "linux-arm" = "linux-arm"
         "linux-x64" = "linux-64"
         "linux-64"  = "linux-64"
-        "win-x86"   = "windows-x86"
-        "win-x64"   = "windows-x64"
+        "win-x86"   = "windows-x86"   # only valid Windows RID: PlatformTarget=x86 is forced by the csproj
     }
 
     foreach ($rid in $effectiveRuntimes) {
