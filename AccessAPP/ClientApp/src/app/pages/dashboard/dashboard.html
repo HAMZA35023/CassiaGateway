@@ -22,6 +22,9 @@
     <button class="inner-tab" [class.active]="activeTab === 'log'" (click)="setTab('log')">
       Log <span class="tab-count" *ngIf="logEntries.length">{{ logEntries.length }}</span>
     </button>
+    <button class="inner-tab" [class.active]="activeTab === 'speed'" (click)="setTab('speed')">
+      Speed
+    </button>
   </div>
 
   <!-- ══════════════════════════════════════════════════════════════════ -->
@@ -87,11 +90,24 @@
             </th>
             <th style="width:34px" title="Add to queue"></th>
             <th style="width:18px"></th>
-            <th>Name</th>
-            <th>MAC Address</th>
-            <th>Type</th>
-            <th>FW Version</th>
-            <th>RSSI</th>
+            <th class="sortable" (click)="sortBy('Name')"
+              [class.sort-asc]="sortField==='Name'&&sortDirection==='asc'"
+              [class.sort-desc]="sortField==='Name'&&sortDirection==='desc'">Name</th>
+            <th class="sortable" (click)="sortBy('productNumber')"
+              [class.sort-asc]="sortField==='productNumber'&&sortDirection==='asc'"
+              [class.sort-desc]="sortField==='productNumber'&&sortDirection==='desc'">Product No.</th>
+            <th class="sortable" (click)="sortBy('mac')"
+              [class.sort-asc]="sortField==='mac'&&sortDirection==='asc'"
+              [class.sort-desc]="sortField==='mac'&&sortDirection==='desc'">MAC Address</th>
+            <th class="sortable" (click)="sortBy('version')"
+              [class.sort-asc]="sortField==='version'&&sortDirection==='asc'"
+              [class.sort-desc]="sortField==='version'&&sortDirection==='desc'">Type</th>
+            <th class="sortable" (click)="sortBy('sensorVersion')"
+              [class.sort-asc]="sortField==='sensorVersion'&&sortDirection==='asc'"
+              [class.sort-desc]="sortField==='sensorVersion'&&sortDirection==='desc'">FW Version</th>
+            <th class="sortable" (click)="sortBy('rssi')"
+              [class.sort-asc]="sortField==='rssi'&&sortDirection==='asc'"
+              [class.sort-desc]="sortField==='rssi'&&sortDirection==='desc'">RSSI</th>
             <th>Status</th>
             <th>Progress</th>
             <th style="width:30px"></th>
@@ -119,6 +135,8 @@
             </td>
             <!-- Name -->
             <td>{{ device.Name }}</td>
+            <!-- Product No. -->
+            <td class="product-number">{{ device.productNumber || '–' }}</td>
             <!-- MAC -->
             <td class="mac-cell">{{ device.mac }}</td>
             <!-- Det. Type -->
@@ -183,7 +201,7 @@
             </td>
           </tr>
           <tr *ngIf="!filteredDevices.length">
-            <td colspan="11" class="empty-row">No devices found</td>
+            <td colspan="12" class="empty-row">No devices found</td>
           </tr>
         </tbody>
       </table>
@@ -319,6 +337,77 @@
           </tr>
         </tbody>
       </table>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════ -->
+  <!-- SPEED TAB                                                          -->
+  <!-- ══════════════════════════════════════════════════════════════════ -->
+  <div *ngIf="activeTab === 'speed'">
+    <div class="queue-toolbar">
+      <span class="queue-count">{{ speedHistory.length }} data points (sampled every 3 s)</span>
+      <button class="upgrade-button-glow danger-btn" (click)="clearSpeedHistory()" [disabled]="!speedHistory.length">
+        Clear
+      </button>
+    </div>
+
+    <div *ngIf="speedHistory.length < 2" class="empty-row" style="padding:3rem;text-align:center">
+      No data yet — start an upgrade to see speed data here.
+    </div>
+
+    <div *ngIf="speedHistory.length >= 2" class="speed-chart-section">
+      <!-- Stat row -->
+      <div class="chart-stat-row">
+        <div class="chart-stat">
+          <span class="chart-stat-label">Current Speed</span>
+          <span class="chart-stat-value">{{ speedChartLast.totalSpeed | number:'1.1-1' }} %/min</span>
+        </div>
+        <div class="chart-stat">
+          <span class="chart-stat-label">Active Devices</span>
+          <span class="chart-stat-value">{{ speedChartLast.activeCount }}</span>
+        </div>
+        <div class="chart-stat">
+          <span class="chart-stat-label">Peak Speed</span>
+          <span class="chart-stat-value">{{ speedChartMax | number:'1.1-1' }} %/min</span>
+        </div>
+        <div class="chart-stat">
+          <span class="chart-stat-label">Avg Speed</span>
+          <span class="chart-stat-value">{{ speedChartAvg | number:'1.1-1' }} %/min</span>
+        </div>
+      </div>
+
+      <!-- SVG chart — viewBox: 720×220, chart area x50–700 y15–170 -->
+      <svg viewBox="0 0 720 210" width="100%" class="speed-chart" preserveAspectRatio="none">
+        <!-- Grid lines + Y-axis labels -->
+        <ng-container *ngFor="let tick of speedYAxisTicks; trackBy: trackByIdx">
+          <line [attr.x1]="50" [attr.x2]="700" [attr.y1]="tick.y" [attr.y2]="tick.y" class="grid-line" />
+          <text [attr.x]="46" [attr.y]="tick.y + 4" class="chart-label y-label">{{ tick.label }}</text>
+        </ng-container>
+
+        <!-- Area fill under speed line -->
+        <polygon [attr.points]="speedAreaPoints" class="speed-area" />
+
+        <!-- Speed polyline -->
+        <polyline [attr.points]="speedPolylinePoints" class="speed-line" />
+
+        <!-- X-axis tick marks + labels -->
+        <ng-container *ngFor="let tick of speedXAxisTicks; trackBy: trackByIdx">
+          <line [attr.x1]="tick.x" [attr.x2]="tick.x" y1="171" y2="176" class="tick-line" />
+          <text [attr.x]="tick.x" y="189" class="chart-label x-label">{{ tick.label }}</text>
+        </ng-container>
+
+        <!-- Axes -->
+        <line x1="50" y1="14" x2="50" y2="172" class="axis-line" />
+        <line x1="50" y1="172" x2="700" y2="172" class="axis-line" />
+
+        <!-- Y-axis title -->
+        <text x="10" y="95" class="chart-axis-title" transform="rotate(-90,10,95)">%/min</text>
+      </svg>
+
+      <div class="chart-legend">
+        <span class="legend-dot legend-speed-dot"></span>
+        <span>Combined upgrade speed (%/min, all active devices)</span>
+      </div>
     </div>
   </div>
 
@@ -655,6 +744,51 @@ td.rssi-ok   { color: #16a34a; }
 
 /* ── Lock icon ── */
 .lock-icon { font-size: 13px; width: 1.2em; text-align: center; display: inline-block; }
+
+/* ── Product number ── */
+.product-number { font-family: monospace; font-size: 0.82rem; color: #555; }
+
+/* ── Sortable headers ── */
+.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+.sortable:hover { background: #e8e8e8 !important; }
+.sortable::after { content: ' ⇅'; opacity: 0.25; font-size: 0.7rem; }
+.sort-asc::after  { content: ' ↑'; opacity: 1; color: #007bff; }
+.sort-desc::after { content: ' ↓'; opacity: 1; color: #007bff; }
+
+/* ── Speed chart ── */
+.speed-chart-section { padding: 0 4px; }
+.chart-stat-row {
+  display: flex; gap: 1.5rem; flex-wrap: wrap;
+  margin-bottom: 1.2rem;
+}
+.chart-stat {
+  display: flex; flex-direction: column; gap: 2px;
+  background: #fafafa; border: 1px solid #e5e7eb;
+  border-radius: 8px; padding: 10px 18px; min-width: 130px;
+}
+.chart-stat-label { font-size: 0.75rem; color: #6b7280; text-transform: uppercase; font-weight: 600; }
+.chart-stat-value { font-size: 1.35rem; font-weight: 700; color: #1e3a5f; }
+
+.speed-chart {
+  display: block; width: 100%;
+  background: #f9fbff; border: 1px solid #e0eaf6;
+  border-radius: 8px; overflow: visible;
+}
+.grid-line  { stroke: #e5e7eb; stroke-width: 1; }
+.axis-line  { stroke: #9ca3af; stroke-width: 1.5; }
+.tick-line  { stroke: #9ca3af; stroke-width: 1; }
+.speed-area { fill: rgba(59, 130, 246, 0.12); }
+.speed-line { fill: none; stroke: #3b82f6; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart-label { font-size: 10px; fill: #6b7280; font-family: 'Segoe UI', sans-serif; }
+.y-label { text-anchor: end; }
+.x-label { text-anchor: middle; }
+.chart-axis-title { font-size: 10px; fill: #9ca3af; text-anchor: middle; font-family: 'Segoe UI', sans-serif; }
+.chart-legend {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 0.8rem; color: #6b7280; margin-top: 6px;
+}
+.legend-dot { width: 12px; height: 3px; border-radius: 2px; display: inline-block; }
+.legend-speed-dot { background: #3b82f6; }
 
 /* ── Queue toolbar ── */
 .queue-toolbar {

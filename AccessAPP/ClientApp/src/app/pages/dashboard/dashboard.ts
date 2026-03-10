@@ -25,7 +25,11 @@ type RowColor = 'queued' | 'failed' | 'success' | 'warn' | 'nofwread' | '';
 export class DashboardComponent implements OnInit, OnDestroy {
   private intervals: ReturnType<typeof setInterval>[] = [];
   // ── Tabs ──────────────────────────────────────────────────────────────────
-  activeTab: 'devices' | 'queue' | 'log' | 'runtime' = 'devices';
+  activeTab: 'devices' | 'queue' | 'log' | 'runtime' | 'speed' = 'devices';
+
+  // ── Sorting ────────────────────────────────────────────────────────────────
+  sortField = '';
+  sortDirection: 'asc' | 'desc' = 'asc';
 
   // ── Firmware manifest ──────────────────────────────────────────────────────
   firmwareMap: { [type: string]: string[] } = {};
@@ -89,7 +93,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   // ── Tab ────────────────────────────────────────────────────────────────────
 
-  setTab(tab: 'devices' | 'queue' | 'log' | 'runtime'): void {
+  setTab(tab: 'devices' | 'queue' | 'log' | 'runtime' | 'speed'): void {
     this.activeTab = tab;
     if (tab === 'runtime' && Object.keys(this.runtimeVars).length === 0) this.loadRuntimeVars();
   }
@@ -211,9 +215,26 @@ export class DashboardComponent implements OnInit, OnDestroy {
       const rssiOk = this.minRssiFilter === -127 || (d.rssi != null && d.rssi >= this.minRssiFilter);
       return typeOk && macOk && rssiOk;
     });
+    if (this.sortField) {
+      const f = this.sortField;
+      const dir = this.sortDirection === 'asc' ? 1 : -1;
+      this.filteredDevices.sort((a, b) => {
+        const av = a[f] ?? '', bv = b[f] ?? '';
+        const cmp = (typeof av === 'number' && typeof bv === 'number')
+          ? av - bv
+          : String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: 'base' });
+        return cmp * dir;
+      });
+    }
   }
 
   onRssiFilterChange(): void { this.filterDevicesByAllCriteria(); }
+
+  sortBy(field: string): void {
+    this.sortDirection = this.sortField === field && this.sortDirection === 'asc' ? 'desc' : 'asc';
+    this.sortField = field;
+    this.filterDevicesByAllCriteria();
+  }
 
   // ── Row color (WPF-style) ──────────────────────────────────────────────────
 
@@ -356,6 +377,64 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   cancelUpgrade(): void { this.showConfirmation = false; this.pendingDevices = []; }
 
+  // ── Speed chart ────────────────────────────────────────────────────────────
+  speedHistory: { time: Date; totalSpeed: number; activeCount: number }[] = [];
+  speedPolylinePoints = '';
+  speedAreaPoints = '';
+  speedYAxisTicks: { y: number; label: string }[] = [];
+  speedXAxisTicks: { x: number; label: string }[] = [];
+  speedChartMax = 1;
+  speedChartAvg = 0;
+  speedChartLast: { totalSpeed: number; activeCount: number } = { totalSpeed: 0, activeCount: 0 };
+
+  clearSpeedHistory(): void { this.speedHistory = []; this.updateSpeedChart(); }
+
+  private updateSpeedChart(): void {
+    const n = this.speedHistory.length;
+    if (n < 2) {
+      this.speedPolylinePoints = '';
+      this.speedAreaPoints = '';
+      this.speedYAxisTicks = [];
+      this.speedXAxisTicks = [];
+      return;
+    }
+    const maxSpeed = Math.max(...this.speedHistory.map(p => p.totalSpeed), 1);
+    this.speedChartMax = maxSpeed;
+    this.speedChartAvg = this.speedHistory.reduce((s, p) => s + p.totalSpeed, 0) / n;
+    this.speedChartLast = this.speedHistory[n - 1];
+    const W = 650, H = 155, xOff = 50, yOff = 15;
+
+    const pts = this.speedHistory.map((p, i) => {
+      const x = xOff + (i / (n - 1)) * W;
+      const y = yOff + H - (p.totalSpeed / maxSpeed) * H;
+      return `${x.toFixed(0)},${y.toFixed(0)}`;
+    });
+    this.speedPolylinePoints = pts.join(' ');
+    this.speedAreaPoints = [
+      ...pts,
+      `${(xOff + W).toFixed(0)},${(yOff + H).toFixed(0)}`,
+      `${xOff},${(yOff + H).toFixed(0)}`
+    ].join(' ');
+
+    this.speedYAxisTicks = Array.from({ length: 6 }, (_, i) => ({
+      y: yOff + H * (1 - i / 5),
+      label: (maxSpeed * i / 5).toFixed(1)
+    }));
+
+    const numTicks = Math.min(n, 7);
+    this.speedXAxisTicks = Array.from({ length: numTicks }, (_, i) => {
+      const idx = numTicks === 1 ? 0 : Math.round(i * (n - 1) / (numTicks - 1));
+      const x = xOff + (idx / (n - 1)) * W;
+      const d = this.speedHistory[idx].time;
+      return {
+        x,
+        label: `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}:${d.getSeconds().toString().padStart(2, '0')}`
+      };
+    });
+  }
+
+  trackByIdx(i: number): number { return i; }
+
   // ── Progress / Queue ───────────────────────────────────────────────────────
 
   loadProgress(): void {
@@ -374,6 +453,14 @@ export class DashboardComponent implements OnInit, OnDestroy {
             else Object.assign(ex, item);
           }
         });
+
+        const active = Object.values(this.progressMap).filter(p => p.progress > 0 && p.progress < 100);
+        const totalSpeed = active.reduce((sum, p) => sum + (p.speedPctPerMin ?? 0), 0);
+        if (active.length > 0 || (this.speedHistory.length > 0 && this.speedHistory[this.speedHistory.length - 1].activeCount > 0)) {
+          this.speedHistory.push({ time: new Date(), totalSpeed, activeCount: active.length });
+          if (this.speedHistory.length > 120) this.speedHistory.shift();
+          this.updateSpeedChart();
+        }
       },
       error: err => console.error('Failed to load progress:', err)
     });
