@@ -1,13 +1,20 @@
-﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+<Project Sdk="Microsoft.NET.Sdk.Web">
 
 	<PropertyGroup>
-		<TargetFramework>net8.0</TargetFramework>
+		<TargetFrameworks>net8.0-windows10.0.17763.0;net8.0</TargetFrameworks>
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<InvariantGlobalization>true</InvariantGlobalization>
 		<UserSecretsId>a3266c98-7486-4507-aa7a-8415b218daec</UserSecretsId>
 		<DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
 		<DockerfileContext>.</DockerfileContext>
+		<!-- Disable build-time swagger.json generation; Swagger UI works at runtime. -->
+		<OpenApiGenerateDocuments>false</OpenApiGenerateDocuments>
+	</PropertyGroup>
+
+	<!-- Force 32-bit process only when explicitly publishing for win-x86. -->
+	<PropertyGroup Condition="$(TargetFramework.StartsWith('net8.0-windows')) and '$(RuntimeIdentifier)' == 'win-x86'">
+		<PlatformTarget>x86</PlatformTarget>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -31,9 +38,13 @@
 	</Target>
 
 	<ItemGroup>
-		<None Update="BootloaderUtilMultiThread.dll">
+		<!-- Both Windows arch DLLs are shipped; the runtime resolver in Bootloader_Utils picks the right one. -->
+		<Content Include="BootloaderUtilMultiThread_x86.dll" Condition="$(TargetFramework.StartsWith('net8.0-windows'))">
 			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
+		</Content>
+		<Content Include="BootloaderUtilMultiThread_x64.dll" Condition="$(TargetFramework.StartsWith('net8.0-windows'))">
+			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
+		</Content>
 		<None Update="FirmwareVersions\0220\353AP10220.cyacd">
 			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
 		</None>

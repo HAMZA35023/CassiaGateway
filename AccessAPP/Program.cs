@@ -2,6 +2,9 @@ using AccessAPP;
 using AccessAPP.Services;
 using AccessAPP.Services.BleAbstractions;
 using AccessAPP.Services.LinuxBle;
+#if WINDOWS
+using AccessAPP.Services.WindowsBle;
+#endif
 using AccessAPP.Services.HelperClasses;
 using AccessAPP.Models;
 using AccessAPP.Logging;
@@ -10,9 +13,10 @@ using System.Runtime.InteropServices;
 
 // ── Native library resolver ────────────────────────────────────────────────
 // DllImport("BootloaderUtilMultiThread") targets platform-specific binaries:
-//   Windows : BootloaderUtilMultiThread.dll   (found automatically by the CLR)
-//   Linux x64: libBootloaderUtilMultiThread_linux-x64.so
-//   Linux ARM : libBootloaderUtilMultiThread_arm.so
+//   Windows x86: BootloaderUtilMultiThread_x86.dll
+//   Windows x64: BootloaderUtilMultiThread_x64.dll
+//   Linux x64  : libBootloaderUtilMultiThread_linux-x64.so
+//   Linux ARM  : libBootloaderUtilMultiThread_arm.so
 // SetDllImportResolver must be called from within the assembly that owns
 // the DllImport (AccessAPP), which is also the executing assembly here.
 NativeLibrary.SetDllImportResolver(typeof(Bootloader_Utils).Assembly,
@@ -21,8 +25,19 @@ NativeLibrary.SetDllImportResolver(typeof(Bootloader_Utils).Assembly,
         if (!libraryName.Equals("BootloaderUtilMultiThread", StringComparison.OrdinalIgnoreCase))
             return IntPtr.Zero; // let default logic handle everything else
 
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-            return IntPtr.Zero; // Windows: CLR finds BootloaderUtilMultiThread.dll automatically
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            var winArch = Environment.Is64BitProcess ? "x64" : "x86";
+            var dllName = $"BootloaderUtilMultiThread_{winArch}.dll";
+            var dllPath = Path.Combine(AppContext.BaseDirectory, dllName);
+            if (NativeLibrary.TryLoad(dllPath, out var winHandle))
+            {
+                AppLog.Info($"Native library loaded: {dllName} (arch={winArch})");
+                return winHandle;
+            }
+            AppLog.Error($"Native library load failed: {dllPath} not found.");
+            return IntPtr.Zero;
+        }
 
         var arch = RuntimeInformation.ProcessArchitecture;
         var suffix = (arch == Architecture.Arm || arch == Architecture.Arm64) ? "arm" : "linux-x64";
@@ -59,7 +74,12 @@ LoggingBootstrapper.TryConfigureSerilog(builder);
 // Add services to the container.
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(c =>
+{
+    // IFormFile with [FromForm] requires explicit multipart schema mapping.
+    c.MapType<Microsoft.AspNetCore.Http.IFormFile>(() =>
+        new Microsoft.OpenApi.Models.OpenApiSchema { Type = "string", Format = "binary" });
+});
 
 // Register HttpClient
 builder.Services.AddHttpClient();
@@ -77,23 +97,46 @@ builder.Services.AddSingleton<LinuxBleNotificationService>();
 builder.Services.AddSingleton<LinuxBleReadWriteService>();
 builder.Services.AddSingleton<LinuxNativeScanDevice>();
 
+// ── Windows native BLE backend ────────────────────────────────────────────
+#if WINDOWS
+builder.Services.AddSingleton<WindowsBleConnectionService>();
+builder.Services.AddSingleton<WindowsBleNotificationService>();
+builder.Services.AddSingleton<WindowsBleReadWriteService>();
+builder.Services.AddSingleton<WindowsNativeScanDevice>();
+#endif
+
 // ── BLE interface → concrete mapping (resolved lazily after runtime.json) ─
 // Factories run on first resolution, which happens AFTER LoadFromDisk() below,
 // so BLE_BACKEND already reflects any override from runtime.json.
 builder.Services.AddSingleton<IBleConnectionService>(sp =>
-    RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase)
-        ? sp.GetRequiredService<LinuxBleConnectionService>()
-        : (IBleConnectionService)sp.GetRequiredService<CassiaConnectService>());
+    RuntimeVariables.BLE_BACKEND switch
+    {
+        "linux-native" => sp.GetRequiredService<LinuxBleConnectionService>(),
+#if WINDOWS
+        "windows-native" => sp.GetRequiredService<WindowsBleConnectionService>(),
+#endif
+        _ => (IBleConnectionService)sp.GetRequiredService<CassiaConnectService>()
+    });
 
 builder.Services.AddSingleton<IBleNotificationService>(sp =>
-    RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase)
-        ? sp.GetRequiredService<LinuxBleNotificationService>()
-        : (IBleNotificationService)sp.GetRequiredService<CassiaNotificationService>());
+    RuntimeVariables.BLE_BACKEND switch
+    {
+        "linux-native" => sp.GetRequiredService<LinuxBleNotificationService>(),
+#if WINDOWS
+        "windows-native" => sp.GetRequiredService<WindowsBleNotificationService>(),
+#endif
+        _ => (IBleNotificationService)sp.GetRequiredService<CassiaNotificationService>()
+    });
 
 builder.Services.AddSingleton<IBleReadWriteService>(sp =>
-    RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase)
-        ? sp.GetRequiredService<LinuxBleReadWriteService>()
-        : (IBleReadWriteService)sp.GetRequiredService<CassiaReadWriteService>());
+    RuntimeVariables.BLE_BACKEND switch
+    {
+        "linux-native" => sp.GetRequiredService<LinuxBleReadWriteService>(),
+#if WINDOWS
+        "windows-native" => sp.GetRequiredService<WindowsBleReadWriteService>(),
+#endif
+        _ => (IBleReadWriteService)sp.GetRequiredService<CassiaReadWriteService>()
+    });
 
 // ── Shared / always-on services ────────────────────────────────────────────
 builder.Services.AddSingleton<CassiaScanService>();
@@ -156,7 +199,34 @@ using (var scope = app.Services.CreateScope())
     if (loadResult.errors.Count > 0)
         AppLog.Warn($"Runtime variables load errors: {string.Join(", ", loadResult.errors.Select(kv => $"{kv.Key}={kv.Value}"))}");
 
+    // Resolve "auto" BLE_BACKEND: probe Cassia HTTP API → windows-native → linux-native.
+    if (RuntimeVariables.BLE_BACKEND.Equals("auto", StringComparison.OrdinalIgnoreCase))
+    {
+        var cassiaIp   = app.Configuration.GetValue<string>("GatewayConfiguration:IpAddress") ?? string.Empty;
+        var cassiaPort = app.Configuration.GetValue<int>("GatewayConfiguration:Port", 80);
+        var probeUrl   = $"http://{cassiaIp}:{cassiaPort}/gap/nodes?connection_state=connected";
+
+        bool hasCassiaGateway = false;
+        try
+        {
+            using var probeClient = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+            using var resp = await probeClient.GetAsync(probeUrl).ConfigureAwait(false);
+            hasCassiaGateway = true; // any HTTP response means the gateway answered
+        }
+        catch (Exception ex)
+        {
+            AppLog.Info($"BLE_BACKEND auto: Cassia probe failed ({ex.GetType().Name}), falling back to platform detection.");
+        }
+
+        RuntimeVariables.BLE_BACKEND =
+            hasCassiaGateway ? "cassia"
+            : RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "windows-native"
+            : "linux-native";
+        AppLog.Info($"BLE_BACKEND auto-detected: {RuntimeVariables.BLE_BACKEND} (probe={probeUrl}, reachable={hasCassiaGateway})");
+    }
+
     var isLinuxNativeBackend = RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase);
+    var isWindowsNativeBackend = RuntimeVariables.BLE_BACKEND.Equals("windows-native", StringComparison.OrdinalIgnoreCase);
     var linuxAdapters = RuntimeVariables.GetLinuxBleAdapterList()
         .Where(a => !string.IsNullOrWhiteSpace(a))
         .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -166,6 +236,7 @@ using (var scope = app.Services.CreateScope())
 
     var startupWorkersRequested = isLinuxNativeBackend
         ? Math.Max(1, linuxAdapters.Length)
+        : isWindowsNativeBackend ? 1
         : 2;
     var startupWorkersValue = CassiaFirmwareUpgradeService.SetParallelProgrammers(startupWorkersRequested);
     AppLog.Info(
@@ -174,6 +245,15 @@ using (var scope = app.Services.CreateScope())
             : $"Startup workers auto-set to {startupWorkersValue} (cassia default).");
 
     // Start the BLE backend chosen by BLE_BACKEND (evaluated after runtime.json is loaded).
+#if WINDOWS
+    if (isWindowsNativeBackend)
+    {
+        AppLog.Info("BLE backend: windows-native (Windows.Devices.Bluetooth WinRT)");
+        // Constructing the singleton starts the Windows BLE advertisement watcher.
+        serviceProvider.GetRequiredService<WindowsNativeScanDevice>();
+    }
+    else
+#endif
     if (isLinuxNativeBackend)
     {
         AppLog.Info("BLE backend: linux-native (BlueZ D-Bus)");
@@ -209,6 +289,7 @@ using (var scope = app.Services.CreateScope())
                 source = "startup-auto",
                 backend = RuntimeVariables.BLE_BACKEND,
                 linuxAdapters = isLinuxNativeBackend ? linuxAdapters : Array.Empty<string>(),
+                windowsNative = isWindowsNativeBackend,
                 requested = startupWorkersRequested,
                 value = startupWorkersValue
             }).ConfigureAwait(false);

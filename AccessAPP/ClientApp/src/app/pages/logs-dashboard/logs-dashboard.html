@@ -75,11 +75,11 @@
                     <td>{{ stage.stage }}</td>
                     <td>
                       <span [ngClass]="{
-                        'success': stage.status === 'success',
-                        'failure': stage.status === 'fail',
+                        'success': stage.status?.startsWith('success'),
+                        'failure': stage.status?.startsWith('fail'),
                         'pending': !stage.status
                       }">
-                        {{ stage.status || 'Pending' }}
+                        {{ stage.status || '-' }}
                       </span>
                     </td>
                   </tr>

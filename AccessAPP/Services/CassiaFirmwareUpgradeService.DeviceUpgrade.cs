@@ -87,12 +87,11 @@ try
                 var isInBootMode = false;
                 if (probeConnected)
                 {
-                    int bootModeChecks = RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase)
-                        ? 1
-                        : 5;
-                    int bootModeRetryDelayMs = RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase)
-                        ? 0
-                        : 1500;
+                    // Native backends cache GATT mode during connect — single instant check.
+                    bool isNativeBackend = RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase)
+                        || RuntimeVariables.BLE_BACKEND.Equals("windows-native", StringComparison.OrdinalIgnoreCase);
+                    int bootModeChecks = isNativeBackend ? 1 : 5;
+                    int bootModeRetryDelayMs = isNativeBackend ? 0 : 1500;
                     for (int attempt = 1; attempt <= bootModeChecks; attempt++)
                     {
                         if (CheckIfDeviceInBootMode(_gatewayIpAddress, mac))
@@ -555,6 +554,7 @@ try
                     status: "OK"));
 
                 UpgradeLogger.Log(logId, mac, "Device Upgrade Completed.", dev.finalUpgradeResult);
+                _deviceStorageService.UpdateFirmwareProgress(mac, 100, "Device Upgrade Completed.", null, null, null, dev.finalUpgradeResult);
                 await SendUpgradeResultLogAsync(
                     mac: mac,
                     dev: dev,
@@ -1193,7 +1193,8 @@ var response = new ServiceResponse();
             }
 
             bool checkedBootMode = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
-            bool linuxNativeBackend = _connectService is LinuxBle.LinuxBleConnectionService;
+            bool linuxNativeBackend = _connectService is LinuxBle.LinuxBleConnectionService
+                || RuntimeVariables.BLE_BACKEND.Equals("windows-native", StringComparison.OrdinalIgnoreCase);
             // For linux-native we can trust caller assumption because login in boot mode is expected to fail.
             // For Cassia we must trust only the fresh on-session check; stale gateway GATT views can
             // falsely report boot mode and lead to immediate programming failures.

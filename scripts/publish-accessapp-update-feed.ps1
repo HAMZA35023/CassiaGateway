@@ -155,6 +155,8 @@ function Invoke-PublishAndPackage {
         "linux-arm" = "linux-arm"
         "linux-x64" = "linux-64"
         "linux-64"  = "linux-64"
+        "win-x86"   = "windows-x86"
+        "win-x64"   = "windows-x64"
     }
 
     foreach ($rid in $effectiveRuntimes) {
@@ -181,6 +183,11 @@ function Invoke-PublishAndPackage {
                 "--output"
                 $publishDir
             )
+            # Multi-targeted project: Windows RIDs must target the Windows TFM explicitly.
+            if ($rid.StartsWith("win-", [System.StringComparison]::OrdinalIgnoreCase)) {
+                $publishArgs += "-f"
+                $publishArgs += "net8.0-windows10.0.17763.0"
+            }
             if ($SkipClientBuild) {
                 $publishArgs += "-p:SkipClientAppBuild=true"
             }

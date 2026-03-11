@@ -374,7 +374,7 @@ namespace AccessAPP.Services
         }
 
 
-        public void UpdateFirmwareProgress(string mac, double progress, string status = "Programming", double? speedPctPerMin = null)
+        public void UpdateFirmwareProgress(string mac, double progress, string status = "Programming", double? speedPctPerMin = null, string? targetFirmwareVersion = null, string? detectorType = null, string? finalResult = null)
         {
             _progressStatus.AddOrUpdate(mac,
                 new FirmwareProgressStatus
@@ -383,7 +383,10 @@ namespace AccessAPP.Services
                     Progress = progress,
                     Status = status,
                     SpeedPctPerMin = speedPctPerMin,
-                    LastUpdated = DateTime.UtcNow
+                    LastUpdated = DateTime.UtcNow,
+                    TargetFirmwareVersion = targetFirmwareVersion,
+                    DetectorType = detectorType,
+                    FinalResult = finalResult
                 },
                 (key, existing) =>
                 {
@@ -391,6 +394,9 @@ namespace AccessAPP.Services
                     existing.Status = status;
                     existing.SpeedPctPerMin = speedPctPerMin;
                     existing.LastUpdated = DateTime.UtcNow;
+                    if (targetFirmwareVersion != null) existing.TargetFirmwareVersion = targetFirmwareVersion;
+                    if (detectorType != null) existing.DetectorType = detectorType;
+                    if (finalResult != null) existing.FinalResult = finalResult;
                     return existing;
                 });
 
@@ -441,6 +447,20 @@ namespace AccessAPP.Services
         public List<FirmwareProgressStatus> GetAllFirmwareProgress()
         {
             return _progressStatus.Values.ToList();
+        }
+
+        public bool RemoveFirmwareProgress(string mac)
+        {
+            return _progressStatus.TryRemove(mac, out _);
+        }
+
+        public int ClearQueuedProgress()
+        {
+            var queued = _progressStatus.Where(kvp => kvp.Value.Status == "Queued").Select(kvp => kvp.Key).ToList();
+            int removed = 0;
+            foreach (var mac in queued)
+                if (_progressStatus.TryRemove(mac, out _)) removed++;
+            return removed;
         }
 
         // Get the list of devices
