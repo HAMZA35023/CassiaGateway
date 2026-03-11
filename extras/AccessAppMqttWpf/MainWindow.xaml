@@ -482,12 +482,24 @@
                     </MenuItem.Icon>
                 </MenuItem>
             </MenuItem>
-            <MenuItem Header="Local Server"
-                      Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}">
+            <MenuItem Header="Local Server">
                 <MenuItem.Icon>
                     <TextBlock Text="🖥" Style="{StaticResource MenuIconGlyph}"/>
                 </MenuItem.Icon>
-                <MenuItem Header="Local server settings…"
+                <MenuItem Header="{Binding LocalServerToggleLabel}"
+                          Command="{Binding ToggleLocalServerCommand}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="⚡" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="{Binding AccessAppToggleLabel}"
+                          Command="{Binding ToggleAccessAppCommand}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="🤖" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <Separator/>
+                <MenuItem Header="Settings…"
                           Command="{Binding OpenLocalServerSettingsCommand}">
                     <MenuItem.Icon>
                         <TextBlock Text="⚙" Style="{StaticResource MenuIconGlyph}"/>
@@ -706,11 +718,25 @@
                                FontSize="14"
                                VerticalAlignment="Center"/>
 
-                    <ContentControl Grid.Column="1"
-                                    Content="{Binding}"
-                                    ContentTemplate="{StaticResource CassiaStateBadge}"
-                                    VerticalAlignment="Center"
-                                    Margin="8,0,0,0"/>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0,0,0">
+                        <ContentControl Content="{Binding}"
+                                        ContentTemplate="{StaticResource CassiaStateBadge}"
+                                        VerticalAlignment="Center"/>
+                        <Border CornerRadius="4"
+                                Padding="6,2"
+                                Margin="6,0,0,0"
+                                Background="{DynamicResource Card2Brush}"
+                                BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="1"
+                                VerticalAlignment="Center"
+                                Visibility="{Binding HasBleBackend, Converter={StaticResource BoolToVis}}">
+                            <TextBlock Text="{Binding BleBackend}"
+                                       FontSize="11"
+                                       Foreground="{DynamicResource MutedBrush}"
+                                       VerticalAlignment="Center"
+                                       ToolTip="BLE backend used by AccessApp"/>
+                        </Border>
+                    </StackPanel>
                 </Grid>                <!-- Right button column spans full card height -->
                 <Grid Grid.Row="0" Grid.RowSpan="2" Grid.Column="1"
                       VerticalAlignment="Top"

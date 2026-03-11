@@ -183,6 +183,9 @@
                     <Separator Margin="0,10,0,10"/>
 
                     <!-- Auto-start + start/stop -->
+                    <CheckBox Content="Auto-start local server on application startup"
+                              IsChecked="{Binding AutoStartLocalServer, Mode=TwoWay}"
+                              Margin="0,0,0,6"/>
                     <CheckBox Content="Auto-start AccessApp when local server starts"
                               IsChecked="{Binding AutoStartAccessApp, Mode=TwoWay}"
                               Margin="0,0,0,10"/>

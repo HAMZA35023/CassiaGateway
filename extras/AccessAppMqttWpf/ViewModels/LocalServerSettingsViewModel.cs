@@ -23,6 +23,7 @@ public partial class LocalServerSettingsViewModel : ObservableObject, IDisposabl
     [ObservableProperty] private string manifestBaseUrl = "https://prod.statistics.niko-test.nu/accessapp";
     [ObservableProperty] private string selectedRuntime = "windows-x64";
     [ObservableProperty] private string localAccessAppPath = "";
+    [ObservableProperty] private bool autoStartLocalServer;
     [ObservableProperty] private bool autoStartAccessApp;
 
     public string[] RuntimeOptions { get; } = new[]
@@ -57,6 +58,7 @@ public partial class LocalServerSettingsViewModel : ObservableObject, IDisposabl
         ManifestBaseUrl = s.manifestBaseUrl;
         SelectedRuntime = s.accessAppRuntime;
         LocalAccessAppPath = s.localAccessAppPath;
+        AutoStartLocalServer = s.autoStartLocalServer;
         AutoStartAccessApp = s.autoStartAccessApp;
 
         RefreshInstalledVersion();
@@ -237,6 +239,7 @@ public partial class LocalServerSettingsViewModel : ObservableObject, IDisposabl
         all.localServer.manifestBaseUrl = ManifestBaseUrl;
         all.localServer.accessAppRuntime = SelectedRuntime;
         all.localServer.localAccessAppPath = LocalAccessAppPath;
+        all.localServer.autoStartLocalServer = AutoStartLocalServer;
         all.localServer.autoStartAccessApp = AutoStartAccessApp;
         _store.Save(all);
         StatusText = "Settings saved.";

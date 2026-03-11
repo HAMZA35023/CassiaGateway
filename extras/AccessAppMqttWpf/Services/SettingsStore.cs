@@ -65,6 +65,7 @@ public sealed class LocalServerSettings
     public string localAccessAppPath { get; set; } = "";
 
     public bool autoStartAccessApp { get; set; } = false;
+    public bool autoStartLocalServer { get; set; } = false;
 }
 
 public sealed class AccessAppSettings

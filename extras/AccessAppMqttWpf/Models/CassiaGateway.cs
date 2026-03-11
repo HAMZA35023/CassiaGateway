@@ -34,6 +34,7 @@ public partial class CassiaGateway : ObservableObject
     [ObservableProperty] private int? cellularLteRsrqDb;
     [ObservableProperty] private int? cellularLteSnrDb;
     [ObservableProperty] private string cellularProvider = "";
+    [ObservableProperty] private string bleBackend = "";
 
     // Client-side speed history for graphing (max 12 hours kept)
     public ObservableCollection<SpeedSample> SpeedHistory { get; } = new();
@@ -99,6 +100,7 @@ public partial class CassiaGateway : ObservableObject
     }
 
     public bool HasCellularSummary => !string.IsNullOrWhiteSpace(CellularSummary);
+    public bool HasBleBackend => !string.IsNullOrWhiteSpace(BleBackend);
 
     public string LastSeenLocal => LastSeenUtc == DateTimeOffset.MinValue ? "" : LastSeenUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
     public string FwManifestLastSeenLocal => FwManifestLastSeenUtc == DateTimeOffset.MinValue ? "" : FwManifestLastSeenUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
@@ -156,6 +158,7 @@ public partial class CassiaGateway : ObservableObject
     partial void OnCellularLteRsrqDbChanged(int? value) => OnCellularSummaryChanged();
     partial void OnCellularLteSnrDbChanged(int? value) => OnCellularSummaryChanged();
     partial void OnCellularProviderChanged(string value) => OnCellularSummaryChanged();
+    partial void OnBleBackendChanged(string value) => OnPropertyChanged(nameof(HasBleBackend));
 
     private void OnCellularSummaryChanged()
     {
