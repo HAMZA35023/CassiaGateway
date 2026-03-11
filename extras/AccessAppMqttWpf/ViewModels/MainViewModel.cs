@@ -358,6 +358,8 @@ public partial class MainViewModel : ObservableObject
 
     public MainViewModel()
     {
+        InitLocalServer();
+
         var s = _store.Load();
 
         // your current settings model uses nested objects

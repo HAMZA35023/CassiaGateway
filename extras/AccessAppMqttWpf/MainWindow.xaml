@@ -482,6 +482,18 @@
                     </MenuItem.Icon>
                 </MenuItem>
             </MenuItem>
+            <MenuItem Header="Local Server"
+                      Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}">
+                <MenuItem.Icon>
+                    <TextBlock Text="🖥" Style="{StaticResource MenuIconGlyph}"/>
+                </MenuItem.Icon>
+                <MenuItem Header="Local server settings…"
+                          Command="{Binding OpenLocalServerSettingsCommand}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="⚙" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+            </MenuItem>
             <MenuItem Header="Devices">
                 <MenuItem.Icon>
                     <TextBlock Text="🧩" Style="{StaticResource MenuIconGlyph}"/>

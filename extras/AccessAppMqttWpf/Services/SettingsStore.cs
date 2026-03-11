@@ -37,6 +37,7 @@ public sealed class AppSettings
 {
     public MqttSettings mqtt { get; set; } = new();
     public AccessAppSettings accessapp { get; set; } = new();
+    public LocalServerSettings localServer { get; set; } = new();
 }
 
 public sealed class MqttSettings
@@ -48,6 +49,22 @@ public sealed class MqttSettings
     public string password { get; set; } = "Niko1234!";
     public bool useTls { get; set; } = true;
     public bool ignoreTlsErrors { get; set; } = false;
+}
+
+public sealed class LocalServerSettings
+{
+    public bool enabled { get; set; } = false;
+    public int mqttPort { get; set; } = 1883;
+    public string accessAppChannel { get; set; } = "develop";
+    public string manifestBaseUrl { get; set; } = "https://prod.statistics.niko-test.nu/accessapp";
+    public string accessAppRuntime { get; set; } = "windows-x64";
+
+    /// <summary>
+    /// If non-empty, use this directory instead of downloading from the manifest.
+    /// </summary>
+    public string localAccessAppPath { get; set; } = "";
+
+    public bool autoStartAccessApp { get; set; } = false;
 }
 
 public sealed class AccessAppSettings

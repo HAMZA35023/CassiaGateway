@@ -62,4 +62,15 @@ public partial class App : Application
             ApplyTheme("Light", persist: false);
         }
     }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        try
+        {
+            if (MainWindow?.DataContext is ViewModels.MainViewModel vm)
+                vm.ShutdownLocalServices();
+        }
+        catch { }
+        base.OnExit(e);
+    }
 }
