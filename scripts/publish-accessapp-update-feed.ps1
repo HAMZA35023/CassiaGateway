@@ -116,7 +116,8 @@ function Get-VersionFromSource {
 function Invoke-PublishAndPackage {
     param(
         [string]$RepoRootPath,
-        [string]$TargetChannel
+        [string]$TargetChannel,
+        [string[]]$EffectiveRuntimes
     )
 
     $resolvedProject = Resolve-FullPath -Path $ProjectFile -Base $RepoRootPath
@@ -138,19 +139,6 @@ function Invoke-PublishAndPackage {
         throw "Missing helper script: $packScript"
     }
 
-    # Default: publish BOTH linux-arm and linux-x64 (packaged as linux-64).
-    $effectiveRuntimes = @()
-    if ($PSBoundParameters.ContainsKey("Runtimes") -and $Runtimes -and $Runtimes.Count -gt 0) {
-        $effectiveRuntimes = $Runtimes
-    }
-    elseif ($PSBoundParameters.ContainsKey("Runtime") -and -not [string]::IsNullOrWhiteSpace($Runtime) -and $Runtime -ne "linux-arm") {
-        # Backwards compatibility: if someone explicitly set -Runtime, publish only that runtime.
-        $effectiveRuntimes = @($Runtime)
-    }
-    else {
-        $effectiveRuntimes = @("linux-arm", "linux-x64", "win-x86", "win-x64")
-    }
-
     $runtimeTagMap = @{
         "linux-arm" = "linux-arm"
         "linux-x64" = "linux-64"
@@ -159,7 +147,7 @@ function Invoke-PublishAndPackage {
         "win-x64"   = "windows-x64"
     }
 
-    foreach ($rid in $effectiveRuntimes) {
+    foreach ($rid in $EffectiveRuntimes) {
         $runtimeTag = $runtimeTagMap[$rid]
         if (-not $runtimeTag) { $runtimeTag = $rid }
 
@@ -225,7 +213,7 @@ function Invoke-PublishAndPackage {
         }
     }
 
-    Write-Log "Published channel '$TargetChannel' version '$effectiveVersion' (runtimes: $($effectiveRuntimes -join ', '))."
+    Write-Log "Published channel '$TargetChannel' version '$effectiveVersion' (runtimes: $($EffectiveRuntimes -join ', '))."
     return $effectiveVersion
 }
 
@@ -371,9 +359,21 @@ function Get-WorktreeRootsToClean {
     return $roots
 }
 
+# Resolve effective runtimes once at script scope where $PSBoundParameters is correct.
+$scriptEffectiveRuntimes = if ($PSBoundParameters.ContainsKey("Runtimes") -and $Runtimes -and $Runtimes.Count -gt 0) {
+    $Runtimes
+}
+elseif ($PSBoundParameters.ContainsKey("Runtime") -and -not [string]::IsNullOrWhiteSpace($Runtime) -and $Runtime -ne "linux-arm") {
+    # Backwards compatibility: if someone explicitly passed -Runtime, publish only that runtime.
+    @($Runtime)
+}
+else {
+    @("linux-arm", "linux-x64", "win-x86", "win-x64")
+}
+
 try {
     if (-not $AutoBuildAllChannels) {
-        $resultVersion = Invoke-PublishAndPackage -RepoRootPath $repoRoot -TargetChannel $Channel
+        $resultVersion = Invoke-PublishAndPackage -RepoRootPath $repoRoot -TargetChannel $Channel -EffectiveRuntimes $scriptEffectiveRuntimes
         Write-Host ""
         Write-Log "Update feed published successfully."
         Write-Log "Version: $resultVersion"
@@ -468,7 +468,7 @@ try {
                         throw "git worktree add failed for '$branch'"
                     }
 
-                    $builtVersion = Invoke-PublishAndPackage -RepoRootPath $worktreePath -TargetChannel $targetChannel
+                    $builtVersion = Invoke-PublishAndPackage -RepoRootPath $worktreePath -TargetChannel $targetChannel -EffectiveRuntimes $scriptEffectiveRuntimes
                     $newSha | Set-Content -Path $shaFile -Encoding ascii -NoNewline
                     $built.Add("$branch->$targetChannel ($builtVersion)") | Out-Null
                     Write-Log "Build completed for '$branch' -> '$targetChannel'."
