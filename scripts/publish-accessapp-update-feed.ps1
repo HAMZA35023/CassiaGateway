@@ -2,7 +2,7 @@ param(
     [string]$ProjectFile = "AccessAPP\AccessAPP.csproj",
     [string]$Configuration = "Release",
     [string]$Runtime = "linux-arm",
-    [string[]]$Runtimes = @("linux-arm", "linux-x64"),
+    [string[]]$Runtimes = @("linux-arm", "linux-x64", "win-x86", "win-x64"),
     [bool]$SelfContained = $true,
     [switch]$SkipPublish,
     [switch]$SkipClientBuild,
@@ -148,7 +148,7 @@ function Invoke-PublishAndPackage {
         $effectiveRuntimes = @($Runtime)
     }
     else {
-        $effectiveRuntimes = @("linux-arm", "linux-x64")
+        $effectiveRuntimes = @("linux-arm", "linux-x64", "win-x86", "win-x64")
     }
 
     $runtimeTagMap = @{
