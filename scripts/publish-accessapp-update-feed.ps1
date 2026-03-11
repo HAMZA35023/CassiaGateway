@@ -183,10 +183,14 @@ function Invoke-PublishAndPackage {
                 "--output"
                 $publishDir
             )
-            # Multi-targeted project: Windows RIDs must target the Windows TFM explicitly.
+            # Multi-targeted project: must specify TFM explicitly.
             if ($rid.StartsWith("win-", [System.StringComparison]::OrdinalIgnoreCase)) {
                 $publishArgs += "-f"
                 $publishArgs += "net8.0-windows10.0.17763.0"
+            }
+            else {
+                $publishArgs += "-f"
+                $publishArgs += "net8.0"
             }
             if ($SkipClientBuild) {
                 $publishArgs += "-p:SkipClientAppBuild=true"
