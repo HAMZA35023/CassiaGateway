@@ -91,12 +91,8 @@ public partial class MainViewModel : ObservableObject
         return null;
     }
 
-    private void OnMqttMessage(string topic, string payload)
+    private void HandlePlainReplyPayload(string payload)
     {
-        // Learn available scopes from incoming topics so the user can switch quickly.
-        RegisterObservedScopeFromTopic(topic);
-
-        // 1) Handle plain-text replies regardless of topic.
         // We accept:
         //   "AA:BB:..: connect OK"
         //   "[info] AA:BB:..: disconnect OK"
@@ -130,10 +126,19 @@ public partial class MainViewModel : ObservableObject
             }
         }
         catch { /* ignore */ }
+    }
 
+    private void OnMqttMessage(string topic, string payload)
+    {
+        // Learn available scopes from incoming topics so the user can switch quickly.
+        RegisterObservedScopeFromTopic(topic);
 
         var m = TopicRx.Match(topic);
-        if (!m.Success) return;
+        if (!m.Success)
+        {
+            HandlePlainReplyPayload(payload);
+            return;
+        }
 
         var net = m.Groups["net"].Value;
         if (!net.Equals(NetworkId, StringComparison.OrdinalIgnoreCase))
@@ -142,6 +147,8 @@ public partial class MainViewModel : ObservableObject
         var kind = m.Groups["kind"].Value.ToLowerInvariant();
         var cassia = m.Groups["cassia"].Value;
         var leaf = m.Groups["leaf"].Value.ToLowerInvariant();
+
+        HandlePlainReplyPayload(payload);
 
         if (kind == "tele" && leaf == "status")
         {

@@ -14,7 +14,11 @@ public partial class LocalServerSettingsViewModel : ObservableObject, IDisposabl
 {
     private readonly MainViewModel _main;
     private readonly SettingsStore _store = new();
+    private readonly bool _launchAfterDownload;
     private CancellationTokenSource? _downloadCts;
+
+    /// <summary>Raised when the VM wants to close its window (e.g. after download+launch).</summary>
+    public event Action? RequestClose;
 
     // ── Settings ─────────────────────────────────────────────────────────────
 
@@ -48,9 +52,10 @@ public partial class LocalServerSettingsViewModel : ObservableObject, IDisposabl
 
     // ── Constructor ───────────────────────────────────────────────────────────
 
-    public LocalServerSettingsViewModel(MainViewModel main)
+    public LocalServerSettingsViewModel(MainViewModel main, bool launchAfterDownload = false)
     {
         _main = main;
+        _launchAfterDownload = launchAfterDownload;
 
         var s = _store.Load().localServer;
         MqttPort = s.mqttPort;
@@ -157,7 +162,8 @@ public partial class LocalServerSettingsViewModel : ObservableObject, IDisposabl
                     return;
                 }
 
-                var proc = AccessAppLauncherService.StartAccessApp(exe, _main.LocalMqttServer.Port, _main.NetworkId);
+                var proc = AccessAppLauncherService.StartAccessApp(exe, _main.LocalMqttServer.Port, _main.NetworkId,
+                    username: "local", password: LocalMqttServerService.LocalToken);
                 _main.SetAccessAppProcess(proc);
 
                 Application.Current.Dispatcher.Invoke(() =>
@@ -199,7 +205,24 @@ public partial class LocalServerSettingsViewModel : ObservableObject, IDisposabl
 
             StatusText = message;
             if (success)
+            {
                 RefreshInstalledVersion();
+
+                if (_launchAfterDownload)
+                {
+                    await StartAccessAppInternalAsync();
+
+                    var close = Application.Current.Dispatcher.Invoke(() =>
+                        MessageBox.Show(
+                            "AccessApp has been updated and launched.\n\nClose this settings window?",
+                            "AccessApp started",
+                            MessageBoxButton.YesNo,
+                            MessageBoxImage.Question));
+
+                    if (close == MessageBoxResult.Yes)
+                        Application.Current.Dispatcher.Invoke(() => RequestClose?.Invoke());
+                }
+            }
         }
         finally
         {

@@ -8,16 +8,17 @@ public partial class LocalServerSettingsWindow : Window
 {
     private readonly LocalServerSettingsViewModel _vm;
 
-    public LocalServerSettingsWindow(MainViewModel main)
+    public LocalServerSettingsWindow(MainViewModel main, bool autoDownloadAndLaunch = false)
     {
         InitializeComponent();
-        _vm = new LocalServerSettingsViewModel(main);
+        _vm = new LocalServerSettingsViewModel(main, autoDownloadAndLaunch);
         DataContext = _vm;
 
-        Closed += (_, _) =>
-        {
-            try { _vm.Dispose(); } catch { }
-        };
+        _vm.RequestClose += Close;
+        Closed += (_, _) => { try { _vm.Dispose(); } catch { } };
+
+        if (autoDownloadAndLaunch)
+            Loaded += (_, _) => _vm.DownloadUpdateCommand.Execute(null);
     }
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();

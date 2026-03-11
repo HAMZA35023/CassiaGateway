@@ -156,7 +156,9 @@ public sealed class AccessAppLauncherService
         string executablePath,
         int mqttPort,
         string networkId,
-        string cassia = "local-cassia")
+        string cassia = "local-cassia",
+        string username = "",
+        string password = "")
     {
         try
         {
@@ -171,8 +173,8 @@ public sealed class AccessAppLauncherService
                 host = "127.0.0.1",
                 port = mqttPort,
                 useTls = false,
-                username = "",
-                password = "",
+                username,
+                password,
                 baseTopic = "accessapp",
                 keepAliveSeconds = 30,
                 reconnectDelaySeconds = 10,

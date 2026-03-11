@@ -79,9 +79,6 @@ public partial class MainViewModel : ObservableObject
 
         // Auto-start on startup (deferred after UI is up)
         _ = AutoStartLocalServicesAsync();
-
-        // Startup version check (deferred)
-        _ = StartupVersionCheckAsync();
     }
 
     private async Task AutoStartLocalServicesAsync()
@@ -106,22 +103,23 @@ public partial class MainViewModel : ObservableObject
         }
 
         if (s.localServer.autoStartAccessApp)
-            await LaunchAccessAppFromSettingsAsync(s.localServer);
+            await LaunchAccessAppWithUpdateCheckAsync(s.localServer);
     }
 
-    private async Task StartupVersionCheckAsync()
+    /// <summary>
+    /// Checks if a newer AccessApp version is available. Returns (hasUpdate, latestVersion).
+    /// Returns (false, "") if no update or check failed.
+    /// </summary>
+    private async Task<(bool hasUpdate, string latest, string installed, string channel)> CheckForAccessAppUpdateAsync()
     {
-        // Delay so we don't block startup
-        await Task.Delay(4000);
-
         AppSettings s;
-        try { s = _store.Load(); } catch { return; }
+        try { s = _store.Load(); } catch { return (false, "", "", ""); }
 
-        // Only check when using the auto-download dir (not a local path override)
-        if (!string.IsNullOrWhiteSpace(s.localServer.localAccessAppPath)) return;
+        // Only meaningful when using the auto-download dir
+        if (!string.IsNullOrWhiteSpace(s.localServer.localAccessAppPath)) return (false, "", "", "");
 
         var installed = AccessAppLauncherService.GetInstalledVersion();
-        if (installed == "Not installed") return;
+        if (installed == "Not installed") return (false, "", "", "");
 
         try
         {
@@ -133,21 +131,10 @@ public partial class MainViewModel : ObservableObject
                 && l.TryGetProperty("version", out var v)
                 ? (v.GetString() ?? "") : "";
 
-            if (string.IsNullOrWhiteSpace(latest) || latest == installed) return;
-
-            Application.Current.Dispatcher.Invoke(() =>
-            {
-                var result = MessageBox.Show(
-                    $"A new AccessApp version is available.\n\nInstalled: {installed}\nLatest ({s.localServer.accessAppChannel}): {latest}\n\nOpen Local Server Settings to update?",
-                    "AccessApp update available",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Information);
-
-                if (result == MessageBoxResult.Yes)
-                    OpenLocalServerSettingsCommand.Execute(null);
-            });
+            if (string.IsNullOrWhiteSpace(latest) || latest == installed) return (false, "", "", "");
+            return (true, latest, installed, s.localServer.accessAppChannel);
         }
-        catch { /* best-effort */ }
+        catch { return (false, "", "", ""); }
     }
 
     /// <summary>Reconnect the WPF MQTT client to the local broker. Stored host/port is NOT changed.</summary>
@@ -158,12 +145,17 @@ public partial class MainViewModel : ObservableObject
         ConnectionStatus = $"Switching to local MQTT (127.0.0.1:{LocalMqttServer.Port})…";
         try
         {
+            // Treat broker switching as a manual handoff so delayed reconnect attempts
+            // cannot revive the previous broker while we are changing targets.
+            _manualDisconnectRequested = true;
+            _autoReconnectCts?.Cancel();
+
             if (IsConnected)
             {
-                _manualDisconnectRequested = false;
                 await _mqtt.DisconnectAsync();
             }
-            await ConnectWithEffectiveParamsAsync();
+            // ConnectWithEffectiveParamsAsync resets _manualDisconnectRequested = false
+            await ConnectWithEffectiveParamsAsync(delayResyncMs: 1000);
         }
         catch (Exception ex)
         {
@@ -179,12 +171,16 @@ public partial class MainViewModel : ObservableObject
         ConnectionStatus = "Switching back to public MQTT…";
         try
         {
+            // Treat broker switching as a manual handoff so delayed reconnect attempts
+            // cannot revive the previous broker while we are changing targets.
+            _manualDisconnectRequested = true;
+            _autoReconnectCts?.Cancel();
+
             if (IsConnected)
             {
-                _manualDisconnectRequested = false;
                 await _mqtt.DisconnectAsync();
             }
-            await ConnectWithEffectiveParamsAsync();
+            await ConnectWithEffectiveParamsAsync(delayResyncMs: 1000);
         }
         catch (Exception ex)
         {
@@ -195,7 +191,7 @@ public partial class MainViewModel : ObservableObject
     /// <summary>
     /// Connect using either local or stored MQTT parameters, without touching stored properties.
     /// </summary>
-    internal async Task ConnectWithEffectiveParamsAsync()
+    internal async Task ConnectWithEffectiveParamsAsync(int delayResyncMs = 0)
     {
         string host;
         int port;
@@ -235,6 +231,9 @@ public partial class MainViewModel : ObservableObject
             _isConnecting = false;
         }
 
+        if (delayResyncMs > 0)
+            await Task.Delay(delayResyncMs, _appCts.Token).ConfigureAwait(false);
+
         await ResyncCoreAsync(true, clearUi: true).ConfigureAwait(false);
     }
 
@@ -272,7 +271,7 @@ public partial class MainViewModel : ObservableObject
                 await LocalMqttServer.StartAsync(s.mqttPort);
 
                 if (s.autoStartAccessApp)
-                    await LaunchAccessAppFromSettingsAsync(s);
+                    await LaunchAccessAppWithUpdateCheckAsync(s);
             }
         }
         catch (Exception ex)
@@ -299,12 +298,51 @@ public partial class MainViewModel : ObservableObject
             }
 
             var s = _store.Load().localServer;
-            await LaunchAccessAppFromSettingsAsync(s);
+            await LaunchAccessAppWithUpdateCheckAsync(s);
         }
         catch (Exception ex)
         {
             ConnectionStatus = "AccessApp toggle failed: " + ex.Message;
         }
+    }
+
+    /// <summary>
+    /// Checks for an available update, prompts the user if one exists, then either opens the
+    /// settings window to download+launch or launches the current version directly.
+    /// </summary>
+    private async Task LaunchAccessAppWithUpdateCheckAsync(LocalServerSettings s)
+    {
+        var (hasUpdate, latest, installed, channel) = await CheckForAccessAppUpdateAsync();
+        if (hasUpdate)
+        {
+            var answer = Application.Current.Dispatcher.Invoke(() =>
+                MessageBox.Show(
+                    $"A new AccessApp version is available.\n\nInstalled: {installed}\nLatest ({channel}): {latest}\n\nUpdate and then launch AccessApp?",
+                    "AccessApp update available",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Information));
+
+            if (answer == MessageBoxResult.Yes)
+            {
+                OpenLocalServerSettingsForUpdate();
+                return;
+            }
+        }
+
+        await LaunchAccessAppFromSettingsAsync(s);
+    }
+
+    private void OpenLocalServerSettingsForUpdate()
+    {
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            var wnd = new LocalServerSettingsWindow(this, autoDownloadAndLaunch: true)
+            {
+                Owner = Application.Current.MainWindow
+            };
+            wnd.Show();
+            wnd.Activate();
+        });
     }
 
     private Task LaunchAccessAppFromSettingsAsync(LocalServerSettings s)
@@ -320,7 +358,8 @@ public partial class MainViewModel : ObservableObject
                 return;
             }
 
-            var proc = AccessAppLauncherService.StartAccessApp(exe, LocalMqttServer.Port, NetworkId);
+            var proc = AccessAppLauncherService.StartAccessApp(exe, LocalMqttServer.Port, NetworkId,
+                username: "local", password: LocalMqttServerService.LocalToken);
             SetAccessAppProcess(proc);
 
             Application.Current.Dispatcher.Invoke(() =>

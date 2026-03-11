@@ -950,36 +950,9 @@ public partial class MainViewModel : ObservableObject
             _autoReconnectEnabled = true;
             _autoReconnectCts?.Cancel();
 
-            // Always start a fresh session when connecting (clears UI + internal caches)
-            // so reconnect behaves the same as a "clean" connect.
-            var resetSpeedHistory = ShouldResetSpeedHistoryForCurrentScope();
-            ClearAllUiAndState(resetSpeedHistory);
-
-            _isConnecting = true;
-            try
-            {
-                // Route to local broker when local server is active; stored params otherwise
-                string host; int port; string user; string pass; bool tls; bool ignoreTls;
-                if (_localMqttActive && LocalMqttServer.IsRunning)
-                {
-                    host = "127.0.0.1"; port = LocalMqttServer.Port;
-                    user = ""; pass = ""; tls = false; ignoreTls = false;
-                }
-                else
-                {
-                    host = MqttHost; port = MqttPort;
-                    user = MqttUser; pass = MqttPassword ?? ""; tls = UseTls; ignoreTls = IgnoreTlsErrors;
-                }
-
-                await _mqtt.ConnectAsync(host, port, user, pass, tls, ignoreTls, MqttTopic, _appCts.Token);
-            }
-            finally
-            {
-                _isConnecting = false;
-            }
-
-            // Full clean re-sync (subscribe + request snapshots).
-            await ResyncCoreAsync(resetSpeedHistory, clearUi: false).ConfigureAwait(false);
+            // ConnectWithEffectiveParamsAsync routes to local or public broker as needed,
+            // then clears the UI and resyncs.
+            await ConnectWithEffectiveParamsAsync().ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -1111,26 +1084,9 @@ public partial class MainViewModel : ObservableObject
 
             try
             {
-                var resetSpeedHistory = ShouldResetSpeedHistoryForCurrentScope();
-                _isConnecting = true;
-                try
-                {
-                    await _mqtt.ConnectAsync(
-                        MqttHost,
-                        MqttPort,
-                        MqttUser,
-                        MqttPassword ?? "",
-                        UseTls,
-                        IgnoreTlsErrors,
-                        MqttTopic,
-                        _appCts.Token).ConfigureAwait(false);
-                }
-                finally
-                {
-                    _isConnecting = false;
-                }
-
-                await ResyncCoreAsync(resetSpeedHistory, clearUi: true).ConfigureAwait(false);
+                // Use ConnectWithEffectiveParamsAsync so local-mode reconnects go back to
+                // the local broker instead of the public/stored host.
+                await ConnectWithEffectiveParamsAsync().ConfigureAwait(false);
                 return;
             }
             catch (Exception ex)
