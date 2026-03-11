@@ -482,6 +482,30 @@
                     </MenuItem.Icon>
                 </MenuItem>
             </MenuItem>
+            <MenuItem Header="Local Server">
+                <MenuItem.Icon>
+                    <TextBlock Text="🖥" Style="{StaticResource MenuIconGlyph}"/>
+                </MenuItem.Icon>
+                <MenuItem Header="{Binding LocalServerToggleLabel}"
+                          Command="{Binding ToggleLocalServerCommand}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="⚡" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="{Binding AccessAppToggleLabel}"
+                          Command="{Binding ToggleAccessAppCommand}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="🤖" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <Separator/>
+                <MenuItem Header="Settings…"
+                          Command="{Binding OpenLocalServerSettingsCommand}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="⚙" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+            </MenuItem>
             <MenuItem Header="Devices">
                 <MenuItem.Icon>
                     <TextBlock Text="🧩" Style="{StaticResource MenuIconGlyph}"/>
@@ -549,10 +573,66 @@
                 <StackPanel>
 
                     <!-- ===== Cassia gateways (TOP LEFT) ===== -->
-                    <TextBlock Text="Cassia gateways"
-                               FontSize="18"
-                               FontWeight="SemiBold"
-                               Margin="0,0,0,10"/>
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0"
+                                   Text="Cassia gateways"
+                                   FontSize="18"
+                                   FontWeight="SemiBold"
+                                   VerticalAlignment="Center"/>
+                        <!-- MQTT connection badge: LOCAL (green) or REMOTE (blue). Click to toggle when local server is running. -->
+                        <Button Grid.Column="1"
+                                Command="{Binding ToggleMqttConnectionCommand}"
+                                VerticalAlignment="Center"
+                                Margin="10,0,0,0"
+                                Padding="0"
+                                BorderThickness="0"
+                                Background="Transparent"
+                                ToolTip="{Binding MqttConnectionTooltip}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Cursor" Value="Arrow"/>
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border x:Name="BadgeBorder"
+                                                        CornerRadius="4"
+                                                        Background="{DynamicResource AccentBrush}"
+                                                        BorderThickness="0"
+                                                        Padding="8,3">
+                                                    <TextBlock x:Name="BadgeText"
+                                                               Text="{Binding MqttConnectionLabel}"
+                                                               FontSize="11"
+                                                               FontWeight="SemiBold"
+                                                               Foreground="White"
+                                                               VerticalAlignment="Center"/>
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <DataTrigger Binding="{Binding IsLocalMqttActive}" Value="True">
+                                                        <Setter TargetName="BadgeBorder" Property="Background" Value="{DynamicResource GoodBrush}"/>
+                                                    </DataTrigger>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="BadgeBorder" Property="Opacity" Value="0.8"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsLocalServerRunning}" Value="False">
+                                            <Setter Property="Cursor" Value="Arrow"/>
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding IsLocalServerRunning}" Value="True">
+                                            <Setter Property="Cursor" Value="Hand"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </Grid>
                     <ItemsControl ItemsSource="{Binding CassiaGateways}">
                         <ItemsControl.ItemContainerStyle>
                             <Style TargetType="ContentPresenter">
@@ -694,11 +774,25 @@
                                FontSize="14"
                                VerticalAlignment="Center"/>
 
-                    <ContentControl Grid.Column="1"
-                                    Content="{Binding}"
-                                    ContentTemplate="{StaticResource CassiaStateBadge}"
-                                    VerticalAlignment="Center"
-                                    Margin="8,0,0,0"/>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0,0,0">
+                        <Border CornerRadius="4"
+                                Padding="6,2"
+                                Margin="0,0,6,0"
+                                Background="{DynamicResource Card2Brush}"
+                                BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="1"
+                                VerticalAlignment="Center"
+                                Visibility="{Binding HasBleBackend, Converter={StaticResource BoolToVis}}">
+                            <TextBlock Text="{Binding BleBackendShort}"
+                                       FontSize="11"
+                                       Foreground="{DynamicResource MutedBrush}"
+                                       VerticalAlignment="Center"
+                                       ToolTip="BLE backend used by AccessApp"/>
+                        </Border>
+                        <ContentControl Content="{Binding}"
+                                        ContentTemplate="{StaticResource CassiaStateBadge}"
+                                        VerticalAlignment="Center"/>
+                    </StackPanel>
                 </Grid>                <!-- Right button column spans full card height -->
                 <Grid Grid.Row="0" Grid.RowSpan="2" Grid.Column="1"
                       VerticalAlignment="Top"

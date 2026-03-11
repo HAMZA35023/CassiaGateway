@@ -157,6 +157,7 @@ public partial class MainViewModel : ObservableObject
                 int queue = root.TryGetProperty("queue", out var q) ? q.GetInt32() : 0;
                 int programming = root.TryGetProperty("programming", out var pr) ? pr.GetInt32() : 0;
                 double totalSpeedpct = root.TryGetProperty("totalSpeedpct", out var sp) ? sp.GetDouble() : 0;
+                var bleBackend = root.TryGetProperty("backend", out var bb) ? (bb.GetString() ?? "") : "";
                 var cellularState = root.TryGetProperty("cellularState", out var cs) ? (cs.GetString() ?? "") : "";
                 var cellularNetworkType = root.TryGetProperty("cellularNetworkType", out var cnt) ? (cnt.GetString() ?? "") : "";
                 var cellularProvider = root.TryGetProperty("cellularProvider", out var cp) ? (cp.GetString() ?? "") : "";
@@ -199,6 +200,7 @@ public partial class MainViewModel : ObservableObject
                     gw.Programming = programming;
                     gw.TotalSpeedpct = totalSpeedpct;
                     gw.AddSpeedSample(ts, totalSpeedpct);
+                    if (!string.IsNullOrWhiteSpace(bleBackend)) gw.BleBackend = bleBackend;
                     gw.CellularState = cellularState;
                     gw.CellularNetworkType = cellularNetworkType;
                     gw.CellularProvider = cellularProvider;

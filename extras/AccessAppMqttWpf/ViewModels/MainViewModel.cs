@@ -358,6 +358,8 @@ public partial class MainViewModel : ObservableObject
 
     public MainViewModel()
     {
+        InitLocalServer();
+
         var s = _store.Load();
 
         // your current settings model uses nested objects
@@ -956,15 +958,20 @@ public partial class MainViewModel : ObservableObject
             _isConnecting = true;
             try
             {
-                await _mqtt.ConnectAsync(
-                    MqttHost,
-                    MqttPort,
-                    MqttUser,
-                    MqttPassword ?? "",
-                    UseTls,
-                    IgnoreTlsErrors,
-                    MqttTopic,
-                    _appCts.Token);
+                // Route to local broker when local server is active; stored params otherwise
+                string host; int port; string user; string pass; bool tls; bool ignoreTls;
+                if (_localMqttActive && LocalMqttServer.IsRunning)
+                {
+                    host = "127.0.0.1"; port = LocalMqttServer.Port;
+                    user = ""; pass = ""; tls = false; ignoreTls = false;
+                }
+                else
+                {
+                    host = MqttHost; port = MqttPort;
+                    user = MqttUser; pass = MqttPassword ?? ""; tls = UseTls; ignoreTls = IgnoreTlsErrors;
+                }
+
+                await _mqtt.ConnectAsync(host, port, user, pass, tls, ignoreTls, MqttTopic, _appCts.Token);
             }
             finally
             {
