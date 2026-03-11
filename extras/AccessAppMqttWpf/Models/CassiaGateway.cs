@@ -102,6 +102,14 @@ public partial class CassiaGateway : ObservableObject
     public bool HasCellularSummary => !string.IsNullOrWhiteSpace(CellularSummary);
     public bool HasBleBackend => !string.IsNullOrWhiteSpace(BleBackend);
 
+    public string BleBackendShort => (BleBackend ?? "").ToLowerInvariant() switch
+    {
+        "windows-native" => "win",
+        "linux-native"   => "linux",
+        var s when !string.IsNullOrWhiteSpace(s) => s,
+        _ => ""
+    };
+
     public string LastSeenLocal => LastSeenUtc == DateTimeOffset.MinValue ? "" : LastSeenUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
     public string FwManifestLastSeenLocal => FwManifestLastSeenUtc == DateTimeOffset.MinValue ? "" : FwManifestLastSeenUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
     public string StateLower => (State ?? "").ToLowerInvariant();
@@ -158,7 +166,11 @@ public partial class CassiaGateway : ObservableObject
     partial void OnCellularLteRsrqDbChanged(int? value) => OnCellularSummaryChanged();
     partial void OnCellularLteSnrDbChanged(int? value) => OnCellularSummaryChanged();
     partial void OnCellularProviderChanged(string value) => OnCellularSummaryChanged();
-    partial void OnBleBackendChanged(string value) => OnPropertyChanged(nameof(HasBleBackend));
+    partial void OnBleBackendChanged(string value)
+    {
+        OnPropertyChanged(nameof(HasBleBackend));
+        OnPropertyChanged(nameof(BleBackendShort));
+    }
 
     private void OnCellularSummaryChanged()
     {

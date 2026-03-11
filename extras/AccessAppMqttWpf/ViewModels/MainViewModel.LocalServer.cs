@@ -11,6 +11,7 @@ namespace AccessAppMqttWpf.ViewModels;
 public partial class MainViewModel : ObservableObject
 {
     public readonly LocalMqttServerService LocalMqttServer = new();
+    private readonly LocalDiscoveryBeaconService _discoveryBeacon = new();
 
     private Process? _accessAppProcess;
 
@@ -19,6 +20,7 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty] private bool isLocalServerRunning;
     [ObservableProperty] private bool isAccessAppRunning;
+    [ObservableProperty] private bool isLocalMqttActive;
     [ObservableProperty] private string localServerStatus = "Stopped";
     [ObservableProperty] private string accessAppProcessStatus = "Not running";
 
@@ -26,9 +28,25 @@ public partial class MainViewModel : ObservableObject
     public string LocalServerToggleLabel => IsLocalServerRunning ? "Stop local server" : "Start local server";
     public string AccessAppToggleLabel => IsAccessAppRunning ? "Stop AccessApp" : "Start AccessApp";
 
+    // Badge shown next to "Cassia gateways" heading
+    public string MqttConnectionLabel => IsLocalMqttActive ? "LOCAL" : "REMOTE";
+    public string MqttConnectionTooltip =>
+        IsLocalServerRunning
+            ? (IsLocalMqttActive
+                ? "Connected to local MQTT — click to switch to remote"
+                : "Connected to remote MQTT — click to switch to local")
+            : "Remote MQTT — start local server to switch";
+
     partial void OnIsLocalServerRunningChanged(bool value)
     {
         OnPropertyChanged(nameof(LocalServerToggleLabel));
+        OnPropertyChanged(nameof(MqttConnectionTooltip));
+    }
+
+    partial void OnIsLocalMqttActiveChanged(bool value)
+    {
+        OnPropertyChanged(nameof(MqttConnectionLabel));
+        OnPropertyChanged(nameof(MqttConnectionTooltip));
     }
 
     partial void OnIsAccessAppRunningChanged(bool value)
@@ -45,6 +63,12 @@ public partial class MainViewModel : ObservableObject
                 IsLocalServerRunning = running;
                 LocalServerStatus = msg;
             });
+
+            // Announce / stop announcing the local broker on the LAN
+            if (running)
+                _discoveryBeacon.Start(LocalMqttServer.Port, NetworkId);
+            else
+                _discoveryBeacon.Stop();
 
             // Switch the client's MQTT connection to/from localhost when the server starts/stops
             if (running)
@@ -130,6 +154,7 @@ public partial class MainViewModel : ObservableObject
     private async Task SwitchMqttToLocalAsync()
     {
         _localMqttActive = true;
+        IsLocalMqttActive = true;
         ConnectionStatus = $"Switching to local MQTT (127.0.0.1:{LocalMqttServer.Port})…";
         try
         {
@@ -150,6 +175,7 @@ public partial class MainViewModel : ObservableObject
     private async Task SwitchMqttToPublicAsync()
     {
         _localMqttActive = false;
+        IsLocalMqttActive = false;
         ConnectionStatus = "Switching back to public MQTT…";
         try
         {
@@ -182,8 +208,8 @@ public partial class MainViewModel : ObservableObject
         {
             host = "127.0.0.1";
             port = LocalMqttServer.Port;
-            user = "";
-            pass = "";
+            user = "local";
+            pass = LocalMqttServerService.LocalToken;
             tls = false;
             ignoreTls = false;
         }
@@ -209,10 +235,27 @@ public partial class MainViewModel : ObservableObject
             _isConnecting = false;
         }
 
-        await ResyncCoreAsync(false, clearUi: false).ConfigureAwait(false);
+        await ResyncCoreAsync(true, clearUi: true).ConfigureAwait(false);
     }
 
     // ── Commands ──────────────────────────────────────────────────────────────
+
+    [RelayCommand]
+    private async Task ToggleMqttConnection()
+    {
+        if (!LocalMqttServer.IsRunning) return;
+        try
+        {
+            if (_localMqttActive)
+                await SwitchMqttToPublicAsync();
+            else
+                await SwitchMqttToLocalAsync();
+        }
+        catch (Exception ex)
+        {
+            ConnectionStatus = "Switch MQTT connection failed: " + ex.Message;
+        }
+    }
 
     [RelayCommand]
     private async Task ToggleLocalServer()
@@ -342,6 +385,7 @@ public partial class MainViewModel : ObservableObject
         }
         catch { }
 
+        try { _discoveryBeacon.Stop(); } catch { }
         try { _ = LocalMqttServer.StopAsync(); } catch { }
     }
 }

@@ -6,11 +6,14 @@ using System.Threading.Tasks;
 namespace AccessAppMqttWpf.Services;
 
 /// <summary>
-/// Hosts a local MQTT broker using MQTTnet. Anonymous connections accepted.
+/// Hosts a local MQTT broker using MQTTnet. Token-authenticated connections only.
 /// Lifetime is managed by MainViewModel.
 /// </summary>
 public sealed class LocalMqttServerService : IDisposable
 {
+    /// <summary>Shared secret used by all local-network participants (WPF + AccessApp).</summary>
+    public const string LocalToken = "cassia-local-3a7f2b9e1c4d8f06";
+
     private MqttServer? _server;
     private readonly MqttFactory _factory = new();
 
@@ -30,10 +33,12 @@ public sealed class LocalMqttServerService : IDisposable
 
         _server = _factory.CreateMqttServer(options);
 
-        // Accept all connecting clients (no auth)
+        // Accept only clients presenting the shared token as password
         _server.ValidatingConnectionAsync += args =>
         {
-            args.ReasonCode = MQTTnet.Protocol.MqttConnectReasonCode.Success;
+            args.ReasonCode = args.Password == LocalToken
+                ? MQTTnet.Protocol.MqttConnectReasonCode.Success
+                : MQTTnet.Protocol.MqttConnectReasonCode.BadAuthenticationMethod;
             return Task.CompletedTask;
         };
 

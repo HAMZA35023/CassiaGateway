@@ -164,6 +164,9 @@ public sealed class StatusMessage
     // OS uptime (seconds). Derived from Environment.TickCount64.
     public long uptimeSeconds { get; set; }
 
+    // BLE backend in use (e.g. "windows-native", "linux-native", "cassia")
+    public string? backend { get; set; }
+
     // Optional LTE/4G modem status (ZTE MF79U)
     public string? cellularState { get; set; }
     public string? cellularNetworkType { get; set; }

@@ -63,6 +63,18 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     public event Func<SetUpdateChannelCommand, Task>? SetUpdateChannelRequested;
     public event Func<RebootCommand, Task>? RebootRequested;
 
+    /// <summary>
+    /// Fired after each successful MQTT publish (topic, raw payload bytes).
+    /// Used by <see cref="LocalBrokerDiscoveryService"/> to mirror telemetry to discovered local brokers.
+    /// </summary>
+    public event Action<string, byte[]>? MessagePublished;
+
+    /// <summary>
+    /// Injects an externally received command (e.g. from a discovered local broker)
+    /// into the same command pipeline as messages received from the primary broker.
+    /// </summary>
+    public Task FeedCommandAsync(string topic, string payload) => HandleCommandAsync(topic, payload);
+
     public MqttService(
         MqttConfigStore store,
         RuntimeVariablesStore runtimeStore,
@@ -293,44 +305,76 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     private async Task RunLoopAsync(CancellationToken ct)
     {
         AppLog.Debug("Run loop started");
+        var lastStatusPublishAt = DateTimeOffset.MinValue;
+
         while (!ct.IsCancellationRequested)
         {
+            // ── Try to connect to the primary broker ─────────────────────────────
+            bool primaryConnected = false;
             try
             {
                 AppLog.Debug($"Ensuring connection to {CurrentOptions.Host}:{CurrentOptions.Port} (clientId={CurrentOptions.ClientId}, network={CurrentOptions.NetworkId})");
                 await EnsureConnectedAndSubscribedAsync(ct).ConfigureAwait(false);
-
-                var now = DateTimeOffset.UtcNow;
-                var online = await BuildStatusMessageAsync(now, ct).ConfigureAwait(false);
-                await PublishJsonAsync(TeleTopic("status"), online, retain: false, ct).ConfigureAwait(false);
-                AppLog.Info("Published retained online status");
-                var lastStatusPublishAt = now;
-
-                while (!ct.IsCancellationRequested && _client is not null && _client.IsConnected)
-                {
-                    now = DateTimeOffset.UtcNow;
-                    var heartbeatInterval = GetStatusHeartbeatInterval();
-
-                    if ((now - lastStatusPublishAt) >= heartbeatInterval)
-                    {
-                        var heartbeat = await BuildStatusMessageAsync(now, ct).ConfigureAwait(false);
-
-                        await PublishJsonAsync(TeleTopic("status"), heartbeat, retain: false, ct)
-                            .ConfigureAwait(false);
-
-                        lastStatusPublishAt = now;
-                    }
-
-                    await Task.Delay(500, ct).ConfigureAwait(false);
-                }
+                primaryConnected = true;
             }
             catch (OperationCanceledException)
             {
                 AppLog.Debug("Run loop cancelled");
+                return;
             }
             catch (Exception ex)
             {
                 AppLog.Warn($"Connection error: {ex.Message}");
+            }
+
+            if (primaryConnected)
+            {
+                // ── Connected path: publish initial status then heartbeat loop ───
+                try
+                {
+                    var now = DateTimeOffset.UtcNow;
+                    var online = await BuildStatusMessageAsync(now, ct).ConfigureAwait(false);
+                    await PublishJsonAsync(TeleTopic("status"), online, retain: false, ct).ConfigureAwait(false);
+                    AppLog.Info("Published retained online status");
+                    lastStatusPublishAt = now;
+
+                    while (!ct.IsCancellationRequested && _client is not null && _client.IsConnected)
+                    {
+                        now = DateTimeOffset.UtcNow;
+                        var heartbeatInterval = GetStatusHeartbeatInterval();
+
+                        if ((now - lastStatusPublishAt) >= heartbeatInterval)
+                        {
+                            var heartbeat = await BuildStatusMessageAsync(now, ct).ConfigureAwait(false);
+                            await PublishJsonAsync(TeleTopic("status"), heartbeat, retain: false, ct)
+                                .ConfigureAwait(false);
+                            lastStatusPublishAt = now;
+                        }
+
+                        await Task.Delay(500, ct).ConfigureAwait(false);
+                    }
+                }
+                catch (OperationCanceledException) { return; }
+                catch (Exception ex) { AppLog.Warn($"Heartbeat error: {ex.Message}"); }
+            }
+            else
+            {
+                // ── Offline path: still heartbeat to local brokers at the configured interval ──
+                // PublishJsonAsync fires MessagePublished before attempting primary, so local
+                // brokers receive status updates even without a public MQTT connection.
+                var now = DateTimeOffset.UtcNow;
+                var heartbeatInterval = GetStatusHeartbeatInterval();
+                if ((now - lastStatusPublishAt) >= heartbeatInterval)
+                {
+                    try
+                    {
+                        var status = await BuildStatusMessageAsync(now, ct).ConfigureAwait(false);
+                        await PublishJsonAsync(TeleTopic("status"), status, retain: false, ct).ConfigureAwait(false);
+                        lastStatusPublishAt = now;
+                    }
+                    catch (OperationCanceledException) { return; }
+                    catch { /* best-effort */ }
+                }
             }
 
             if (!ct.IsCancellationRequested)
@@ -380,6 +424,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
             programming = CassiaFirmwareUpgradeService.GetProgrammingCount(),
             totalSpeedpct = CassiaFirmwareUpgradeService.totalSpeed,
             uptimeSeconds = Math.Max(0, Environment.TickCount64 / 1000),
+            backend = RuntimeVariables.BLE_BACKEND,
             cellularState = modem?.State,
             cellularNetworkType = modem?.NetworkType,
             cellularSignalBar = modem?.SignalBar,
@@ -2231,13 +2276,25 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
     private async Task PublishJsonAsync(string topic, object payload, bool retain, CancellationToken ct)
     {
-        await EnsureConnectedAndSubscribedAsync(ct).ConfigureAwait(false);
-
         var json = JsonSerializer.Serialize(payload, JsonOptions);
+        var bytes = Encoding.UTF8.GetBytes(json);
+
+        // Notify local broker mirrors at serialization time so they work even when the
+        // primary broker is unreachable.
+        MessagePublished?.Invoke(topic, bytes);
+
+        // Best-effort publish to primary broker; do not let a primary failure prevent
+        // local delivery (MessagePublished already fired above).
+        try
+        {
+            await EnsureConnectedAndSubscribedAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch { return; }
 
         var msg = new MqttApplicationMessageBuilder()
             .WithTopic(topic)
-            .WithPayload(Encoding.UTF8.GetBytes(json))
+            .WithPayload(bytes)
             .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
             .WithRetainFlag(retain)
             .Build();

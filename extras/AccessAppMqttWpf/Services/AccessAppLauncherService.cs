@@ -186,7 +186,8 @@ public sealed class AccessAppLauncherService
             {
                 FileName = executablePath,
                 Arguments = $"--Mqtt:ConfigPath=\"{mqttConfigPath}\"",
-                UseShellExecute = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
                 WorkingDirectory = exeDir
             };
 

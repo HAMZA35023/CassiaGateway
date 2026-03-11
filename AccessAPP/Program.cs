@@ -183,6 +183,7 @@ builder.Services.AddSingleton<MqttConfigStore>(sp =>
 builder.Services.AddSingleton<RuntimeVariablesStore>();
 
 builder.Services.AddSingleton<IMqttService, MqttService>();
+builder.Services.AddSingleton<LocalBrokerDiscoveryService>();
 
 var app = builder.Build();
 
@@ -275,6 +276,10 @@ using (var scope = app.Services.CreateScope())
     // Start MQTT service
     var mqttService = serviceProvider.GetRequiredService<IMqttService>();
     _ = mqttService.StartAsync();
+
+    // Start LAN discovery — connects to any WPF client's local MQTT broker found via UDP beacon
+    var brokerDiscovery = serviceProvider.GetRequiredService<LocalBrokerDiscoveryService>();
+    brokerDiscovery.Start();
     _ = Task.Run(async () =>
     {
         try
@@ -1017,6 +1022,9 @@ app.Lifetime.ApplicationStopping.Register(() =>
     using var scope = app.Services.CreateScope();
     var mqtt = scope.ServiceProvider.GetRequiredService<IMqttService>();
     _ = mqtt.StopAsync();
+
+    var discovery = scope.ServiceProvider.GetRequiredService<LocalBrokerDiscoveryService>();
+    discovery.Stop();
 });
 
 app.Run();
