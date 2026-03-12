@@ -163,6 +163,7 @@ public partial class LocalServerSettingsViewModel : ObservableObject, IDisposabl
                 }
 
                 var proc = AccessAppLauncherService.StartAccessApp(exe, _main.LocalMqttServer.Port, _main.NetworkId,
+                    cassia: Environment.MachineName.ToLower(),
                     username: "local", password: LocalMqttServerService.LocalToken);
                 _main.SetAccessAppProcess(proc);
 

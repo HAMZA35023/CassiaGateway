@@ -1,8 +1,23 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using System;
+using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 
 namespace AccessAppMqttWpf.Models;
+
+public sealed class RuntimeVariableChoice
+{
+    public RuntimeVariableChoice(object? value, string display)
+    {
+        Value = value;
+        Display = display ?? "";
+    }
+
+    public object? Value { get; }
+    public string Display { get; }
+    public override string ToString() => Display;
+}
 
 public enum RuntimeVariableKind
 {
@@ -36,9 +51,13 @@ public partial class RuntimeVariableItem : ObservableObject
 
     public string Name { get; }
     public RuntimeVariableKind Kind { get; }
+    public string Description { get; set; } = "";
+    public IReadOnlyList<RuntimeVariableChoice>? Choices { get; set; }
+    public bool HasChoices => Choices is { Count: > 0 };
 
     [ObservableProperty] private bool boolValue;
     [ObservableProperty] private string? textValue;
+    [ObservableProperty] private RuntimeVariableChoice? selectedChoice;
 
     public static RuntimeVariableItem FromValue(RuntimeVariableValue v)
     {
@@ -64,6 +83,17 @@ public partial class RuntimeVariableItem : ObservableObject
     {
         error = null;
         value = null;
+
+        if (HasChoices)
+        {
+            if (SelectedChoice == null)
+            {
+                error = "No option selected.";
+                return false;
+            }
+            value = SelectedChoice.Value;
+            return true;
+        }
 
         if (Kind == RuntimeVariableKind.Bool)
         {
