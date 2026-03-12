@@ -126,36 +126,69 @@
             <Setter Property="Background" Value="{DynamicResource CardBrush}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabControl">
+                        <Grid KeyboardNavigation.TabNavigation="Local">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <TabPanel Grid.Row="0"
+                                      IsItemsHost="True"
+                                      Margin="0,0,0,-1"
+                                      Background="Transparent"/>
+                            <Border Grid.Row="1"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="0,12,12,12">
+                                <ContentPresenter x:Name="PART_SelectedContentHost"
+                                                  Margin="12"
+                                                  ContentSource="SelectedContent"/>
+                            </Border>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
 
         <Style TargetType="TabItem">
             <Setter Property="Background" Value="{DynamicResource Card2Brush}"/>
             <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding" Value="12,7"/>
             <Setter Property="Margin" Value="0,0,6,0"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="TabItem">
-                        <Border Background="{TemplateBinding Background}"
-                                BorderBrush="{DynamicResource BorderBrush}"
-                                BorderThickness="1"
+                        <Border x:Name="TabBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
                                 CornerRadius="8,8,0,0"
                                 Padding="{TemplateBinding Padding}">
                             <ContentPresenter ContentSource="Header"
                                               HorizontalAlignment="Center"
-                                              VerticalAlignment="Center"/>
+                                              VerticalAlignment="Center"
+                                              RecognizesAccessKey="True"/>
                         </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="TabBorder" Property="Background" Value="{DynamicResource CardBrush}"/>
+                                <Setter TargetName="TabBorder" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="TabBorder" Property="Background" Value="{DynamicResource CardBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.6"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
-            <Style.Triggers>
-                <Trigger Property="IsSelected" Value="True">
-                    <Setter Property="Background" Value="{DynamicResource CardBrush}"/>
-                </Trigger>
-                <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="{DynamicResource CardBrush}"/>
-                </Trigger>
-            </Style.Triggers>
         </Style>
 
         <DataTemplate x:Key="ProgressBarCellTemplate">
@@ -578,11 +611,15 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0"
-                                   Text="Cassia gateways"
-                                   FontSize="18"
-                                   FontWeight="SemiBold"
-                                   VerticalAlignment="Center"/>
+                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                            <TextBlock Text="Cassia gateways"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"/>
+                            <TextBlock Text="{Binding ActiveConnectionLabel}"
+                                       FontSize="11"
+                                       Foreground="{DynamicResource MutedBrush}"
+                                       Margin="0,2,0,0"/>
+                        </StackPanel>
                         <!-- MQTT connection badge: LOCAL (green) or REMOTE (blue). Click to toggle when local server is running. -->
                         <Button Grid.Column="1"
                                 Command="{Binding ToggleMqttConnectionCommand}"
@@ -613,6 +650,10 @@
                                                 <ControlTemplate.Triggers>
                                                     <DataTrigger Binding="{Binding IsLocalMqttActive}" Value="True">
                                                         <Setter TargetName="BadgeBorder" Property="Background" Value="{DynamicResource GoodBrush}"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding IsConnected}" Value="False">
+                                                        <Setter TargetName="BadgeBorder" Property="Background" Value="{DynamicResource Card2Brush}"/>
+                                                        <Setter TargetName="BadgeText" Property="Foreground" Value="{DynamicResource MutedBrush}"/>
                                                     </DataTrigger>
                                                     <Trigger Property="IsMouseOver" Value="True">
                                                         <Setter TargetName="BadgeBorder" Property="Opacity" Value="0.8"/>
@@ -1521,17 +1562,17 @@
     <!-- If the latest upgrade-log entry is Warn, mark the row orange. -->
     <DataTrigger Binding="{Binding IsUpgradeWarn}" Value="True">
         <Setter Property="Background" Value="{StaticResource WarnRowBrush}"/>
-        <Setter Property="Foreground" Value="Black"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
     </DataTrigger>
     <DataTrigger Binding="{Binding IsUpgradeNoFwRead}" Value="True">
         <Setter Property="Background" Value="{StaticResource NoFwRowBrush}"/>
-        <Setter Property="Foreground" Value="Black"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
     </DataTrigger>
 
     <!-- Completed devices are green, but queue/progress state should override (stay blue while queued). -->
     <DataTrigger Binding="{Binding IsUpgradeSuccess}" Value="True">
         <Setter Property="Background" Value="{StaticResource DoneRowBrush}"/>
-        <Setter Property="Foreground" Value="Black"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
     </DataTrigger>
 
     <!-- Failed devices are red, but queue/progress state should override (stay blue while queued). -->
@@ -1542,7 +1583,7 @@
 
     <DataTrigger Binding="{Binding IsInQueue}" Value="True">
         <Setter Property="Background" Value="{StaticResource QueueRowBrush}"/>
-        <Setter Property="Foreground" Value="Black"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
     </DataTrigger>
 </Style.Triggers>
 </Style>
@@ -1852,15 +1893,15 @@
                             <Style.Triggers>
                                 <DataTrigger Binding="{Binding IsUpgradeWarn}" Value="True">
                                     <Setter Property="Background" Value="{StaticResource WarnRowBrush}"/>
-                                    <Setter Property="Foreground" Value="Black"/>
+                                    <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding IsUpgradeNoFwRead}" Value="True">
                                     <Setter Property="Background" Value="{StaticResource NoFwRowBrush}"/>
-                                    <Setter Property="Foreground" Value="Black"/>
+                                    <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding IsUpgradeSuccess}" Value="True">
                                     <Setter Property="Background" Value="{StaticResource DoneRowBrush}"/>
-                                    <Setter Property="Foreground" Value="Black"/>
+                                    <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding IsUpgradeFailed}" Value="True">
                                     <Setter Property="Background" Value="{StaticResource FailedRowBrush}"/>
@@ -1868,7 +1909,7 @@
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding IsInQueue}" Value="True">
                                     <Setter Property="Background" Value="{StaticResource QueueRowBrush}"/>
-                                    <Setter Property="Foreground" Value="Black"/>
+                                    <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>

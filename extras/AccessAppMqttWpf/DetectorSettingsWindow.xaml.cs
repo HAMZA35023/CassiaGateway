@@ -323,7 +323,7 @@ public partial class DetectorSettingsWindow : Window
 
     private static void DrawGrid(Canvas canvas, double plotWidth, double plotHeight)
     {
-        var gridBrush = new SolidColorBrush(Color.FromRgb(220, 220, 220));
+        var gridBrush = ThemeBrush("BorderBrush", Color.FromRgb(220, 220, 220));
         for (var i = 0; i <= 4; i++)
         {
             var y = PlotTop + ((plotHeight / 4d) * i);
@@ -374,7 +374,7 @@ public partial class DetectorSettingsWindow : Window
         {
             Text = text,
             FontSize = 10,
-            Foreground = new SolidColorBrush(Color.FromRgb(90, 90, 90)),
+            Foreground = ThemeBrush("MutedBrush", Color.FromRgb(90, 90, 90)),
             IsHitTestVisible = false
         };
 
@@ -389,14 +389,14 @@ public partial class DetectorSettingsWindow : Window
         {
             Text = value.ToString(CultureInfo.InvariantCulture),
             FontSize = 9,
-            Foreground = new SolidColorBrush(Color.FromRgb(48, 48, 48)),
+            Foreground = ThemeBrush("TextBrush", Color.FromRgb(48, 48, 48)),
             IsHitTestVisible = false
         };
 
         var holder = new Border
         {
-            Background = new SolidColorBrush(Color.FromArgb(188, 255, 255, 255)),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(140, 210, 210, 210)),
+            Background = ThemeAlphaBrush("CardBrush", IsDarkTheme() ? (byte)232 : (byte)235, Color.FromRgb(255, 255, 255)),
+            BorderBrush = ThemeAlphaBrush("BorderBrush", IsDarkTheme() ? (byte)220 : (byte)160, Color.FromRgb(210, 210, 210)),
             BorderThickness = new Thickness(0.6),
             CornerRadius = new CornerRadius(2),
             Padding = new Thickness(2, 0, 2, 0),
@@ -420,6 +420,26 @@ public partial class DetectorSettingsWindow : Window
         Canvas.SetTop(holder, top);
         canvas.Children.Add(holder);
     }
+
+    private static Brush ThemeBrush(string key, Color fallback)
+    {
+        if (Application.Current?.TryFindResource(key) is Brush brush)
+            return brush;
+
+        return new SolidColorBrush(fallback);
+    }
+
+    private static SolidColorBrush ThemeAlphaBrush(string key, byte alpha, Color fallback)
+    {
+        var color = fallback;
+        if (Application.Current?.TryFindResource(key) is SolidColorBrush brush)
+            color = brush.Color;
+
+        return new SolidColorBrush(Color.FromArgb(alpha, color.R, color.G, color.B));
+    }
+
+    private static bool IsDarkTheme() =>
+        string.Equals(App.CurrentTheme, "Dark", StringComparison.OrdinalIgnoreCase);
 
     private static Color ResolvePointColor(TunableWhiteHourPointViewModel point, ScheduleSeries series)
     {

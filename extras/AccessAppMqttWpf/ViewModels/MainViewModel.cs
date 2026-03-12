@@ -312,7 +312,11 @@ public partial class MainViewModel : ObservableObject
     partial void OnSelectedDetectorSettingsProfileP46Changed(string value) { }
     partial void OnSelectedDetectorSettingsProfileP47Changed(string value) { }
     partial void OnSelectedDetectorSettingsProfileP48Changed(string value) { }
-    partial void OnMqttHostChanged(string value) => SyncSelectedMqttHostPreset();
+    partial void OnMqttHostChanged(string value)
+    {
+        SyncSelectedMqttHostPreset();
+        OnPropertyChanged(nameof(ActiveConnectionLabel));
+    }
     partial void OnMqttPortChanged(int value) => SyncSelectedMqttHostPreset();
     partial void OnUseTlsChanged(bool value) => SyncSelectedMqttHostPreset();
     partial void OnSelectedMqttHostPresetChanged(MqttHostPresetOption? value)
@@ -612,6 +616,8 @@ public partial class MainViewModel : ObservableObject
                 _syncingScopeSelection = false;
             }
         }
+
+        OnPropertyChanged(nameof(ActiveConnectionLabel));
 
         if (_isInitializing || !IsConnected) return;
         _ = ResyncAfterScopeChangeAsync(scope);
@@ -1650,10 +1656,12 @@ public partial class MainViewModel : ObservableObject
         var s = baseSettings ?? new AppSettings();
         var existingTheme = s.accessapp?.theme;
 
+        // When connected to local broker, persist the saved remote connection rather than the
+        // transient local 127.0.0.1 values that are shown in the UI for feedback only.
         s.mqtt = new MqttSettings
         {
-            host = MqttHost,
-            port = MqttPort,
+            host = _localMqttActive && !string.IsNullOrWhiteSpace(_savedRemoteHost) ? _savedRemoteHost : MqttHost,
+            port = _localMqttActive && _savedRemotePort != 0 ? _savedRemotePort : MqttPort,
             topic = MqttTopic,
             username = MqttUser,
             password = MqttPassword ?? "",
@@ -1685,7 +1693,7 @@ public partial class MainViewModel : ObservableObject
 
         s.accessapp = new AccessAppSettings
         {
-            networkId = NetworkId,
+            networkId = _localMqttActive && !string.IsNullOrWhiteSpace(_savedRemoteNetworkId) ? _savedRemoteNetworkId : NetworkId,
             commandTopicTemplate = CommandTopicTemplate,
             defaultCommand = DefaultCommand,
             theme = string.IsNullOrWhiteSpace(existingTheme) ? App.CurrentTheme : existingTheme,

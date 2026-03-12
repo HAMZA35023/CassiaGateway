@@ -121,7 +121,7 @@
                                             <ItemsControl ItemsSource="{Binding Items}">
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate DataType="{x:Type models:CassiaEditableSettingItem}">
-                                                        <Border BorderBrush="#14000000" BorderThickness="0,0,0,1" Padding="0,8">
+                                                        <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1" Padding="0,8">
                                                             <Border.Style>
                                                                 <Style TargetType="Border">
                                                                     <Setter Property="Visibility" Value="Visible"/>
@@ -181,10 +181,10 @@
                                                                         Grid.Column="2"
                                                                         Margin="12,0,0,0"
                                                                         Padding="8,2"
-                                                                        BorderBrush="#22007ACC"
+                                                                        BorderBrush="{DynamicResource AccentBrush}"
                                                                         BorderThickness="1"
                                                                         CornerRadius="8"
-                                                                        Background="#10007ACC">
+                                                                        Background="{DynamicResource Card2Brush}">
                                                                     <Border.Style>
                                                                         <Style TargetType="Border">
                                                                             <Setter Property="Visibility" Value="Collapsed"/>
@@ -195,7 +195,7 @@
                                                                             </Style.Triggers>
                                                                         </Style>
                                                                     </Border.Style>
-                                                                    <TextBlock Text="Changed" Foreground="#007ACC"/>
+                                                                    <TextBlock Text="Changed" Foreground="{DynamicResource AccentBrush}"/>
                                                                 </Border>
 
                                                                 <TextBlock Grid.Row="1"

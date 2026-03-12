@@ -18,6 +18,11 @@ public partial class MainViewModel : ObservableObject
     // True while the MQTT client is connected to the local broker (runtime override, never persisted)
     private bool _localMqttActive;
 
+    // Saved remote connection params — restored when switching back from local
+    private string _savedRemoteNetworkId = "";
+    private string _savedRemoteHost = "";
+    private int _savedRemotePort = 0;
+
     [ObservableProperty] private bool isLocalServerRunning;
     [ObservableProperty] private bool isAccessAppRunning;
     [ObservableProperty] private bool isLocalMqttActive;
@@ -30,6 +35,12 @@ public partial class MainViewModel : ObservableObject
 
     // Badge shown next to "Cassia gateways" heading
     public string MqttConnectionLabel => IsLocalMqttActive ? "LOCAL" : "REMOTE";
+
+    // Connection subtitle shown below "Cassia gateways" heading
+    public string ActiveConnectionLabel =>
+        _localMqttActive && LocalMqttServer.IsRunning
+            ? $"127.0.0.1:{LocalMqttServer.Port} · {NetworkId}"
+            : $"{MqttHost} · {NetworkId}";
     public string MqttConnectionTooltip =>
         IsLocalServerRunning
             ? (IsLocalMqttActive
@@ -47,6 +58,7 @@ public partial class MainViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(MqttConnectionLabel));
         OnPropertyChanged(nameof(MqttConnectionTooltip));
+        OnPropertyChanged(nameof(ActiveConnectionLabel));
     }
 
     partial void OnIsAccessAppRunningChanged(bool value)
@@ -140,9 +152,24 @@ public partial class MainViewModel : ObservableObject
     /// <summary>Reconnect the WPF MQTT client to the local broker. Stored host/port is NOT changed.</summary>
     private async Task SwitchMqttToLocalAsync()
     {
+        // Read current values first (may be on background thread)
+        string remoteHost = MqttHost;
+        int remotePort = MqttPort;
+        string remoteNetworkId = NetworkId;
+
+        _savedRemoteNetworkId = remoteNetworkId;
+        _savedRemoteHost = remoteHost;
+        _savedRemotePort = remotePort;
         _localMqttActive = true;
-        IsLocalMqttActive = true;
-        ConnectionStatus = $"Switching to local MQTT (127.0.0.1:{LocalMqttServer.Port})…";
+
+        int localPort = LocalMqttServer.Port;
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            IsLocalMqttActive = true;
+            MqttHost = "127.0.0.1";
+            MqttPort = localPort;
+            ConnectionStatus = $"Switching to local MQTT (127.0.0.1:{localPort})…";
+        });
         try
         {
             // Treat broker switching as a manual handoff so delayed reconnect attempts
@@ -167,8 +194,22 @@ public partial class MainViewModel : ObservableObject
     private async Task SwitchMqttToPublicAsync()
     {
         _localMqttActive = false;
-        IsLocalMqttActive = false;
-        ConnectionStatus = "Switching back to public MQTT…";
+        string restoreHost = _savedRemoteHost;
+        int restorePort = _savedRemotePort;
+        string restoreNetworkId = _savedRemoteNetworkId;
+
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            if (!string.IsNullOrWhiteSpace(restoreNetworkId))
+                NetworkId = restoreNetworkId;
+            if (!string.IsNullOrWhiteSpace(restoreHost))
+            {
+                MqttHost = restoreHost;
+                MqttPort = restorePort;
+            }
+            IsLocalMqttActive = false;
+            ConnectionStatus = "Switching back to public MQTT…";
+        });
         try
         {
             // Treat broker switching as a manual handoff so delayed reconnect attempts

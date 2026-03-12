@@ -199,6 +199,31 @@ public partial class SpeedGraphWindow : Window
 
     private sealed record Series(string Name, IReadOnlyList<SpeedSample> Samples, Brush Stroke);
 
+    private static IReadOnlyList<Brush> GetSeriesPalette()
+    {
+        if (IsDarkTheme())
+        {
+            return new Brush[]
+            {
+                new SolidColorBrush(Color.FromRgb(96, 165, 250)),
+                new SolidColorBrush(Color.FromRgb(52, 211, 153)),
+                new SolidColorBrush(Color.FromRgb(248, 113, 113)),
+                new SolidColorBrush(Color.FromRgb(251, 191, 36)),
+                new SolidColorBrush(Color.FromRgb(167, 139, 250)),
+                new SolidColorBrush(Color.FromRgb(34, 211, 238)),
+                new SolidColorBrush(Color.FromRgb(244, 114, 182)),
+                new SolidColorBrush(Color.FromRgb(253, 186, 116)),
+                new SolidColorBrush(Color.FromRgb(147, 197, 253))
+            };
+        }
+
+        return new Brush[]
+        {
+            Brushes.Black, Brushes.Blue, Brushes.Red, Brushes.Green, Brushes.DarkOrange,
+            Brushes.Purple, Brushes.Brown, Brushes.DarkCyan, Brushes.Gray
+        };
+    }
+
     private void GatewayCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (GatewayCombo.SelectedItem is GatewayOption opt)
@@ -325,11 +350,7 @@ public partial class SpeedGraphWindow : Window
     {
         if (Vm == null) return new();
 
-        var brushes = new Brush[]
-        {
-            Brushes.Black, Brushes.Blue, Brushes.Red, Brushes.Green, Brushes.DarkOrange,
-            Brushes.Purple, Brushes.Brown, Brushes.DarkCyan, Brushes.Gray
-        };
+        var brushes = GetSeriesPalette();
 
         var series = new List<Series>();
 
@@ -340,7 +361,7 @@ public partial class SpeedGraphWindow : Window
             {
                 var s = gw.SpeedHistory.ToList();
                 if (s.Count < 2) continue;
-                series.Add(new Series(gw.Name, s, brushes[bi++ % brushes.Length]));
+                series.Add(new Series(gw.Name, s, brushes[bi++ % brushes.Count]));
             }
             return series;
         }
@@ -356,7 +377,7 @@ public partial class SpeedGraphWindow : Window
             var total = BuildTotalSeries(Vm.CassiaGateways, nowUtc, MaxHistory);
 
             if (total.Count >= 2)
-                series.Add(new Series("Total", total, Brushes.Black));
+                series.Add(new Series("Total", total, brushes[0]));
             return series;
         }
 
@@ -366,7 +387,7 @@ public partial class SpeedGraphWindow : Window
         {
             var s = g1.SpeedHistory.ToList();
             if (s.Count >= 2)
-                series.Add(new Series(g1.Name, s, Brushes.Black));
+                series.Add(new Series(g1.Name, s, brushes[0]));
         }
 
         return series;
@@ -538,8 +559,8 @@ public partial class SpeedGraphWindow : Window
             Height = h,
             RadiusX = 8,
             RadiusY = 8,
-            Fill = new SolidColorBrush(Color.FromRgb(250, 250, 252)),
-            Stroke = new SolidColorBrush(Color.FromRgb(230, 230, 235)),
+            Fill = ThemeBrush("Card2Brush", Color.FromRgb(250, 250, 252)),
+            Stroke = ThemeBrush("BorderBrush", Color.FromRgb(230, 230, 235)),
             StrokeThickness = 1
         });
 
@@ -574,8 +595,8 @@ public partial class SpeedGraphWindow : Window
         var x0 = left;
         var y0 = top + h;
 
-        var gridStroke = new SolidColorBrush(Color.FromRgb(225, 225, 232));
-        var axisStroke = new SolidColorBrush(Color.FromRgb(40, 40, 45));
+        var gridStroke = ThemeBrush("BorderBrush", Color.FromRgb(225, 225, 232));
+        var axisStroke = ThemeBrush("MutedBrush", Color.FromRgb(40, 40, 45));
 
         int yTicks = 5;
         for (int i = 0; i <= yTicks; i++)
@@ -590,7 +611,7 @@ public partial class SpeedGraphWindow : Window
             {
                 Text = v.ToString("0", CultureInfo.InvariantCulture),
                 FontSize = 11,
-                Foreground = new SolidColorBrush(Color.FromRgb(70, 70, 75))
+                Foreground = ThemeBrush("MutedBrush", Color.FromRgb(70, 70, 75))
             };
             Canvas.SetLeft(tb, 6);
             Canvas.SetTop(tb, y - 8);
@@ -612,7 +633,7 @@ public partial class SpeedGraphWindow : Window
             {
                 Text = t.ToLocalTime().ToString("HH:mm"),
                 FontSize = 11,
-                Foreground = new SolidColorBrush(Color.FromRgb(70, 70, 75))
+                Foreground = ThemeBrush("MutedBrush", Color.FromRgb(70, 70, 75))
             };
             tb.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
             Canvas.SetLeft(tb, x - tb.DesiredSize.Width / 2);
@@ -628,7 +649,7 @@ public partial class SpeedGraphWindow : Window
             Text = "% / min",
             FontSize = 12,
             FontWeight = FontWeights.SemiBold,
-            Foreground = new SolidColorBrush(Color.FromRgb(60, 60, 65))
+            Foreground = ThemeBrush("TextBrush", Color.FromRgb(60, 60, 65))
         };
         Canvas.SetLeft(yLabel, 10);
         Canvas.SetTop(yLabel, 2);
@@ -648,8 +669,8 @@ public partial class SpeedGraphWindow : Window
     {
         var border = new Border
         {
-            Background = new SolidColorBrush(Color.FromArgb(235, 255, 255, 255)),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(190, 190, 195)),
+            Background = ThemeAlphaBrush("CardBrush", IsDarkTheme() ? (byte)240 : (byte)235, Color.FromRgb(255, 255, 255)),
+            BorderBrush = ThemeBrush("BorderBrush", Color.FromRgb(190, 190, 195)),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(10),
             Padding = new Thickness(10),
@@ -687,7 +708,7 @@ public partial class SpeedGraphWindow : Window
                 Text = s.Name,
                 FontSize = 12.5,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = new SolidColorBrush(Color.FromRgb(40, 40, 45))
+                Foreground = ThemeBrush("TextBrush", Color.FromRgb(40, 40, 45))
             };
             DockPanel.SetDock(name, Dock.Left);
             row.Children.Add(name);
@@ -698,7 +719,7 @@ public partial class SpeedGraphWindow : Window
                     ? ""
                     : $"   last {last.SpeedPctPerMin:0.##}  |  15m {(double.IsNaN(avg15) ? "—" : avg15.ToString("0.##"))}  |  30m {(double.IsNaN(avg30) ? "—" : avg30.ToString("0.##"))}",
                 FontSize = 12,
-                Foreground = new SolidColorBrush(Color.FromRgb(90, 90, 95)),
+                Foreground = ThemeBrush("MutedBrush", Color.FromRgb(90, 90, 95)),
                 TextTrimming = TextTrimming.CharacterEllipsis
             };
             row.Children.Add(stats);
@@ -790,8 +811,8 @@ public partial class SpeedGraphWindow : Window
 
         _selectRect = new Rectangle
         {
-            Fill = new SolidColorBrush(Color.FromArgb(40, 30, 144, 255)),
-            Stroke = new SolidColorBrush(Color.FromArgb(160, 30, 144, 255)),
+            Fill = ThemeAlphaBrush("AccentBrush", 40, Color.FromRgb(30, 144, 255)),
+            Stroke = ThemeAlphaBrush("AccentBrush", 160, Color.FromRgb(30, 144, 255)),
             StrokeThickness = 1,
             RadiusX = 6,
             RadiusY = 6,
@@ -883,4 +904,24 @@ public partial class SpeedGraphWindow : Window
         var seconds = (_plotMaxT - _plotMinT).TotalSeconds * pct;
         return _plotMinT + TimeSpan.FromSeconds(seconds);
     }
+
+    private static Brush ThemeBrush(string key, Color fallback)
+    {
+        if (Application.Current?.TryFindResource(key) is Brush brush)
+            return brush;
+
+        return new SolidColorBrush(fallback);
+    }
+
+    private static SolidColorBrush ThemeAlphaBrush(string key, byte alpha, Color fallback)
+    {
+        var color = fallback;
+        if (Application.Current?.TryFindResource(key) is SolidColorBrush brush)
+            color = brush.Color;
+
+        return new SolidColorBrush(Color.FromArgb(alpha, color.R, color.G, color.B));
+    }
+
+    private static bool IsDarkTheme() =>
+        string.Equals(App.CurrentTheme, "Dark", StringComparison.OrdinalIgnoreCase);
 }

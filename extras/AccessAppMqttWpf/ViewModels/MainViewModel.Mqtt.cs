@@ -141,6 +141,19 @@ public partial class MainViewModel : ObservableObject
         }
 
         var net = m.Groups["net"].Value;
+
+        // When local MQTT is active and no gateways are known yet, auto-adopt the first network seen.
+        if (_localMqttActive && CassiaGateways.Count == 0
+            && m.Groups["kind"].Value.Equals("tele", StringComparison.OrdinalIgnoreCase)
+            && m.Groups["leaf"].Value.Equals("status", StringComparison.OrdinalIgnoreCase))
+        {
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                if (CassiaGateways.Count == 0)
+                    NetworkId = net;
+            });
+        }
+
         if (!net.Equals(NetworkId, StringComparison.OrdinalIgnoreCase))
             return;
 
