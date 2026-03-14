@@ -34,17 +34,19 @@ public sealed class AccessAppDiscoveryService : IDisposable
 
     private int    _mqttPort;
     private string _networkId = "";
+    private bool   _useSharedNetworkId;
     private LocalMqttServerService? _mqttServer;
 
     public bool IsRunning => _listenTask != null && !_listenTask.IsCompleted;
 
     // ── Lifecycle ────────────────────────────────────────────────────────────
 
-    public void Start(int mqttPort, string networkId, LocalMqttServerService? mqttServer = null)
+    public void Start(int mqttPort, string networkId, LocalMqttServerService? mqttServer = null, bool useSharedNetworkId = false)
     {
         Stop();
-        _mqttPort  = mqttPort;
-        _networkId = networkId;
+        _mqttPort            = mqttPort;
+        _networkId           = networkId;
+        _useSharedNetworkId  = useSharedNetworkId;
 
         if (mqttServer != null)
             mqttServer.RemoteClientConnected += OnRemoteClientConnected;
@@ -180,9 +182,11 @@ public sealed class AccessAppDiscoveryService : IDisposable
 
             var payload = new
             {
-                token    = LocalMqttServerService.LocalToken,
-                mqttPort = _mqttPort,
-                mqttHost  // WPF's real LAN IP; empty string → AccessApp falls back to callerIp
+                token     = LocalMqttServerService.LocalToken,
+                mqttPort  = _mqttPort,
+                mqttHost,  // WPF's real LAN IP; empty string → AccessApp falls back to callerIp
+                // Push WPF's networkId only when "use shared network ID" is enabled.
+                networkId = _useSharedNetworkId ? _networkId : null
             };
 
             var body = new System.Net.Http.StringContent(

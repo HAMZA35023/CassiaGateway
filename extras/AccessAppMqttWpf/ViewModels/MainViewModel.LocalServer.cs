@@ -80,9 +80,9 @@ public partial class MainViewModel : ObservableObject
             // Announce / stop announcing the local broker on the LAN
             if (running)
             {
-                var gatewayIps = _store.Load().localServer.gatewayIps;
-                _discoveryBeacon.Start(LocalMqttServer.Port, NetworkId, gatewayIps);
-                _accessAppDiscovery.Start(LocalMqttServer.Port, NetworkId, LocalMqttServer);
+                var ls = _store.Load().localServer;
+                _discoveryBeacon.Start(LocalMqttServer.Port, NetworkId, ls.gatewayIps);
+                _accessAppDiscovery.Start(LocalMqttServer.Port, NetworkId, LocalMqttServer, ls.useSharedNetworkId);
                 LocalMqttServer.RemoteClientConnected += OnGatewayConnectedToLocalMqtt;
             }
             else

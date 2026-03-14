@@ -46,8 +46,12 @@ public class LocalMqttController : ControllerBase
         RuntimeVariables.LOCAL_MQTT_HOST = host;
         if (req.MqttPort > 0)
             RuntimeVariables.LOCAL_MQTT_PORT = req.MqttPort;
+        if (!string.IsNullOrWhiteSpace(req.NetworkId))
+            RuntimeVariables.LOCAL_NETWORK_ID = req.NetworkId.Trim();
 
-        AppLog.Info($"[LocalMqtt] Local broker set to {RuntimeVariables.LOCAL_MQTT_HOST}:{RuntimeVariables.LOCAL_MQTT_PORT} (pushed by WPF)");
+        AppLog.Info($"[LocalMqtt] Local broker set to {RuntimeVariables.LOCAL_MQTT_HOST}:{RuntimeVariables.LOCAL_MQTT_PORT}" +
+                    (string.IsNullOrEmpty(RuntimeVariables.LOCAL_NETWORK_ID) ? "" : $", localNetworkId={RuntimeVariables.LOCAL_NETWORK_ID}") +
+                    " (pushed by WPF)");
 
         return Ok(new { ok = true, mqttHost = RuntimeVariables.LOCAL_MQTT_HOST, mqttPort = RuntimeVariables.LOCAL_MQTT_PORT });
     }
@@ -61,5 +65,12 @@ public class LocalMqttController : ControllerBase
         /// caller IP — necessary when AccessApp runs in a NAT container (e.g. Cassia LXC).
         /// </summary>
         public string? MqttHost { get; set; }
+        /// <summary>
+        /// When WPF has "use shared network ID" enabled, this is the WPF's NetworkId.
+        /// AccessApp uses it for local broker subscription topics and mirrored telemetry
+        /// so all gateways appear on the same network in the local MQTT session.
+        /// Empty/null = keep the AccessApp's own configured NetworkId.
+        /// </summary>
+        public string? NetworkId { get; set; }
     }
 }

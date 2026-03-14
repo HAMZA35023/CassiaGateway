@@ -31,6 +31,7 @@ public partial class LocalServerSettingsViewModel : ObservableObject, IDisposabl
     [ObservableProperty] private string localAccessAppPath = "";
     [ObservableProperty] private bool autoStartLocalServer;
     [ObservableProperty] private bool autoStartAccessApp;
+    [ObservableProperty] private bool useSharedNetworkId = true;
     /// <summary>Comma-separated list of known Cassia WAN IPs for unicast discovery.</summary>
     [ObservableProperty] private string gatewayIpsText = "";
     [ObservableProperty] private bool isScanning;
@@ -71,6 +72,7 @@ public partial class LocalServerSettingsViewModel : ObservableObject, IDisposabl
         LocalAccessAppPath = s.localAccessAppPath;
         AutoStartLocalServer = s.autoStartLocalServer;
         AutoStartAccessApp = s.autoStartAccessApp;
+        UseSharedNetworkId = s.useSharedNetworkId;
         GatewayIpsText = string.Join(", ", s.gatewayIps);
 
         RefreshInstalledVersion();
@@ -272,6 +274,7 @@ public partial class LocalServerSettingsViewModel : ObservableObject, IDisposabl
         all.localServer.localAccessAppPath = LocalAccessAppPath;
         all.localServer.autoStartLocalServer = AutoStartLocalServer;
         all.localServer.autoStartAccessApp = AutoStartAccessApp;
+        all.localServer.useSharedNetworkId = UseSharedNetworkId;
         all.localServer.gatewayIps = ParseGatewayIps(GatewayIpsText);
         _store.Save(all);
         StatusText = "Settings saved.";

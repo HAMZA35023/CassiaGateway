@@ -77,6 +77,22 @@
                 <TextBlock Text="Cassia Gateway IPs"
                            FontSize="14" FontWeight="SemiBold"
                            Margin="0,0,0,4"/>
+
+                <CheckBox Content="Use shared network ID for local connection"
+                          IsChecked="{Binding UseSharedNetworkId, Mode=TwoWay}"
+                          Margin="0,0,0,4"
+                          ToolTip="When enabled, all AccessApp instances use the WPF's network ID on the local broker instead of their own configured ID."/>
+                <TextBlock Text="All gateways will subscribe and publish under the same network ID on the local broker. Only affects the local connection — their own configured ID is unchanged."
+                           Foreground="{DynamicResource MutedBrush}"
+                           FontSize="11"
+                           TextWrapping="Wrap"
+                           Margin="20,0,0,10"/>
+
+                <Separator Margin="0,0,0,10"/>
+
+                <TextBlock Text="Known Gateway IPs"
+                           FontSize="14" FontWeight="SemiBold"
+                           Margin="0,0,0,4"/>
                 <TextBlock TextWrapping="Wrap"
                            Foreground="{DynamicResource MutedBrush}"
                            FontSize="11"

@@ -73,6 +73,13 @@ public sealed class LocalServerSettings
     /// Auto-populated when a gateway connects to the local MQTT broker.
     /// </summary>
     public List<string> gatewayIps { get; set; } = new();
+
+    /// <summary>
+    /// When true, WPF pushes its own NetworkId to all discovered AccessApp instances so
+    /// they all subscribe and publish under the same network ID on the local broker.
+    /// Only affects the local MQTT connection — each AccessApp's own configured ID is unchanged.
+    /// </summary>
+    public bool useSharedNetworkId { get; set; } = true;
 }
 
 public sealed class AccessAppSettings

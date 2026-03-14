@@ -265,6 +265,11 @@ namespace AccessAPP
         public static string LOCAL_MQTT_HOST = "";
         // Port for the directly-configured local MQTT broker. Defaults to 1883.
         public static int LOCAL_MQTT_PORT = 1883;
+        // When non-empty, overrides the AccessApp's own NetworkId for the local broker
+        // connection: subscription topics and mirrored telemetry topics use this value
+        // instead of the configured NetworkId. Set by WPF push (useSharedNetworkId).
+        // Leave empty ("") to keep the AccessApp's own NetworkId.
+        public static string LOCAL_NETWORK_ID = "";
 
         // BLE backend selection.
         // "auto"            = auto-detect: cassia (if GatewayConfiguration:IpAddress is set) → windows-native (Windows) → linux-native (Linux x64/ARM).

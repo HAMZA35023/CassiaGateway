@@ -287,11 +287,17 @@ public sealed class LocalBrokerDiscoveryService : IDisposable
                     .Build();
 
                 await _client.ConnectAsync(options, ct).ConfigureAwait(false);
-                AppLog.Info($"[LocalBrokerDiscovery] Connected to local broker {_host}:{_port}");
+
+                // Use the shared network ID for local connection if WPF pushed one.
+                var localNetworkId = string.IsNullOrEmpty(RuntimeVariables.LOCAL_NETWORK_ID)
+                    ? opts.NetworkId
+                    : RuntimeVariables.LOCAL_NETWORK_ID;
+
+                AppLog.Info($"[LocalBrokerDiscovery] Connected to local broker {_host}:{_port} (networkId={localNetworkId})");
 
                 // Subscribe to commands directed at this AccessApp instance
-                var topicMine = $"{opts.BaseTopic}/{opts.NetworkId}/cmd/{opts.Name}/#";
-                var topicAll  = $"{opts.BaseTopic}/{opts.NetworkId}/cmd/all/#";
+                var topicMine = $"{opts.BaseTopic}/{localNetworkId}/cmd/{opts.Name}/#";
+                var topicAll  = $"{opts.BaseTopic}/{localNetworkId}/cmd/all/#";
 
                 await _client.SubscribeAsync(new MqttTopicFilter
                 {
@@ -324,6 +330,12 @@ public sealed class LocalBrokerDiscoveryService : IDisposable
             {
                 var client = _client;
                 if (client?.IsConnected != true) return;
+
+                // Remap networkId segment in the topic when WPF requested a shared network ID.
+                var opts = _mqtt.CurrentOptions;
+                var localNetworkId = RuntimeVariables.LOCAL_NETWORK_ID;
+                if (!string.IsNullOrEmpty(localNetworkId) && localNetworkId != opts.NetworkId)
+                    topic = topic.Replace($"/{opts.NetworkId}/", $"/{localNetworkId}/");
 
                 var msg = new MqttApplicationMessageBuilder()
                     .WithTopic(topic)
