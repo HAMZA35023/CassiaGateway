@@ -26,7 +26,7 @@ namespace AccessAPP.Services;
 /// </summary>
 public sealed class LocalBrokerDiscoveryService : IDisposable
 {
-    public const int BeaconPort = 18884;
+    public const int BeaconPort = 60004;
     private const int BeaconTimeoutMs = 15_000; // removed after 5× beacon interval silence
 
     /// <summary>Shared secret — must match LocalMqttServerService.LocalToken in the WPF app.</summary>

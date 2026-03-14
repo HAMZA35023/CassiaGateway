@@ -204,7 +204,53 @@ public sealed class CassiaWebSettingsService
         if (string.IsNullOrWhiteSpace(json))
             throw new InvalidOperationException("/cassia/info returned empty response.");
 
+        // Fetch container data separately — it is not included in the base /cassia/info response.
+        var containerJson = await TryGetContainerInfoJsonAsync(client, baseUri, ct).ConfigureAwait(false);
+        if (containerJson != null)
+            json = MergeContainerIntoInfo(json, containerJson);
+
         return json;
+    }
+
+    private static async Task<string?> TryGetContainerInfoJsonAsync(HttpClient client, Uri baseUri, CancellationToken ct)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "cassia/info?fields=container");
+            request.Headers.Accept.Clear();
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            request.Headers.TryAddWithoutValidation("X-Requested-With", "XMLHttpRequest");
+            request.Headers.Referrer = new Uri(baseUri, "/");
+
+            using var response = await client.SendAsync(request, ct).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode) return null;
+
+            var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            return string.IsNullOrWhiteSpace(json) ? null : json;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string MergeContainerIntoInfo(string infoJson, string containerJson)
+    {
+        try
+        {
+            var info = JsonNode.Parse(infoJson) as JsonObject;
+            var container = JsonNode.Parse(containerJson) as JsonObject;
+            if (info == null || container == null) return infoJson;
+
+            if (container.TryGetPropertyValue("container", out var containerNode) && containerNode != null)
+                info["container"] = containerNode.DeepClone();
+
+            return info.ToJsonString(new JsonSerializerOptions { WriteIndented = false });
+        }
+        catch
+        {
+            return infoJson;
+        }
     }
 
     private static async Task PostInfoAsync(HttpClient client, JsonObject payload, Uri baseUri, CancellationToken ct)

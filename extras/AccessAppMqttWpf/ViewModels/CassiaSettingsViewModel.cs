@@ -442,9 +442,16 @@ public partial class CassiaSettingsViewModel : ObservableObject
         _itemsByPath.Clear();
         InitializeTabs();
 
+        // Augment settings with flat port1/proto1..4 fields extracted from container.port_fwd array,
+        // since the Cassia API GET returns port forwarding as a nested array but POST expects flat fields.
+        var augmented = AugmentWithPortFwdFlat(settings);
+
         var rawPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        FlattenLeafPaths(settings, null, rawPaths);
+        FlattenLeafPaths(augmented, null, rawPaths);
         FlattenLeafPaths(saveTemplate, null, rawPaths);
+
+        // container.port_fwd is surfaced via flat port1/proto1..4 fields; hide the raw array field.
+        rawPaths.Remove("container.port_fwd");
 
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var rawPath in rawPaths)
@@ -458,7 +465,7 @@ public partial class CassiaSettingsViewModel : ObservableObject
                      .ThenBy(p => HtmlPathOrder.TryGetValue(p, out var order) ? order : int.MaxValue)
                      .ThenBy(p => p, StringComparer.OrdinalIgnoreCase))
         {
-            var node = GetPathWithAliases(settings, path) ?? GetPathWithAliases(saveTemplate, path);
+            var node = GetPathWithAliases(augmented, path) ?? GetPathWithAliases(saveTemplate, path);
             var (tabKey, section) = MapPathToNavigation(path);
             var selectOptions = GetSelectOptions(path, node);
             var item = new CassiaEditableSettingItem(
@@ -1205,6 +1212,28 @@ public partial class CassiaSettingsViewModel : ObservableObject
             value.Equals("off", StringComparison.OrdinalIgnoreCase))
             return false;
         return null;
+    }
+
+    // The Cassia API GET returns port forwarding as container.port_fwd (array of {name,port,proto}).
+    // The firmware HTML form and POST endpoint use flat top-level fields: port1, proto1, port2, proto2, etc.
+    // This method clones the settings and injects those flat fields so the UI can display and save them correctly.
+    private static JsonObject AugmentWithPortFwdFlat(JsonObject settings)
+    {
+        var clone = (settings.DeepClone() as JsonObject) ?? new JsonObject();
+        if (GetPath(clone, "container.port_fwd") is not JsonArray portFwd)
+            return clone;
+
+        for (var i = 0; i < portFwd.Count && i < 4; i++)
+        {
+            if (portFwd[i] is not JsonObject entry) continue;
+            var n = i + 1;
+            if (entry.TryGetPropertyValue("port", out var portNode) && portNode != null)
+                clone[$"port{n}"] = JsonValue.Create(portNode.ToString());
+            if (entry.TryGetPropertyValue("proto", out var protoNode) && protoNode != null)
+                clone[$"proto{n}"] = JsonValue.Create(protoNode.ToString());
+        }
+
+        return clone;
     }
 
     private static void FlattenLeafPaths(JsonNode? node, string? prefix, ISet<string> target)
