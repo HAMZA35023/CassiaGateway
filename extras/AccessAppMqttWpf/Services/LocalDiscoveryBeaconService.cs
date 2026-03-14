@@ -120,8 +120,9 @@ public sealed class LocalDiscoveryBeaconService : IDisposable
                 if (addr.Address.AddressFamily != AddressFamily.InterNetwork) continue;
 
                 var ip   = addr.Address.GetAddressBytes();
-                var mask = addr.IPv4Mask?.GetAddressBytes();
-                if (mask == null || mask.Length != 4) continue;
+                // IPv4Mask is often null on Linux ARM — derive from PrefixLength instead
+                var mask = MaskFromPrefix(addr.IPv4Mask, addr.PrefixLength);
+                if (mask == null) continue;
 
                 var broadcast = new byte[4];
                 for (int i = 0; i < 4; i++)
@@ -136,5 +137,20 @@ public sealed class LocalDiscoveryBeaconService : IDisposable
             result.Add((IPAddress.Any, IPAddress.Broadcast));
 
         return result;
+    }
+
+    private static byte[]? MaskFromPrefix(System.Net.IPAddress? ipv4Mask, int prefixLength)
+    {
+        var bytes = ipv4Mask?.GetAddressBytes();
+        if (bytes != null && bytes.Length == 4) return bytes;
+
+        if (prefixLength < 0 || prefixLength > 32) return null;
+        var mask = new byte[4];
+        for (int i = 0; i < 4; i++)
+        {
+            int bits = Math.Min(8, Math.Max(0, prefixLength - i * 8));
+            mask[i] = bits == 0 ? (byte)0 : (byte)(0xFF << (8 - bits));
+        }
+        return mask;
     }
 }

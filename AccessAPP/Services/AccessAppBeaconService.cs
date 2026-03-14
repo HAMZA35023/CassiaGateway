@@ -117,8 +117,9 @@ public sealed class AccessAppBeaconService : IDisposable
                 if (addr.Address.AddressFamily != AddressFamily.InterNetwork) continue;
 
                 var ip   = addr.Address.GetAddressBytes();
-                var mask = addr.IPv4Mask?.GetAddressBytes();
-                if (mask == null || mask.Length != 4) continue;
+                // IPv4Mask is often null on Linux ARM — derive from PrefixLength instead
+                var mask = MaskFromPrefix(addr.IPv4Mask, addr.PrefixLength);
+                if (mask == null) continue;
 
                 var broadcast = new byte[4];
                 for (int i = 0; i < 4; i++)
@@ -132,5 +133,25 @@ public sealed class AccessAppBeaconService : IDisposable
             result.Add((IPAddress.Any, IPAddress.Broadcast));
 
         return result;
+    }
+
+    /// <summary>
+    /// Returns a 4-byte mask array. Prefers <paramref name="ipv4Mask"/> when available
+    /// (Windows / some Linux). Falls back to computing it from <paramref name="prefixLength"/>
+    /// which is always populated on Linux ARM where IPv4Mask may be null.
+    /// </summary>
+    private static byte[]? MaskFromPrefix(IPAddress? ipv4Mask, int prefixLength)
+    {
+        var bytes = ipv4Mask?.GetAddressBytes();
+        if (bytes != null && bytes.Length == 4) return bytes;
+
+        if (prefixLength < 0 || prefixLength > 32) return null;
+        var mask = new byte[4];
+        for (int i = 0; i < 4; i++)
+        {
+            int bits = Math.Min(8, Math.Max(0, prefixLength - i * 8));
+            mask[i] = bits == 0 ? (byte)0 : (byte)(0xFF << (8 - bits));
+        }
+        return mask;
     }
 }
