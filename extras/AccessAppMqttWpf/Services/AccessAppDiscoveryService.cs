@@ -12,14 +12,18 @@ namespace AccessAppMqttWpf.Services;
 /// <summary>
 /// Listens on UDP port <see cref="BeaconPort"/> for "cassia-accessapp" beacons broadcast by
 /// AccessApp instances on the LAN.  When a new instance is discovered, pushes the local MQTT
-/// broker settings to it via HTTP POST to its <c>/api/local-mqtt</c> endpoint so it can connect
-/// without relying on UDP beacon discovery in the other direction.
+/// broker settings to it via HTTP POST to its <c>/api/local-mqtt</c> endpoint.
+///
+/// The push payload includes <c>mqttHost</c> — WPF's own outbound IP probed via the OS
+/// routing table — so that AccessApp uses the correct LAN IP even when it is running inside
+/// a NAT container and <c>HttpContext.Connection.RemoteIpAddress</c> would return the
+/// container's gateway rather than WPF's real address.
 /// </summary>
 public sealed class AccessAppDiscoveryService : IDisposable
 {
     public const int BeaconPort = 60004;
-    private const int PushIntervalMs    = 30_000; // re-push config every 30 s
-    private const int BeaconTimeoutMs   = 20_000; // remove after 4× beacon-interval silence
+    private const int PushIntervalMs  = 30_000; // re-push config every 30 s
+    private const int BeaconTimeoutMs = 60_000; // remove after silence
 
     private readonly ConcurrentDictionary<string, DiscoveredEntry> _entries =
         new(StringComparer.OrdinalIgnoreCase);
@@ -59,7 +63,7 @@ public sealed class AccessAppDiscoveryService : IDisposable
     /// </summary>
     private void OnRemoteClientConnected(string ip)
     {
-        const int httpPort = 60000; // AccessApp always listens on this port
+        const int httpPort = 60000;
         var key   = $"{ip}:{httpPort}";
         var entry = _entries.GetOrAdd(key, _ => new DiscoveredEntry(ip, httpPort));
         var isNew = entry.LastPushedUtc == DateTimeOffset.MinValue;
@@ -118,7 +122,7 @@ public sealed class AccessAppDiscoveryService : IDisposable
                 try
                 {
                     var result = await udp.ReceiveAsync(ct).ConfigureAwait(false);
-                    AppLog.Info($"[AccessAppDiscovery] UDP packet received from {result.RemoteEndPoint}: {System.Text.Encoding.UTF8.GetString(result.Buffer)}");
+                    AppLog.Info($"[AccessAppDiscovery] UDP packet received from {result.RemoteEndPoint}: {Encoding.UTF8.GetString(result.Buffer)}");
                     ProcessBeacon(result.Buffer, ct);
                 }
                 catch (OperationCanceledException) { break; }
@@ -144,7 +148,6 @@ public sealed class AccessAppDiscoveryService : IDisposable
             var isNew = entry.LastPushedUtc == DateTimeOffset.MinValue;
             entry.UpdateLastSeen();
 
-            // Push on first discovery or after push interval (tracked separately from LastSeenUtc)
             if (isNew || (DateTimeOffset.UtcNow - entry.LastPushedUtc).TotalMilliseconds > PushIntervalMs)
             {
                 if (isNew)
@@ -167,12 +170,19 @@ public sealed class AccessAppDiscoveryService : IDisposable
             using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(5) };
             var url = $"http://{entry.Host}:{entry.HttpPort}/api/local-mqtt";
 
-            // The AccessApp controller reads the caller's IP from the TCP connection, so we
-            // only need to send the token and port — no need to figure out our own IP.
+            // Probe the outbound IP we would use to reach this specific host.
+            // This is necessary when the Cassia gateway runs AccessApp in an LXC container
+            // where HttpContext.Connection.RemoteIpAddress returns the NAT gateway IP
+            // rather than WPF's real LAN IP.
+            var mqttHost = GetOutboundIpFor(entry.Host);
+            if (string.IsNullOrWhiteSpace(mqttHost))
+                AppLog.Warn($"[AccessAppDiscovery] Could not probe outbound IP for {entry.Host} — omitting mqttHost from payload");
+
             var payload = new
             {
                 token    = LocalMqttServerService.LocalToken,
-                mqttPort = _mqttPort
+                mqttPort = _mqttPort,
+                mqttHost  // WPF's real LAN IP; empty string → AccessApp falls back to callerIp
             };
 
             var body = new System.Net.Http.StringContent(
@@ -184,7 +194,7 @@ public sealed class AccessAppDiscoveryService : IDisposable
             if (response.IsSuccessStatusCode)
             {
                 entry.LastPushedUtc = DateTimeOffset.UtcNow;
-                AppLog.Info($"[AccessAppDiscovery] Pushed MQTT config (port {_mqttPort}) to {entry.Host}:{entry.HttpPort} — OK");
+                AppLog.Info($"[AccessAppDiscovery] Pushed MQTT config (host={mqttHost}, port={_mqttPort}) to {entry.Host}:{entry.HttpPort} — OK");
             }
             else
             {
@@ -199,6 +209,22 @@ public sealed class AccessAppDiscoveryService : IDisposable
         {
             entry.PushGate.Release();
         }
+    }
+
+    /// <summary>
+    /// Uses the OS routing table to determine which local IP would be used when sending a
+    /// packet to <paramref name="targetIp"/>.  The UDP socket is never actually sent —
+    /// Connect() on a UDP socket is a local routing-table query only.
+    /// </summary>
+    private static string GetOutboundIpFor(string targetIp)
+    {
+        try
+        {
+            using var probe = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            probe.Connect(targetIp, 1);
+            return ((IPEndPoint)probe.LocalEndPoint!).Address.ToString();
+        }
+        catch { return ""; }
     }
 
     // ── Cleanup loop ──────────────────────────────────────────────────────────
@@ -233,12 +259,12 @@ public sealed class AccessAppDiscoveryService : IDisposable
 
     private sealed class DiscoveredEntry
     {
-        public string           Host         { get; }
-        public int              HttpPort     { get; }
-        public DateTimeOffset   LastSeenUtc  { get; private set; } = DateTimeOffset.UtcNow;
+        public string           Host          { get; }
+        public int              HttpPort      { get; }
+        public DateTimeOffset   LastSeenUtc   { get; private set; } = DateTimeOffset.UtcNow;
         /// <summary>MinValue on first discovery — guarantees the first beacon triggers a push.</summary>
         public DateTimeOffset   LastPushedUtc { get; set; } = DateTimeOffset.MinValue;
-        public SemaphoreSlim    PushGate   { get; } = new(1, 1);
+        public SemaphoreSlim    PushGate      { get; } = new(1, 1);
 
         public DiscoveredEntry(string host, int httpPort) { Host = host; HttpPort = httpPort; }
         public void UpdateLastSeen() => LastSeenUtc = DateTimeOffset.UtcNow;

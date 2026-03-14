@@ -25,16 +25,25 @@ public class LocalMqttController : ControllerBase
             return Unauthorized(new { error = "Invalid token." });
         }
 
-        // Use the caller's IP — this is the WPF machine's address as seen from the Cassia,
-        // so it is always the correct IP to reach the local MQTT broker.
-        var callerIp = HttpContext.Connection.RemoteIpAddress?.MapToIPv4().ToString();
-        if (string.IsNullOrWhiteSpace(callerIp) || callerIp == "0.0.0.0")
+        // Prefer mqttHost from the payload (WPF sends its probed outbound IP, which is correct
+        // even when the Cassia sits behind NAT and RemoteIpAddress would return the LXC gateway).
+        // Fall back to the TCP caller IP for backward compatibility with older WPF clients.
+        string? host = null;
+        if (!string.IsNullOrWhiteSpace(req.MqttHost))
         {
-            AppLog.Warn("[LocalMqtt] Config push rejected: could not determine caller IP.");
-            return BadRequest(new { error = "Could not determine caller IP." });
+            host = req.MqttHost.Trim();
+        }
+        else
+        {
+            host = HttpContext.Connection.RemoteIpAddress?.MapToIPv4().ToString();
+            if (string.IsNullOrWhiteSpace(host) || host == "0.0.0.0")
+            {
+                AppLog.Warn("[LocalMqtt] Config push rejected: could not determine caller IP and no mqttHost in payload.");
+                return BadRequest(new { error = "Could not determine caller IP." });
+            }
         }
 
-        RuntimeVariables.LOCAL_MQTT_HOST = callerIp;
+        RuntimeVariables.LOCAL_MQTT_HOST = host;
         if (req.MqttPort > 0)
             RuntimeVariables.LOCAL_MQTT_PORT = req.MqttPort;
 
@@ -47,5 +56,10 @@ public class LocalMqttController : ControllerBase
     {
         public string? Token    { get; set; }
         public int     MqttPort { get; set; }
+        /// <summary>
+        /// WPF's own LAN IP (probed via routing table). When set, used instead of the TCP
+        /// caller IP — necessary when AccessApp runs in a NAT container (e.g. Cassia LXC).
+        /// </summary>
+        public string? MqttHost { get; set; }
     }
 }

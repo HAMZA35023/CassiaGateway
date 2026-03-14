@@ -16,37 +16,95 @@ namespace AccessAPP.Services;
 ///
 /// Beacon JSON (sent to subnet broadcast : <see cref="BeaconPort"/> every 5 s):
 /// <code>{ "service":"cassia-accessapp", "host":"192.168.x.x", "httpPort":60000, "name":"...", "networkId":"..." }</code>
+///
+/// For Cassia gateways running AccessApp in an LXC container the container's network
+/// (10.10.10.x) is invisible to the LAN.  This service therefore also queries the Cassia
+/// web API to discover the host's WAN IP (wired.iface.ip / wired.iface.bcast) and sends
+/// an additional directed broadcast to the WAN subnet with host=&lt;WAN IP&gt;, so that WPF
+/// clients on the same LAN can receive the beacon and push MQTT config to the correct IP.
 /// </summary>
 public sealed class AccessAppBeaconService : IDisposable
 {
     public const int BeaconPort = 60004;
     public const int HttpPort   = 60000;
-    private const int BeaconIntervalMs = 5000;
+    private const int BeaconIntervalMs    = 5000;
+    private const int WanDiscoveryRetryMs = 15_000; // retry WAN API if first attempt fails
 
     private readonly IMqttService _mqtt;
+    private readonly CassiaWebSettingsService _cassiaWeb;
+
     private CancellationTokenSource? _cts;
     private Task? _task;
+    private Task? _wanDiscoveryTask;
 
-    public AccessAppBeaconService(IMqttService mqtt) => _mqtt = mqtt;
+    // Set once WAN discovery succeeds; read from the broadcast loop.
+    private volatile IPAddress? _wanIp;
+    private volatile IPAddress? _wanBroadcast;
+
+    public AccessAppBeaconService(IMqttService mqtt, CassiaWebSettingsService cassiaWeb)
+    {
+        _mqtt      = mqtt;
+        _cassiaWeb = cassiaWeb;
+    }
 
     public void Start()
     {
         if (_cts != null) return;
         _cts  = new CancellationTokenSource();
         _task = Task.Run(() => BroadcastLoopAsync(_cts.Token));
-        AppLog.Info("[AccessAppBeacon] Broadcasting presence on UDP port " + BeaconPort);
+        _wanDiscoveryTask = Task.Run(() => WanDiscoveryLoopAsync(_cts.Token));
+        AppLog.Info("[ AccessAppBeacon] Broadcasting presence on UDP port " + BeaconPort);
     }
 
     public void Stop()
     {
         _cts?.Cancel();
-        try { _task?.Wait(1000); } catch { }
+        try { _task?.Wait(1000); }             catch { }
+        try { _wanDiscoveryTask?.Wait(1000); } catch { }
         _cts?.Dispose();
-        _cts  = null;
-        _task = null;
+        _cts              = null;
+        _task             = null;
+        _wanDiscoveryTask = null;
     }
 
     public void Dispose() => Stop();
+
+    // ── WAN discovery ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Queries the Cassia web API on startup to learn the host's WAN IP and subnet broadcast.
+    /// Retries every <see cref="WanDiscoveryRetryMs"/> until successful or cancelled.
+    /// </summary>
+    private async Task WanDiscoveryLoopAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                var result = await _cassiaWeb.TryGetWanInfoAsync(ct).ConfigureAwait(false);
+                if (result.HasValue)
+                {
+                    _wanIp        = result.Value.WanIp;
+                    _wanBroadcast = result.Value.WanBroadcast;
+                    AppLog.Info($"[AccessAppBeacon] WAN info discovered via Cassia API: " +
+                                $"wanIp={_wanIp}, wanBroadcast={_wanBroadcast}");
+                    return; // success — no need to keep retrying
+                }
+
+                AppLog.Info("[AccessAppBeacon] Cassia web API not available — WAN broadcast disabled (will retry).");
+            }
+            catch (OperationCanceledException) { return; }
+            catch (Exception ex)
+            {
+                AppLog.Warn($"[AccessAppBeacon] WAN discovery failed: {ex.Message} — will retry in {WanDiscoveryRetryMs / 1000}s");
+            }
+
+            try { await Task.Delay(WanDiscoveryRetryMs, ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) { return; }
+        }
+    }
+
+    // ── Broadcast loop ────────────────────────────────────────────────────────
 
     private async Task BroadcastLoopAsync(CancellationToken ct)
     {
@@ -58,23 +116,23 @@ public sealed class AccessAppBeaconService : IDisposable
 
             if (firstLoop)
             {
-                foreach (var (localIp, broadcastIp) in interfaces)
-                    AppLog.Info($"[AccessAppBeacon] Interface {localIp} → broadcast {broadcastIp}:{BeaconPort}");
+                foreach (var entry in interfaces)
+                    AppLog.Info($"[AccessAppBeacon] Interface bind={entry.BindIp} → broadcast={entry.BroadcastIp}:{BeaconPort} (advertised host={entry.AdvertisedIp})");
             }
 
-            foreach (var (localIp, broadcastIp) in interfaces)
+            foreach (var entry in interfaces)
             {
                 try
                 {
                     using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
                     socket.EnableBroadcast = true;
                     socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-                    socket.Bind(new IPEndPoint(localIp, 0));
+                    socket.Bind(new IPEndPoint(entry.BindIp, 0));
 
                     var beacon = new
                     {
                         service   = "cassia-accessapp",
-                        host      = localIp.ToString(),
+                        host      = entry.AdvertisedIp.ToString(),  // WAN IP for NAT entries, local IP otherwise
                         httpPort  = HttpPort,
                         name      = opts.Name,
                         networkId = opts.NetworkId
@@ -83,15 +141,15 @@ public sealed class AccessAppBeaconService : IDisposable
                     var json = JsonSerializer.Serialize(beacon);
                     var data = Encoding.UTF8.GetBytes(json);
                     await socket.SendToAsync(data, SocketFlags.None,
-                        new IPEndPoint(broadcastIp, BeaconPort), ct).ConfigureAwait(false);
+                        new IPEndPoint(entry.BroadcastIp, BeaconPort), ct).ConfigureAwait(false);
 
                     if (firstLoop)
-                        AppLog.Info($"[AccessAppBeacon] Sent to {broadcastIp}:{BeaconPort}: {json}");
+                        AppLog.Info($"[AccessAppBeacon] Sent to {entry.BroadcastIp}:{BeaconPort}: {json}");
                 }
                 catch (OperationCanceledException) { return; }
                 catch (Exception ex)
                 {
-                    AppLog.Warn($"[AccessAppBeacon] Send on {localIp} failed: {ex.Message}");
+                    AppLog.Warn($"[AccessAppBeacon] Send on bind={entry.BindIp} → {entry.BroadcastIp} failed: {ex.Message}");
                 }
             }
 
@@ -102,9 +160,17 @@ public sealed class AccessAppBeaconService : IDisposable
         }
     }
 
-    private static List<(IPAddress localIp, IPAddress broadcastIp)> GetLanInterfaces()
+    // ── Interface enumeration ─────────────────────────────────────────────────
+
+    private readonly record struct InterfaceEntry(
+        IPAddress BindIp,       // local IP to bind the UDP socket to
+        IPAddress BroadcastIp,  // UDP broadcast destination
+        IPAddress AdvertisedIp  // IP written into the beacon 'host' field
+    );
+
+    private List<InterfaceEntry> GetLanInterfaces()
     {
-        var result = new List<(IPAddress, IPAddress)>();
+        var result = new List<InterfaceEntry>();
 
         foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
         {
@@ -125,21 +191,27 @@ public sealed class AccessAppBeaconService : IDisposable
                 for (int i = 0; i < 4; i++)
                     broadcast[i] = (byte)((ip[i] & mask[i]) | (~mask[i] & 0xFF));
 
-                result.Add((addr.Address, new IPAddress(broadcast)));
+                // Normal LAN entry: bind to local IP, advertise local IP
+                result.Add(new InterfaceEntry(addr.Address, new IPAddress(broadcast), addr.Address));
             }
         }
 
+        // Add WAN entry if Cassia API already returned the WAN info.
+        // The socket binds to any interface (IPAddress.Any) and sends to the WAN subnet
+        // broadcast.  The beacon's 'host' is set to the Cassia's WAN IP so that WPF
+        // can push config back to the correct publicly-routable address.
+        var wanIp   = _wanIp;
+        var wanBcast = _wanBroadcast;
+        if (wanIp != null && wanBcast != null)
+            result.Add(new InterfaceEntry(IPAddress.Any, wanBcast, wanIp));
+
+        // Fallback: if nothing found at all, use 255.255.255.255 global broadcast
         if (result.Count == 0)
-            result.Add((IPAddress.Any, IPAddress.Broadcast));
+            result.Add(new InterfaceEntry(IPAddress.Any, IPAddress.Broadcast, IPAddress.Any));
 
         return result;
     }
 
-    /// <summary>
-    /// Returns a 4-byte mask array. Prefers <paramref name="ipv4Mask"/> when available
-    /// (Windows / some Linux). Falls back to computing it from <paramref name="prefixLength"/>
-    /// which is always populated on Linux ARM where IPv4Mask may be null.
-    /// </summary>
     private static byte[]? MaskFromPrefix(IPAddress? ipv4Mask, int prefixLength)
     {
         var bytes = ipv4Mask?.GetAddressBytes();

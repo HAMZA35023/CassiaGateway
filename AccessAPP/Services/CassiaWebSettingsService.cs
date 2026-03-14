@@ -461,6 +461,36 @@ public sealed class CassiaWebSettingsService
         };
     }
 
+    /// <summary>
+    /// Tries to authenticate against the Cassia web interface using default/configured credentials
+    /// and extract the WAN IP address and subnet broadcast address from <c>wired.iface.ip</c>
+    /// and <c>wired.iface.bcast</c>. Returns null if the Cassia API is unreachable or the
+    /// fields are missing (e.g. running on a non-Cassia host).
+    /// </summary>
+    public async Task<(IPAddress WanIp, IPAddress WanBroadcast)?> TryGetWanInfoAsync(CancellationToken ct)
+    {
+        try
+        {
+            await using var session = await CreateAuthenticatedSessionAsync(
+                new CassiaWebSettingsRequest(), ct).ConfigureAwait(false);
+
+            var root = System.Text.Json.Nodes.JsonNode.Parse(session.InitialInfoJson)
+                       as System.Text.Json.Nodes.JsonObject;
+
+            var wanIpStr    = root?["wired"]?["iface"]?["ip"]?.GetValue<string>();
+            var wanBcastStr = root?["wired"]?["iface"]?["bcast"]?.GetValue<string>();
+
+            if (!string.IsNullOrWhiteSpace(wanIpStr)    && IPAddress.TryParse(wanIpStr,    out var wanIp)
+             && !string.IsNullOrWhiteSpace(wanBcastStr) && IPAddress.TryParse(wanBcastStr, out var wanBroadcast))
+            {
+                return (wanIp, wanBroadcast);
+            }
+        }
+        catch { }
+
+        return null;
+    }
+
     private sealed class AuthenticatedSession : IAsyncDisposable
     {
         public HttpClient Client { get; }
