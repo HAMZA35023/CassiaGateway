@@ -33,6 +33,7 @@ public sealed class LocalDiscoveryBeaconService : IDisposable
         Stop();
         _cts = new CancellationTokenSource();
         _task = Task.Run(() => BroadcastLoopAsync(mqttPort, networkId, _cts.Token));
+        AppLog.Info($"[LocalDiscoveryBeacon] Started — broadcasting MQTT port {mqttPort}, networkId={networkId} on UDP {BeaconPort}");
     }
 
     public void Stop()
@@ -42,15 +43,25 @@ public sealed class LocalDiscoveryBeaconService : IDisposable
         _cts?.Dispose();
         _cts = null;
         _task = null;
+        AppLog.Info("[LocalDiscoveryBeacon] Stopped.");
     }
 
     public void Dispose() => Stop();
 
     private static async Task BroadcastLoopAsync(int mqttPort, string networkId, CancellationToken ct)
     {
+        bool firstLoop = true;
         while (!ct.IsCancellationRequested)
         {
-            foreach (var (localIp, broadcastIp) in GetLanInterfaces())
+            var interfaces = GetLanInterfaces();
+
+            if (firstLoop)
+            {
+                foreach (var (localIp, broadcastIp) in interfaces)
+                    AppLog.Info($"[LocalDiscoveryBeacon] Interface {localIp} → broadcast {broadcastIp}:{BeaconPort}");
+            }
+
+            foreach (var (localIp, broadcastIp) in interfaces)
             {
                 try
                 {
@@ -67,13 +78,23 @@ public sealed class LocalDiscoveryBeaconService : IDisposable
                         networkId
                     };
 
-                    var data = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(beacon));
+                    var json = JsonSerializer.Serialize(beacon);
+                    var data = Encoding.UTF8.GetBytes(json);
                     await socket.SendToAsync(data, SocketFlags.None,
                         new IPEndPoint(broadcastIp, BeaconPort), ct).ConfigureAwait(false);
+
+                    // Only log the payload on first loop to avoid noise every 3 s
+                    if (firstLoop)
+                        AppLog.Info($"[LocalDiscoveryBeacon] Sent to {broadcastIp}:{BeaconPort}: {json}");
                 }
                 catch (OperationCanceledException) { return; }
-                catch { /* interface temporarily unavailable — ignore */ }
+                catch (Exception ex)
+                {
+                    AppLog.Warn($"[LocalDiscoveryBeacon] Send on {localIp} failed: {ex.Message}");
+                }
             }
+
+            firstLoop = false;
 
             try { await Task.Delay(BeaconIntervalMs, ct).ConfigureAwait(false); }
             catch (OperationCanceledException) { break; }

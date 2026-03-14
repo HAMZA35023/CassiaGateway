@@ -30,24 +30,55 @@ public sealed class AccessAppDiscoveryService : IDisposable
 
     private int    _mqttPort;
     private string _networkId = "";
+    private LocalMqttServerService? _mqttServer;
 
     public bool IsRunning => _listenTask != null && !_listenTask.IsCompleted;
 
     // ── Lifecycle ────────────────────────────────────────────────────────────
 
-    public void Start(int mqttPort, string networkId)
+    public void Start(int mqttPort, string networkId, LocalMqttServerService? mqttServer = null)
     {
         Stop();
         _mqttPort  = mqttPort;
         _networkId = networkId;
 
+        if (mqttServer != null)
+            mqttServer.RemoteClientConnected += OnRemoteClientConnected;
+        _mqttServer = mqttServer;
+
         _cts         = new CancellationTokenSource();
         _listenTask  = Task.Run(() => ListenLoopAsync(_cts.Token));
         _cleanupTask = Task.Run(() => CleanupLoopAsync(_cts.Token));
+        AppLog.Info($"[AccessAppDiscovery] Started — listening for AccessApp beacons on UDP {BeaconPort}");
+    }
+
+    /// <summary>
+    /// Called when an AccessApp connects to the local MQTT server from a remote IP.
+    /// Pushes the MQTT config back so the AccessApp sets LOCAL_MQTT_HOST and maintains
+    /// the connection without relying on UDP broadcast.
+    /// </summary>
+    private void OnRemoteClientConnected(string ip)
+    {
+        const int httpPort = 60000; // AccessApp always listens on this port
+        var key   = $"{ip}:{httpPort}";
+        var entry = _entries.GetOrAdd(key, _ => new DiscoveredEntry(ip, httpPort));
+        var isNew = entry.LastPushedUtc == DateTimeOffset.MinValue;
+        entry.UpdateLastSeen();
+
+        AppLog.Info($"[AccessAppDiscovery] Remote MQTT client connected from {ip} — pushing config (isNew={isNew})");
+
+        if (isNew || (DateTimeOffset.UtcNow - entry.LastPushedUtc).TotalMilliseconds > PushIntervalMs)
+            _ = PushConfigAsync(entry, _cts?.Token ?? CancellationToken.None);
     }
 
     public void Stop()
     {
+        if (_mqttServer != null)
+        {
+            _mqttServer.RemoteClientConnected -= OnRemoteClientConnected;
+            _mqttServer = null;
+        }
+
         _cts?.Cancel();
         try { _listenTask?.Wait(1000); }  catch { }
         try { _cleanupTask?.Wait(1000); } catch { }
@@ -56,6 +87,7 @@ public sealed class AccessAppDiscoveryService : IDisposable
         _listenTask  = null;
         _cleanupTask = null;
         _entries.Clear();
+        AppLog.Info("[AccessAppDiscovery] Stopped.");
     }
 
     public void Dispose() => Stop();
@@ -70,10 +102,11 @@ public sealed class AccessAppDiscoveryService : IDisposable
             udp = new UdpClient();
             udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
             udp.Client.Bind(new IPEndPoint(IPAddress.Any, BeaconPort));
+            AppLog.Info($"[AccessAppDiscovery] UDP socket bound on port {BeaconPort}");
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[AccessAppDiscovery] Cannot bind UDP port {BeaconPort}: {ex.Message}");
+            AppLog.Error($"[AccessAppDiscovery] Cannot bind UDP port {BeaconPort}: {ex.Message}");
             udp?.Dispose();
             return;
         }
@@ -85,6 +118,7 @@ public sealed class AccessAppDiscoveryService : IDisposable
                 try
                 {
                     var result = await udp.ReceiveAsync(ct).ConfigureAwait(false);
+                    AppLog.Info($"[AccessAppDiscovery] UDP packet received from {result.RemoteEndPoint}: {System.Text.Encoding.UTF8.GetString(result.Buffer)}");
                     ProcessBeacon(result.Buffer, ct);
                 }
                 catch (OperationCanceledException) { break; }
@@ -107,12 +141,16 @@ public sealed class AccessAppDiscoveryService : IDisposable
             var key   = $"{beacon.Host}:{beacon.HttpPort}";
             var entry = _entries.GetOrAdd(key, _ => new DiscoveredEntry(beacon.Host!, beacon.HttpPort));
 
-            var wasStale = (DateTimeOffset.UtcNow - entry.LastSeenUtc).TotalMilliseconds > PushIntervalMs;
+            var isNew = entry.LastPushedUtc == DateTimeOffset.MinValue;
             entry.UpdateLastSeen();
 
-            // Push config on first discovery or after push interval
-            if (wasStale || !entry.ConfigPushed)
+            // Push on first discovery or after push interval (tracked separately from LastSeenUtc)
+            if (isNew || (DateTimeOffset.UtcNow - entry.LastPushedUtc).TotalMilliseconds > PushIntervalMs)
+            {
+                if (isNew)
+                    AppLog.Info($"[AccessAppDiscovery] Discovered AccessApp at {key} (name={beacon.Name}, networkId={beacon.NetworkId}) — pushing MQTT config");
                 _ = PushConfigAsync(entry, ct);
+            }
         }
         catch { }
     }
@@ -145,20 +183,17 @@ public sealed class AccessAppDiscoveryService : IDisposable
             var response = await http.PostAsync(url, body, ct).ConfigureAwait(false);
             if (response.IsSuccessStatusCode)
             {
-                entry.ConfigPushed = true;
-                System.Diagnostics.Debug.WriteLine(
-                    $"[AccessAppDiscovery] Pushed MQTT config to {entry.Host}:{entry.HttpPort} (port {_mqttPort})");
+                entry.LastPushedUtc = DateTimeOffset.UtcNow;
+                AppLog.Info($"[AccessAppDiscovery] Pushed MQTT config (port {_mqttPort}) to {entry.Host}:{entry.HttpPort} — OK");
             }
             else
             {
-                System.Diagnostics.Debug.WriteLine(
-                    $"[AccessAppDiscovery] Push to {entry.Host}:{entry.HttpPort} returned {(int)response.StatusCode}");
+                AppLog.Warn($"[AccessAppDiscovery] Push to {entry.Host}:{entry.HttpPort} returned HTTP {(int)response.StatusCode}");
             }
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine(
-                $"[AccessAppDiscovery] Push to {entry.Host}:{entry.HttpPort} failed: {ex.Message}");
+            AppLog.Warn($"[AccessAppDiscovery] Push to {entry.Host}:{entry.HttpPort} failed: {ex.Message}");
         }
         finally
         {
@@ -198,10 +233,11 @@ public sealed class AccessAppDiscoveryService : IDisposable
 
     private sealed class DiscoveredEntry
     {
-        public string           Host       { get; }
-        public int              HttpPort   { get; }
-        public DateTimeOffset   LastSeenUtc { get; private set; } = DateTimeOffset.UtcNow;
-        public bool             ConfigPushed { get; set; }
+        public string           Host         { get; }
+        public int              HttpPort     { get; }
+        public DateTimeOffset   LastSeenUtc  { get; private set; } = DateTimeOffset.UtcNow;
+        /// <summary>MinValue on first discovery — guarantees the first beacon triggers a push.</summary>
+        public DateTimeOffset   LastPushedUtc { get; set; } = DateTimeOffset.MinValue;
         public SemaphoreSlim    PushGate   { get; } = new(1, 1);
 
         public DiscoveredEntry(string host, int httpPort) { Host = host; HttpPort = httpPort; }

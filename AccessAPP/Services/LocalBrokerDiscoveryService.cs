@@ -109,6 +109,7 @@ public sealed class LocalBrokerDiscoveryService : IDisposable
                 try
                 {
                     var result = await udp.ReceiveAsync(ct).ConfigureAwait(false);
+                    AppLog.Info($"[LocalBrokerDiscovery] UDP packet received from {result.RemoteEndPoint}: {System.Text.Encoding.UTF8.GetString(result.Buffer)}");
                     ProcessBeacon(result.Buffer, ct);
                 }
                 catch (OperationCanceledException) { break; }
@@ -131,8 +132,12 @@ public sealed class LocalBrokerDiscoveryService : IDisposable
                 return;
 
             var key = $"{beacon.Host}:{beacon.Port}";
+            bool isNew = !_brokers.ContainsKey(key);
             var entry = _brokers.GetOrAdd(key,
                 _ => new LocalBrokerEntry(beacon.Host!, beacon.Port, _mqtt));
+
+            if (isNew)
+                AppLog.Info($"[LocalBrokerDiscovery] Discovered local broker at {key} (networkId={beacon.NetworkId}) — connecting");
 
             entry.UpdateLastSeen();
             _ = entry.EnsureConnectedAsync(ct);
@@ -152,6 +157,7 @@ public sealed class LocalBrokerDiscoveryService : IDisposable
     /// </summary>
     private async Task StaticHostLoopAsync(CancellationToken ct)
     {
+        string lastLoggedHost = "";
         while (!ct.IsCancellationRequested)
         {
             var host = RuntimeVariables.LOCAL_MQTT_HOST;
@@ -160,9 +166,22 @@ public sealed class LocalBrokerDiscoveryService : IDisposable
             if (!string.IsNullOrWhiteSpace(host))
             {
                 var key   = $"{host}:{port}";
+                bool isNew = !_brokers.ContainsKey(key);
                 var entry = _brokers.GetOrAdd(key, _ => new LocalBrokerEntry(host, port, _mqtt));
                 entry.UpdateLastSeen(); // prevent cleanup removal
+
+                if (host != lastLoggedHost)
+                {
+                    lastLoggedHost = host;
+                    AppLog.Info($"[LocalBrokerDiscovery] StaticHost: LOCAL_MQTT_HOST={host}, port={port} — will connect");
+                }
+
                 _ = entry.EnsureConnectedAsync(ct);
+            }
+            else if (lastLoggedHost != "")
+            {
+                AppLog.Info("[LocalBrokerDiscovery] StaticHost: LOCAL_MQTT_HOST cleared — no static broker");
+                lastLoggedHost = "";
             }
 
             try { await Task.Delay(5000, ct).ConfigureAwait(false); }

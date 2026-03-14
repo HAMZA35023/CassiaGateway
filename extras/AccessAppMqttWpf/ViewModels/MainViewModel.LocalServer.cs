@@ -81,7 +81,7 @@ public partial class MainViewModel : ObservableObject
             if (running)
             {
                 _discoveryBeacon.Start(LocalMqttServer.Port, NetworkId);
-                _accessAppDiscovery.Start(LocalMqttServer.Port, NetworkId);
+                _accessAppDiscovery.Start(LocalMqttServer.Port, NetworkId, LocalMqttServer);
             }
             else
             {

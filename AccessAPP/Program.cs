@@ -197,9 +197,10 @@ using (var scope = app.Services.CreateScope())
     var runtimeStore = serviceProvider.GetRequiredService<RuntimeVariablesStore>();
     var loadResult = runtimeStore.LoadFromDisk();
     if (loadResult.applied.Count > 0)
-        AppLog.Info($"Runtime variables loaded: {loadResult.applied.Count} applied from {runtimeStore.FilePath}");
+        AppLog.Info($"Runtime variables loaded: {loadResult.applied.Count} applied from {runtimeStore.FilePath} ({string.Join(", ", loadResult.applied)})");
     if (loadResult.errors.Count > 0)
         AppLog.Warn($"Runtime variables load errors: {string.Join(", ", loadResult.errors.Select(kv => $"{kv.Key}={kv.Value}"))}");
+    AppLog.Info($"[Startup] LOCAL_MQTT_HOST='{RuntimeVariables.LOCAL_MQTT_HOST}', LOCAL_MQTT_PORT={RuntimeVariables.LOCAL_MQTT_PORT}");
 
     // Resolve "auto" BLE_BACKEND: probe Cassia HTTP API → windows-native → linux-native.
     if (RuntimeVariables.BLE_BACKEND.Equals("auto", StringComparison.OrdinalIgnoreCase))
@@ -276,6 +277,7 @@ using (var scope = app.Services.CreateScope())
 
     // Start MQTT service
     var mqttService = serviceProvider.GetRequiredService<IMqttService>();
+    AppLog.Info($"[Startup] Primary MQTT broker: {mqttService.CurrentOptions.Host}:{mqttService.CurrentOptions.Port}, name={mqttService.CurrentOptions.Name}, networkId={mqttService.CurrentOptions.NetworkId}");
     _ = mqttService.StartAsync();
 
     // Start LAN discovery — connects to any WPF client's local MQTT broker found via UDP beacon

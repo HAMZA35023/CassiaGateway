@@ -50,11 +50,19 @@ public sealed class AccessAppBeaconService : IDisposable
 
     private async Task BroadcastLoopAsync(CancellationToken ct)
     {
+        bool firstLoop = true;
         while (!ct.IsCancellationRequested)
         {
             var opts = _mqtt.CurrentOptions;
+            var interfaces = GetLanInterfaces();
 
-            foreach (var (localIp, broadcastIp) in GetLanInterfaces())
+            if (firstLoop)
+            {
+                foreach (var (localIp, broadcastIp) in interfaces)
+                    AppLog.Info($"[AccessAppBeacon] Interface {localIp} → broadcast {broadcastIp}:{BeaconPort}");
+            }
+
+            foreach (var (localIp, broadcastIp) in interfaces)
             {
                 try
                 {
@@ -72,13 +80,22 @@ public sealed class AccessAppBeaconService : IDisposable
                         networkId = opts.NetworkId
                     };
 
-                    var data = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(beacon));
+                    var json = JsonSerializer.Serialize(beacon);
+                    var data = Encoding.UTF8.GetBytes(json);
                     await socket.SendToAsync(data, SocketFlags.None,
                         new IPEndPoint(broadcastIp, BeaconPort), ct).ConfigureAwait(false);
+
+                    if (firstLoop)
+                        AppLog.Info($"[AccessAppBeacon] Sent to {broadcastIp}:{BeaconPort}: {json}");
                 }
                 catch (OperationCanceledException) { return; }
-                catch { /* interface temporarily unavailable */ }
+                catch (Exception ex)
+                {
+                    AppLog.Warn($"[AccessAppBeacon] Send on {localIp} failed: {ex.Message}");
+                }
             }
+
+            firstLoop = false;
 
             try { await Task.Delay(BeaconIntervalMs, ct).ConfigureAwait(false); }
             catch (OperationCanceledException) { break; }
