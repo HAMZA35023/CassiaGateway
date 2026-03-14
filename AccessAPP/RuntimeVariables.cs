@@ -257,6 +257,15 @@ namespace AccessAPP
         // Read callback wait for incoming programming notification data (sensor/bootloader/actor).
         public static int UPGRADE_PROGRAMMING_NOTIFICATION_WAIT_MS = 30000;
 
+        // Local MQTT broker (WPF AccessAppMqttWpf) — direct connection fallback.
+        // When set, LocalBrokerDiscoveryService connects directly to this host without
+        // waiting for a UDP discovery beacon. Useful when UDP broadcast does not reach
+        // the device (e.g. the Cassia gateway is on a different broadcast domain).
+        // Leave empty ("") to rely on UDP beacon discovery only.
+        public static string LOCAL_MQTT_HOST = "";
+        // Port for the directly-configured local MQTT broker. Defaults to 1883.
+        public static int LOCAL_MQTT_PORT = 1883;
+
         // BLE backend selection.
         // "auto"            = auto-detect: cassia (if GatewayConfiguration:IpAddress is set) → windows-native (Windows) → linux-native (Linux x64/ARM).
         // "cassia"          = use the Cassia gateway REST/SSE API.

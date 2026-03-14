@@ -39,6 +39,7 @@ public sealed class LocalBrokerDiscoveryService : IDisposable
     private CancellationTokenSource? _cts;
     private Task? _listenTask;
     private Task? _cleanupTask;
+    private Task? _staticHostTask;
 
     public LocalBrokerDiscoveryService(IMqttService mqtt)
     {
@@ -53,8 +54,9 @@ public sealed class LocalBrokerDiscoveryService : IDisposable
         if (_cts != null) return;
         _cts = new CancellationTokenSource();
         _mqtt.MessagePublished += OnMessagePublished;
-        _listenTask  = Task.Run(() => ListenLoopAsync(_cts.Token));
-        _cleanupTask = Task.Run(() => CleanupLoopAsync(_cts.Token));
+        _listenTask      = Task.Run(() => ListenLoopAsync(_cts.Token));
+        _cleanupTask     = Task.Run(() => CleanupLoopAsync(_cts.Token));
+        _staticHostTask  = Task.Run(() => StaticHostLoopAsync(_cts.Token));
         AppLog.Info("[LocalBrokerDiscovery] Started listening on UDP port " + BeaconPort);
     }
 
@@ -138,6 +140,33 @@ public sealed class LocalBrokerDiscoveryService : IDisposable
         catch (Exception ex)
         {
             AppLog.Warn($"[LocalBrokerDiscovery] Beacon parse error: {ex.Message}");
+        }
+    }
+
+    // ── Static host loop ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// When <see cref="RuntimeVariables.LOCAL_MQTT_HOST"/> is set, maintains a broker entry for
+    /// that host directly — no UDP beacon required.  Refreshes LastSeen every 5 s so the cleanup
+    /// loop never removes the entry.
+    /// </summary>
+    private async Task StaticHostLoopAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            var host = RuntimeVariables.LOCAL_MQTT_HOST;
+            var port = RuntimeVariables.LOCAL_MQTT_PORT;
+
+            if (!string.IsNullOrWhiteSpace(host))
+            {
+                var key   = $"{host}:{port}";
+                var entry = _brokers.GetOrAdd(key, _ => new LocalBrokerEntry(host, port, _mqtt));
+                entry.UpdateLastSeen(); // prevent cleanup removal
+                _ = entry.EnsureConnectedAsync(ct);
+            }
+
+            try { await Task.Delay(5000, ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) { break; }
         }
     }
 

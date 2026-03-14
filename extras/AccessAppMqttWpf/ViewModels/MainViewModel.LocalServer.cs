@@ -12,6 +12,7 @@ public partial class MainViewModel : ObservableObject
 {
     public readonly LocalMqttServerService LocalMqttServer = new();
     private readonly LocalDiscoveryBeaconService _discoveryBeacon = new();
+    private readonly AccessAppDiscoveryService _accessAppDiscovery = new();
 
     private Process? _accessAppProcess;
 
@@ -78,9 +79,15 @@ public partial class MainViewModel : ObservableObject
 
             // Announce / stop announcing the local broker on the LAN
             if (running)
+            {
                 _discoveryBeacon.Start(LocalMqttServer.Port, NetworkId);
+                _accessAppDiscovery.Start(LocalMqttServer.Port, NetworkId);
+            }
             else
+            {
                 _discoveryBeacon.Stop();
+                _accessAppDiscovery.Stop();
+            }
 
             // Switch the client's MQTT connection to/from localhost when the server starts/stops
             if (running)
@@ -467,6 +474,7 @@ public partial class MainViewModel : ObservableObject
         catch { }
 
         try { _discoveryBeacon.Stop(); } catch { }
+        try { _accessAppDiscovery.Stop(); } catch { }
         try { _ = LocalMqttServer.StopAsync(); } catch { }
     }
 }

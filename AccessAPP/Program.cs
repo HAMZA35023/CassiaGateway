@@ -184,6 +184,7 @@ builder.Services.AddSingleton<RuntimeVariablesStore>();
 
 builder.Services.AddSingleton<IMqttService, MqttService>();
 builder.Services.AddSingleton<LocalBrokerDiscoveryService>();
+builder.Services.AddSingleton<AccessAppBeaconService>();
 
 var app = builder.Build();
 
@@ -280,6 +281,10 @@ using (var scope = app.Services.CreateScope())
     // Start LAN discovery — connects to any WPF client's local MQTT broker found via UDP beacon
     var brokerDiscovery = serviceProvider.GetRequiredService<LocalBrokerDiscoveryService>();
     brokerDiscovery.Start();
+
+    // Announce this AccessApp instance on the LAN so WPF clients can discover and configure it
+    var accessAppBeacon = serviceProvider.GetRequiredService<AccessAppBeaconService>();
+    accessAppBeacon.Start();
     _ = Task.Run(async () =>
     {
         try
