@@ -80,11 +80,14 @@ public partial class MainViewModel : ObservableObject
             // Announce / stop announcing the local broker on the LAN
             if (running)
             {
-                _discoveryBeacon.Start(LocalMqttServer.Port, NetworkId);
+                var gatewayIps = _store.Load().localServer.gatewayIps;
+                _discoveryBeacon.Start(LocalMqttServer.Port, NetworkId, gatewayIps);
                 _accessAppDiscovery.Start(LocalMqttServer.Port, NetworkId, LocalMqttServer);
+                LocalMqttServer.RemoteClientConnected += OnGatewayConnectedToLocalMqtt;
             }
             else
             {
+                LocalMqttServer.RemoteClientConnected -= OnGatewayConnectedToLocalMqtt;
                 _discoveryBeacon.Stop();
                 _accessAppDiscovery.Stop();
             }
@@ -462,6 +465,32 @@ public partial class MainViewModel : ObservableObject
         var running = _accessAppProcess != null && !_accessAppProcess.HasExited;
         IsAccessAppRunning = running;
         AccessAppProcessStatus = running ? $"Running (PID {_accessAppProcess!.Id})" : "Not running";
+    }
+
+    /// <summary>
+    /// When a remote AccessApp connects to our local MQTT broker, auto-save its IP as a
+    /// known gateway so future sessions unicast cassia-mqtt beacons directly to it.
+    /// </summary>
+    private void OnGatewayConnectedToLocalMqtt(string ip)
+    {
+        // Also feed it into the running beacon so it starts getting unicast immediately.
+        _discoveryBeacon.AddGatewayIp(ip);
+
+        // Persist to settings so it survives app restarts.
+        try
+        {
+            var all = _store.Load();
+            if (!all.localServer.gatewayIps.Contains(ip, StringComparer.OrdinalIgnoreCase))
+            {
+                all.localServer.gatewayIps.Add(ip);
+                _store.Save(all);
+                AppLog.Info($"[MainViewModel] Auto-saved gateway IP {ip} to settings.");
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn($"[MainViewModel] Failed to save gateway IP {ip}: {ex.Message}");
+        }
     }
 
     public void ShutdownLocalServices()

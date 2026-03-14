@@ -3,7 +3,9 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Win32;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -29,6 +31,10 @@ public partial class LocalServerSettingsViewModel : ObservableObject, IDisposabl
     [ObservableProperty] private string localAccessAppPath = "";
     [ObservableProperty] private bool autoStartLocalServer;
     [ObservableProperty] private bool autoStartAccessApp;
+    /// <summary>Comma-separated list of known Cassia WAN IPs for unicast discovery.</summary>
+    [ObservableProperty] private string gatewayIpsText = "";
+    [ObservableProperty] private bool isScanning;
+    [ObservableProperty] private double scanProgress;
 
     public string[] RuntimeOptions { get; } = new[]
     {
@@ -65,6 +71,7 @@ public partial class LocalServerSettingsViewModel : ObservableObject, IDisposabl
         LocalAccessAppPath = s.localAccessAppPath;
         AutoStartLocalServer = s.autoStartLocalServer;
         AutoStartAccessApp = s.autoStartAccessApp;
+        GatewayIpsText = string.Join(", ", s.gatewayIps);
 
         RefreshInstalledVersion();
 
@@ -265,9 +272,64 @@ public partial class LocalServerSettingsViewModel : ObservableObject, IDisposabl
         all.localServer.localAccessAppPath = LocalAccessAppPath;
         all.localServer.autoStartLocalServer = AutoStartLocalServer;
         all.localServer.autoStartAccessApp = AutoStartAccessApp;
+        all.localServer.gatewayIps = ParseGatewayIps(GatewayIpsText);
         _store.Save(all);
         StatusText = "Settings saved.";
     }
+
+    [RelayCommand]
+    private async Task ScanForGatewaysAsync()
+    {
+        if (IsScanning) return;
+        IsScanning    = true;
+        ScanProgress  = 0;
+        StatusText    = "Scanning subnet for AccessApp instances…";
+
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            var progress  = new Progress<(int done, int total)>(p =>
+                Application.Current.Dispatcher.Invoke(() =>
+                    ScanProgress = p.total > 0 ? (double)p.done / p.total : 0));
+
+            var found = await GatewayScannerService.ScanAsync(progress, cts.Token);
+
+            if (found.Count == 0)
+            {
+                StatusText = "Scan complete — no AccessApp instances found.";
+                return;
+            }
+
+            // Merge into existing IPs
+            var existing = ParseGatewayIps(GatewayIpsText);
+            foreach (var ip in found)
+                if (!existing.Contains(ip, StringComparer.OrdinalIgnoreCase))
+                    existing.Add(ip);
+
+            GatewayIpsText = string.Join(", ", existing);
+            StatusText = $"Scan complete — found: {string.Join(", ", found)}";
+
+            // Auto-save
+            SaveSettings();
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Scan timed out.";
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Scan failed: {ex.Message}";
+        }
+        finally
+        {
+            IsScanning = false;
+        }
+    }
+
+    private static List<string> ParseGatewayIps(string text) =>
+        new(text.Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(s => s.Trim())
+                .Where(s => s.Length > 0));
 
     public void Dispose()
     {

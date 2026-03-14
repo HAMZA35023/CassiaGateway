@@ -66,6 +66,13 @@ public sealed class LocalServerSettings
 
     public bool autoStartAccessApp { get; set; } = false;
     public bool autoStartLocalServer { get; set; } = false;
+
+    /// <summary>
+    /// Known Cassia gateway WAN IPs to unicast cassia-mqtt beacons to directly.
+    /// Required when AccessApp runs in an LXC container that cannot receive LAN broadcasts.
+    /// Auto-populated when a gateway connects to the local MQTT broker.
+    /// </summary>
+    public List<string> gatewayIps { get; set; } = new();
 }
 
 public sealed class AccessAppSettings

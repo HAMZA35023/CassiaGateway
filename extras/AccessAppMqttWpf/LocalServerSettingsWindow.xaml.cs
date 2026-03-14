@@ -23,6 +23,8 @@ public partial class LocalServerSettingsWindow : Window
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
 
+    private void ClearGatewayIps_Click(object sender, RoutedEventArgs e) => _vm.GatewayIpsText = "";
+
     private void LocalPathBox_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         _vm.BrowseLocalPathCommand.Execute(null);
