@@ -273,7 +273,10 @@ public sealed class LocalBrokerDiscoveryService : IDisposable
                 };
 
                 var opts = _mqtt.CurrentOptions;
-                var clientId = $"mirror-{opts.Name}-{Environment.MachineName}";
+                // Include target host in clientId so each broker entry has a unique identity.
+                // Without this, connecting from multiple interface IPs to the same physical broker
+                // causes SessionTakenOver as the broker sees the same clientId reconnecting.
+                var clientId = $"mirror-{opts.Name}-{_host}";
 
                 var options = new MqttClientOptionsBuilder()
                     .WithTcpServer(_host, _port)

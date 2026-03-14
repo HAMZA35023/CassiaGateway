@@ -114,6 +114,7 @@ public sealed class LocalDiscoveryBeaconService : IDisposable
             if (ni.OperationalStatus != OperationalStatus.Up) continue;
             if (ni.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
             if (ni.NetworkInterfaceType == NetworkInterfaceType.Tunnel) continue;
+            if (IsVirtualAdapter(ni)) continue;
 
             foreach (var addr in ni.GetIPProperties().UnicastAddresses)
             {
@@ -137,6 +138,16 @@ public sealed class LocalDiscoveryBeaconService : IDisposable
             result.Add((IPAddress.Any, IPAddress.Broadcast));
 
         return result;
+    }
+
+    private static bool IsVirtualAdapter(System.Net.NetworkInformation.NetworkInterface ni)
+    {
+        var desc = ni.Description ?? "";
+        return desc.Contains("Virtual",    StringComparison.OrdinalIgnoreCase)
+            || desc.Contains("Hyper-V",    StringComparison.OrdinalIgnoreCase)
+            || desc.Contains("TAP-Windows", StringComparison.OrdinalIgnoreCase)
+            || desc.Contains("WireGuard",  StringComparison.OrdinalIgnoreCase)
+            || desc.Contains("vEthernet",  StringComparison.OrdinalIgnoreCase);
     }
 
     private static byte[]? MaskFromPrefix(System.Net.IPAddress? ipv4Mask, int prefixLength)
