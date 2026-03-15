@@ -130,8 +130,8 @@ namespace AccessAPP
         public static int UPGRADE_FW_COMMAND_RETRY_ATTEMPTS = 3;
         // Delay between firmware command retries.
         public static int UPGRADE_FW_COMMAND_RETRY_DELAY_MS = 800;
-        // Max time to wait for DALI SysFail get/set (capped to 5s).
-        public static int UPGRADE_DALI_SYSFAIL_TIMEOUT_MS = 5000;
+        // Max time to wait for DALI common param get/set (capped to 30s, min 1s). Default 15s to allow for slow DALI bus operations (FadeTime SET can take >10s).
+        public static int UPGRADE_DALI_SYSFAIL_TIMEOUT_MS = 15000;
         // Settings backup: per-field read attempts.
         public static int UPGRADE_SETTINGS_BACKUP_READ_ATTEMPTS = 3;
         // Settings backup: delay between read attempts.
@@ -324,7 +324,9 @@ namespace AccessAPP
         // Linux native BLE: when writing, how long to wait for the characteristic handle to appear after connect (ms).
         public static int LINUX_BLE_WRITE_FIND_CHAR_TIMEOUT_MS = 1500;
         // Linux native BLE: max time to wait for command notification after a write (ms).
-        public static int LINUX_BLE_DATA_NOTIFICATION_TIMEOUT_MS = 12000;
+        // DALI long-running operations use a per-call override via GetDataFromBleDevice(notificationTimeoutMs)
+        // so this default only applies to normal (non-DALI) BLE reads.
+        public static int LINUX_BLE_DATA_NOTIFICATION_TIMEOUT_MS = 5000;
         // Linux native BLE: max time to wait for notify pipeline readiness before login write (ms).
         public static int LINUX_BLE_LOGIN_NOTIFY_READY_TIMEOUT_MS = 5000;
 

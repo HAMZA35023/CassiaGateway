@@ -399,9 +399,29 @@ using (var scope = app.Services.CreateScope())
         await mqttService.PublishTeleJsonAsync("fw-version", resp);
     };
 
+    // Dedup dictionary shared by get/set detector-settings handlers to discard duplicate MQTT
+    // deliveries (same requestId fired multiple times when subscribed to multiple brokers).
+    var detectorSettingsRecentIds = new System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase);
+
+    static bool DetectorSettingsDedup(System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> seen, string requestId)
+    {
+        if (!seen.TryAdd(requestId, DateTimeOffset.UtcNow))
+            return false; // duplicate
+        // Prune entries older than 5 minutes to prevent unbounded growth.
+        var cutoff = DateTimeOffset.UtcNow.AddMinutes(-5);
+        foreach (var kvp in seen)
+            if (kvp.Value < cutoff) seen.TryRemove(kvp.Key, out _);
+        return true;
+    }
+
     mqttService.GetDetectorSettingsRequested += async cmd =>
     {
         var requestId = string.IsNullOrWhiteSpace(cmd.RequestId) ? Guid.NewGuid().ToString("N") : cmd.RequestId!;
+        if (!DetectorSettingsDedup(detectorSettingsRecentIds, requestId))
+        {
+            AppLog.Debug($"[DetectorSettings] get duplicate requestId={requestId} — skipped");
+            return;
+        }
         var requested = (cmd.Sensors ?? new List<string>())
             .Where(m => !string.IsNullOrWhiteSpace(m))
             .Select(m => m.Trim())
@@ -517,6 +537,11 @@ using (var scope = app.Services.CreateScope())
     mqttService.SetDetectorSettingsRequested += async cmd =>
     {
         var requestId = string.IsNullOrWhiteSpace(cmd.RequestId) ? Guid.NewGuid().ToString("N") : cmd.RequestId!;
+        if (!DetectorSettingsDedup(detectorSettingsRecentIds, requestId))
+        {
+            AppLog.Debug($"[DetectorSettings] set duplicate requestId={requestId} — skipped");
+            return;
+        }
         var requested = (cmd.Sensors ?? new List<string>())
             .Where(m => !string.IsNullOrWhiteSpace(m))
             .Select(m => m.Trim())

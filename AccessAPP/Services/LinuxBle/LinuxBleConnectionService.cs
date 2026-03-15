@@ -518,7 +518,7 @@ public class LinuxBleConnectionService : IBleConnectionService
     // ── Data read (write + wait for notification) ───────────────────────────
 
     public async Task<DataResponseModel> GetDataFromBleDevice(
-        string gatewayIpAddress, int gatewayPort, string macAddress, string value)
+        string gatewayIpAddress, int gatewayPort, string macAddress, string value, int notificationTimeoutMs = 0)
     {
         var rw = new LinuxBleReadWriteService(
             _logger.CreateLogger<LinuxBleReadWriteService>());
@@ -563,7 +563,9 @@ public class LinuxBleConnectionService : IBleConnectionService
                 };
             }
 
-            int timeoutMs = Math.Clamp(RuntimeVariables.LINUX_BLE_DATA_NOTIFICATION_TIMEOUT_MS, 2000, 120000);
+            int timeoutMs = Math.Clamp(
+                notificationTimeoutMs > 0 ? notificationTimeoutMs : RuntimeVariables.LINUX_BLE_DATA_NOTIFICATION_TIMEOUT_MS,
+                2000, 120000);
             var completed = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromMilliseconds(timeoutMs)));
 
             if (completed == tcs.Task)
