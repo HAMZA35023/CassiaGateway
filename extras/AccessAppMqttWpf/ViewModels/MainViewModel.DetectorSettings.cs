@@ -38,7 +38,7 @@ public partial class MainViewModel
             "get-detector-settings",
             payload,
             expectedMac: macAddress,
-            timeout: timeout ?? TimeSpan.FromSeconds(15)).ConfigureAwait(false);
+            timeout: timeout ?? TimeSpan.FromSeconds(60)).ConfigureAwait(false);
     }
 
     internal async Task<DetectorSettingsCommandResult?> ApplyDetectorSettingsAsync(
@@ -64,7 +64,7 @@ public partial class MainViewModel
             "set-detector-settings",
             payload,
             expectedMac: macAddress,
-            timeout: timeout ?? TimeSpan.FromSeconds(20)).ConfigureAwait(false);
+            timeout: timeout ?? TimeSpan.FromSeconds(120)).ConfigureAwait(false);
     }
 
     internal async Task QueueDeviceAndRequestWithDetectorSettingsAsync(

@@ -109,7 +109,7 @@ public sealed class LocalBrokerDiscoveryService : IDisposable
                 try
                 {
                     var result = await udp.ReceiveAsync(ct).ConfigureAwait(false);
-                    AppLog.Info($"[LocalBrokerDiscovery] UDP packet received from {result.RemoteEndPoint}: {System.Text.Encoding.UTF8.GetString(result.Buffer)}");
+                    AppLog.Verbose($"[LocalBrokerDiscovery] UDP packet received from {result.RemoteEndPoint}: {System.Text.Encoding.UTF8.GetString(result.Buffer)}");
                     ProcessBeacon(result.Buffer, ct);
                 }
                 catch (OperationCanceledException) { break; }
