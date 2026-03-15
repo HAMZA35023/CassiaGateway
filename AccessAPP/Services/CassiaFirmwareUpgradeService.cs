@@ -449,7 +449,7 @@ return true; // command was likely accepted before disconnect
         private const string DaliSetDeviceMinLevelPrefix = "01120408006297";
         private const string DaliSetDevicePowerOnLevelPrefix = "0113040800D6E1";
         private const string DaliSetDeviceSysFailLevelPrefix = "0114040800FBB0";
-        private const string DaliSetDeviceFadeTimePrefix = "01150409004FC6";
+        private const string DaliSetDeviceFadeTimePrefix = "01150409007EF5"; // CRC over header bytes 01 15 04 09 00
         private const string DaliSetDeviceFadeRatePrefix = "0116040800935D";
 
         public async Task<bool> DaliSetDeviceSysFailLevelAsync(
@@ -572,6 +572,8 @@ return true; // command was likely accepted before disconnect
 
                 if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
                 {
+                    if (sensorResponse.Status == HttpStatusCode.ServiceUnavailable)
+                        throw new BleDeviceUnreachableException(nodeMac);
                     AppLog.Warn($"[DALI] CommonParam set failed: MAC={nodeMac}, Label={label}, Status={sensorResponse.Status}, RAW={sensorResponse.Data}, Cmd={cmd}");
                     return false;
                 }
@@ -582,6 +584,10 @@ return true; // command was likely accepted before disconnect
                     AppLog.Warn($"[DALI] CommonParam set rejected: MAC={nodeMac}, Label={label}, Reply={reply}, Cmd={cmd}");
 
                 return ok;
+            }
+            catch (BleDeviceUnreachableException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -651,9 +657,9 @@ return true; // command was likely accepted before disconnect
         {
             int configured = RuntimeVariables.UPGRADE_DALI_SYSFAIL_TIMEOUT_MS;
             if (configured <= 0)
-                configured = 5000;
+                configured = 10000;
 
-            return Math.Min(5000, configured);
+            return Math.Clamp(configured, 1000, 30000);
         }
 
         private async Task<DataResponseModel?> GetDataWithSysFailTimeoutAsync(
@@ -662,7 +668,7 @@ return true; // command was likely accepted before disconnect
             string label)
         {
             int timeoutMs = GetSysFailTimeoutMs();
-            var task = _connectService.GetDataFromBleDevice(_gatewayIpAddress, _gatewayPort, nodeMac, cmd);
+            var task = _connectService.GetDataFromBleDevice(_gatewayIpAddress, _gatewayPort, nodeMac, cmd, timeoutMs);
             var completed = await Task.WhenAny(task, Task.Delay(timeoutMs)).ConfigureAwait(false);
             if (completed != task)
             {
@@ -678,6 +684,8 @@ return true; // command was likely accepted before disconnect
             string sensorCommand = "012101070099DB"; // GetBLEPushButtonList
             var sensorResponse = await _connectService.GetDataFromBleDevice(
                 _gatewayIpAddress, _gatewayPort, nodeMac, sensorCommand);
+            if (sensorResponse.Status == System.Net.HttpStatusCode.ServiceUnavailable)
+                throw new BleDeviceUnreachableException(nodeMac);
 
             string hex = "";
             if (sensorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(sensorResponse.Data))
@@ -694,6 +702,9 @@ hex = sensorResponse.Data;
             string sensorCommand = "0119016400CA2C"; // SetBLEPushButtonList
             var sensorResponse = await _connectService.GetDataFromBleDevice(
                 _gatewayIpAddress, _gatewayPort, nodeMac, sensorCommand + newBlePushButtonListHex);
+
+            if (sensorResponse.Status == HttpStatusCode.ServiceUnavailable)
+                throw new BleDeviceUnreachableException(nodeMac);
 
             bool resp = false;
             if (sensorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(sensorResponse.Data))
@@ -726,6 +737,8 @@ return resp;
 
             if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
             {
+                if (sensorResponse.Status == HttpStatusCode.ServiceUnavailable)
+                    throw new BleDeviceUnreachableException(nodeMac);
                 AppLog.Warn($"[TW] Get list failed: status={sensorResponse.Status}, raw={sensorResponse.Data}");
                 return string.Empty;
             }
@@ -758,6 +771,8 @@ return resp;
 
             if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
             {
+                if (sensorResponse.Status == HttpStatusCode.ServiceUnavailable)
+                    throw new BleDeviceUnreachableException(nodeMac);
                 AppLog.Warn($"[TW] Set list write failed: status={sensorResponse.Status}, raw={sensorResponse.Data}");
                 return false;
             }
@@ -799,6 +814,8 @@ return resp;
 
                     if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
                     {
+                        if (sensorResponse.Status == HttpStatusCode.ServiceUnavailable)
+                            throw new BleDeviceUnreachableException(nodeMac);
                         AppLog.Warn($"[TW] Get preset failed (version=0x{version:X2}, payload={payload.Length}): status={sensorResponse.Status}, raw={sensorResponse.Data}");
                         continue;
                     }
@@ -840,6 +857,8 @@ return resp;
 
                     if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
                     {
+                        if (sensorResponse.Status == HttpStatusCode.ServiceUnavailable)
+                            throw new BleDeviceUnreachableException(nodeMac);
                         AppLog.Warn($"[TW] Set preset write failed (version=0x{version:X2}, payload={payload.Length}): status={sensorResponse.Status}, raw={sensorResponse.Data}");
                         continue;
                     }
@@ -868,6 +887,8 @@ return resp;
 
             if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
             {
+                if (sensorResponse.Status == HttpStatusCode.ServiceUnavailable)
+                    throw new BleDeviceUnreachableException(nodeMac);
                 AppLog.Warn($"[TW] Get default kelvin failed: status={sensorResponse.Status}, raw={sensorResponse.Data}");
                 return string.Empty;
             }
@@ -880,41 +901,57 @@ return resp;
                 return string.Empty;
             }
 
+            var kelvinValue = (ushort)(setPayload[2] | (setPayload[3] << 8));
+            AppLog.Debug($"[TW] Get default kelvin OK: version=0x{setPayload[1]:X2}, kelvin={kelvinValue}K, raw={sensorResponse.Data}");
             return Convert.ToHexString(setPayload);
         }
 
         public async Task<bool> SetTunableWhiteDefaultKelvin(string nodeMac, string tunableWhiteDefaultKelvinHex)
         {
-            if (!TryNormalizeTunableWhiteDefaultKelvinSetPayload(tunableWhiteDefaultKelvinHex, out var payload, out var normalizeError))
+            if (!TryNormalizeTunableWhiteDefaultKelvinSetPayload(tunableWhiteDefaultKelvinHex, out var normalizedPayload, out var normalizeError))
             {
                 AppLog.Warn($"[TW] Set default kelvin rejected: {normalizeError}");
                 return false;
             }
 
-            payload[0] = 0x01; // enforce Set
-            var sensorCommand = BuildSensorCommandHex(GetSetTunableWhiteDefaultKelvinTelegramType, payload);
-            var sensorResponse = await _connectService.GetDataFromBleDevice(
-                _gatewayIpAddress, _gatewayPort, nodeMac, sensorCommand);
-
-            if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
+            byte requestedVersion = normalizedPayload.Length > 1 ? normalizedPayload[1] : TunableWhitePresetPreferredVersion;
+            foreach (var version in EnumeratePresetVersions(requestedVersion))
             {
-                AppLog.Warn($"[TW] Set default kelvin write failed: status={sensorResponse.Status}, raw={sensorResponse.Data}");
-                return false;
+                var payload = (byte[])normalizedPayload.Clone();
+                payload[0] = 0x01; // enforce Set
+                payload[1] = version;
+
+                var kelvinValue = (ushort)(payload[2] | (payload[3] << 8));
+                AppLog.Debug($"[TW] Set default kelvin sending: version=0x{version:X2}, kelvin={kelvinValue}K");
+
+                var sensorCommand = BuildSensorCommandHex(GetSetTunableWhiteDefaultKelvinTelegramType, payload);
+                var sensorResponse = await _connectService.GetDataFromBleDevice(
+                    _gatewayIpAddress, _gatewayPort, nodeMac, sensorCommand);
+
+                if (sensorResponse.Status != HttpStatusCode.OK || string.IsNullOrWhiteSpace(sensorResponse.Data))
+                {
+                    if (sensorResponse.Status == HttpStatusCode.ServiceUnavailable)
+                        throw new BleDeviceUnreachableException(nodeMac);
+                    AppLog.Warn($"[TW] Set default kelvin write failed (version=0x{version:X2}): status={sensorResponse.Status}, raw={sensorResponse.Data}");
+                    continue;
+                }
+
+                if (!TryParseTunableWhiteDefaultKelvinResult(sensorResponse.Data, out var resultCode))
+                {
+                    AppLog.Warn($"[TW] Set default kelvin reply parse failed (version=0x{version:X2}): raw={sensorResponse.Data}");
+                    continue;
+                }
+
+                if (resultCode == 0x00)
+                {
+                    AppLog.Info($"[TW] Default kelvin written (version=0x{version:X2}, kelvin={kelvinValue}K) for {nodeMac}.");
+                    return true;
+                }
+
+                AppLog.Warn($"[TW] Set default kelvin rejected (version=0x{version:X2}, kelvin={kelvinValue}K): result=0x{resultCode:X2} ({DescribeTunableWhiteResult(resultCode)}), raw={sensorResponse.Data}");
             }
 
-            if (!TryParseTunableWhiteDefaultKelvinResult(sensorResponse.Data, out var resultCode))
-            {
-                AppLog.Warn($"[TW] Set default kelvin reply parse failed: raw={sensorResponse.Data}");
-                return false;
-            }
-
-            if (resultCode != 0x00)
-            {
-                AppLog.Warn($"[TW] Set default kelvin rejected: result=0x{resultCode:X2} ({DescribeTunableWhiteResult(resultCode)})");
-                return false;
-            }
-
-            return true;
+            return false;
         }
 
         private async Task<bool> SetUnixTimeWithRuntimeOffsetAsync(string nodeMac)
@@ -1172,35 +1209,23 @@ return resp;
 
         private static IEnumerable<byte[]> BuildTunableWhitePresetGetPayloadCandidates(byte version)
         {
-            // Keep request values in valid range for firmware variants that validate fields on GET.
-            var payload18 = new byte[18];
-            payload18[0] = 0x00; // Get
-            payload18[1] = version;
-            WriteDefaultPresetValues(payload18, presetOffset: 2);
-            yield return payload18;
-
-            // Firmware/documentation variants that include one extra placeholder byte.
-            var payload19 = new byte[19];
-            payload19[0] = 0x00; // Get
-            payload19[1] = version;
-            payload19[2] = 0x00; // placeholder/reserved
-            WriteDefaultPresetValues(payload19, presetOffset: 3);
-            yield return payload19;
+            // Protocol 0x0157: request frame is always 25 bytes total (7-byte header + 18-byte payload).
+            // Byte 7=Get/Set, Byte 8=Version, Bytes 9-24=4 presets × 4 bytes.
+            // The reply (0x0158) is 26 bytes (extra Result byte at position 9) — the request has no Result byte.
+            var payload = new byte[18];
+            payload[0] = 0x00; // Get
+            payload[1] = version;
+            WriteDefaultPresetValues(payload, presetOffset: 2);
+            yield return payload;
         }
 
         private static IEnumerable<byte[]> BuildTunableWhitePresetSetPayloadCandidates(byte[] normalizedPayload, byte version)
         {
-            var payload18 = (byte[])normalizedPayload.Clone();
-            payload18[0] = 0x01; // Set
-            payload18[1] = version;
-            yield return payload18;
-
-            var payload19 = new byte[19];
-            payload19[0] = 0x01; // Set
-            payload19[1] = version;
-            payload19[2] = 0x00; // placeholder/reserved
-            Array.Copy(payload18, 2, payload19, 3, 16);
-            yield return payload19;
+            // Protocol 0x0157: request frame is always 25 bytes total (18-byte payload).
+            var payload = (byte[])normalizedPayload.Clone();
+            payload[0] = 0x01; // Set
+            payload[1] = version;
+            yield return payload;
         }
 
         private static void WriteDefaultPresetValues(byte[] payload, int presetOffset)
@@ -1358,6 +1383,8 @@ return resp;
             string sensorCommand = "0113010700181A"; // GetWiredPushButtonList
             var sensorResponse = await _connectService.GetDataFromBleDevice(
                 _gatewayIpAddress, _gatewayPort, nodeMac, sensorCommand);
+            if (sensorResponse.Status == System.Net.HttpStatusCode.ServiceUnavailable)
+                throw new BleDeviceUnreachableException(nodeMac);
 
             string hex = "";
             if (sensorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(sensorResponse.Data))
@@ -1374,6 +1401,9 @@ hex = sensorResponse.Data;
             string sensorCommand = "0111011C00F928"; // SetWiredPushButtonList
             var sensorResponse = await _connectService.GetDataFromBleDevice(
                 _gatewayIpAddress, _gatewayPort, nodeMac, sensorCommand + newWiredPushButtonListHex);
+
+            if (sensorResponse.Status == HttpStatusCode.ServiceUnavailable)
+                throw new BleDeviceUnreachableException(nodeMac);
 
             bool resp = false;
             if (sensorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(sensorResponse.Data))
@@ -1395,6 +1425,8 @@ return resp;
             string sensorCommand = "013F0107006462"; // GetDaliPushButtonList
             var sensorResponse = await _connectService.GetDataFromBleDevice(
                 _gatewayIpAddress, _gatewayPort, nodeMac, sensorCommand);
+            if (sensorResponse.Status == System.Net.HttpStatusCode.ServiceUnavailable)
+                throw new BleDeviceUnreachableException(nodeMac);
 
             string hex = "";
             if (sensorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(sensorResponse.Data))
@@ -1411,6 +1443,9 @@ hex = sensorResponse.Data;
             string sensorCommand = "013D016C00DC58"; // SetDaliPushButtonList
             var sensorResponse = await _connectService.GetDataFromBleDevice(
                 _gatewayIpAddress, _gatewayPort, nodeMac, sensorCommand + newDaliPushButtonListHex);
+
+            if (sensorResponse.Status == HttpStatusCode.ServiceUnavailable)
+                throw new BleDeviceUnreachableException(nodeMac);
 
             bool resp = false;
             if (sensorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(sensorResponse.Data))
@@ -1949,8 +1984,10 @@ resp = true;
         {
 
             // Sensor
-            string sensorCommand = "010B0107007C84"; //GetUserConfig 
+            string sensorCommand = "010B0107007C84"; //GetUserConfig
             var sensorResponse = await _connectService.GetDataFromBleDevice(_gatewayIpAddress, _gatewayPort, nodeMac, sensorCommand);
+            if (sensorResponse.Status == System.Net.HttpStatusCode.ServiceUnavailable)
+                throw new BleDeviceUnreachableException(nodeMac);
             string userconfig = "";
             if (sensorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(sensorResponse.Data))
             {
@@ -1965,8 +2002,12 @@ userconfig = sensorResponse.Data;
         {
 
             // Sensor
-            string sensorCommand = "010D01A7009BBE"; //SetUserConfig 
+            string sensorCommand = "010D01A7009BBE"; //SetUserConfig
             var sensorResponse = await _connectService.GetDataFromBleDevice(_gatewayIpAddress, _gatewayPort, nodeMac, sensorCommand + newuserconfig);
+
+            if (sensorResponse.Status == HttpStatusCode.ServiceUnavailable)
+                throw new BleDeviceUnreachableException(nodeMac);
+
             bool resp = false;
             if (sensorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(sensorResponse.Data))
             {
@@ -2812,5 +2853,16 @@ UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
     {
         public BleFeatureNotSupportedBySensorException(string feature)
             : base($"Feature '{feature}' is not available in sensor profile (NACK 0x07).") { }
+    }
+
+    /// <summary>
+    /// Thrown when a BLE write returns GattCommunicationStatus.Unreachable (HTTP 503),
+    /// meaning the sensor has dropped off BLE mid-session and all further reads will also fail.
+    /// ReadRequiredAsync and ReadOptionalAsync re-throw this immediately without retrying.
+    /// </summary>
+    public sealed class BleDeviceUnreachableException : Exception
+    {
+        public BleDeviceUnreachableException(string nodeMac)
+            : base($"BLE device '{nodeMac}' is unreachable (connection dropped mid-session).") { }
     }
 }

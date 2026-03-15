@@ -150,6 +150,12 @@ namespace AccessAPP.Services
                     lastError = "empty response";
                     AppLog.Warn($"[Backup] {label} empty (attempt {attempt}/{attempts}).");
                 }
+                catch (BleDeviceUnreachableException)
+                {
+                    // Sensor dropped off BLE — all further attempts will also fail; abort immediately.
+                    AppLog.Warn($"[Backup] {label} aborted: sensor unreachable (BLE connection dropped).");
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     lastError = ex.Message;
@@ -180,6 +186,12 @@ namespace AccessAPP.Services
 
                     AppLog.Warn($"[Backup] Optional {label} empty (attempt {attempt}/{attempts}).");
                 }
+                catch (BleDeviceUnreachableException)
+                {
+                    // Sensor dropped off BLE — abort immediately; no point reading remaining optional fields.
+                    AppLog.Warn($"[Backup] Optional {label} aborted: sensor unreachable (BLE connection dropped).");
+                    throw;
+                }
                 catch (BleFeatureNotSupportedBySensorException)
                 {
                     AppLog.Warn($"[Backup] Optional {label} not available in sensor profile (NACK 0x07) — skipping.");
@@ -198,12 +210,18 @@ namespace AccessAPP.Services
             return null;
         }
 
-        public async Task<DeviceSettingsSnapshot> CaptureSnapshotAsync(
+        public Task<DeviceSettingsSnapshot> CaptureSnapshotAsync(
             string macAddress,
             string detectorType,
             string firmwareVersion)
+            => CaptureSnapshotCoreAsync(macAddress, detectorType, firmwareVersion, GetProfile(detectorType));
+
+        private async Task<DeviceSettingsSnapshot> CaptureSnapshotCoreAsync(
+            string macAddress,
+            string detectorType,
+            string firmwareVersion,
+            SettingsBackupProfile profile)
         {
-            var profile = GetProfile(detectorType);
 
             return new DeviceSettingsSnapshot
             {
@@ -280,8 +298,38 @@ namespace AccessAPP.Services
             }
 
             var normalized = overrides.CloneNormalized();
-            var current = await CaptureSnapshotAsync(macAddress, detectorType, firmwareVersion).ConfigureAwait(false);
             var profile = GetProfile(detectorType);
+
+            bool requestedUser = !string.IsNullOrWhiteSpace(normalized.UserConfigHex)
+                || !string.IsNullOrWhiteSpace(normalized.UserConfigMaskHex);
+            bool requestedWired = !string.IsNullOrWhiteSpace(normalized.PushButtonsHex)
+                || !string.IsNullOrWhiteSpace(normalized.PushButtonsMaskHex);
+            bool requestedDali = !string.IsNullOrWhiteSpace(normalized.DaliPushButtonsHex)
+                || !string.IsNullOrWhiteSpace(normalized.DaliPushButtonsMaskHex);
+            bool requestedDaliCommon = !string.IsNullOrWhiteSpace(normalized.DaliDeviceCommonParamHex)
+                || !string.IsNullOrWhiteSpace(normalized.DaliDeviceCommonParamMaskHex);
+            bool requestedBle = !string.IsNullOrWhiteSpace(normalized.BlePushButtonsHex)
+                || !string.IsNullOrWhiteSpace(normalized.BlePushButtonsMaskHex);
+            bool requestedTunableWhiteList = !string.IsNullOrWhiteSpace(normalized.TunableWhiteListHex);
+            bool requestedTunableWhitePreset = !string.IsNullOrWhiteSpace(normalized.TunableWhitePresetHex);
+            bool requestedTunableWhiteDefaultKelvin = !string.IsNullOrWhiteSpace(normalized.TunableWhiteDefaultKelvinHex);
+
+            // Only read sections that actually need the current value as a baseline.
+            // - Masked sections (UserConfig, PushButtons, DaliCommonParam) need current for merge.
+            // - Full-replacement sections (TunableWhite*) are always overwritten, so reading
+            //   current only saves a write if values happen to match — not worth a 12s BLE timeout
+            //   if the sensor doesn't respond to those reads.
+            var captureProfile = new SettingsBackupProfile(
+                UserConfig:                  requestedUser && profile.UserConfig,
+                WiredPushButtons:            requestedWired && profile.WiredPushButtons,
+                DaliPushButtons:             requestedDali && profile.DaliPushButtons,
+                DaliDeviceCommonParam:       requestedDaliCommon && profile.DaliDeviceCommonParam,
+                BlePushButtons:              requestedBle && profile.BlePushButtons,
+                TunableWhiteList:            false,
+                TunableWhitePreset:          false,
+                TunableWhiteDefaultKelvin:   false);
+
+            var current = await CaptureSnapshotCoreAsync(macAddress, detectorType, firmwareVersion, captureProfile).ConfigureAwait(false);
 
             var target = new DeviceSettingsSnapshot
             {
@@ -298,20 +346,6 @@ namespace AccessAPP.Services
                 TunableWhitePresetHex = current.TunableWhitePresetHex,
                 TunableWhiteDefaultKelvinHex = current.TunableWhiteDefaultKelvinHex
             };
-
-            bool requestedUser = !string.IsNullOrWhiteSpace(normalized.UserConfigHex)
-                || !string.IsNullOrWhiteSpace(normalized.UserConfigMaskHex);
-            bool requestedWired = !string.IsNullOrWhiteSpace(normalized.PushButtonsHex)
-                || !string.IsNullOrWhiteSpace(normalized.PushButtonsMaskHex);
-            bool requestedDali = !string.IsNullOrWhiteSpace(normalized.DaliPushButtonsHex)
-                || !string.IsNullOrWhiteSpace(normalized.DaliPushButtonsMaskHex);
-            bool requestedDaliCommon = !string.IsNullOrWhiteSpace(normalized.DaliDeviceCommonParamHex)
-                || !string.IsNullOrWhiteSpace(normalized.DaliDeviceCommonParamMaskHex);
-            bool requestedBle = !string.IsNullOrWhiteSpace(normalized.BlePushButtonsHex)
-                || !string.IsNullOrWhiteSpace(normalized.BlePushButtonsMaskHex);
-            bool requestedTunableWhiteList = !string.IsNullOrWhiteSpace(normalized.TunableWhiteListHex);
-            bool requestedTunableWhitePreset = !string.IsNullOrWhiteSpace(normalized.TunableWhitePresetHex);
-            bool requestedTunableWhiteDefaultKelvin = !string.IsNullOrWhiteSpace(normalized.TunableWhiteDefaultKelvinHex);
 
             if (requestedUser)
             {
@@ -810,6 +844,12 @@ return new ServiceResponse
                     if (ok) return true;
 
                     AppLog.Warn($"[Restore] {label} failed (attempt {attempt}/{maxAttempts}).");
+                }
+                catch (BleDeviceUnreachableException)
+                {
+                    // Sensor dropped off BLE — no point retrying any further writes; abort immediately.
+                    AppLog.Warn($"[Restore] {label} aborted: sensor unreachable (BLE connection dropped).");
+                    throw;
                 }
                 catch (TimeoutException)
                 {
