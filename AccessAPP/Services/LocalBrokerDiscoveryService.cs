@@ -268,6 +268,15 @@ public sealed class LocalBrokerDiscoveryService : IDisposable
                 {
                     var topic   = e.ApplicationMessage.Topic;
                     var payload = Encoding.UTF8.GetString(e.ApplicationMessage.Payload.ToArray());
+
+                    // Remap the localNetworkId back to the AccessApp's own NetworkId so
+                    // FeedCommandAsync validates correctly (it compares against CurrentOptions.NetworkId).
+                    // Mirror of the outbound remap in PublishAsync.
+                    var currentOpts  = _mqtt.CurrentOptions;
+                    var localNetId   = RuntimeVariables.LOCAL_NETWORK_ID;
+                    if (!string.IsNullOrEmpty(localNetId) && localNetId != currentOpts.NetworkId)
+                        topic = topic.Replace($"/{localNetId}/", $"/{currentOpts.NetworkId}/");
+
                     _ = _mqtt.FeedCommandAsync(topic, payload);
                     return Task.CompletedTask;
                 };

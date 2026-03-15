@@ -198,7 +198,8 @@ public sealed class AccessAppDiscoveryService : IDisposable
             if (response.IsSuccessStatusCode)
             {
                 entry.LastPushedUtc = DateTimeOffset.UtcNow;
-                AppLog.Info($"[AccessAppDiscovery] Pushed MQTT config (host={mqttHost}, port={_mqttPort}) to {entry.Host}:{entry.HttpPort} — OK");
+                var networkIdSuffix = _useSharedNetworkId ? $", networkId={_networkId}" : "";
+                AppLog.Info($"[AccessAppDiscovery] Pushed MQTT config (host={mqttHost}, port={_mqttPort}{networkIdSuffix}) to {entry.Host}:{entry.HttpPort} — OK");
             }
             else
             {
