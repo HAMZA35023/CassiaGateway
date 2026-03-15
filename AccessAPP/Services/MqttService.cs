@@ -2304,7 +2304,18 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
     public async Task PublishAsync(string topic, string payload, bool retain = false, int qos = 0, CancellationToken ct = default)
     {
-        await EnsureConnectedAndSubscribedAsync(ct).ConfigureAwait(false);
+        var bytes = Encoding.UTF8.GetBytes(payload ?? string.Empty);
+
+        // Mirror to local broker first — same pattern as PublishJsonAsync so that
+        // local delivery works even when the primary broker is unreachable.
+        MessagePublished?.Invoke(topic, bytes);
+
+        try
+        {
+            await EnsureConnectedAndSubscribedAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch { return; }
 
         var level = qos <= 0
             ? MqttQualityOfServiceLevel.AtMostOnce
@@ -2314,7 +2325,7 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
         var msg = new MqttApplicationMessageBuilder()
             .WithTopic(topic)
-            .WithPayload(Encoding.UTF8.GetBytes(payload ?? string.Empty))
+            .WithPayload(bytes)
             .WithQualityOfServiceLevel(level)
             .WithRetainFlag(retain)
             .Build();
