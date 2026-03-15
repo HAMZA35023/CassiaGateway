@@ -733,6 +733,8 @@ return resp;
             if (!TryNormalizeTunableWhiteListSetPayload(sensorResponse.Data, out var setPayload, out var error))
             {
                 AppLog.Warn($"[TW] Get list parse failed: {error}; raw={sensorResponse.Data}");
+                if (TryParseTunableWhiteListResult(sensorResponse.Data, out var listResultCode) && listResultCode == 0x07)
+                    throw new BleFeatureNotSupportedBySensorException("TunableWhiteList");
                 return string.Empty;
             }
 
@@ -807,6 +809,8 @@ return resp;
                     if (TryParseTunableWhitePresetResult(sensorResponse.Data, out var resultCode))
                     {
                         AppLog.Warn($"[TW] Get preset rejected (version=0x{version:X2}, payload={payload.Length}): result=0x{resultCode:X2} ({DescribeTunableWhiteResult(resultCode)}), raw={sensorResponse.Data}");
+                        if (resultCode == 0x07)
+                            throw new BleFeatureNotSupportedBySensorException("TunableWhitePreset");
                         continue;
                     }
 
@@ -871,6 +875,8 @@ return resp;
             if (!TryNormalizeTunableWhiteDefaultKelvinSetPayload(sensorResponse.Data, out var setPayload, out var error))
             {
                 AppLog.Warn($"[TW] Get default kelvin parse failed: {error}; raw={sensorResponse.Data}");
+                if (TryParseTunableWhiteDefaultKelvinResult(sensorResponse.Data, out var kelvinResultCode) && kelvinResultCode == 0x07)
+                    throw new BleFeatureNotSupportedBySensorException("TunableWhiteDefaultKelvin");
                 return string.Empty;
             }
 
@@ -2795,5 +2801,16 @@ UpgradeLogger.Log(logId, nodeMac, "Sensor BootMode", "Detected");
 
         // NOTE: command/helper methods moved to CassiaFirmwareUpgradeService.Commands.cs
         // NOTE: DeviceUpgradeSummary moved to CassiaFirmwareUpgradeService.Models.cs
+    }
+
+    /// <summary>
+    /// Thrown when a BLE Get command returns result code 0x07 (NOT_AVAILABLE_IN_PROFILE),
+    /// indicating the feature is permanently absent from this sensor's firmware profile.
+    /// ReadOptionalAsync catches this to skip retries immediately.
+    /// </summary>
+    public sealed class BleFeatureNotSupportedBySensorException : Exception
+    {
+        public BleFeatureNotSupportedBySensorException(string feature)
+            : base($"Feature '{feature}' is not available in sensor profile (NACK 0x07).") { }
     }
 }

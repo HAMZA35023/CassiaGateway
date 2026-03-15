@@ -180,6 +180,11 @@ namespace AccessAPP.Services
 
                     AppLog.Warn($"[Backup] Optional {label} empty (attempt {attempt}/{attempts}).");
                 }
+                catch (BleFeatureNotSupportedBySensorException)
+                {
+                    AppLog.Warn($"[Backup] Optional {label} not available in sensor profile (NACK 0x07) — skipping.");
+                    return null;
+                }
                 catch (Exception ex)
                 {
                     AppLog.Warn($"[Backup] Optional {label} exception (attempt {attempt}/{attempts}): {ex.Message}");
@@ -495,6 +500,11 @@ namespace AccessAPP.Services
                 {
                     ok = false;
                     AppLog.Warn($"[SettingsPatch] DaliDeviceCommonParam override requested but detector '{detectorType}' profile does not support it.");
+                }
+                else if (string.IsNullOrEmpty(current.DaliDeviceCommonParamHex))
+                {
+                    // Optional DALI read returned empty — sensor has no DALI connected; skip write to avoid 3×5s timeouts.
+                    AppLog.Warn($"[SettingsPatch] DaliDeviceCommonParam write skipped: current value unavailable (sensor likely has no DALI connected).");
                 }
                 else if (!string.IsNullOrWhiteSpace(target.DaliDeviceCommonParamHex) && ShouldWrite(current.DaliDeviceCommonParamHex, target.DaliDeviceCommonParamHex))
                 {
