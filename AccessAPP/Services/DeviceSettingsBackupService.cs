@@ -220,7 +220,7 @@ namespace AccessAPP.Services
                     : null,
 
                 DaliDeviceCommonParamHex = profile.DaliDeviceCommonParam
-                    ? StripBleHeader(await ReadRequiredAsync(() => _ble.GetDaliDeviceCommonParam(macAddress), "DaliDeviceCommonParam").ConfigureAwait(false))
+                    ? StripBleHeader(await ReadOptionalAsync(() => _ble.GetDaliDeviceCommonParam(macAddress), "DaliDeviceCommonParam").ConfigureAwait(false))
                     : null,
 
                 BlePushButtonsHex = profile.BlePushButtons
