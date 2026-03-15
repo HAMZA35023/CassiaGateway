@@ -312,7 +312,11 @@ public partial class MainViewModel : ObservableObject
     partial void OnSelectedDetectorSettingsProfileP46Changed(string value) { }
     partial void OnSelectedDetectorSettingsProfileP47Changed(string value) { }
     partial void OnSelectedDetectorSettingsProfileP48Changed(string value) { }
-    partial void OnMqttHostChanged(string value) => SyncSelectedMqttHostPreset();
+    partial void OnMqttHostChanged(string value)
+    {
+        SyncSelectedMqttHostPreset();
+        OnPropertyChanged(nameof(ActiveConnectionLabel));
+    }
     partial void OnMqttPortChanged(int value) => SyncSelectedMqttHostPreset();
     partial void OnUseTlsChanged(bool value) => SyncSelectedMqttHostPreset();
     partial void OnSelectedMqttHostPresetChanged(MqttHostPresetOption? value)
@@ -358,6 +362,8 @@ public partial class MainViewModel : ObservableObject
 
     public MainViewModel()
     {
+        InitLocalServer();
+
         var s = _store.Load();
 
         // your current settings model uses nested objects
@@ -610,6 +616,8 @@ public partial class MainViewModel : ObservableObject
                 _syncingScopeSelection = false;
             }
         }
+
+        OnPropertyChanged(nameof(ActiveConnectionLabel));
 
         if (_isInitializing || !IsConnected) return;
         _ = ResyncAfterScopeChangeAsync(scope);
@@ -948,31 +956,9 @@ public partial class MainViewModel : ObservableObject
             _autoReconnectEnabled = true;
             _autoReconnectCts?.Cancel();
 
-            // Always start a fresh session when connecting (clears UI + internal caches)
-            // so reconnect behaves the same as a "clean" connect.
-            var resetSpeedHistory = ShouldResetSpeedHistoryForCurrentScope();
-            ClearAllUiAndState(resetSpeedHistory);
-
-            _isConnecting = true;
-            try
-            {
-                await _mqtt.ConnectAsync(
-                    MqttHost,
-                    MqttPort,
-                    MqttUser,
-                    MqttPassword ?? "",
-                    UseTls,
-                    IgnoreTlsErrors,
-                    MqttTopic,
-                    _appCts.Token);
-            }
-            finally
-            {
-                _isConnecting = false;
-            }
-
-            // Full clean re-sync (subscribe + request snapshots).
-            await ResyncCoreAsync(resetSpeedHistory, clearUi: false).ConfigureAwait(false);
+            // ConnectWithEffectiveParamsAsync routes to local or public broker as needed,
+            // then clears the UI and resyncs.
+            await ConnectWithEffectiveParamsAsync().ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -1104,26 +1090,9 @@ public partial class MainViewModel : ObservableObject
 
             try
             {
-                var resetSpeedHistory = ShouldResetSpeedHistoryForCurrentScope();
-                _isConnecting = true;
-                try
-                {
-                    await _mqtt.ConnectAsync(
-                        MqttHost,
-                        MqttPort,
-                        MqttUser,
-                        MqttPassword ?? "",
-                        UseTls,
-                        IgnoreTlsErrors,
-                        MqttTopic,
-                        _appCts.Token).ConfigureAwait(false);
-                }
-                finally
-                {
-                    _isConnecting = false;
-                }
-
-                await ResyncCoreAsync(resetSpeedHistory, clearUi: true).ConfigureAwait(false);
+                // Use ConnectWithEffectiveParamsAsync so local-mode reconnects go back to
+                // the local broker instead of the public/stored host.
+                await ConnectWithEffectiveParamsAsync().ConfigureAwait(false);
                 return;
             }
             catch (Exception ex)
@@ -1687,10 +1656,12 @@ public partial class MainViewModel : ObservableObject
         var s = baseSettings ?? new AppSettings();
         var existingTheme = s.accessapp?.theme;
 
+        // When connected to local broker, persist the saved remote connection rather than the
+        // transient local 127.0.0.1 values that are shown in the UI for feedback only.
         s.mqtt = new MqttSettings
         {
-            host = MqttHost,
-            port = MqttPort,
+            host = _localMqttActive && !string.IsNullOrWhiteSpace(_savedRemoteHost) ? _savedRemoteHost : MqttHost,
+            port = _localMqttActive && _savedRemotePort != 0 ? _savedRemotePort : MqttPort,
             topic = MqttTopic,
             username = MqttUser,
             password = MqttPassword ?? "",
@@ -1722,7 +1693,7 @@ public partial class MainViewModel : ObservableObject
 
         s.accessapp = new AccessAppSettings
         {
-            networkId = NetworkId,
+            networkId = _localMqttActive && !string.IsNullOrWhiteSpace(_savedRemoteNetworkId) ? _savedRemoteNetworkId : NetworkId,
             commandTopicTemplate = CommandTopicTemplate,
             defaultCommand = DefaultCommand,
             theme = string.IsNullOrWhiteSpace(existingTheme) ? App.CurrentTheme : existingTheme,

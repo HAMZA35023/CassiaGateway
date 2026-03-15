@@ -944,6 +944,21 @@ await Task.Delay(500); // Small delay before retrying
             return Ok(_deviceStorageService.GetAllFirmwareProgress());
         }
 
+        [HttpDelete("upgrade/queue/{mac}")]
+        public IActionResult RemoveFromQueue(string mac)
+        {
+            CassiaFirmwareUpgradeService.RemoveFromUpgradeQueuePending(mac);
+            _deviceStorageService.RemoveFirmwareProgress(mac);
+            return Ok(new { removed = true, mac });
+        }
+
+        [HttpDelete("upgrade/queue")]
+        public IActionResult ClearQueue()
+        {
+            var cleared = _deviceStorageService.ClearQueuedProgress();
+            return Ok(new { cleared });
+        }
+
         // ---------------- LED range visualizer (local, no MQTT) ----------------
         [HttpGet("led-range/state")]
         public IActionResult GetLedRangeState()
@@ -1073,6 +1088,8 @@ await Task.Delay(500); // Small delay before retrying
         /// Upload a firmware ZIP file with pattern like 353PK2A238A238A2380604A238A238A238.zip
         /// </summary>
         [HttpPost("firmware/upload")]
+        [Consumes("multipart/form-data")]
+        [Microsoft.AspNetCore.Mvc.ApiExplorerSettings(IgnoreApi = true)]
         public async Task<IActionResult> UploadFirmware([FromForm] IFormFile zipFile)
         {
             try
@@ -1270,7 +1287,72 @@ return StatusCode(500, new
             }
         }
 
+        // ---------------- Identify ----------------
+
+        [HttpPost("identify")]
+        public async Task<IActionResult> IdentifyDevice([FromBody] IdentifyRequest request)
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.MacAddress))
+                return BadRequest(new { success = false, message = "MacAddress is required." });
+
+            var result = await _firmwareUpgradeService.IdentifyDeviceAsync(
+                macAddress: request.MacAddress,
+                pincode: request.Pincode,
+                secondsToStayConnected: request.SecondsToStayConnected > 0 ? request.SecondsToStayConnected : 15,
+                maxConnectAttempts: 1);
+
+            return Ok(result);
+        }
+
+        // ---------------- Runtime variables ----------------
+
+        [HttpGet("runtime")]
+        public IActionResult GetRuntimeVariables()
+        {
+            var fields = typeof(RuntimeVariables)
+                .GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+                .Where(f => !f.Name.StartsWith("_"))
+                .ToDictionary(f => f.Name, f => f.GetValue(null));
+            return Ok(fields);
+        }
+
+        [HttpPut("runtime")]
+        public IActionResult SetRuntimeVariables([FromBody] Dictionary<string, object> values)
+        {
+            if (values == null) return BadRequest("Body required.");
+            var type = typeof(RuntimeVariables);
+            var updated = new List<string>();
+            var errors = new List<string>();
+
+            foreach (var kvp in values)
+            {
+                var field = type.GetField(kvp.Key, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                if (field == null) { errors.Add($"Unknown field: {kvp.Key}"); continue; }
+                try
+                {
+                    var raw = kvp.Value?.ToString();
+                    object converted = field.FieldType == typeof(bool) ? bool.Parse(raw ?? "false")
+                        : field.FieldType == typeof(int) ? int.Parse(raw ?? "0")
+                        : field.FieldType == typeof(double) ? double.Parse(raw ?? "0", System.Globalization.CultureInfo.InvariantCulture)
+                        : (object)(raw ?? "");
+                    field.SetValue(null, converted);
+                    updated.Add(kvp.Key);
+                }
+                catch (Exception ex) { errors.Add($"{kvp.Key}: {ex.Message}"); }
+            }
+
+            return Ok(new { updated, errors });
+        }
+
     }
+
+    public class IdentifyRequest
+    {
+        public string MacAddress { get; set; }
+        public string? Pincode { get; set; }
+        public int SecondsToStayConnected { get; set; } = 15;
+    }
+
     public class ConnectionTestResult
     {
         public int SuccessCount { get; set; } = 0;

@@ -257,10 +257,29 @@ namespace AccessAPP
         // Read callback wait for incoming programming notification data (sensor/bootloader/actor).
         public static int UPGRADE_PROGRAMMING_NOTIFICATION_WAIT_MS = 30000;
 
+        // Local MQTT broker (WPF AccessAppMqttWpf) — direct connection fallback.
+        // When set, LocalBrokerDiscoveryService connects directly to this host without
+        // waiting for a UDP discovery beacon. Useful when UDP broadcast does not reach
+        // the device (e.g. the Cassia gateway is on a different broadcast domain).
+        // Leave empty ("") to rely on UDP beacon discovery only.
+        public static string LOCAL_MQTT_HOST = "";
+        // Port for the directly-configured local MQTT broker. Defaults to 1883.
+        public static int LOCAL_MQTT_PORT = 1883;
+        // When non-empty, overrides the AccessApp's own NetworkId for the local broker
+        // connection: subscription topics and mirrored telemetry topics use this value
+        // instead of the configured NetworkId. Set by WPF push (useSharedNetworkId).
+        // Leave empty ("") to keep the AccessApp's own NetworkId.
+        public static string LOCAL_NETWORK_ID = "";
+
         // BLE backend selection.
-        // "cassia"       = use the Cassia gateway REST/SSE API (default).
-        // "linux-native" = use Linux BlueZ via D-Bus (Tmds.DBus) directly.
-        public static string BLE_BACKEND = "cassia";
+        // "auto"            = auto-detect: cassia (if GatewayConfiguration:IpAddress is set) → windows-native (Windows) → linux-native (Linux x64/ARM).
+        // "cassia"          = use the Cassia gateway REST/SSE API.
+        // "linux-native"    = use Linux BlueZ via D-Bus (Tmds.DBus) directly.
+        // "windows-native"  = use Windows.Devices.Bluetooth WinRT APIs directly (Windows only).
+        public static string BLE_BACKEND = "auto";
+
+        // Windows native BLE: MAC address prefix filter for scanning (empty = no filter).
+        public static string WINDOWS_BLE_MAC_PREFIX = "10:B9:F7";
 
         // Linux native BLE: HCI adapter name exposed by BlueZ (e.g. "hci0", "hci1").
         // Used as the default adapter for connections and as the fallback when LINUX_BLE_ADAPTERS is empty.

@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:models="clr-namespace:AccessAppMqttWpf.Models"
         Title="Runtime Variables"
-        Height="560" Width="820"
+        Height="680" Width="820"
         WindowStartupLocation="CenterOwner">
 
     <Window.Resources>
@@ -20,26 +20,52 @@
                      VerticalAlignment="Center"/>
         </DataTemplate>
 
+        <DataTemplate x:Key="RuntimeChoiceTemplate">
+            <ComboBox ItemsSource="{Binding Choices}"
+                      SelectedItem="{Binding SelectedChoice, Mode=TwoWay}"
+                      DisplayMemberPath="Display"
+                      Width="220"
+                      VerticalAlignment="Center"/>
+        </DataTemplate>
+
         <DataTemplate x:Key="RuntimeVariableRowTemplate" DataType="{x:Type models:RuntimeVariableItem}">
-            <Grid Margin="0,2">
+            <Grid Margin="0,3">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="220"/>
                 </Grid.ColumnDefinitions>
 
-                <TextBlock Text="{Binding Name}"
-                           VerticalAlignment="Center"
-                           Margin="0,0,10,0"
-                           ToolTip="{Binding Name}"
-                           TextTrimming="CharacterEllipsis"/>
+                <StackPanel VerticalAlignment="Center" Margin="0,0,10,0">
+                    <TextBlock Text="{Binding Name}"
+                               TextTrimming="CharacterEllipsis"
+                               ToolTip="{Binding Description}"/>
+                    <TextBlock Text="{Binding Description}"
+                               FontSize="11"
+                               Foreground="{DynamicResource MutedBrush}"
+                               TextWrapping="Wrap"
+                               Margin="0,1,0,0">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Description}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
 
-                <ContentControl Grid.Column="1" Content="{Binding}" HorizontalAlignment="Left">
+                <ContentControl Grid.Column="1" Content="{Binding}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,2,0,0">
                     <ContentControl.Style>
                         <Style TargetType="ContentControl">
                             <Setter Property="ContentTemplate" Value="{StaticResource RuntimeTextTemplate}"/>
                             <Style.Triggers>
                                 <DataTrigger Binding="{Binding Kind}" Value="{x:Static models:RuntimeVariableKind.Bool}">
                                     <Setter Property="ContentTemplate" Value="{StaticResource RuntimeBoolTemplate}"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding HasChoices}" Value="True">
+                                    <Setter Property="ContentTemplate" Value="{StaticResource RuntimeChoiceTemplate}"/>
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>

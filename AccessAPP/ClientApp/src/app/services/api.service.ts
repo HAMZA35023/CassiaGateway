@@ -102,8 +102,28 @@ export class ApiService {
     return this.http.get(`${this.baseUrl}/Cassia/upgrade/progress`);
   }
 
+  removeFromQueue(mac: string): Observable<any> {
+    return this.http.delete(`${this.baseUrl}/Cassia/upgrade/queue/${encodeURIComponent(mac)}`);
+  }
+
+  clearQueue(): Observable<any> {
+    return this.http.delete(`${this.baseUrl}/Cassia/upgrade/queue`);
+  }
+
   getLogs(): Observable<any> {
     return this.http.get(`${this.baseUrl}/Cassia/logs`, { responseType: 'text' });
+  }
+
+  identifyDevice(macAddress: string, pincode?: string, secondsToStayConnected = 15): Observable<any> {
+    return this.http.post(`${this.baseUrl}/Cassia/identify`, { macAddress, pincode, secondsToStayConnected });
+  }
+
+  getRuntimeVariables(): Observable<any> {
+    return this.http.get(`${this.baseUrl}/Cassia/runtime`);
+  }
+
+  setRuntimeVariables(values: Record<string, any>): Observable<any> {
+    return this.http.put(`${this.baseUrl}/Cassia/runtime`, values);
   }
 
   // MQTT config (mqtt.json)

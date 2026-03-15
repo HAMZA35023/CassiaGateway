@@ -5,7 +5,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="AC Controller for AccessAPP - v0.14.0"
+        Title="AC Controller for AccessAPP"
         Height="941" Width="1715"
         WindowStartupLocation="CenterScreen">
 
@@ -18,11 +18,11 @@
         </Style>
 
         <conv:StatusToBrushConverter x:Key="StatusToBrush"/>
-        <SolidColorBrush x:Key="DoneRowBrush" Color="#2A22C55E"/>
+        <SolidColorBrush x:Key="DoneRowBrush" Color="#6622C55E"/>
         <SolidColorBrush x:Key="QueueRowBrush" Color="#2A60A5FA"/>
         <SolidColorBrush x:Key="WarnRowBrush" Color="#2AFACC15"/>
         <SolidColorBrush x:Key="NoFwRowBrush" Color="#2A06B6D4"/>
-        <SolidColorBrush x:Key="FailedRowBrush" Color="#2AE74C3C"/>
+        <SolidColorBrush x:Key="FailedRowBrush" Color="#66E74C3C"/>
 
 
         <!-- ONLINE / OFFLINE badge -->
@@ -126,36 +126,69 @@
             <Setter Property="Background" Value="{DynamicResource CardBrush}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabControl">
+                        <Grid KeyboardNavigation.TabNavigation="Local">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <TabPanel Grid.Row="0"
+                                      IsItemsHost="True"
+                                      Margin="0,0,0,-1"
+                                      Background="Transparent"/>
+                            <Border Grid.Row="1"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="0,12,12,12">
+                                <ContentPresenter x:Name="PART_SelectedContentHost"
+                                                  Margin="12"
+                                                  ContentSource="SelectedContent"/>
+                            </Border>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
 
         <Style TargetType="TabItem">
             <Setter Property="Background" Value="{DynamicResource Card2Brush}"/>
             <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding" Value="12,7"/>
             <Setter Property="Margin" Value="0,0,6,0"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="TabItem">
-                        <Border Background="{TemplateBinding Background}"
-                                BorderBrush="{DynamicResource BorderBrush}"
-                                BorderThickness="1"
+                        <Border x:Name="TabBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
                                 CornerRadius="8,8,0,0"
                                 Padding="{TemplateBinding Padding}">
                             <ContentPresenter ContentSource="Header"
                                               HorizontalAlignment="Center"
-                                              VerticalAlignment="Center"/>
+                                              VerticalAlignment="Center"
+                                              RecognizesAccessKey="True"/>
                         </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="TabBorder" Property="Background" Value="{DynamicResource CardBrush}"/>
+                                <Setter TargetName="TabBorder" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="TabBorder" Property="Background" Value="{DynamicResource CardBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.6"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
-            <Style.Triggers>
-                <Trigger Property="IsSelected" Value="True">
-                    <Setter Property="Background" Value="{DynamicResource CardBrush}"/>
-                </Trigger>
-                <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="{DynamicResource CardBrush}"/>
-                </Trigger>
-            </Style.Triggers>
         </Style>
 
         <DataTemplate x:Key="ProgressBarCellTemplate">
@@ -482,6 +515,30 @@
                     </MenuItem.Icon>
                 </MenuItem>
             </MenuItem>
+            <MenuItem Header="Local Server">
+                <MenuItem.Icon>
+                    <TextBlock Text="🖥" Style="{StaticResource MenuIconGlyph}"/>
+                </MenuItem.Icon>
+                <MenuItem Header="{Binding LocalServerToggleLabel}"
+                          Command="{Binding ToggleLocalServerCommand}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="⚡" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <MenuItem Header="{Binding AccessAppToggleLabel}"
+                          Command="{Binding ToggleAccessAppCommand}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="🤖" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <Separator/>
+                <MenuItem Header="Settings…"
+                          Command="{Binding OpenLocalServerSettingsCommand}">
+                    <MenuItem.Icon>
+                        <TextBlock Text="⚙" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+            </MenuItem>
             <MenuItem Header="Devices">
                 <MenuItem.Icon>
                     <TextBlock Text="🧩" Style="{StaticResource MenuIconGlyph}"/>
@@ -549,10 +606,74 @@
                 <StackPanel>
 
                     <!-- ===== Cassia gateways (TOP LEFT) ===== -->
-                    <TextBlock Text="Cassia gateways"
-                               FontSize="18"
-                               FontWeight="SemiBold"
-                               Margin="0,0,0,10"/>
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                            <TextBlock Text="Cassia gateways"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"/>
+                            <TextBlock Text="{Binding ActiveConnectionLabel}"
+                                       FontSize="11"
+                                       Foreground="{DynamicResource MutedBrush}"
+                                       Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <!-- MQTT connection badge: LOCAL (green) or REMOTE (blue). Click to toggle when local server is running. -->
+                        <Button Grid.Column="1"
+                                Command="{Binding ToggleMqttConnectionCommand}"
+                                VerticalAlignment="Center"
+                                Margin="10,0,0,0"
+                                Padding="0"
+                                BorderThickness="0"
+                                Background="Transparent"
+                                ToolTip="{Binding MqttConnectionTooltip}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Cursor" Value="Arrow"/>
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border x:Name="BadgeBorder"
+                                                        CornerRadius="4"
+                                                        Background="{DynamicResource AccentBrush}"
+                                                        BorderThickness="0"
+                                                        Padding="8,3">
+                                                    <TextBlock x:Name="BadgeText"
+                                                               Text="{Binding MqttConnectionLabel}"
+                                                               FontSize="11"
+                                                               FontWeight="SemiBold"
+                                                               Foreground="White"
+                                                               VerticalAlignment="Center"/>
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <DataTrigger Binding="{Binding IsLocalMqttActive}" Value="True">
+                                                        <Setter TargetName="BadgeBorder" Property="Background" Value="{DynamicResource GoodBrush}"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding IsConnected}" Value="False">
+                                                        <Setter TargetName="BadgeBorder" Property="Background" Value="{DynamicResource Card2Brush}"/>
+                                                        <Setter TargetName="BadgeText" Property="Foreground" Value="{DynamicResource MutedBrush}"/>
+                                                    </DataTrigger>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="BadgeBorder" Property="Opacity" Value="0.8"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsLocalServerRunning}" Value="False">
+                                            <Setter Property="Cursor" Value="Arrow"/>
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding IsLocalServerRunning}" Value="True">
+                                            <Setter Property="Cursor" Value="Hand"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </Grid>
                     <ItemsControl ItemsSource="{Binding CassiaGateways}">
                         <ItemsControl.ItemContainerStyle>
                             <Style TargetType="ContentPresenter">
@@ -694,11 +815,25 @@
                                FontSize="14"
                                VerticalAlignment="Center"/>
 
-                    <ContentControl Grid.Column="1"
-                                    Content="{Binding}"
-                                    ContentTemplate="{StaticResource CassiaStateBadge}"
-                                    VerticalAlignment="Center"
-                                    Margin="8,0,0,0"/>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0,0,0">
+                        <Border CornerRadius="4"
+                                Padding="6,2"
+                                Margin="0,0,6,0"
+                                Background="{DynamicResource Card2Brush}"
+                                BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="1"
+                                VerticalAlignment="Center"
+                                Visibility="{Binding HasBleBackend, Converter={StaticResource BoolToVis}}">
+                            <TextBlock Text="{Binding BleBackendShort}"
+                                       FontSize="11"
+                                       Foreground="{DynamicResource MutedBrush}"
+                                       VerticalAlignment="Center"
+                                       ToolTip="BLE backend used by AccessApp"/>
+                        </Border>
+                        <ContentControl Content="{Binding}"
+                                        ContentTemplate="{StaticResource CassiaStateBadge}"
+                                        VerticalAlignment="Center"/>
+                    </StackPanel>
                 </Grid>                <!-- Right button column spans full card height -->
                 <Grid Grid.Row="0" Grid.RowSpan="2" Grid.Column="1"
                       VerticalAlignment="Top"
@@ -1427,17 +1562,17 @@
     <!-- If the latest upgrade-log entry is Warn, mark the row orange. -->
     <DataTrigger Binding="{Binding IsUpgradeWarn}" Value="True">
         <Setter Property="Background" Value="{StaticResource WarnRowBrush}"/>
-        <Setter Property="Foreground" Value="Black"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
     </DataTrigger>
     <DataTrigger Binding="{Binding IsUpgradeNoFwRead}" Value="True">
         <Setter Property="Background" Value="{StaticResource NoFwRowBrush}"/>
-        <Setter Property="Foreground" Value="Black"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
     </DataTrigger>
 
     <!-- Completed devices are green, but queue/progress state should override (stay blue while queued). -->
     <DataTrigger Binding="{Binding IsUpgradeSuccess}" Value="True">
         <Setter Property="Background" Value="{StaticResource DoneRowBrush}"/>
-        <Setter Property="Foreground" Value="Black"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
     </DataTrigger>
 
     <!-- Failed devices are red, but queue/progress state should override (stay blue while queued). -->
@@ -1448,7 +1583,7 @@
 
     <DataTrigger Binding="{Binding IsInQueue}" Value="True">
         <Setter Property="Background" Value="{StaticResource QueueRowBrush}"/>
-        <Setter Property="Foreground" Value="Black"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
     </DataTrigger>
 </Style.Triggers>
 </Style>
@@ -1758,15 +1893,15 @@
                             <Style.Triggers>
                                 <DataTrigger Binding="{Binding IsUpgradeWarn}" Value="True">
                                     <Setter Property="Background" Value="{StaticResource WarnRowBrush}"/>
-                                    <Setter Property="Foreground" Value="Black"/>
+                                    <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding IsUpgradeNoFwRead}" Value="True">
                                     <Setter Property="Background" Value="{StaticResource NoFwRowBrush}"/>
-                                    <Setter Property="Foreground" Value="Black"/>
+                                    <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding IsUpgradeSuccess}" Value="True">
                                     <Setter Property="Background" Value="{StaticResource DoneRowBrush}"/>
-                                    <Setter Property="Foreground" Value="Black"/>
+                                    <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding IsUpgradeFailed}" Value="True">
                                     <Setter Property="Background" Value="{StaticResource FailedRowBrush}"/>
@@ -1774,7 +1909,7 @@
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding IsInQueue}" Value="True">
                                     <Setter Property="Background" Value="{StaticResource QueueRowBrush}"/>
-                                    <Setter Property="Foreground" Value="Black"/>
+                                    <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>

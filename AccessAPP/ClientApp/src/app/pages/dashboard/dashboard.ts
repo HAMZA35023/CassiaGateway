@@ -1,4 +1,4 @@
-import { Component,ElementRef, HostListener,  OnInit,ViewChild } from '@angular/core';
+import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ScannerService, ScannedDevice } from '../../services/scanner.service';
@@ -6,662 +6,564 @@ import { FirmwareService } from '../../services/firmware.service';
 import { FilterByMacPipe } from '../../filter-by-mac-pipe';
 import { TabsComponent } from '../../components/tabs/tabs.component';
 import { ConfirmationModalComponent } from '../../components/confirmation-modal/confirmation-modal.component';
-import { UpgradePrepDialogComponent  } from '../../components/upgrade-prep-dialog/upgrade-prep-dialog';
+import { UpgradePrepDialogComponent } from '../../components/upgrade-prep-dialog/upgrade-prep-dialog';
 import { MatDialog } from '@angular/material/dialog';
 import { DeviceStorageService, FirmwareProgress } from '../../services/device-storage.service';
+import { ApiService } from '../../services/api.service';
 import { Router, RouterModule } from '@angular/router';
+import { finalize } from 'rxjs/operators';
+
+type RowColor = 'queued' | 'failed' | 'success' | 'warn' | 'nofwread' | '';
 
 @Component({
   standalone: true,
   selector: 'app-dashboard',
   templateUrl: './dashboard.html',
   styleUrls: ['./dashboard.css'],
-  imports: [CommonModule, FormsModule, FilterByMacPipe, TabsComponent, ConfirmationModalComponent,RouterModule ]
+  imports: [CommonModule, FormsModule, FilterByMacPipe, TabsComponent, ConfirmationModalComponent, RouterModule]
 })
-export class DashboardComponent implements OnInit {
-  upgradeType = 'Sensor';
-  fwVersions: string[] = [];
-  sensorFwVersions: string[] = [];
-  blFwVersions: string[] = [];
-  selectedFwVersion: string = '';
+export class DashboardComponent implements OnInit, OnDestroy {
+  private intervals: ReturnType<typeof setInterval>[] = [];
+  // ── Tabs ──────────────────────────────────────────────────────────────────
+  activeTab: 'devices' | 'queue' | 'log' | 'runtime' | 'speed' = 'devices';
 
+  // ── Sorting ────────────────────────────────────────────────────────────────
+  sortField = '';
+  sortDirection: 'asc' | 'desc' = 'asc';
+
+  // ── Firmware manifest ──────────────────────────────────────────────────────
+  firmwareMap: { [type: string]: string[] } = {};
+  selectedFirmwareByType: { [type: string]: string } = {};
+  selectedTypeFlags: { [type: string]: boolean } = {};
+  detectorTypesInUse: string[] = [];
+
+  // ── Devices ────────────────────────────────────────────────────────────────
+  private productTypeCache = new Map<string, string>();
   devices: any[] = [];
   filteredDevices: any[] = [];
-
   selectedCount = 0;
-  searchTerm: string = '';
+  searchTerm = '';
+  isLoading = true;
+  forceUpdate = false;
+  minRssiFilter: number = -127;
+  readonly rssiOptions = [
+    { label: 'All', value: -127 },
+    { label: '≥ -80 dBm', value: -80 },
+    { label: '≥ -75 dBm', value: -75 },
+    { label: '≥ -70 dBm', value: -70 },
+    { label: '≥ -65 dBm', value: -65 },
+  ];
+
+  // ── Confirmation ───────────────────────────────────────────────────────────
   showConfirmation = false;
   pendingDevices: any[] = [];
-  isLoading = true;
 
-  firmwareMap: { [key: string]: string[] } = {};
-  selectedFirmwareByType: { [key: string]: string } = {};
-  expandedGroups: { [key: string]: boolean } = {};
-  selectedTypeFlags: { [key: string]: boolean } = {};
-  detectorTypesInUse: string[] = [];
+  // ── Progress ───────────────────────────────────────────────────────────────
   progressMap: Record<string, FirmwareProgress> = {};
+  logEntries: FirmwareProgress[] = [];
 
-  @ViewChild('firmwareDropdown', { static: false }) firmwareDropdownRef!: ElementRef;
-  showFirmwarePanel = false;
+  // ── Identifying ───────────────────────────────────────────────────────────
+  identifyingMacs = new Set<string>();
+
+  // ── Runtime variables ─────────────────────────────────────────────────────
+  runtimeVars: Record<string, any> = {};
+  runtimeSaving = false;
+  runtimeSaveResult = '';
 
   constructor(
-     private scannerService: ScannerService,
-     private firmwareService: FirmwareService,
-     private dialog: MatDialog,
-     private deviceStorageService: DeviceStorageService,
-     private router: Router
+    private scannerService: ScannerService,
+    private firmwareService: FirmwareService,
+    private apiService: ApiService,
+    private dialog: MatDialog,
+    private deviceStorageService: DeviceStorageService,
+    private router: Router
   ) {}
 
   ngOnInit(): void {
-    this.loadNearbyDevices(); // initial
-
-    setInterval(() => {
-      this.loadNearbyDevices(); // only adds new devices
-    }, 15000); // every 15 seconds
-    
-    // Load firmware manifest and initialize firmware map
+    this.loadNearbyDevices();
+    this.intervals.push(setInterval(() => this.loadNearbyDevices(), 15000));
     this.loadFirmwareData();
+    this.loadProgress();
+    this.intervals.push(setInterval(() => this.loadProgress(), 3000));
+  }
 
-     this.loadProgress();
-     setInterval(() => this.loadProgress(), 3000);
+  ngOnDestroy(): void {
+    this.intervals.forEach(id => clearInterval(id));
+  }
+
+  // ── Tab ────────────────────────────────────────────────────────────────────
+
+  setTab(tab: 'devices' | 'queue' | 'log' | 'runtime' | 'speed'): void {
+    this.activeTab = tab;
+    if (tab === 'runtime' && Object.keys(this.runtimeVars).length === 0) this.loadRuntimeVars();
+  }
+
+  // ── Firmware manifest ──────────────────────────────────────────────────────
+
+  private sortVersionsDesc(versions: string[]): string[] {
+    return [...versions].sort((a, b) => {
+      const parts = (v: string) => v.replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0);
+      const [ap, bp] = [parts(a), parts(b)];
+      for (let i = 0; i < Math.max(ap.length, bp.length); i++) {
+        const d = (bp[i] ?? 0) - (ap[i] ?? 0);
+        if (d !== 0) return d;
+      }
+      return 0;
+    });
   }
 
   private loadFirmwareData(): void {
-    console.log('Dashboard: Loading firmware data...');
     this.firmwareService.loadFirmwareManifest().subscribe({
       next: (manifest) => {
-        console.log('Dashboard: Firmware manifest received:', manifest);
+        for (const type of Object.keys(manifest))
+          manifest[type] = this.sortVersionsDesc(manifest[type]);
         this.firmwareMap = manifest;
         this.detectorTypesInUse = Object.keys(manifest);
-        console.log('Dashboard: Available detector types:', this.detectorTypesInUse);
+        for (const type of this.detectorTypesInUse) {
+          if (!this.selectedFirmwareByType[type] && manifest[type]?.length)
+            this.selectedFirmwareByType[type] = manifest[type][0]; // [0] is now highest
+          if (this.selectedTypeFlags[type] === undefined) this.selectedTypeFlags[type] = true;
+        }
+        this.rebuildTypeRows();
+        this.filterDevicesByAllCriteria();
       },
-      error: (error) => {
-        console.error('Dashboard: Failed to load firmware manifest:', error);
-        // Fallback to current map
+      error: () => {
         this.firmwareMap = this.firmwareService.getFirmwareMap();
         this.detectorTypesInUse = Object.keys(this.firmwareMap);
       }
     });
   }
 
-loadNearbyDevices() {
-  this.isLoading = true;
+  // Stable array — updated explicitly, NOT a getter, to avoid change-detection loops
+  allTypeRows: { type: string; count: number; inManifest: boolean }[] = [];
 
-  this.scannerService.fetchNearbyDevices().subscribe({
-    next: (data: ScannedDevice[]) => {
-      const existingMacs = new Set(this.devices.map(d => d.mac));
-      const newDevices: any[] = [];
-
-      data.forEach((d, i) => {
-        const mac = d.bdaddrs[0]?.bdaddr ?? 'N/A';
-        if (existingMacs.has(mac)) return; // Skip known devices
-
-        newDevices.push({
-          mac,
-          version: d.detectorShortDescription
-            ? (d.detectorShortDescription.includes('-')
-                ? d.detectorShortDescription.split('-')[0]
-                : d.detectorShortDescription)
-            : 'Unknown',
-          Name: d.name,
-          productNumber: d.productNumber,
-          sensorVersion: '', // will enrich below
-          rssi: d.rssi,
-          ctStatus: 'Idle',
-          selected: false,
-          isLocked: d.isLocked,
-          connectionStatus: 'Disconnected',
-          isConnected: false,
-          isConnecting: false,
-          isDisconnecting: false
-        });
-      });
-
-      // Add only the new devices to the array
-      this.devices.push(...newDevices);
-      this.filteredDevices = [...this.devices];
-
-      // Update detector types
-      newDevices.forEach(d => {
-        if (!this.detectorTypesInUse.includes(d.version)) {
-          this.detectorTypesInUse.push(d.version);
-          this.selectedTypeFlags[d.version] = true;
-          this.expandedGroups[d.version] = true;
-        }
-      });
-
-      this.filterDevicesBySelectedTypes();
-      this.isLoading = false;
-    },
-    error: (err) => {
-      console.error("Failed to load devices", err);
-      this.isLoading = false;
-    }
-  });
-}
-
-
-refreshFirmwareVersion(device: any, event: Event): void {
-  event.preventDefault(); // prevent href navigation
-
-  device.isFirmwareLoading = true;
-
-  this.scannerService.getFirmwareVersionsByMac([device.mac]).subscribe({
-    next: (fwMap: { [mac: string]: string }) => {
-      device.sensorVersion = fwMap[device.mac] ?? '';
-    },
-    error: (err) => {
-      console.error(`Failed to fetch firmware for ${device.mac}:`, err);
-      this.showToast(`Failed to fetch firmware for ${device.mac}`);
-    },
-    complete: () => {
-      device.isFirmwareLoading = false;
-    }
-  });
-}
-
-fetchFirmwareForSelectedDevices(): void {
-  const selectedDevices = this.filteredDevices.filter(d => d.selected);
-
-  if (selectedDevices.length === 0) {
-    this.showToast('Please select at least one device.');
-    return;
+  private rebuildTypeRows(): void {
+    const fromDevices = [...new Set(this.devices.map(d => d.version))];
+    const all = [...new Set([...this.detectorTypesInUse, ...fromDevices])];
+    this.allTypeRows = all.map(type => ({
+      type,
+      count: this.devices.filter(d => d.version === type).length,
+      inManifest: !!this.firmwareMap[type]?.length
+    }));
   }
 
-  selectedDevices.forEach(device => {
-    device.isFirmwareLoading = true;
+  trackByType(_: number, row: { type: string }): string { return row.type; }
+  trackByMac(_: number, item: { mac?: string; macAddress?: string }): string {
+    return item.mac ?? item.macAddress ?? '';
+  }
 
-    this.scannerService.getFirmwareVersionsByMac([device.mac]).subscribe({
-      next: (fwMap: { [mac: string]: string }) => {
-        device.sensorVersion = fwMap[device.mac] ?? '';
-        console.log("API response for MAC:", device.mac, fwMap); // DEBUG
+  onTypeToggle(type: string): void {
+    this.devices.forEach(d => { if (d.version === type && !this.selectedTypeFlags[type]) d.selected = false; });
+    this.selectedCount = this.devices.filter(d => d.selected).length;
+    this.filterDevicesByAllCriteria();
+  }
 
-        const version = fwMap[device.mac];
-        console.log(`Extracted firmware version for ${device.mac}:`, version); 
+  // ── Device list ────────────────────────────────────────────────────────────
+
+  loadNearbyDevices(): void {
+    const firstLoad = this.devices.length === 0;
+    if (firstLoad) this.isLoading = true;
+
+    this.scannerService.fetchNearbyDevices().pipe(
+      finalize(() => { this.isLoading = false; })
+    ).subscribe({
+      next: (data: ScannedDevice[]) => {
+        const byMac = new Map(this.devices.map(d => [d.mac, d]));
+
+        data.forEach(d => {
+          const mac = d.bdaddrs[0]?.bdaddr ?? 'N/A';
+          const existing = byMac.get(mac);
+          if (existing) { existing.rssi = d.rssi; return; }
+
+          const rawType = d.detectorShortDescription
+            ? (d.detectorShortDescription.includes('-') ? d.detectorShortDescription.split('-')[0] : d.detectorShortDescription)
+            : '';
+
+          if (rawType && d.productNumber) this.productTypeCache.set(d.productNumber, rawType);
+          const version = rawType || (d.productNumber ? this.productTypeCache.get(d.productNumber) : undefined) || 'Unknown';
+
+          const newDevice = {
+            mac,
+            version,
+            Name: d.name,
+            productNumber: d.productNumber,
+            sensorVersion: '',
+            rssi: d.rssi,
+            selected: false,
+            isLocked: d.isLocked,
+            isFirmwareLoading: false
+          };
+          this.devices.push(newDevice);
+          byMac.set(mac, newDevice);
+
+          if (this.selectedTypeFlags[newDevice.version] === undefined)
+            this.selectedTypeFlags[newDevice.version] = true;
+        });
+
+        this.rebuildTypeRows();
+        this.filterDevicesByAllCriteria();
       },
-      error: (err) => {
-        console.error(`Failed to fetch firmware for ${device.mac}:`, err);
-        this.showToast(`Error fetching firmware for ${device.mac}`);
-      },
-      complete: () => {
-        device.isFirmwareLoading = false;
-      }
+      error: err => console.error('Failed to load devices:', err)
     });
-  });
-}
+  }
 
-
-extractAppVersion(versionString: string): string {
-  if (!versionString || typeof versionString !== 'string') return '';
-
-  try {
-    const sensorMatch = versionString.match(/Sensor:\s*App:\s*([A-Za-z0-9.]+)/i);
-    const actorMatch = versionString.match(/Actor:\s*App:\s*([A-Za-z0-9.]+)/i);
-
-    const sensorApp = sensorMatch?.[1] ?? null;
-    const actorApp = actorMatch?.[1] ?? null;
-
-    if (sensorApp && actorApp) {
-      return `Sensor: ${sensorApp}, Actor: ${actorApp}`;
-    } else if (sensorApp) {
-      return `Sensor: ${sensorApp}`;
-    } else if (actorApp) {
-      return `Actor: ${actorApp}`;
-    } else {
-      return '';
+  filterDevicesByAllCriteria(): void {
+    const enabled = Object.keys(this.selectedTypeFlags).filter(t => this.selectedTypeFlags[t]);
+    this.filteredDevices = this.devices.filter(d => {
+      const typeOk = enabled.includes(d.version);
+      const macOk = !this.searchTerm || d.mac.toLowerCase().includes(this.searchTerm.toLowerCase());
+      const rssiOk = this.minRssiFilter === -127 || (d.rssi != null && d.rssi >= this.minRssiFilter);
+      return typeOk && macOk && rssiOk;
+    });
+    if (this.sortField) {
+      const f = this.sortField;
+      const dir = this.sortDirection === 'asc' ? 1 : -1;
+      this.filteredDevices.sort((a, b) => {
+        const av = a[f] ?? '', bv = b[f] ?? '';
+        const cmp = (typeof av === 'number' && typeof bv === 'number')
+          ? av - bv
+          : String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: 'base' });
+        return cmp * dir;
+      });
     }
-  } catch {
+  }
+
+  onRssiFilterChange(): void { this.filterDevicesByAllCriteria(); }
+
+  sortBy(field: string): void {
+    this.sortDirection = this.sortField === field && this.sortDirection === 'asc' ? 'desc' : 'asc';
+    this.sortField = field;
+    this.filterDevicesByAllCriteria();
+  }
+
+  // ── Row color (WPF-style) ──────────────────────────────────────────────────
+
+  getRowColor(device: any): RowColor {
+    const p = this.progressMap[device.mac];
+    if (!p) return '';
+    if (p.status === 'Queued' || (p.progress > 0 && p.progress < 100)) return 'queued';
+    if (p.status === 'Device Upgrade Completed.') {
+      const r = (p.finalResult ?? '').toLowerCase();
+      if (r === 'success') return 'success';
+      if (r === 'warn') return 'warn';
+      return 'failed';
+    }
+    const s = (p.status ?? '').toLowerCase();
+    if (s.includes('fail') || s.includes('error')) return 'failed';
     return '';
   }
-}
 
+  // ── FW version display ─────────────────────────────────────────────────────
 
-
-  // loadFirmwareVersions() {
-  //   this.fwVersions = this.firmwareService.getFirmwareVersions('actor');
-  //   this.sensorFwVersions = this.firmwareService.getFirmwareVersions('sensor');
-  //   this.blFwVersions = this.firmwareService.getFirmwareVersions('bootloader');
-  // }
-
-  filterDevicesBySelectedTypes(): void {
-  this.filterDevicesByAllCriteria();
-}
-
-  toggleFirmwarePanel(): void {
-    this.showFirmwarePanel = !this.showFirmwarePanel;
+  extractAppVersion(v: string): string {
+    if (!v) return '';
+    try {
+      const s = v.match(/Sensor:\s*App:\s*([A-Za-z0-9.]+)/i)?.[1];
+      const a = v.match(/Actor:\s*App:\s*([A-Za-z0-9.]+)/i)?.[1];
+      if (s && a) return `S:${s} A:${a}`;
+      if (s) return `S:${s}`;
+      if (a) return `A:${a}`;
+      return '';
+    } catch { return ''; }
   }
 
-   @HostListener('document:click', ['$event'])
-  onDocumentClick(event: MouseEvent): void {
-    const clickedInside = this.firmwareDropdownRef?.nativeElement.contains(event.target);
-    if (!clickedInside) {
-      this.showFirmwarePanel = false;
-    }
+  refreshFirmwareVersion(device: any, event: Event): void {
+    event.preventDefault();
+    device.isFirmwareLoading = true;
+    this.scannerService.getFirmwareVersionsByMac([device.mac]).subscribe({
+      next: (m: any) => { device.sensorVersion = m[device.mac] ?? ''; },
+      error: () => this.showToast(`Failed to fetch FW for ${device.mac}`),
+      complete: () => { device.isFirmwareLoading = false; }
+    });
   }
 
-  toggleExpanded(type: string): void {
-    this.expandedGroups[type] = !this.expandedGroups[type];
+  fetchFirmwareForSelectedDevices(): void {
+    const sel = this.filteredDevices.filter(d => d.selected);
+    if (!sel.length) { this.showToast('Select at least one device.'); return; }
+    sel.forEach(device => {
+      device.isFirmwareLoading = true;
+      this.scannerService.getFirmwareVersionsByMac([device.mac]).subscribe({
+        next: (m: any) => { device.sensorVersion = m[device.mac] ?? ''; },
+        error: () => this.showToast(`Error fetching FW for ${device.mac}`),
+        complete: () => { device.isFirmwareLoading = false; }
+      });
+    });
   }
 
- onTypeToggle(): void {
-  this.filterDevicesBySelectedTypes();
-
-  const selectedTypes = Object.keys(this.selectedTypeFlags).filter(type => this.selectedTypeFlags[type]);
-
-  // Deselect devices whose type is now hidden
-  this.devices.forEach(d => {
-    if (!selectedTypes.includes(d.version)) {
-      d.selected = false;
-    }
-  });
-
-  // Ensure child firmware is selected when type is checked
-  selectedTypes.forEach(type => {
-    const firmwareSelected = this.selectedFirmwareByType[type];
-    const availableFirmwares = this.firmwareMap[type];
-
-    if (!firmwareSelected && availableFirmwares?.length) {
-      // Auto-select the first available firmware version
-      this.selectedFirmwareByType[type] = availableFirmwares[0];
-    }
-  });
-
-  // Recalculate selected count
-  this.selectedCount = this.devices.filter(d => d.selected).length;
-}
-
-
+  // ── Selection ──────────────────────────────────────────────────────────────
 
   onDeviceClick(device: any, event: Event): void {
     const input = event.target as HTMLInputElement;
-    const checked = input.checked;
-    const currentSelectedCount = this.devices.filter(d => d.selected).length;
-
-    if (checked && currentSelectedCount >= 100) {
-      event.preventDefault();
-      input.checked = false;
-      this.showToast('⚠️ You can select a maximum of 100 devices at a time.');
-      return;
+    if (input.checked && this.devices.filter(d => d.selected).length >= 100) {
+      event.preventDefault(); input.checked = false;
+      this.showToast('Maximum 100 devices can be selected.'); return;
     }
-
-    device.selected = checked;
+    device.selected = input.checked;
     this.selectedCount = this.devices.filter(d => d.selected).length;
   }
 
   toggleAllSelection(checked: boolean): void {
-  if (checked) {
-    let count = 0;
-    for (let d of this.filteredDevices) {
-      if (count < 100) {
-        d.selected = true;
-        count++;
-      } else {
-        d.selected = false;
-      }
+    if (checked) {
+      let c = 0;
+      for (const d of this.filteredDevices) { d.selected = c < 100; if (c < 100) c++; }
+      this.selectedCount = c;
+      if (this.filteredDevices.length > 100) this.showToast('Only first 100 devices selected.');
+    } else {
+      this.filteredDevices.forEach(d => d.selected = false);
+      this.selectedCount = 0;
     }
-    this.selectedCount = count;
-
-    // ✅ Only show toast if more than 10 filtered devices exist
-    if (this.filteredDevices.length > 100) {
-      this.showToast(`Only the first 100 devices were selected.`);
-    }
-  } else {
-    this.filteredDevices.forEach(d => d.selected = false);
-    this.selectedCount = 0;
-  }
-}
-
-  onMasterCheckboxChange(event: Event): void {
-    const input = event.target as HTMLInputElement;
-    this.toggleAllSelection(input.checked);
   }
 
+  onMasterCheckboxChange(e: Event): void { this.toggleAllSelection((e.target as HTMLInputElement).checked); }
   areAllSelected(): boolean {
-    const selected = this.filteredDevices.filter(d => d.selected).length;
-    return selected > 0 && selected <= 100 && selected === this.filteredDevices.length;
+    const s = this.filteredDevices.filter(d => d.selected).length;
+    return s > 0 && s <= 100 && s === this.filteredDevices.length;
   }
 
-  showToast(message: string) {
-    const toast = document.createElement('div');
-    toast.innerHTML = `<div class="toast-glass">${message}</div>`;
-    document.body.appendChild(toast);
-    setTimeout(() => toast.remove(), 3000);
+  // ── Add to Queue ───────────────────────────────────────────────────────────
+
+  addToQueue(): void {
+    const sel = this.filteredDevices.filter(d => d.selected);
+    if (!sel.length) { alert('No devices selected.'); return; }
+    this.prepareAndConfirm(sel);
+  }
+
+  addSingleToQueue(device: any): void { this.prepareAndConfirm([device]); }
+
+  private prepareAndConfirm(devices: any[]): void {
+    const unknown = devices.filter(d => d.version === 'Unknown');
+    const locked = devices.filter(d => d.isLocked);
+
+    if (unknown.length || locked.length) {
+      this.dialog.open(UpgradePrepDialogComponent, {
+        width: '700px', data: { unknownDevices: unknown, lockedDevices: locked }
+      }).afterClosed().subscribe(result => {
+        if (!result?.confirmed) return;
+        const updated = result.updatedDevices.map((d: any) => ({ ...d, selectedFirmware: this.selectedFirmwareByType[d.version] ?? '' }));
+        const final = devices.map((o: any) => {
+          const u = updated.find((x: any) => x.mac === o.mac);
+          return u ? { ...o, ...u } : { ...o, selectedFirmware: this.selectedFirmwareByType[o.version] ?? '' };
+        });
+        const missing = [...new Set(final.map((d: any) => d.version as string))].filter(t => !this.selectedFirmwareByType[t]);
+        if (missing.length) { alert(`Select firmware for: ${missing.join(', ')}`); return; }
+        this.pendingDevices = final;
+        this.showConfirmation = true;
+      });
+      return;
+    }
+
+    const missing = [...new Set(devices.map(d => d.version as string))].filter(t => !this.selectedFirmwareByType[t]);
+    if (missing.length) { alert(`Select firmware for: ${missing.join(', ')}`); return; }
+    this.pendingDevices = devices.map(d => ({ ...d, selectedFirmware: this.selectedFirmwareByType[d.version] }));
+    this.showConfirmation = true;
   }
 
   confirmUpgrade(): void {
     this.showConfirmation = false;
-    if (!this.pendingDevices || this.pendingDevices.length === 0) return;
-
-    
-  this.pendingDevices.forEach(device => {
-    // Inject a queued progress state directly
-    this.progressMap[device.mac] = {
-        macAddress: device.mac,
-        progress: 0,
-        status: 'Queued',
-        lastUpdated: new Date().toISOString(),
-        showTick: false
+    if (!this.pendingDevices?.length) return;
+    this.pendingDevices.forEach(d => {
+      this.progressMap[d.mac] = {
+        macAddress: d.mac, progress: 0, status: 'Queued',
+        lastUpdated: new Date().toISOString(), showTick: false,
+        targetFirmwareVersion: d.selectedFirmware, detectorType: d.version
       };
-
-  });
-
-   
-
-    switch (this.upgradeType) {
-      case 'Sensor':
-        this.firmwareService.bulkSensorUpgrade(this.pendingDevices, this.selectedFwVersion)
-          .subscribe({
-            next: (res: any) => {
-              console.log('Sensor upgrade response:', res);
-              this.pendingDevices.forEach(d => d.ctStatus = 'done');
-            },
-            error: (err: any) => {
-              console.error('Sensor upgrade failed:', err);
-              this.pendingDevices.forEach(d => d.ctStatus = 'error');
-            }
-          });
-        break;
-
-      default:
-        alert("Unsupported upgrade type selected.");
-        break;
-    }
-
-    this.pendingDevices = [];
-  }
-
-  cancelUpgrade(): void {
-    this.showConfirmation = false;
-    this.pendingDevices = [];
-  }
-
-upgrade(): void {
-  const selectedDevices = this.filteredDevices.filter((device: any) => device.selected);
-
-  if (selectedDevices.length === 0) {
-    alert("No devices selected.");
-    return;
-  }
-
-  const unknownDevices = selectedDevices.filter((d: any) => d.version === 'Unknown');
-  const lockedDevices = selectedDevices.filter((d: any) => d.isLocked);
-
-  if (unknownDevices.length > 0 || lockedDevices.length > 0) {
-    this.dialog.open(UpgradePrepDialogComponent, {
-      width: '700px',
-      data: { unknownDevices, lockedDevices }
-    }).afterClosed().subscribe(result => {
-      if (result?.confirmed) {
-        // Step 1: attach selectedFirmware to the updated subset
-        const updatedSubset = result.updatedDevices.map((d: any) => ({
-          ...d,
-          selectedFirmware: this.selectedFirmwareByType[d.version] ?? ''
-        }));
-
-        // Step 2: merge updated subset into the original full selection
-        const finalDevices = selectedDevices.map((original: any) => {
-          const updated = updatedSubset.find((u: any) => u.mac === original.mac);
-          return updated
-            ? { ...original, ...updated }
-            : {
-                ...original,
-                selectedFirmware: this.selectedFirmwareByType[original.version] ?? ''
-              };
-        });
-
-        // Step 3: check for any missing firmware versions
-        const missingTypes = [...new Set(finalDevices.map((d: any) => d.version))]
-          .filter(type => !this.selectedFirmwareByType[type]);
-
-        if (missingTypes.length > 0) {
-          alert(`Please select firmware Versions for: ${missingTypes.join(', ')}`);
-          return;
-        }
-
-        // Ready for confirmation
-        this.pendingDevices = finalDevices;
-        this.showConfirmation = true;
-      }
     });
-
-    return;
+    this.firmwareService.bulkSensorUpgrade(this.pendingDevices, this.forceUpdate).subscribe({
+      error: (err: any) => console.error('Upgrade failed:', err)
+    });
+    this.pendingDevices = [];
+    this.setTab('queue');
   }
 
-  // No locked/unknown devices, proceed directly
-  const requiredTypes = [...new Set(selectedDevices.map((d: any) => d.version))] as string[];
-  const missingTypes = requiredTypes.filter(type => !this.selectedFirmwareByType[type]);
+  cancelUpgrade(): void { this.showConfirmation = false; this.pendingDevices = []; }
 
-  if (missingTypes.length > 0) {
-    alert(`Please select firmware Versions for: ${missingTypes.join(', ')}`);
-    return;
+  // ── Speed chart ────────────────────────────────────────────────────────────
+  speedHistory: { time: Date; totalSpeed: number; activeCount: number }[] = [];
+  speedPolylinePoints = '';
+  speedAreaPoints = '';
+  speedYAxisTicks: { y: number; label: string }[] = [];
+  speedXAxisTicks: { x: number; label: string }[] = [];
+  speedChartMax = 1;
+  speedChartAvg = 0;
+  speedChartLast: { totalSpeed: number; activeCount: number } = { totalSpeed: 0, activeCount: 0 };
+
+  clearSpeedHistory(): void { this.speedHistory = []; this.updateSpeedChart(); }
+
+  private updateSpeedChart(): void {
+    const n = this.speedHistory.length;
+    if (n < 2) {
+      this.speedPolylinePoints = '';
+      this.speedAreaPoints = '';
+      this.speedYAxisTicks = [];
+      this.speedXAxisTicks = [];
+      return;
+    }
+    const maxSpeed = Math.max(...this.speedHistory.map(p => p.totalSpeed), 1);
+    this.speedChartMax = maxSpeed;
+    this.speedChartAvg = this.speedHistory.reduce((s, p) => s + p.totalSpeed, 0) / n;
+    this.speedChartLast = this.speedHistory[n - 1];
+    const W = 650, H = 155, xOff = 50, yOff = 15;
+
+    const pts = this.speedHistory.map((p, i) => {
+      const x = xOff + (i / (n - 1)) * W;
+      const y = yOff + H - (p.totalSpeed / maxSpeed) * H;
+      return `${x.toFixed(0)},${y.toFixed(0)}`;
+    });
+    this.speedPolylinePoints = pts.join(' ');
+    this.speedAreaPoints = [
+      ...pts,
+      `${(xOff + W).toFixed(0)},${(yOff + H).toFixed(0)}`,
+      `${xOff},${(yOff + H).toFixed(0)}`
+    ].join(' ');
+
+    this.speedYAxisTicks = Array.from({ length: 6 }, (_, i) => ({
+      y: yOff + H * (1 - i / 5),
+      label: (maxSpeed * i / 5).toFixed(1)
+    }));
+
+    const numTicks = Math.min(n, 7);
+    this.speedXAxisTicks = Array.from({ length: numTicks }, (_, i) => {
+      const idx = numTicks === 1 ? 0 : Math.round(i * (n - 1) / (numTicks - 1));
+      const x = xOff + (idx / (n - 1)) * W;
+      const d = this.speedHistory[idx].time;
+      return {
+        x,
+        label: `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}:${d.getSeconds().toString().padStart(2, '0')}`
+      };
+    });
   }
 
-  this.pendingDevices = selectedDevices.map((d: any) => ({
-    ...d,
-    selectedFirmware: this.selectedFirmwareByType[d.version]
-  }));
+  trackByIdx(i: number): number { return i; }
 
-  this.showConfirmation = true;
-}
+  // ── Progress / Queue ───────────────────────────────────────────────────────
 
+  loadProgress(): void {
+    this.deviceStorageService.getUpgradeProgress().subscribe({
+      next: (data: FirmwareProgress[]) => {
+        const newMap: Record<string, FirmwareProgress> = {};
+        data.forEach(item => { newMap[item.macAddress] = item; });
+        for (const mac in this.progressMap)
+          if (!newMap[mac]) newMap[mac] = this.progressMap[mac];
+        this.progressMap = newMap;
 
-
-
-  filterDevicesByAllCriteria(): void {
-  const selectedTypes = Object.keys(this.selectedTypeFlags).filter(type => this.selectedTypeFlags[type]);
-  this.filteredDevices = this.devices.filter(d => {
-    const matchesType = selectedTypes.includes(d.version);
-    const matchesMac = this.searchTerm ? d.mac.toLowerCase().includes(this.searchTerm.toLowerCase()) : true;
-    return matchesType && matchesMac;
-  });
-}
-
-loadProgress(): void {
-  this.deviceStorageService.getUpgradeProgress().subscribe({
-    next: (data: FirmwareProgress[]) => {
-      const newMap: Record<string, FirmwareProgress> = {};
-
-      // Step 1: Add all updated entries from the backend
-      data.forEach(item => {
-        newMap[item.macAddress] = item;
-      });
-
-      // Step 2: Retain existing entries that were manually set but not yet updated by backend
-      for (const mac in this.progressMap) {
-        if (!newMap[mac]) {
-          newMap[mac] = this.progressMap[mac];  // retain existing
-        }
-      }
-
-      this.progressMap = newMap;
-    },
-    error: (err) => {
-      console.error('Failed to load upgrade progress:', err);
-    }
-  });
-}
-
-
-
-viewLogs(mac: string): void {
-  this.router.navigate(['/logs-dashboard']
-  );
-}
-
-connectToDevice(device: any): void {
-  device.isConnecting = true;
-  device.connectionStatus = 'Connecting...';
-
-  this.firmwareService.connectToDevices([device.mac]).subscribe({
-    next: (response) => {
-      console.log('Connect response:', response);
-      if (response && response.length > 0) {
-        const result = response[0];
-        if (result.status === 200 && result.data === 'OK') {
-          device.connectionStatus = 'Connected';
-          device.isConnected = true;
-          this.showToast(`Successfully connected to device ${device.mac}`);
-        } else {
-          device.connectionStatus = 'Connection Failed';
-          device.isConnected = false;
-          this.showToast(`Failed to connect to device ${device.mac}: ${result.data || 'Connection failed'}`);
-        }
-      } else {
-        device.connectionStatus = 'Connection Failed';
-        device.isConnected = false;
-        this.showToast(`Failed to connect to device ${device.mac}`);
-      }
-    },
-    error: (err) => {
-      console.error('Connect error:', err);
-      device.connectionStatus = 'Connection Error';
-      device.isConnected = false;
-      this.showToast(`Error connecting to device ${device.mac}: ${err.message || 'Network error'}`);
-    },
-    complete: () => {
-      device.isConnecting = false;
-    }
-  });
-}
-
-disconnectFromDevice(device: any): void {
-  device.isDisconnecting = true;
-  device.connectionStatus = 'Disconnecting...';
-
-  this.firmwareService.disconnectFromDevices([device.mac]).subscribe({
-    next: (response) => {
-      console.log('Disconnect response:', response);
-      if (response && response.length > 0) {
-        const result = response[0];
-        if (result.status === 200 && result.data === 'OK') {
-          device.connectionStatus = 'Disconnected';
-          device.isConnected = false;
-          this.showToast(`Successfully disconnected from device ${device.mac}`);
-        } else {
-          device.connectionStatus = 'Disconnect Failed';
-          this.showToast(`Failed to disconnect from device ${device.mac}: ${result.data || 'Disconnection failed'}`);
-        }
-      } else {
-        device.connectionStatus = 'Disconnect Failed';
-        this.showToast(`Failed to disconnect from device ${device.mac}`);
-      }
-    },
-    error: (err) => {
-      console.error('Disconnect error:', err);
-      device.connectionStatus = 'Disconnect Error';
-      this.showToast(`Error disconnecting from device ${device.mac}: ${err.message || 'Network error'}`);
-    },
-    complete: () => {
-      device.isDisconnecting = false;
-    }
-  });
-}
-
-connectSelectedDevices(): void {
-  const selectedDevices = this.filteredDevices.filter(d => d.selected);
-  
-  if (selectedDevices.length === 0) {
-    this.showToast('Please select at least one device to connect.');
-    return;
-  }
-
-  const macAddresses = selectedDevices.map(d => d.mac);
-  
-  selectedDevices.forEach(device => {
-    device.isConnecting = true;
-    device.connectionStatus = 'Connecting...';
-  });
-
-  this.firmwareService.connectToDevices(macAddresses).subscribe({
-    next: (response) => {
-      console.log('Bulk connect response:', response);
-      if (response && Array.isArray(response)) {
-        response.forEach((result) => {
-          const device = selectedDevices.find(d => d.mac === result.macAddress);
-          if (device) {
-            if (result.status === 200 && result.data === 'OK') {
-              device.connectionStatus = 'Connected';
-              device.isConnected = true;
-            } else {
-              device.connectionStatus = 'Connection Failed';
-              device.isConnected = false;
-            }
-            device.isConnecting = false;
+        data.forEach(item => {
+          if (item.status === 'Device Upgrade Completed.') {
+            const ex = this.logEntries.find(e => e.macAddress === item.macAddress);
+            if (!ex) this.logEntries.unshift({ ...item });
+            else Object.assign(ex, item);
           }
         });
-        const successCount = response.filter(r => r.status === 200 && r.data === 'OK').length;
-        this.showToast(`Connection completed: ${successCount}/${selectedDevices.length} devices connected successfully`);
-      }
-    },
-    error: (err) => {
-      console.error('Bulk connect error:', err);
-      selectedDevices.forEach(device => {
-        device.connectionStatus = 'Connection Error';
-        device.isConnected = false;
-        device.isConnecting = false;
-      });
-      this.showToast(`Error connecting to devices: ${err.message || 'Network error'}`);
-    }
-  });
-}
 
-disconnectSelectedDevices(): void {
-  const selectedDevices = this.filteredDevices.filter(d => d.selected);
-  
-  if (selectedDevices.length === 0) {
-    this.showToast('Please select at least one device to disconnect.');
-    return;
+        const active = Object.values(this.progressMap).filter(p => p.progress > 0 && p.progress < 100);
+        const totalSpeed = active.reduce((sum, p) => sum + (p.speedPctPerMin ?? 0), 0);
+        if (active.length > 0 || (this.speedHistory.length > 0 && this.speedHistory[this.speedHistory.length - 1].activeCount > 0)) {
+          this.speedHistory.push({ time: new Date(), totalSpeed, activeCount: active.length });
+          if (this.speedHistory.length > 120) this.speedHistory.shift();
+          this.updateSpeedChart();
+        }
+      },
+      error: err => console.error('Failed to load progress:', err)
+    });
   }
 
-  const macAddresses = selectedDevices.map(d => d.mac);
-  
-  selectedDevices.forEach(device => {
-    device.isDisconnecting = true;
-    device.connectionStatus = 'Disconnecting...';
-  });
+  get queueItems(): FirmwareProgress[] {
+    return Object.values(this.progressMap)
+      .filter(p => p.status !== 'Device Upgrade Completed.')
+      .sort((a, b) => (a.status === 'Queued' ? 1 : 0) - (b.status === 'Queued' ? 1 : 0));
+  }
 
-  this.firmwareService.disconnectFromDevices(macAddresses).subscribe({
-    next: (response) => {
-      console.log('Bulk disconnect response:', response);
-      if (response && Array.isArray(response)) {
-        response.forEach((result) => {
-          const device = selectedDevices.find(d => d.mac === result.macAddress);
-          if (device) {
-            if (result.status === 200 && result.data === 'OK') {
-              device.connectionStatus = 'Disconnected';
-              device.isConnected = false;
-            } else {
-              device.connectionStatus = 'Disconnect Failed';
-            }
-            device.isDisconnecting = false;
-          }
-        });
-        const successCount = response.filter(r => r.status === 200 && r.data === 'OK').length;
-        this.showToast(`Disconnection completed: ${successCount}/${selectedDevices.length} devices disconnected successfully`);
-      }
-    },
-    error: (err) => {
-      console.error('Bulk disconnect error:', err);
-      selectedDevices.forEach(device => {
-        device.connectionStatus = 'Disconnect Error';
-        device.isDisconnecting = false;
-      });
-      this.showToast(`Error disconnecting from devices: ${err.message || 'Network error'}`);
-    }
-  });
-}
+  removeFromQueue(mac: string): void {
+    this.firmwareService.removeFromQueue(mac).subscribe({
+      next: () => delete this.progressMap[mac],
+      error: err => console.error('Remove failed:', err)
+    });
+  }
 
-  // onUpgradeTypeChange(): void {
-  //   const normalized = this.upgradeType.toLowerCase().replace(' - sensor', '').toLowerCase();
+  clearQueue(): void {
+    this.firmwareService.clearQueue().subscribe({
+      next: () => {
+        for (const mac in this.progressMap)
+          if (this.progressMap[mac].status === 'Queued') delete this.progressMap[mac];
+      },
+      error: err => console.error('Clear queue failed:', err)
+    });
+  }
 
-  //   if (normalized === 'sensor') {
-  //     this.fwVersions = this.firmwareService.getFirmwareVersions('sensor');
-  //   } else if (normalized === 'actor') {
-  //     this.fwVersions = this.firmwareService.getFirmwareVersions('actor');
-  //   } else if (normalized === 'bootloader') {
-  //     this.fwVersions = this.firmwareService.getFirmwareVersions('bootloader');
-  //   }
+  canRemoveFromQueue(item: FirmwareProgress): boolean { return item.status === 'Queued' && item.progress === 0; }
 
-  //   this.selectedFwVersion = this.fwVersions.length > 0 ? this.fwVersions[0] : '';
-  // }
+  getQueueStatusClass(item: FirmwareProgress): string {
+    const s = (item.status ?? '').toLowerCase();
+    if (s === 'queued') return 'pill-queued';
+    if (s.includes('fail') || s.includes('error')) return 'pill-failed';
+    return 'pill-progress';
+  }
+
+  // ── Log ────────────────────────────────────────────────────────────────────
+
+  clearLog(): void { this.logEntries = []; }
+
+  getLogResult(entry: FirmwareProgress): string {
+    return entry.finalResult ?? entry.status ?? '';
+  }
+
+  isLogSuccess(entry: FirmwareProgress): boolean {
+    const r = (entry.finalResult ?? '').toLowerCase();
+    return r === 'success';
+  }
+
+  // ── Identify ───────────────────────────────────────────────────────────────
+
+  identifyDevice(device: any): void {
+    if (this.identifyingMacs.has(device.mac)) return;
+    this.identifyingMacs.add(device.mac);
+    this.apiService.identifyDevice(device.mac, device.pin).subscribe({
+      next: (r: any) => this.showToast(`Identify ${device.mac}: ${r.success ? 'OK' : (r.error ?? 'Failed')}`),
+      error: () => this.showToast(`Identify failed for ${device.mac}`),
+      complete: () => this.identifyingMacs.delete(device.mac)
+    });
+  }
+
+  // ── Runtime variables ──────────────────────────────────────────────────────
+
+  runtimeVarKeyList: string[] = [];
+
+  loadRuntimeVars(): void {
+    this.apiService.getRuntimeVariables().subscribe({
+      next: (v) => { this.runtimeVars = v; this.runtimeVarKeyList = Object.keys(v).sort(); },
+      error: err => console.error('Failed to load runtime vars:', err)
+    });
+  }
+
+  saveRuntimeVars(): void {
+    this.runtimeSaving = true; this.runtimeSaveResult = '';
+    this.apiService.setRuntimeVariables(this.runtimeVars).subscribe({
+      next: (res) => {
+        this.runtimeSaving = false;
+        this.runtimeSaveResult = res.errors?.length
+          ? `Saved with errors: ${res.errors.join(', ')}`
+          : `Saved ${res.updated?.length ?? 0} variable(s)`;
+      },
+      error: () => { this.runtimeSaving = false; this.runtimeSaveResult = 'Save failed'; }
+    });
+  }
+
+  getRuntimeVarType(key: string): 'bool' | 'number' | 'string' {
+    const v = this.runtimeVars[key];
+    if (typeof v === 'boolean') return 'bool';
+    if (typeof v === 'number') return 'number';
+    return 'string';
+  }
+
+  trackByKey(_: number, key: string): string { return key; }
+
+  // ── Utility ────────────────────────────────────────────────────────────────
+
+  showToast(message: string): void {
+    const el = document.createElement('div');
+    el.innerHTML = `<div class="toast-glass">${message}</div>`;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 3000);
+  }
+
+  viewLogs(): void { this.router.navigate(['/logs-dashboard']); }
 }

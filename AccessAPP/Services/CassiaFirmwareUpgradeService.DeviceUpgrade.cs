@@ -87,12 +87,11 @@ try
                 var isInBootMode = false;
                 if (probeConnected)
                 {
-                    int bootModeChecks = RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase)
-                        ? 1
-                        : 5;
-                    int bootModeRetryDelayMs = RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase)
-                        ? 0
-                        : 1500;
+                    // Native backends cache GATT mode during connect — single instant check.
+                    bool isNativeBackend = RuntimeVariables.BLE_BACKEND.Equals("linux-native", StringComparison.OrdinalIgnoreCase)
+                        || RuntimeVariables.BLE_BACKEND.Equals("windows-native", StringComparison.OrdinalIgnoreCase);
+                    int bootModeChecks = isNativeBackend ? 1 : 5;
+                    int bootModeRetryDelayMs = isNativeBackend ? 0 : 1500;
                     for (int attempt = 1; attempt <= bootModeChecks; attempt++)
                     {
                         if (CheckIfDeviceInBootMode(_gatewayIpAddress, mac))
@@ -555,6 +554,7 @@ try
                     status: "OK"));
 
                 UpgradeLogger.Log(logId, mac, "Device Upgrade Completed.", dev.finalUpgradeResult);
+                _deviceStorageService.UpdateFirmwareProgress(mac, 100, "Device Upgrade Completed.", null, null, null, dev.finalUpgradeResult);
                 await SendUpgradeResultLogAsync(
                     mac: mac,
                     dev: dev,
@@ -1193,7 +1193,8 @@ var response = new ServiceResponse();
             }
 
             bool checkedBootMode = CheckIfDeviceInBootMode(_gatewayIpAddress, nodeMac);
-            bool linuxNativeBackend = _connectService is LinuxBle.LinuxBleConnectionService;
+            bool linuxNativeBackend = _connectService is LinuxBle.LinuxBleConnectionService
+                || RuntimeVariables.BLE_BACKEND.Equals("windows-native", StringComparison.OrdinalIgnoreCase);
             // For linux-native we can trust caller assumption because login in boot mode is expected to fail.
             // For Cassia we must trust only the fresh on-session check; stale gateway GATT views can
             // falsely report boot mode and lead to immediate programming failures.
@@ -1268,7 +1269,7 @@ await Task.Delay(3000); // Delay between attempts
             }
 
             //Step 3: Start Programming the Sensor
-            bool programmingResult = ProgramDevice(_gatewayIpAddress, nodeMac, _notificationService, DetectorType, FirmwareVersion, bActor, isBootloader, logId, FirmwareVersion);
+            bool programmingResult = ProgramDevice(_gatewayIpAddress, nodeMac, _notificationService, DetectorType, FirmwareVersion, bActor, isBootloader, logId, FirmwareVersion) == ReturnCodes.CYRET_SUCCESS;
 
             if (programmingResult)
             {
@@ -1387,9 +1388,9 @@ await Task.Delay(3000); // Delay between attempts
 
             AppLog.Info($"Bootloader mode achieved for {nodeMac}.");
 // Step 3: Start programming the actor
-            var programmingResult = ProgramDevice(_gatewayIpAddress, nodeMac, _notificationService, DetectorType, FirmwareVersion, bActor, false, logId, FirmwareVersion);
+            var progCode = ProgramDevice(_gatewayIpAddress, nodeMac, _notificationService, DetectorType, FirmwareVersion, bActor, false, logId, FirmwareVersion);
 
-            if (programmingResult)
+            if (progCode == ReturnCodes.CYRET_SUCCESS)
             {
                 UpgradeLogger.Log(logId, nodeMac, "ActorProgrammingComplete", "Success");
                 response.Success = true;
@@ -1403,6 +1404,7 @@ await Task.Delay(3000); // Delay between attempts
                 response.Success = false;
                 response.StatusCode = 500;
                 response.Message = "Programming Failed";
+                response.ProgrammingReturnCode = (int)progCode;
                 return response;
             }
         }
@@ -1412,7 +1414,7 @@ await Task.Delay(3000); // Delay between attempts
         
         
 
-        public bool ProgramDevice(
+        public ReturnCodes ProgramDevice(
             string gatewayIpAddress,
             string nodeMac,
             BleAbstractions.IBleNotificationService cassiaNotificationService,
@@ -1451,7 +1453,7 @@ try
 if (!File.Exists(firmwarePath))
                 {
                     AppLog.Fatal($" Firmware file missing: {firmwarePath}");
-return false;
+return ReturnCodes.CYRET_ERR_FILE;
                 }
                 if (bActor)
                 {
@@ -1574,7 +1576,7 @@ m_comm_data.WriteData = WriteSensorData;
 _deviceStorageService.MarkFirmwareFailed(nodeMac);
                 }
 
-                return local_status == ReturnCodes.CYRET_SUCCESS;
+                return local_status;
             }
             finally
             {

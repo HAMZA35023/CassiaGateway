@@ -1,6 +1,5 @@
 import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { HttpClient } from '@angular/common/http';
 import { RouterModule } from '@angular/router';
 import { TabsComponent } from '../../components/tabs/tabs.component';
 import { ApiService } from '../../services/api.service';
@@ -38,7 +37,7 @@ export class LogsDashboardComponent implements OnInit {
   endDate: Date | null = null;
   filteredLogs: any[] = [];
 
-  constructor(private http: HttpClient, private apiService: ApiService) {}
+  constructor(private apiService: ApiService) {}
 
   ngOnInit(): void {
     this.apiService.getLogs().subscribe({
@@ -95,19 +94,19 @@ export class LogsDashboardComponent implements OnInit {
     this.updatePaginatedLogs();
   }
 
-  
   parseLogs(text: string): any[] {
     const map = new Map<string, any>();
-    const lines = text.split('\n');
+    const lines = text.split('\n').map(l => l.trimEnd());
 
-    for (let line of lines) {
+    const completionStages = ['device upgrade completed.'];
+
+    for (const line of lines) {
       const logId = line.match(/\[logId=(.*?)\]/)?.[1];
       const stage = line.match(/stage=(.*?)\s(?:time=|mac=|status=)/)?.[1];
-      const time = line.match(/time=([\d\- :]+)/)?.[1];
+      const time = line.match(/time=([\d\- :]+)/)?.[1]?.trim();
       const mac = line.match(/mac=([A-F0-9:]+)/i)?.[1];
-      const fw = line.match(/fw=(\S+)/)?.[1] ?? '-';
-      const oldFw = line.match(/oldfw=(\S+)/)?.[1] ?? '-';
-      const status = line.match(/status=(.+)$/)?.[1]?.toLowerCase() ?? '';
+      const fw = line.match(/\bfw=(\S+)/)?.[1] ?? '-';
+      const status = line.match(/status=(.+)$/)?.[1]?.toLowerCase().trim() ?? '';
 
       if (!logId || !stage || !time || !mac) continue;
 
@@ -116,54 +115,46 @@ export class LogsDashboardComponent implements OnInit {
           id: logId,
           mac,
           fw,
-          oldFw,
+          oldFw: '-',
           start: time,
           stages: [],
           expanded: false,
           result: 'Failed'
         });
-
-
-       const log = map.get(logId)!;
-
-        const isCurrentFw = stage.trim().toLowerCase().startsWith('current fw version');
-
-        if (isCurrentFw) {
-          // Extract old FW from Sensor section only
-          if (!log.oldFw || log.oldFw === '-') {
-            const sensorMatch = line.match(/Sensor:\s*([^|]+)/i);
-            if (sensorMatch) {
-              const appMatch = sensorMatch[1].match(/App:\s*([A-Z]?\d+\.\d+)/i);
-              if (appMatch) {
-                log.oldFw = appMatch[1]; // e.g. "B2.38"
-              }
-            }
-          }
-        }
-        
-
-
-      if (stage.toLowerCase() === 'sensorprogrammingcomplete') {
-        log.result = status === 'success' ? 'Success' : 'Failed';
-      }
       }
 
       const log = map.get(logId)!;
+
+      // Update fw if we now have a value and still need one
+      if (fw !== '-' && log.fw === '-') {
+        log.fw = fw;
+      }
+
+      // Extract oldFw from the "Current FW Version:" stage (can appear anywhere in the log)
+      if (stage.trim().toLowerCase().startsWith('current fw version')) {
+        if (fw !== '-') log.fw = fw;
+        if (!log.oldFw || log.oldFw === '-') {
+          const sensorMatch = line.match(/Sensor:\s*([^|]+)/i);
+          if (sensorMatch) {
+            const appMatch = sensorMatch[1].match(/App:\s*([A-Z]?\d+\.\d+)/i);
+            if (appMatch) log.oldFw = appMatch[1];
+          }
+        }
+      }
+
       log.stages.push({ time, stage, status });
 
-      if (stage.toLowerCase() === 'sensorprogrammingcomplete') {
+      if (completionStages.includes(stage.toLowerCase())) {
         log.result = status === 'success' ? 'Success' : 'Failed';
       }
     }
 
     for (const log of map.values()) {
       const hasProg = log.stages.some(
-        (s: { stage: string }) => s.stage.toLowerCase() === 'sensorprogrammingcomplete'
+        (s: { stage: string }) => completionStages.includes(s.stage.toLowerCase())
       );
       if (!hasProg) log.result = 'Failed';
     }
-
-    
 
     return Array.from(map.values()).sort((a, b) => {
       const timeA = new Date(a.start).getTime();

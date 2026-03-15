@@ -9,6 +9,7 @@
         public string FirmwareVersion { get; set; } // v02.27 or v02.28 etc
 
         public string CurrentFirmwareVersion { get; set; } // v02.26 or v02.27 etc
+        public bool ForceUpdate { get; set; } = false;
     }
 
 }

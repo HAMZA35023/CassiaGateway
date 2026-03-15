@@ -224,7 +224,6 @@ public partial class MainViewModel : ObservableObject
 
                             AddUpgradeLogEntryFromLine(cassia, l);
                             ApplyStatusFromUpgradeLogLine(cassia, l);
-                            ApplyLiveProcessStatusFromUpgradeLogLine(cassia, l);
                         }
                     });
                     await Task.Delay(1);
@@ -245,7 +244,6 @@ public partial class MainViewModel : ObservableObject
 
                         AddUpgradeLogEntryFromLine(cassia, l);
                         ApplyStatusFromUpgradeLogLine(cassia, l);
-                        ApplyLiveProcessStatusFromUpgradeLogLine(cassia, l);
                     }
                 });
             }

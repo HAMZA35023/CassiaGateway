@@ -215,7 +215,12 @@ namespace AccessAPP.Services
                     if (numberOfParallelThreads == -1)
                         numberOfParallelThreads = GlobalnumberOfParallelThreads;
 
-                    var progressList = requests.Select(req => new UpgradeProgress { MacAddress = req.MacAddress, Pincode = req.Pincode, DetectotType = req.DetctorType, FirmwareVersion = req.FirmwareVersion, CurrentFirmwareVersion = req.CurrentFirmwareVersion }).ToList();
+                    var progressList = requests.Select(req => new UpgradeProgress { MacAddress = req.MacAddress, Pincode = req.Pincode, DetectotType = req.DetctorType, FirmwareVersion = req.FirmwareVersion, CurrentFirmwareVersion = req.CurrentFirmwareVersion, ForceUpdate = req.ForceUpdate }).ToList();
+
+                    // Mark all devices as Queued immediately so the UI can show status
+                    foreach (var p in progressList)
+                        if (!string.IsNullOrWhiteSpace(p.MacAddress))
+                            _deviceStorageService.UpdateFirmwareProgress(p.MacAddress, 0, "Queued", null, p.FirmwareVersion, p.DetectotType);
 
                     // Phase 1: Initial Upgrades
                     await UpgradeDevicesInParallel(progressList, numberOfParallelThreads);

@@ -746,7 +746,7 @@ partial void OnHostBleUiUpdateSecondsChanged(int value)
             loadRows: loadRows,
             footer: "Apply = set suggested Cassia and queue update - Keep current = queue without changing assignment",
             notes: $"Suggestion uses the same balancing rules as Add-to-queue/Reassign.\n" +
-                   $"If best RSSI < {RssiAllowBalancingThreshold}: closest Cassia. Otherwise: balance using Cassia Queue/Programming, while still preferring closest when similar.",
+                   $"If best RSSI < {RssiAllowBalancingThreshold}: closest Cassia. Otherwise: balance using Queue/Programming/Workers (free worker slots reduce effective load), while still preferring closest when similar.",
             showKeepButton: true);
 
         if (dlg == AssignmentPlanDialogResult.Cancel)

@@ -91,12 +91,8 @@ public partial class MainViewModel : ObservableObject
         return null;
     }
 
-    private void OnMqttMessage(string topic, string payload)
+    private void HandlePlainReplyPayload(string payload)
     {
-        // Learn available scopes from incoming topics so the user can switch quickly.
-        RegisterObservedScopeFromTopic(topic);
-
-        // 1) Handle plain-text replies regardless of topic.
         // We accept:
         //   "AA:BB:..: connect OK"
         //   "[info] AA:BB:..: disconnect OK"
@@ -130,18 +126,42 @@ public partial class MainViewModel : ObservableObject
             }
         }
         catch { /* ignore */ }
+    }
 
+    private void OnMqttMessage(string topic, string payload)
+    {
+        // Learn available scopes from incoming topics so the user can switch quickly.
+        RegisterObservedScopeFromTopic(topic);
 
         var m = TopicRx.Match(topic);
-        if (!m.Success) return;
+        if (!m.Success)
+        {
+            HandlePlainReplyPayload(payload);
+            return;
+        }
 
         var net = m.Groups["net"].Value;
+
+        // When local MQTT is active and no gateways are known yet, auto-adopt the first network seen.
+        if (_localMqttActive && CassiaGateways.Count == 0
+            && m.Groups["kind"].Value.Equals("tele", StringComparison.OrdinalIgnoreCase)
+            && m.Groups["leaf"].Value.Equals("status", StringComparison.OrdinalIgnoreCase))
+        {
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                if (CassiaGateways.Count == 0)
+                    NetworkId = net;
+            });
+        }
+
         if (!net.Equals(NetworkId, StringComparison.OrdinalIgnoreCase))
             return;
 
         var kind = m.Groups["kind"].Value.ToLowerInvariant();
         var cassia = m.Groups["cassia"].Value;
         var leaf = m.Groups["leaf"].Value.ToLowerInvariant();
+
+        HandlePlainReplyPayload(payload);
 
         if (kind == "tele" && leaf == "status")
         {
@@ -157,6 +177,7 @@ public partial class MainViewModel : ObservableObject
                 int queue = root.TryGetProperty("queue", out var q) ? q.GetInt32() : 0;
                 int programming = root.TryGetProperty("programming", out var pr) ? pr.GetInt32() : 0;
                 double totalSpeedpct = root.TryGetProperty("totalSpeedpct", out var sp) ? sp.GetDouble() : 0;
+                var bleBackend = root.TryGetProperty("backend", out var bb) ? (bb.GetString() ?? "") : "";
                 var cellularState = root.TryGetProperty("cellularState", out var cs) ? (cs.GetString() ?? "") : "";
                 var cellularNetworkType = root.TryGetProperty("cellularNetworkType", out var cnt) ? (cnt.GetString() ?? "") : "";
                 var cellularProvider = root.TryGetProperty("cellularProvider", out var cp) ? (cp.GetString() ?? "") : "";
@@ -199,6 +220,7 @@ public partial class MainViewModel : ObservableObject
                     gw.Programming = programming;
                     gw.TotalSpeedpct = totalSpeedpct;
                     gw.AddSpeedSample(ts, totalSpeedpct);
+                    if (!string.IsNullOrWhiteSpace(bleBackend)) gw.BleBackend = bleBackend;
                     gw.CellularState = cellularState;
                     gw.CellularNetworkType = cellularNetworkType;
                     gw.CellularProvider = cellularProvider;

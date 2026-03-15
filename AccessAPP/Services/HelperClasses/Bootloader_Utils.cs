@@ -2,6 +2,7 @@
 
 namespace AccessAPP.Services.HelperClasses
 {
+
     public enum ReturnCodes
     {
         /// <summary>
@@ -74,6 +75,22 @@ namespace AccessAPP.Services.HelperClasses
         /// </summary>
         CYRET_ERR_BTLDR_MASK = 0x4000,
         SUCCESS = 0x8000,
+
+        // Combined: comm layer reported a specific underlying error
+        CYRET_ERR_COMM_FILE     = CYRET_ERR_COMM_MASK | CYRET_ERR_FILE,     // 0x2001
+        CYRET_ERR_COMM_EOF      = CYRET_ERR_COMM_MASK | CYRET_ERR_EOF,      // 0x2002
+        CYRET_ERR_COMM_LENGTH   = CYRET_ERR_COMM_MASK | CYRET_ERR_LENGTH,   // 0x2003 - data length outside expected range
+        CYRET_ERR_COMM_DATA     = CYRET_ERR_COMM_MASK | CYRET_ERR_DATA,     // 0x2004
+        CYRET_ERR_COMM_CMD      = CYRET_ERR_COMM_MASK | CYRET_ERR_CMD,      // 0x2005
+        CYRET_ERR_COMM_DEVICE   = CYRET_ERR_COMM_MASK | CYRET_ERR_DEVICE,   // 0x2006
+        CYRET_ERR_COMM_VERSION  = CYRET_ERR_COMM_MASK | CYRET_ERR_VERSION,  // 0x2007
+        CYRET_ERR_COMM_CHECKSUM = CYRET_ERR_COMM_MASK | CYRET_ERR_CHECKSUM, // 0x2008
+        CYRET_ERR_COMM_ARRAY    = CYRET_ERR_COMM_MASK | CYRET_ERR_ARRAY,    // 0x2009
+        CYRET_ERR_COMM_ROW      = CYRET_ERR_COMM_MASK | CYRET_ERR_ROW,      // 0x200A
+        CYRET_ERR_COMM_BTLDR    = CYRET_ERR_COMM_MASK | CYRET_ERR_BTLDR,    // 0x200B
+        CYRET_ERR_COMM_ACTIVE   = CYRET_ERR_COMM_MASK | CYRET_ERR_ACTIVE,   // 0x200C
+        CYRET_ERR_COMM_UNKNOWN  = CYRET_ERR_COMM_MASK | CYRET_ERR_UNKNOWN,  // 0x200F
+        CYRET_ERR_COMM_ABORT    = CYRET_ERR_COMM_MASK | CYRET_ABORT,        // 0x20FF
     }
     public class Bootloader_Utils
     {
