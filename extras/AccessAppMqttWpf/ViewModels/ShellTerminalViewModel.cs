@@ -16,13 +16,15 @@ public partial class ShellTerminalViewModel : ObservableObject, IDisposable
     private readonly MainViewModel _main;
     private readonly string _cassiaName;
 
+    private readonly List<string> _history = new();
+    private int _historyIndex = -1; // -1 = not browsing
+
     [ObservableProperty] private string inputText = "";
     [ObservableProperty] private string outputText = "";
 
     public string WindowTitle => $"Local Terminal — {_cassiaName}";
     public string HeaderText  => $"Shell  ·  {_cassiaName}";
 
-    public event Action? RequestClose;
     // Raised whenever new output is appended; code-behind uses this to scroll to end.
     public event Action? OutputAppended;
 
@@ -37,11 +39,33 @@ public partial class ShellTerminalViewModel : ObservableObject, IDisposable
         AppendLine("");
     }
 
+    /// <summary>Navigate command history. direction: -1 = older (Up), +1 = newer (Down).</summary>
+    public void NavigateHistory(int direction)
+    {
+        if (_history.Count == 0) return;
+
+        if (_historyIndex == -1)
+        {
+            // Start browsing from the most recent entry.
+            if (direction == -1) _historyIndex = _history.Count - 1;
+            else return;
+        }
+        else
+        {
+            _historyIndex = Math.Clamp(_historyIndex + direction, 0, _history.Count - 1);
+        }
+
+        InputText = _history[_historyIndex];
+    }
+
     [RelayCommand]
     private async Task SendCommandAsync()
     {
         var cmd = InputText.Trim();
         if (string.IsNullOrWhiteSpace(cmd)) return;
+
+        _history.Add(cmd);
+        _historyIndex = -1;
 
         InputText = "";
         AppendLine($"$ {cmd}");

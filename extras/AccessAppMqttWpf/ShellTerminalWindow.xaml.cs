@@ -28,10 +28,23 @@ public partial class ShellTerminalWindow : Window
 
     private void InputBox_KeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Enter)
+        switch (e.Key)
         {
-            _vm.SendCommandCommand.Execute(null);
-            e.Handled = true;
+            case Key.Enter:
+                _vm.SendCommandCommand.Execute(null);
+                e.Handled = true;
+                break;
+            case Key.Up:
+                _vm.NavigateHistory(-1);
+                // Move caret to end after history fills the TextBox.
+                InputBox.CaretIndex = InputBox.Text.Length;
+                e.Handled = true;
+                break;
+            case Key.Down:
+                _vm.NavigateHistory(+1);
+                InputBox.CaretIndex = InputBox.Text.Length;
+                e.Handled = true;
+                break;
         }
     }
 }
