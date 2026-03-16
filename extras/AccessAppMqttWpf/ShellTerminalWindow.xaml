@@ -61,7 +61,7 @@
                          FontSize="12"
                          Padding="8,6"
                          VerticalAlignment="Center"
-                         KeyDown="InputBox_KeyDown"/>
+                         PreviewKeyDown="InputBox_KeyDown"/>
 
                 <Button Grid.Column="2"
                         Style="{StaticResource PrimaryButton}"
