@@ -4,7 +4,9 @@ using MQTTnet;
 using MQTTnet.Packets;
 using MQTTnet.Protocol;
 using System.Buffers;
+using System.Diagnostics;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -33,6 +35,9 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     private Task? _runLoop;
 
     private bool _subscribed;
+
+    // Token required in the 'exec-shell' MQTT command payload to authorize remote shell execution.
+    private const string ShellExecToken = "Cassia@Shell#2025";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -1127,6 +1132,107 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                     time = DateTimeOffset.UtcNow
                 };
                 return PublishTeleJsonAsync("runtime", resp, CancellationToken.None);
+            }
+
+            // Execute a shell command on the device. Requires HMAC-SHA256 token to prevent unauthorized use.
+            // Payload: { "cmd": "...", "ts": <unix_epoch_seconds>, "hmac": "<hex>" }
+            // HMAC key = ShellExecToken + this gateway's MQTT name; message = cmd + ts
+            if (string.Equals(command, "exec-shell", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(command, "shell", StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.Run(async () =>
+                {
+                    try
+                    {
+                        if (string.IsNullOrWhiteSpace(payload))
+                        {
+                            await PublishTeleJsonAsync("shell", new { success = false, message = "Missing payload. Expected {\"cmd\":\"...\",\"ts\":unix_epoch,\"hmac\":\"sha256hex\"}." }, CancellationToken.None).ConfigureAwait(false);
+                            return;
+                        }
+
+                        using var doc = JsonDocument.Parse(payload);
+                        var root = doc.RootElement;
+
+                        var cmd = root.TryGetProperty("cmd", out var cmdEl) ? cmdEl.GetString() ?? "" : "";
+                        var ts = root.TryGetProperty("ts", out var tsEl) && tsEl.TryGetInt64(out var tsVal) ? tsVal : 0L;
+                        var hmac = root.TryGetProperty("hmac", out var hmacEl) ? hmacEl.GetString() ?? "" : "";
+
+                        if (string.IsNullOrWhiteSpace(cmd))
+                        {
+                            await PublishTeleJsonAsync("shell", new { success = false, message = "Missing 'cmd' field." }, CancellationToken.None).ConfigureAwait(false);
+                            return;
+                        }
+
+                        // Validate timestamp within ±60 seconds to prevent replay attacks.
+                        var nowTs = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                        if (Math.Abs(nowTs - ts) > 60)
+                        {
+                            await PublishTeleJsonAsync("shell", new { success = false, message = $"Token expired or clock skew too large (server={nowTs}, received={ts})." }, CancellationToken.None).ConfigureAwait(false);
+                            return;
+                        }
+
+                        // Validate HMAC.
+                        var expected = ComputeShellHmac(cmd, ts);
+                        if (!string.Equals(expected, hmac, StringComparison.OrdinalIgnoreCase))
+                        {
+                            AppLog.Warn($"[Shell] HMAC verification failed for cmd='{cmd}'");
+                            await PublishTeleJsonAsync("shell", new { success = false, message = "Invalid token." }, CancellationToken.None).ConfigureAwait(false);
+                            return;
+                        }
+
+                        AppLog.Warn($"[Shell] Executing: {cmd}");
+
+                        var psi = new ProcessStartInfo
+                        {
+                            UseShellExecute = false,
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true,
+                            CreateNoWindow = true,
+                            FileName = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/bash"
+                        };
+                        psi.ArgumentList.Add(OperatingSystem.IsWindows() ? "/c" : "-c");
+                        psi.ArgumentList.Add(cmd);
+
+                        var sw = Stopwatch.StartNew();
+                        using var proc = new Process { StartInfo = psi };
+                        proc.Start();
+
+                        var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+                        var stderrTask = proc.StandardError.ReadToEndAsync();
+
+                        var exited = proc.WaitForExit(30_000);
+                        if (!exited)
+                        {
+                            try { proc.Kill(entireProcessTree: true); } catch { }
+                        }
+
+                        sw.Stop();
+                        var stdout = await stdoutTask.ConfigureAwait(false);
+                        var stderr = await stderrTask.ConfigureAwait(false);
+
+                        // Cap output to prevent oversized MQTT messages.
+                        const int maxChars = 50_000;
+                        if (stdout.Length > maxChars) stdout = stdout[..maxChars] + "\n[truncated]";
+                        if (stderr.Length > maxChars) stderr = stderr[..maxChars] + "\n[truncated]";
+
+                        var exitCode = exited ? proc.ExitCode : -1;
+                        await PublishTeleJsonAsync("shell", new
+                        {
+                            success = exited && exitCode == 0,
+                            cmd,
+                            exitCode,
+                            stdout,
+                            stderr,
+                            timedOut = !exited,
+                            durationMs = sw.ElapsedMilliseconds
+                        }, CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLog.Error($"[Shell] Error: {ex.Message}");
+                        await PublishTeleJsonAsync("shell", new { success = false, message = ex.Message }, CancellationToken.None).ConfigureAwait(false);
+                    }
+                });
             }
 
             if (string.Equals(command, "get-cassia-settings", StringComparison.OrdinalIgnoreCase) ||
@@ -2362,6 +2468,20 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
 
     private string CmdTopic(string target, string leaf)
         => $"{CurrentOptions.BaseTopic}/{CurrentOptions.NetworkId}/cmd/{target}/{leaf}";
+
+    // ---------------- Shell exec helpers ----------------
+
+    /// <summary>
+    /// Computes the HMAC-SHA256 token for an exec-shell command.
+    /// Key  = ShellExecToken + this gateway's MQTT name (device-specific).
+    /// Data = cmd + ts (Unix epoch seconds as decimal string).
+    /// </summary>
+    private string ComputeShellHmac(string cmd, long ts)
+    {
+        var key = Encoding.UTF8.GetBytes(ShellExecToken + CurrentOptions.Name);
+        var data = Encoding.UTF8.GetBytes(cmd + ts.ToString());
+        return Convert.ToHexString(HMACSHA256.HashData(key, data)).ToLowerInvariant();
+    }
 
     // ---------------- Options construction (reflection based) ----------------
 

@@ -775,6 +775,14 @@
                     <TextBlock Text="📶" Style="{StaticResource MenuIconGlyph}"/>
                 </MenuItem.Icon>
             </MenuItem>
+            <MenuItem Header="Local terminal..."
+                      Visibility="{Binding PlacementTarget.Tag.DeveloperModeUnlocked, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}}"
+                      Command="{Binding PlacementTarget.Tag.OpenShellTerminalCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                      CommandParameter="{Binding PlacementTarget.DataContext.Name, RelativeSource={RelativeSource AncestorType=ContextMenu}}">
+                <MenuItem.Icon>
+                    <TextBlock Text="&gt;_" Style="{StaticResource MenuIconGlyph}"/>
+                </MenuItem.Icon>
+            </MenuItem>
         </ContextMenu>
     </Border.ContextMenu>
 
