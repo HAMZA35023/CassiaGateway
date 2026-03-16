@@ -15,6 +15,9 @@ namespace AccessAppMqttWpf.Services;
 
 public sealed class MqttClientService : IDisposable
 {
+    private readonly record struct BufferedPayload(long SessionId, string Payload);
+    private readonly record struct BufferedTimestamp(long SessionId, DateTimeOffset Timestamp);
+
     private static bool IsLeaf(string topic, string leaf)
     {
         if (string.IsNullOrWhiteSpace(topic) || string.IsNullOrWhiteSpace(leaf)) return false;
@@ -23,50 +26,79 @@ public sealed class MqttClientService : IDisposable
         return string.Equals(parts[^1], leaf, StringComparison.OrdinalIgnoreCase);
     }
 
-
-    private readonly IMqttClient _client;
+    private IMqttClient? _client;
 
     // --- High-frequency topic coalescing (UI throttling) ---
     // We receive up to a few thousand messages/min. The UI does not need per-message updates for these topics.
     // We keep only the latest payload per topic and emit at a fixed cadence.
-    private readonly ConcurrentDictionary<string, string> _latestProgressByTopicMac = new(StringComparer.OrdinalIgnoreCase); // key = topic|mac
-    private readonly ConcurrentDictionary<string, string> _latestDiscoveredDeviceByTopicMac = new(StringComparer.OrdinalIgnoreCase); // key = topic|mac, value = device json
-    private readonly ConcurrentDictionary<string, DateTimeOffset> _latestDiscoveredTimeByTopic = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, BufferedPayload> _latestProgressByTopicMac = new(StringComparer.OrdinalIgnoreCase); // key = topic|mac
+    private readonly ConcurrentDictionary<string, BufferedPayload> _latestDiscoveredDeviceByTopicMac = new(StringComparer.OrdinalIgnoreCase); // key = topic|mac, value = device json
+    private readonly ConcurrentDictionary<string, BufferedTimestamp> _latestDiscoveredTimeByTopic = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly Timer _progressFlushTimer;
     private readonly Timer _discoveredFlushTimer;
 
     private readonly MqttFactory _factory = new();
     private CancellationTokenSource? _cts;
+    private long _sessionCounter;
+    private long _activeSessionId;
+    private string _activeBrokerLabel = "none";
 
     public bool IsConnected => _client?.IsConnected == true;
 
     public event Action<string, string>? Message;              // topic, payload
     public event Action<bool, string>? ConnectionChanged;      // isConnected, status text
 
-    public MqttClientService()
+    private long ActiveSessionId => Interlocked.Read(ref _activeSessionId);
+
+    private static string BuildBrokerLabel(string host, int port, bool useTls)
+        => $"{(useTls ? "mqtts" : "mqtt")}://{host}:{port}";
+
+    private bool IsCurrentSession(long sessionId)
+        => sessionId == ActiveSessionId;
+
+    private void ClearBufferedTelemetry()
     {
-        _client = _factory.CreateMqttClient();
+        _latestProgressByTopicMac.Clear();
+        _latestDiscoveredDeviceByTopicMac.Clear();
+        _latestDiscoveredTimeByTopic.Clear();
+    }
 
-        // Flush coalesced high-frequency topics on a fixed cadence.
-        _progressFlushTimer = new Timer(_ => FlushProgress(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
-        _discoveredFlushTimer = new Timer(_ => FlushDiscovered(), null, TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(15));
+    private void SetActiveSession(long sessionId, string brokerLabel)
+    {
+        Interlocked.Exchange(ref _activeSessionId, sessionId);
+        _activeBrokerLabel = brokerLabel;
+    }
 
+    private void InvalidateCurrentSession(string brokerLabel = "none")
+    {
+        var invalidatedSessionId = Interlocked.Increment(ref _sessionCounter);
+        SetActiveSession(invalidatedSessionId, brokerLabel);
+    }
 
-        _client.ConnectedAsync += _ =>
+    private void AttachClientHandlers(IMqttClient client, long sessionId, string brokerLabel)
+    {
+        client.ConnectedAsync += _ =>
         {
-            ConnectionChanged?.Invoke(true, "Connected");
+            if (!IsCurrentSession(sessionId)) return Task.CompletedTask;
+
+            ConnectionChanged?.Invoke(true, $"Connected [{sessionId}] {brokerLabel}");
             return Task.CompletedTask;
         };
 
-        _client.DisconnectedAsync += e =>
+        client.DisconnectedAsync += e =>
         {
-            ConnectionChanged?.Invoke(false, $"Disconnected: {e.Reason} {e.ReasonString}".Trim());
+            if (!IsCurrentSession(sessionId)) return Task.CompletedTask;
+
+            ClearBufferedTelemetry();
+            ConnectionChanged?.Invoke(false, $"Disconnected [{sessionId}] {brokerLabel}: {e.Reason} {e.ReasonString}".Trim());
             return Task.CompletedTask;
         };
 
-        _client.ApplicationMessageReceivedAsync += e =>
+        client.ApplicationMessageReceivedAsync += e =>
         {
+            if (!IsCurrentSession(sessionId)) return Task.CompletedTask;
+
             try
             {
                 var payload = e.ApplicationMessage.PayloadSegment.Array == null
@@ -82,25 +114,36 @@ public sealed class MqttClientService : IDisposable
                 {
                     var mac = TryExtractMacFromProgress(payload);
                     if (!string.IsNullOrWhiteSpace(mac))
-                        _latestProgressByTopicMac[$"{topic}|{mac}"] = payload;
+                        _latestProgressByTopicMac[$"{topic}|{mac}"] = new BufferedPayload(sessionId, payload);
                     else
                         Message?.Invoke(topic, payload); // unknown shape, pass through
                 }
                 else if (IsLeaf(topic, "discovered"))
                 {
-                    TryBufferDiscoveredPerMac(topic, payload);
+                    TryBufferDiscoveredPerMac(sessionId, topic, payload);
                 }
                 else
                 {
                     Message?.Invoke(topic, payload);
                 }
             }
-            catch { /* ignore */ }
+            catch
+            {
+                // ignore
+            }
 
             return Task.CompletedTask;
         };
     }
-    
+
+    public MqttClientService()
+    {
+        InvalidateCurrentSession();
+
+        // Flush coalesced high-frequency topics on a fixed cadence.
+        _progressFlushTimer = new Timer(_ => FlushProgress(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+        _discoveredFlushTimer = new Timer(_ => FlushDiscovered(), null, TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(15));
+    }
 
     public async Task ConnectAsync(
         string host,
@@ -114,6 +157,18 @@ public sealed class MqttClientService : IDisposable
     {
         _cts?.Cancel();
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        ClearBufferedTelemetry();
+
+        var brokerLabel = BuildBrokerLabel(host, port, useTls);
+        var sessionId = Interlocked.Increment(ref _sessionCounter);
+        SetActiveSession(sessionId, brokerLabel);
+
+        var oldClient = _client;
+        var client = _factory.CreateMqttClient();
+        AttachClientHandlers(client, sessionId, brokerLabel);
+        _client = client;
+
+        try { oldClient?.Dispose(); } catch { }
 
         var builder = new MqttClientOptionsBuilder()
             .WithClientId($"accessapp-wpf-{Environment.MachineName}-{Guid.NewGuid():N}".Substring(0, 32))
@@ -128,11 +183,11 @@ public sealed class MqttClientService : IDisposable
 
         var options = builder.Build();
 
-        ConnectionChanged?.Invoke(false, "Connecting…");
-        await _client.ConnectAsync(options, _cts.Token).ConfigureAwait(false);
+        ConnectionChanged?.Invoke(false, $"Connecting [{sessionId}] {brokerLabel}...");
+        await client.ConnectAsync(options, _cts.Token).ConfigureAwait(false);
 
         if (!string.IsNullOrWhiteSpace(subscribeTopic))
-            await _client.SubscribeAsync(subscribeTopic).ConfigureAwait(false);
+            await client.SubscribeAsync(subscribeTopic).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -141,7 +196,8 @@ public sealed class MqttClientService : IDisposable
     /// </summary>
     public async Task SubscribeAsync(string topicFilter, int qos = 0)
     {
-        if (!IsConnected) return;
+        var client = _client;
+        if (client?.IsConnected != true) return;
         if (string.IsNullOrWhiteSpace(topicFilter)) return;
 
         var level = qos <= 0
@@ -155,7 +211,7 @@ public sealed class MqttClientService : IDisposable
             .WithQualityOfServiceLevel(level)
             .Build();
 
-        await _client.SubscribeAsync(filter).ConfigureAwait(false);
+        await client.SubscribeAsync(filter).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -273,25 +329,37 @@ public sealed class MqttClientService : IDisposable
     public async Task DisconnectAsync()
     {
         _cts?.Cancel();
-        if (_client.IsConnected)
-            await _client.DisconnectAsync().ConfigureAwait(false);
+        ClearBufferedTelemetry();
+
+        var client = _client;
+        var previousBrokerLabel = _activeBrokerLabel;
+        InvalidateCurrentSession(previousBrokerLabel);
+        _client = null;
+
+        ConnectionChanged?.Invoke(false, $"Disconnected {previousBrokerLabel}");
+
+        if (client?.IsConnected == true)
+            await client.DisconnectAsync().ConfigureAwait(false);
+
+        try { client?.Dispose(); } catch { }
     }
 
     public async Task PublishJsonAsync(string topic, object payload, bool retain = false, int qos = 1, CancellationToken ct = default)
     {
-        if (!_client.IsConnected) return;
+        var client = _client;
+        if (client?.IsConnected != true) return;
 
         var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
         var msg = new MqttApplicationMessageBuilder()
             .WithTopic(topic)
             .WithPayload(json)
             .WithRetainFlag(retain)
-            .WithQualityOfServiceLevel((MQTTnet.Protocol.MqttQualityOfServiceLevel)qos)
+            .WithQualityOfServiceLevel((MqttQualityOfServiceLevel)qos)
             .Build();
 
-        await _client.PublishAsync(msg, ct).ConfigureAwait(false);
+        await client.PublishAsync(msg, ct).ConfigureAwait(false);
     }
-    
+
     private static string NormalizeMac(string mac)
         => (mac ?? "").Trim();
 
@@ -308,11 +376,14 @@ public sealed class MqttClientService : IDisposable
             if (root.TryGetProperty("MacAddress", out var macEl2) && macEl2.ValueKind == JsonValueKind.String)
                 return NormalizeMac(macEl2.GetString() ?? "");
         }
-        catch { }
+        catch
+        {
+            // ignore
+        }
         return "";
     }
 
-    private void TryBufferDiscoveredPerMac(string topic, string payload)
+    private void TryBufferDiscoveredPerMac(long sessionId, string topic, string payload)
     {
         if (string.IsNullOrWhiteSpace(topic) || string.IsNullOrWhiteSpace(payload)) return;
 
@@ -331,7 +402,7 @@ public sealed class MqttClientService : IDisposable
                 else if (tEl.TryGetDateTimeOffset(out var dto2))
                     ts = dto2;
             }
-            _latestDiscoveredTimeByTopic[topic] = ts;
+            _latestDiscoveredTimeByTopic[topic] = new BufferedTimestamp(sessionId, ts);
 
             if (!root.TryGetProperty("devices", out var arr) || arr.ValueKind != JsonValueKind.Array)
                 return;
@@ -348,7 +419,7 @@ public sealed class MqttClientService : IDisposable
                 mac = NormalizeMac(mac);
                 if (string.IsNullOrWhiteSpace(mac)) continue;
 
-                _latestDiscoveredDeviceByTopicMac[$"{topic}|{mac}"] = dev.GetRawText();
+                _latestDiscoveredDeviceByTopicMac[$"{topic}|{mac}"] = new BufferedPayload(sessionId, dev.GetRawText());
             }
         }
         catch
@@ -363,6 +434,7 @@ public sealed class MqttClientService : IDisposable
         try
         {
             if (_latestProgressByTopicMac.IsEmpty) return;
+            var activeSessionId = ActiveSessionId;
 
             // Snapshot & clear so we don't block the receive thread.
             var items = _latestProgressByTopicMac.ToArray();
@@ -371,15 +443,19 @@ public sealed class MqttClientService : IDisposable
             foreach (var kv in items)
             {
                 var key = kv.Key;
-                var payload = kv.Value;
+                var entry = kv.Value;
+                if (entry.SessionId != activeSessionId) continue;
 
                 var sep = key.IndexOf('|');
                 var topic = sep > 0 ? key.Substring(0, sep) : key;
 
-                Message?.Invoke(topic, payload);
+                Message?.Invoke(topic, entry.Payload);
             }
         }
-        catch { }
+        catch
+        {
+            // ignore
+        }
     }
 
     private void FlushDiscovered()
@@ -387,6 +463,7 @@ public sealed class MqttClientService : IDisposable
         try
         {
             if (_latestDiscoveredDeviceByTopicMac.IsEmpty) return;
+            var activeSessionId = ActiveSessionId;
 
             var items = _latestDiscoveredDeviceByTopicMac.ToArray();
             _latestDiscoveredDeviceByTopicMac.Clear();
@@ -398,8 +475,9 @@ public sealed class MqttClientService : IDisposable
                     var key = kv.Key;
                     var sep = key.IndexOf('|');
                     var topic = sep > 0 ? key.Substring(0, sep) : key;
-                    return (topic, devJson: kv.Value);
+                    return (topic, entry: kv.Value);
                 })
+                .Where(x => x.entry.SessionId == activeSessionId)
                 .GroupBy(x => x.topic, StringComparer.OrdinalIgnoreCase);
 
             foreach (var g in groups)
@@ -408,37 +486,44 @@ public sealed class MqttClientService : IDisposable
 
                 // build JSON in the SAME shape MainViewModel already expects:
                 // { time: "...", devices: [ ... ] }
-                var ts = _latestDiscoveredTimeByTopic.TryGetValue(topic, out var dto) ? dto : DateTimeOffset.UtcNow;
+                var ts = _latestDiscoveredTimeByTopic.TryGetValue(topic, out var dto) && dto.SessionId == activeSessionId
+                    ? dto.Timestamp
+                    : DateTimeOffset.UtcNow;
 
-                var devicesJson = string.Join(",", g.Select(x => x.devJson));
+                var devicesJson = string.Join(",", g.Select(x => x.entry.Payload));
                 var outPayload = $"{{\"time\":\"{ts:O}\",\"devices\":[{devicesJson}]}}";
 
                 Message?.Invoke(topic, outPayload);
             }
         }
-        catch { }
+        catch
+        {
+            // ignore
+        }
     }
 
-public async Task PublishAsync(string topic, string payload, bool retain = false)
+    public async Task PublishAsync(string topic, string payload, bool retain = false)
     {
-        if (_client == null || !_client.IsConnected) return;
+        var client = _client;
+        if (client?.IsConnected != true) return;
 
         var msg = new MqttApplicationMessageBuilder()
             .WithTopic(topic)
             .WithPayload(payload)
-            .WithQualityOfServiceLevel(MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce)
+            .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
             .WithRetainFlag(retain)
             .Build();
 
-        await _client.PublishAsync(msg);
+        await client.PublishAsync(msg).ConfigureAwait(false);
     }
+
     public void Dispose()
     {
-        try { _progressFlushTimer?.Dispose(); } catch { }
-        try { _discoveredFlushTimer?.Dispose(); } catch { }
+        try { _progressFlushTimer.Dispose(); } catch { }
+        try { _discoveredFlushTimer.Dispose(); } catch { }
 
         _cts?.Cancel();
         _cts?.Dispose();
-        _client?.Dispose();
+        try { _client?.Dispose(); } catch { }
     }
 }

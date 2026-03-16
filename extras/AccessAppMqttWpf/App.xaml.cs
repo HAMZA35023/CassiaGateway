@@ -50,6 +50,7 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        Services.AppLog.Init();
         try
         {
             var settings = SettingsStore.Load();
@@ -61,5 +62,16 @@ public partial class App : Application
         {
             ApplyTheme("Light", persist: false);
         }
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        try
+        {
+            if (MainWindow?.DataContext is ViewModels.MainViewModel vm)
+                vm.ShutdownLocalServices();
+        }
+        catch { }
+        base.OnExit(e);
     }
 }

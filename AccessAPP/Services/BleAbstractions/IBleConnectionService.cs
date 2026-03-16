@@ -28,7 +28,8 @@ public interface IBleConnectionService
     Task<ConnectedDevicesView> GetConnectedBleDevices(string gatewayIpAddress, int gatewayPort);
 
     /// <summary>Write a value to handle 19 and wait for the notification reply.</summary>
-    Task<DataResponseModel> GetDataFromBleDevice(string gatewayIpAddress, int gatewayPort, string macAddress, string value);
+    /// <param name="notificationTimeoutMs">Override the BLE notification wait timeout (ms). 0 = use the platform default.</param>
+    Task<DataResponseModel> GetDataFromBleDevice(string gatewayIpAddress, int gatewayPort, string macAddress, string value, int notificationTimeoutMs = 0);
 
     /// <summary>Send a light-control telegram to handle 19 (no-response write).</summary>
     Task<ResponseModel> SendControlToLight(string gatewayIpAddress, string macAddress, string hexControlValue);

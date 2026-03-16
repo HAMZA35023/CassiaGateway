@@ -204,7 +204,53 @@ public sealed class CassiaWebSettingsService
         if (string.IsNullOrWhiteSpace(json))
             throw new InvalidOperationException("/cassia/info returned empty response.");
 
+        // Fetch container data separately — it is not included in the base /cassia/info response.
+        var containerJson = await TryGetContainerInfoJsonAsync(client, baseUri, ct).ConfigureAwait(false);
+        if (containerJson != null)
+            json = MergeContainerIntoInfo(json, containerJson);
+
         return json;
+    }
+
+    private static async Task<string?> TryGetContainerInfoJsonAsync(HttpClient client, Uri baseUri, CancellationToken ct)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "cassia/info?fields=container");
+            request.Headers.Accept.Clear();
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            request.Headers.TryAddWithoutValidation("X-Requested-With", "XMLHttpRequest");
+            request.Headers.Referrer = new Uri(baseUri, "/");
+
+            using var response = await client.SendAsync(request, ct).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode) return null;
+
+            var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            return string.IsNullOrWhiteSpace(json) ? null : json;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string MergeContainerIntoInfo(string infoJson, string containerJson)
+    {
+        try
+        {
+            var info = JsonNode.Parse(infoJson) as JsonObject;
+            var container = JsonNode.Parse(containerJson) as JsonObject;
+            if (info == null || container == null) return infoJson;
+
+            if (container.TryGetPropertyValue("container", out var containerNode) && containerNode != null)
+                info["container"] = containerNode.DeepClone();
+
+            return info.ToJsonString(new JsonSerializerOptions { WriteIndented = false });
+        }
+        catch
+        {
+            return infoJson;
+        }
     }
 
     private static async Task PostInfoAsync(HttpClient client, JsonObject payload, Uri baseUri, CancellationToken ct)
@@ -413,6 +459,36 @@ public sealed class CassiaWebSettingsService
             JsonValue value when value.TryGetValue<double>(out var d) => d.ToString(),
             _ => node.ToJsonString(new JsonSerializerOptions { WriteIndented = false })
         };
+    }
+
+    /// <summary>
+    /// Tries to authenticate against the Cassia web interface using default/configured credentials
+    /// and extract the WAN IP address and subnet broadcast address from <c>wired.iface.ip</c>
+    /// and <c>wired.iface.bcast</c>. Returns null if the Cassia API is unreachable or the
+    /// fields are missing (e.g. running on a non-Cassia host).
+    /// </summary>
+    public async Task<(IPAddress WanIp, IPAddress WanBroadcast)?> TryGetWanInfoAsync(CancellationToken ct)
+    {
+        try
+        {
+            await using var session = await CreateAuthenticatedSessionAsync(
+                new CassiaWebSettingsRequest(), ct).ConfigureAwait(false);
+
+            var root = System.Text.Json.Nodes.JsonNode.Parse(session.InitialInfoJson)
+                       as System.Text.Json.Nodes.JsonObject;
+
+            var wanIpStr    = root?["wired"]?["iface"]?["ip"]?.GetValue<string>();
+            var wanBcastStr = root?["wired"]?["iface"]?["bcast"]?.GetValue<string>();
+
+            if (!string.IsNullOrWhiteSpace(wanIpStr)    && IPAddress.TryParse(wanIpStr,    out var wanIp)
+             && !string.IsNullOrWhiteSpace(wanBcastStr) && IPAddress.TryParse(wanBcastStr, out var wanBroadcast))
+            {
+                return (wanIp, wanBroadcast);
+            }
+        }
+        catch { }
+
+        return null;
     }
 
     private sealed class AuthenticatedSession : IAsyncDisposable

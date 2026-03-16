@@ -1,11 +1,15 @@
-AccessApp Cassia backend:
+WPF Application
+---------------------------
 
-CRITICAL:
-Settings-changes and 102/102, should first be executed after all fw-upgrades are done!
+We need to add an option to auto start local mqtt, and access app on startup - also make a quick start/stop local server in the menu.
+No need to hide the local server anymore
+We need to make sure to switch to the local mqtt server when the local mqtt is running in the client (dont override the stores mqtt settings for the public mqtt server)
+If the accessapp is installed from the manifest, we should on startup always check for a new version, and give a promt to update if there is a newer version.
+Next to the online-badge in the cassia overview we should show what BLE backend is used (is should be exposed by the mqtt status signal)
 
-MAJOR:
--> Clear/Remove, should clear the devicelist on cassia as well.
+--------
+NEXT STEP
+--------
 
-MINOR:
-- Add hardcoded limits for workers on both cassia and native-linux (total pr chip)
-
+Lets make the local mqtt server discoverable for the cassia in the accessapp, so we can connect them directly together on a closed network as well, where the cassia also will connect the the local mqtt host.
+Then it is still offline, possible to connect multiple (accessapp) together in a closed network.

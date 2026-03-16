@@ -35,6 +35,11 @@ public partial class MainWindow : Window
         DataContext = new MainViewModel();
         PreviewKeyDown += MainWindow_PreviewKeyDown;
         PreviewMouseDown += MainWindow_PreviewMouseDown;
+        Closing += (_, _) =>
+        {
+            if (DataContext is MainViewModel vm)
+                vm.ShutdownLocalServices();
+        };
 
         Loaded += (_, _) => _queueDefaultSortActive = true;
         ApplyQueueDefaultSort();

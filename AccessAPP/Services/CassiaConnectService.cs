@@ -256,7 +256,7 @@ namespace AccessAPP.Services
                 throw new Exception($"Error: {ex.Message + ex.StackTrace}");
             }
         }
-        public async Task<DataResponseModel> GetDataFromBleDevice(string gatewayIpAddress, int gatewayPort, string macAddress, string value)
+        public async Task<DataResponseModel> GetDataFromBleDevice(string gatewayIpAddress, int gatewayPort, string macAddress, string value, int notificationTimeoutMs = 0)
         {
             try
             {
@@ -291,7 +291,8 @@ namespace AccessAPP.Services
                 });
 
                 // ✅ Wait for response or timeout
-                var completedTask = await Task.WhenAny(responseTask.Task, Task.Delay(TimeSpan.FromSeconds(120)));
+                int timeoutMs = notificationTimeoutMs > 0 ? notificationTimeoutMs : 120000;
+                var completedTask = await Task.WhenAny(responseTask.Task, Task.Delay(timeoutMs));
 
                 if (completedTask == responseTask.Task)
                 {
