@@ -1,0 +1,75 @@
+<Window x:Class="AccessAppMqttWpf.ShellTerminalWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Local Terminal"
+        Height="540" Width="860"
+        MinHeight="300" MinWidth="500"
+        WindowStartupLocation="CenterOwner">
+
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <Border Style="{StaticResource Card}" Padding="12,10" Margin="0,0,0,8">
+            <TextBlock Text="{Binding HeaderText}"
+                       FontSize="14" FontWeight="SemiBold"/>
+        </Border>
+
+        <!-- Output -->
+        <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0" Margin="0,0,0,8">
+            <TextBox x:Name="OutputBox"
+                     Text="{Binding OutputText, Mode=OneWay}"
+                     IsReadOnly="True"
+                     FontFamily="Consolas"
+                     FontSize="12"
+                     Background="#1A1A1A"
+                     Foreground="#D4D4D4"
+                     CaretBrush="#D4D4D4"
+                     BorderThickness="0"
+                     VerticalScrollBarVisibility="Auto"
+                     HorizontalScrollBarVisibility="Auto"
+                     TextWrapping="NoWrap"
+                     Padding="12"
+                     AcceptsReturn="True"/>
+        </Border>
+
+        <!-- Input -->
+        <Border Grid.Row="2" Style="{StaticResource Card}" Padding="10">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Text="$"
+                           FontFamily="Consolas"
+                           FontSize="13"
+                           FontWeight="SemiBold"
+                           VerticalAlignment="Center"
+                           Margin="4,0,8,0"
+                           Foreground="{DynamicResource AccentBrush}"/>
+
+                <TextBox x:Name="InputBox"
+                         Grid.Column="1"
+                         Text="{Binding InputText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                         FontFamily="Consolas"
+                         FontSize="12"
+                         Padding="8,6"
+                         VerticalAlignment="Center"
+                         PreviewKeyDown="InputBox_KeyDown"/>
+
+                <Button Grid.Column="2"
+                        Style="{StaticResource PrimaryButton}"
+                        Content="Send"
+                        Padding="18,6"
+                        Margin="8,0,0,0"
+                        Command="{Binding SendCommandCommand}"/>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

@@ -360,6 +360,12 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        if (kind == "tele" && leaf == "shell")
+        {
+            RaiseShellResponse(cassia, payload);
+            return;
+        }
+
 
         
 if (kind == "tele" && leaf == "progress")
