@@ -1107,6 +1107,28 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 return PublishTeleJsonAsync("runtime", resp, CancellationToken.None);
             }
 
+            // Get raw runtime.json file content from disk (shows only persisted overrides, not all defaults)
+            if (string.Equals(command, "get-runtime-file", StringComparison.OrdinalIgnoreCase))
+            {
+                string? rawJson = null;
+                bool fileExists = File.Exists(_runtimeStore.FilePath);
+                if (fileExists)
+                {
+                    try { rawJson = File.ReadAllText(_runtimeStore.FilePath); }
+                    catch (Exception ex) { rawJson = $"(read error: {ex.Message})"; }
+                }
+
+                var resp = new
+                {
+                    success = true,
+                    filePath = _runtimeStore.FilePath,
+                    fileExists,
+                    rawJson,
+                    time = DateTimeOffset.UtcNow
+                };
+                return PublishTeleJsonAsync("runtime", resp, CancellationToken.None);
+            }
+
             if (string.Equals(command, "get-cassia-settings", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(command, "get-gateway-settings", StringComparison.OrdinalIgnoreCase))
             {
