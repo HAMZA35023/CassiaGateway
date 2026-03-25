@@ -88,54 +88,16 @@
                            TextWrapping="Wrap"
                            Margin="20,0,0,10"/>
 
-                <Separator Margin="0,0,0,10"/>
-
-                <TextBlock Text="Known Gateway IPs"
-                           FontSize="14" FontWeight="SemiBold"
-                           Margin="0,0,0,4"/>
-                <TextBlock TextWrapping="Wrap"
+                <CheckBox Content="Send MQTT host IP to AccessApp"
+                          IsChecked="{Binding SendMqttHost, Mode=TwoWay}"
+                          Margin="0,0,0,4"
+                          ToolTip="When enabled, WPF probes its outbound IP and sends it in the config push. Required when AccessApp runs inside a NAT container (e.g. Cassia LXC). Disable if there is no NAT — AccessApp will then use the TCP connection's source IP instead."/>
+                <TextBlock Text="Enable when AccessApp runs inside a NAT container (Cassia LXC). Disable for direct connections — AccessApp will detect the WPF IP automatically from the TCP connection."
                            Foreground="{DynamicResource MutedBrush}"
                            FontSize="11"
-                           Margin="0,0,0,8">
-                    <Run Text="Known Cassia WAN IPs that receive unicast discovery beacons. Required when AccessApp runs inside an LXC container and cannot receive subnet broadcasts."/>
-                    <LineBreak/>
-                    <Run Text="IPs are saved automatically when a gateway connects to the local MQTT server."/>
-                </TextBlock>
+                           TextWrapping="Wrap"
+                           Margin="20,0,0,10"/>
 
-                <Grid Margin="0,0,0,6">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBox Grid.Column="0"
-                             Text="{Binding GatewayIpsText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                             ToolTip="Comma-separated list of Cassia WAN IP addresses (e.g. 192.168.0.89, 192.168.0.90)"/>
-                    <Button Grid.Column="1"
-                            Content="{Binding IsScanning, Converter={StaticResource BoolToVis}, ConverterParameter=Scanning…|Scan}"
-                            Command="{Binding ScanForGatewaysCommand}"
-                            MinWidth="70" Margin="6,0,0,0">
-                        <Button.Style>
-                            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-                                <Setter Property="Content" Value="Scan…"/>
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsScanning}" Value="True">
-                                        <Setter Property="Content" Value="Scanning…"/>
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </Button.Style>
-                    </Button>
-                    <Button Grid.Column="2"
-                            Content="Clear"
-                            MinWidth="50" Margin="4,0,0,0"
-                            Click="ClearGatewayIps_Click"/>
-                </Grid>
-
-                <ProgressBar Height="4"
-                             Minimum="0" Maximum="1"
-                             Value="{Binding ScanProgress}"
-                             Visibility="{Binding IsScanning, Converter={StaticResource BoolToVis}}"/>
             </StackPanel>
         </Border>
 

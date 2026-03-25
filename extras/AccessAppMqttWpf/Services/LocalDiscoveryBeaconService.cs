@@ -12,72 +12,73 @@ using System.Threading.Tasks;
 namespace AccessAppMqttWpf.Services;
 
 /// <summary>
-/// Broadcasts a UDP beacon on every active LAN interface so AccessApp instances on the same
-/// subnet can discover and connect to the local MQTT broker.
+/// Broadcasts a UDP beacon on every active LAN interface so AccessApp instances that CAN
+/// receive subnet broadcasts discover the local MQTT broker without an HTTP scan.
 ///
-/// For each interface a directed broadcast is sent to its subnet broadcast address
-/// (e.g. 192.168.1.255) every 3 s, with that interface's IP in the payload:
+/// Beacon payload every 3 s:
 /// <code>{ "service":"cassia-mqtt", "host":"192.168.x.x", "port":1883, "networkId":"..." }</code>
 ///
-/// In addition, unicast beacons are sent directly to any IPs in <see cref="AddGatewayIp"/>.
-/// This covers Cassia gateways where AccessApp runs in an LXC container and cannot receive
-/// subnet broadcasts from the WPF side.
+/// Additionally sends unicast beacons every 3 s to session-known gateway IPs (added via
+/// <see cref="AddGatewayIp"/>). This keeps the UDP path alive for devices that received the
+/// initial HTTP config push but also listen for the beacon to refresh their broker address.
+///
+/// Note: Discovery and configuration of Cassia gateways is handled entirely by
+/// <see cref="AccessAppDiscoveryService"/> via TCP/HTTP on port 60000. This service is a
+/// complementary UDP path only.
 /// </summary>
 public sealed class LocalDiscoveryBeaconService : IDisposable
 {
     public const int BeaconPort = 60004;
     private const int BeaconIntervalMs = 3000;
 
-    // Thread-safe set of unicast target IPs (e.g. Cassia WAN IPs)
     private readonly ConcurrentDictionary<string, bool> _unicastTargets =
         new(StringComparer.OrdinalIgnoreCase);
 
+    private int    _mqttPort;
+    private string _networkId = "";
+
     private CancellationTokenSource? _cts;
-    private Task? _task;
+    private Task? _beaconTask;
 
-    public bool IsRunning => _task != null && !_task.IsCompleted;
+    public bool IsRunning => _beaconTask != null && !_beaconTask.IsCompleted;
 
-    public void Start(int mqttPort, string networkId, IEnumerable<string>? gatewayIps = null)
+    public void Start(int mqttPort, string networkId)
     {
         Stop();
+        _mqttPort  = mqttPort;
+        _networkId = networkId;
         _unicastTargets.Clear();
-        if (gatewayIps != null)
-            foreach (var ip in gatewayIps)
-                if (!string.IsNullOrWhiteSpace(ip))
-                    _unicastTargets[ip.Trim()] = true;
 
-        _cts  = new CancellationTokenSource();
-        _task = Task.Run(() => BroadcastLoopAsync(mqttPort, networkId, _cts.Token));
-        AppLog.Info($"[LocalDiscoveryBeacon] Started — broadcasting MQTT port {mqttPort}, networkId={networkId} on UDP {BeaconPort}");
-        if (_unicastTargets.Count > 0)
-            AppLog.Info($"[LocalDiscoveryBeacon] Unicast targets: {string.Join(", ", _unicastTargets.Keys)}");
+        _cts        = new CancellationTokenSource();
+        _beaconTask = Task.Run(() => BeaconLoopAsync(_cts.Token));
+        AppLog.Info($"[LocalDiscoveryBeacon] Started — MQTT port {mqttPort}, networkId={networkId}");
     }
 
     /// <summary>
-    /// Adds a unicast target IP to the running beacon without restarting.
-    /// Idempotent — adding the same IP twice has no effect.
+    /// Registers a session-level unicast target (gateway found via TCP scan). The beacon loop
+    /// will unicast to this IP every cycle in addition to the subnet broadcast. Not persisted.
     /// </summary>
     public void AddGatewayIp(string ip)
     {
         if (string.IsNullOrWhiteSpace(ip)) return;
         ip = ip.Trim();
         if (_unicastTargets.TryAdd(ip, true))
-            AppLog.Info($"[LocalDiscoveryBeacon] Added unicast gateway target: {ip}");
+            AppLog.Info($"[LocalDiscoveryBeacon] Unicast target registered: {ip}");
     }
 
     public void Stop()
     {
         _cts?.Cancel();
-        try { _task?.Wait(1000); } catch { }
+        try { _beaconTask?.Wait(1000); } catch { }
         _cts?.Dispose();
-        _cts  = null;
-        _task = null;
+        _cts        = null;
+        _beaconTask = null;
         AppLog.Info("[LocalDiscoveryBeacon] Stopped.");
     }
 
     public void Dispose() => Stop();
 
-    private async Task BroadcastLoopAsync(int mqttPort, string networkId, CancellationToken ct)
+    private async Task BeaconLoopAsync(CancellationToken ct)
     {
         bool firstLoop = true;
         while (!ct.IsCancellationRequested)
@@ -85,12 +86,10 @@ public sealed class LocalDiscoveryBeaconService : IDisposable
             var interfaces = GetLanInterfaces();
 
             if (firstLoop)
-            {
                 foreach (var (localIp, broadcastIp) in interfaces)
                     AppLog.Info($"[LocalDiscoveryBeacon] Interface {localIp} → broadcast {broadcastIp}:{BeaconPort}");
-            }
 
-            // ── LAN subnet broadcast ───────────────────────────────────────────
+            // ── Subnet broadcast ──────────────────────────────────────────────
             foreach (var (localIp, broadcastIp) in interfaces)
             {
                 try
@@ -100,15 +99,7 @@ public sealed class LocalDiscoveryBeaconService : IDisposable
                     socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
                     socket.Bind(new IPEndPoint(localIp, 0));
 
-                    var beacon = new
-                    {
-                        service = "cassia-mqtt",
-                        host    = localIp.ToString(),
-                        port    = mqttPort,
-                        networkId
-                    };
-
-                    var json = JsonSerializer.Serialize(beacon);
+                    var json = MakeBeaconJson(localIp.ToString());
                     var data = Encoding.UTF8.GetBytes(json);
                     await socket.SendToAsync(data, SocketFlags.None,
                         new IPEndPoint(broadcastIp, BeaconPort), ct).ConfigureAwait(false);
@@ -117,13 +108,10 @@ public sealed class LocalDiscoveryBeaconService : IDisposable
                         AppLog.Info($"[LocalDiscoveryBeacon] Broadcast to {broadcastIp}:{BeaconPort}: {json}");
                 }
                 catch (OperationCanceledException) { return; }
-                catch (Exception ex)
-                {
-                    AppLog.Warn($"[LocalDiscoveryBeacon] Broadcast on {localIp} failed: {ex.Message}");
-                }
+                catch (Exception ex) { AppLog.Warn($"[LocalDiscoveryBeacon] Broadcast on {localIp} failed: {ex.Message}"); }
             }
 
-            // ── Unicast to known gateway IPs ───────────────────────────────────
+            // ── Unicast to session-known gateway IPs ──────────────────────────
             foreach (var target in _unicastTargets.Keys)
             {
                 try
@@ -134,27 +122,13 @@ public sealed class LocalDiscoveryBeaconService : IDisposable
                     using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
                     socket.Bind(new IPEndPoint(IPAddress.Parse(outboundIp), 0));
 
-                    var beacon = new
-                    {
-                        service = "cassia-mqtt",
-                        host    = outboundIp,   // WPF's real LAN IP toward this target
-                        port    = mqttPort,
-                        networkId
-                    };
-
-                    var json = JsonSerializer.Serialize(beacon);
+                    var json = MakeBeaconJson(outboundIp);
                     var data = Encoding.UTF8.GetBytes(json);
                     await socket.SendToAsync(data, SocketFlags.None,
                         new IPEndPoint(IPAddress.Parse(target), BeaconPort), ct).ConfigureAwait(false);
-
-                    if (firstLoop)
-                        AppLog.Info($"[LocalDiscoveryBeacon] Unicast to {target}:{BeaconPort}: {json}");
                 }
                 catch (OperationCanceledException) { return; }
-                catch (Exception ex)
-                {
-                    AppLog.Warn($"[LocalDiscoveryBeacon] Unicast to {target} failed: {ex.Message}");
-                }
+                catch (Exception ex) { AppLog.Warn($"[LocalDiscoveryBeacon] Unicast to {target} failed: {ex.Message}"); }
             }
 
             firstLoop = false;
@@ -164,14 +138,12 @@ public sealed class LocalDiscoveryBeaconService : IDisposable
         }
     }
 
-    /// <summary>
-    /// Returns all active non-loopback/non-tunnel IPv4 interfaces with their directed
-    /// broadcast address (ip &amp; mask | ~mask).
-    /// </summary>
+    private string MakeBeaconJson(string hostIp) =>
+        JsonSerializer.Serialize(new { service = "cassia-mqtt", host = hostIp, port = _mqttPort, networkId = _networkId });
+
     private static List<(IPAddress localIp, IPAddress broadcastIp)> GetLanInterfaces()
     {
         var result = new List<(IPAddress, IPAddress)>();
-
         foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
         {
             if (ni.OperationalStatus != OperationalStatus.Up) continue;
@@ -182,11 +154,10 @@ public sealed class LocalDiscoveryBeaconService : IDisposable
             foreach (var addr in ni.GetIPProperties().UnicastAddresses)
             {
                 if (addr.Address.AddressFamily != AddressFamily.InterNetwork) continue;
-
-                var ip   = addr.Address.GetAddressBytes();
                 var mask = MaskFromPrefix(addr.IPv4Mask, addr.PrefixLength);
                 if (mask == null) continue;
 
+                var ip        = addr.Address.GetAddressBytes();
                 var broadcast = new byte[4];
                 for (int i = 0; i < 4; i++)
                     broadcast[i] = (byte)((ip[i] & mask[i]) | (~mask[i] & 0xFF));
@@ -194,29 +165,27 @@ public sealed class LocalDiscoveryBeaconService : IDisposable
                 result.Add((addr.Address, new IPAddress(broadcast)));
             }
         }
-
         if (result.Count == 0)
             result.Add((IPAddress.Any, IPAddress.Broadcast));
-
         return result;
     }
 
-    private static bool IsVirtualAdapter(System.Net.NetworkInformation.NetworkInterface ni)
+    private static bool IsVirtualAdapter(NetworkInterface ni)
     {
         var desc = ni.Description ?? "";
-        return desc.Contains("Virtual",    StringComparison.OrdinalIgnoreCase)
-            || desc.Contains("Hyper-V",    StringComparison.OrdinalIgnoreCase)
+        return desc.Contains("Virtual",     StringComparison.OrdinalIgnoreCase)
+            || desc.Contains("Hyper-V",     StringComparison.OrdinalIgnoreCase)
             || desc.Contains("TAP-Windows", StringComparison.OrdinalIgnoreCase)
-            || desc.Contains("WireGuard",  StringComparison.OrdinalIgnoreCase)
-            || desc.Contains("vEthernet",  StringComparison.OrdinalIgnoreCase);
+            || desc.Contains("WireGuard",   StringComparison.OrdinalIgnoreCase)
+            || desc.Contains("vEthernet",   StringComparison.OrdinalIgnoreCase);
     }
 
-    private static byte[]? MaskFromPrefix(System.Net.IPAddress? ipv4Mask, int prefixLength)
+    private static byte[]? MaskFromPrefix(IPAddress? ipv4Mask, int prefixLength)
     {
         var bytes = ipv4Mask?.GetAddressBytes();
         if (bytes != null && bytes.Length == 4) return bytes;
-
         if (prefixLength < 0 || prefixLength > 32) return null;
+
         var mask = new byte[4];
         for (int i = 0; i < 4; i++)
         {
@@ -226,10 +195,6 @@ public sealed class LocalDiscoveryBeaconService : IDisposable
         return mask;
     }
 
-    /// <summary>
-    /// Uses the OS routing table to determine which local IP is used to reach
-    /// <paramref name="targetIp"/>.  The UDP socket is never actually sent.
-    /// </summary>
     private static string GetOutboundIpFor(string targetIp)
     {
         try

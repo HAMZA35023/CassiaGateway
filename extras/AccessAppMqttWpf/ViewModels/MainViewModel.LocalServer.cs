@@ -81,13 +81,33 @@ public partial class MainViewModel : ObservableObject
             if (running)
             {
                 var ls = _store.Load().localServer;
-                _discoveryBeacon.Start(LocalMqttServer.Port, NetworkId, ls.gatewayIps);
-                _accessAppDiscovery.Start(LocalMqttServer.Port, NetworkId, LocalMqttServer, ls.useSharedNetworkId);
-                LocalMqttServer.RemoteClientConnected += OnGatewayConnectedToLocalMqtt;
+                _discoveryBeacon.Start(LocalMqttServer.Port, NetworkId);
+                _accessAppDiscovery.Start(LocalMqttServer.Port, NetworkId, useSharedNetworkId: ls.useSharedNetworkId, sendMqttHost: ls.sendMqttHost);
+
+                // Wire events
+                _accessAppDiscovery.GatewayFound += OnGatewayFound;
+                _accessAppDiscovery.GatewayLost  += OnGatewayLost;
+                LocalMqttServer.RemoteClientConnected    += OnGatewayConnectedToLocalMqtt;
+                LocalMqttServer.RemoteClientDisconnected += OnGatewayDisconnectedFromLocalMqtt;
+
+                // TCP fast scan: parallel HTTP probes, completes in ~300 ms on LAN.
+                Application.Current.Dispatcher.Invoke(() => LocalServerStatus = "Scanning for gateways…");
+                _accessAppDiscovery.StartFastScan(onComplete: () =>
+                {
+                    var count = _accessAppDiscovery.DiscoveredCount;
+                    var msg   = count == 0
+                        ? "Scan done — no gateways found."
+                        : $"Scan done — {count} gateway{(count == 1 ? "" : "s")} found.";
+                    Application.Current.Dispatcher.Invoke(() => LocalServerStatus = msg);
+                    AppLog.Info($"[MainViewModel] Fast scan complete: {count} gateway(s) discovered.");
+                });
             }
             else
             {
-                LocalMqttServer.RemoteClientConnected -= OnGatewayConnectedToLocalMqtt;
+                _accessAppDiscovery.GatewayFound -= OnGatewayFound;
+                _accessAppDiscovery.GatewayLost  -= OnGatewayLost;
+                LocalMqttServer.RemoteClientConnected    -= OnGatewayConnectedToLocalMqtt;
+                LocalMqttServer.RemoteClientDisconnected -= OnGatewayDisconnectedFromLocalMqtt;
                 _discoveryBeacon.Stop();
                 _accessAppDiscovery.Stop();
             }
@@ -418,6 +438,12 @@ public partial class MainViewModel : ObservableObject
                 ConnectionStatus = proc != null
                     ? $"AccessApp started (PID {proc.Id})."
                     : "Failed to start AccessApp.");
+
+            // Probe own LAN IPs every 2 s until the local AccessApp responds (up to 30 s).
+            // The fast scan fires before AccessApp has started listening, so without this
+            // the first discovery would take up to 30 s (re-push loop interval).
+            if (proc != null)
+                _accessAppDiscovery.StartLocalAccessAppProbe();
         });
     }
 
@@ -468,29 +494,50 @@ public partial class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// When a remote AccessApp connects to our local MQTT broker, auto-save its IP as a
-    /// known gateway so future sessions unicast cassia-mqtt beacons directly to it.
+    /// A TCP scan confirmed this IP is an AccessApp and config was pushed.
+    /// Register it as a UDP unicast target so the parallel beacon path also reaches it.
+    /// </summary>
+    private void OnGatewayFound(string ip)
+    {
+        _discoveryBeacon.AddGatewayIp(ip);
+    }
+
+    /// <summary>
+    /// AccessApp connected to our MQTT broker — it received and acted on the config push.
+    /// No action needed beyond what OnGatewayFound already did.
     /// </summary>
     private void OnGatewayConnectedToLocalMqtt(string ip)
     {
-        // Also feed it into the running beacon so it starts getting unicast immediately.
-        _discoveryBeacon.AddGatewayIp(ip);
+        AppLog.Info($"[MainViewModel] Gateway {ip} connected to local MQTT broker.");
+    }
 
-        // Persist to settings so it survives app restarts.
-        try
-        {
-            var all = _store.Load();
-            if (!all.localServer.gatewayIps.Contains(ip, StringComparer.OrdinalIgnoreCase))
-            {
-                all.localServer.gatewayIps.Add(ip);
-                _store.Save(all);
-                AppLog.Info($"[MainViewModel] Auto-saved gateway IP {ip} to settings.");
-            }
-        }
-        catch (Exception ex)
-        {
-            AppLog.Warn($"[MainViewModel] Failed to save gateway IP {ip}: {ex.Message}");
-        }
+    /// <summary>
+    /// MQTT client dropped — fastest signal that a gateway went offline.
+    /// Start the slow TCP scan immediately; it will find the gateway when it comes back.
+    /// </summary>
+    private void OnGatewayDisconnectedFromLocalMqtt(string ip)
+    {
+        var count = _accessAppDiscovery.DiscoveredCount;
+        var msg   = count == 0
+            ? $"Gateway {ip} disconnected — scanning…"
+            : $"Gateway {ip} disconnected — {count} still active, scanning…";
+
+        Application.Current.Dispatcher.Invoke(() => LocalServerStatus = msg);
+        AppLog.Info($"[MainViewModel] Gateway {ip} disconnected — starting slow scan.");
+        _accessAppDiscovery.StartSlowScan();
+    }
+
+    /// <summary>
+    /// HTTP re-push failed 3× — gateway is confirmed gone. The slow scan (started on MQTT
+    /// disconnect) is likely already running; just update the status.
+    /// </summary>
+    private void OnGatewayLost(string ip)
+    {
+        var count = _accessAppDiscovery.DiscoveredCount;
+        var msg   = count == 0
+            ? $"Gateway {ip} lost."
+            : $"Gateway {ip} lost — {count} still active.";
+        Application.Current.Dispatcher.Invoke(() => LocalServerStatus = msg);
     }
 
     public void ShutdownLocalServices()
