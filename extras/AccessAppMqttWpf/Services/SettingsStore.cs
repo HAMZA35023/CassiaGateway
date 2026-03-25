@@ -55,7 +55,7 @@ public sealed class LocalServerSettings
 {
     public bool enabled { get; set; } = false;
     public int mqttPort { get; set; } = 1883;
-    public string accessAppChannel { get; set; } = "develop";
+    public string accessAppChannel { get; set; } = "stable";
     public string manifestBaseUrl { get; set; } = "https://prod.statistics.niko-test.nu/accessapp";
     public string accessAppRuntime { get; set; } = "windows-x64";
 

@@ -50,6 +50,7 @@ public partial class LocalServerSettingsViewModel : ObservableObject, IDisposabl
     public string LocalServerStatus => _main.LocalServerStatus;
     public bool IsAccessAppRunning => _main.IsAccessAppRunning;
     public string AccessAppProcessStatus => _main.AccessAppProcessStatus;
+    public bool DeveloperModeUnlocked => _main.DeveloperModeUnlocked;
 
     public string StartStopServerLabel => IsLocalServerRunning ? "Stop server" : "Start server";
     public string StartStopAccessAppLabel => IsAccessAppRunning ? "Stop AccessApp" : "Start AccessApp";
