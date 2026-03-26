@@ -1,15 +1,18 @@
-WPF Application
----------------------------
 
-We need to add an option to auto start local mqtt, and access app on startup - also make a quick start/stop local server in the menu.
-No need to hide the local server anymore
-We need to make sure to switch to the local mqtt server when the local mqtt is running in the client (dont override the stores mqtt settings for the public mqtt server)
-If the accessapp is installed from the manifest, we should on startup always check for a new version, and give a promt to update if there is a newer version.
-Next to the online-badge in the cassia overview we should show what BLE backend is used (is should be exposed by the mqtt status signal)
+-> WFP app - ask to clear local upgrade-log when resyncing - when a device is offline, we will miss the upgrade log from that, and want to keep using the local copy
 
---------
-NEXT STEP
---------
 
-Lets make the local mqtt server discoverable for the cassia in the accessapp, so we can connect them directly together on a closed network as well, where the cassia also will connect the the local mqtt host.
-Then it is still offline, possible to connect multiple (accessapp) together in a closed network.
+-> Cassia needs external antennas for 4G!
+
+-> Now the WPF app should not warn if it is failed anymore, as we ask other pears the there backup, so it does not need to be sticky.
+
+
+
+MINOR:
+-> the UI cadance in the WPF app, does not give a good expirience for the user - what can we do about that?
+
+
+-> When using local, we need a button to search for new cassia (we connect to them one by one, and then we need to know what sensors there already is queued, so we dont queue them twice, so we need to make sure not to clear the upgradelog and queued devices. - when we connect to one again, then we should get the updated upgrade-log, so we can update the UI)
+ - This is an option when we can connect them together in a local network.
+ - Create a feature-branch for this.
+
