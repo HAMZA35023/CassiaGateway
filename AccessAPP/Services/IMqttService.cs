@@ -61,6 +61,12 @@ public interface IMqttService : IAsyncDisposable
 
     // Reboot the host system.
     event Func<RebootCommand, Task>? RebootRequested;
+
+    // Peer backup sharing: one gateway asks all peers for a device backup.
+    event Func<GetDeviceBackupCommand, Task>? GetDeviceBackupRequested;
+    event Func<DeviceBackupResponseCommand, Task>? DeviceBackupResponseReceived;
+    Task BroadcastDeviceBackupRequestAsync(GetDeviceBackupCommand cmd, CancellationToken ct = default);
+    Task PublishDeviceBackupResponseAsync(string requesterName, DeviceBackupResponseCommand msg, CancellationToken ct = default);
 }
 
 // New: command DTO for request payload

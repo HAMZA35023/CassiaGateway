@@ -45,5 +45,16 @@ namespace AccessAPP.Services
             string firmwareVersion,
             DetectorSettingsPatch overrides,
             bool writeOnlyChanged = true);
+
+        /// <summary>
+        /// Returns the locally stored snapshot for the given MAC, or null if no backup file exists.
+        /// </summary>
+        Task<DeviceSettingsSnapshot?> TryGetSnapshotAsync(string macAddress);
+
+        /// <summary>
+        /// Saves a snapshot received from a peer to the local backup file.
+        /// Returns the file path that was written.
+        /// </summary>
+        Task<string> SaveSnapshotAsync(DeviceSettingsSnapshot snapshot);
     }
 }

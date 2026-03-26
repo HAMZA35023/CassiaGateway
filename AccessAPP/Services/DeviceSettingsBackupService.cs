@@ -280,6 +280,22 @@ namespace AccessAPP.Services
             return (path, snapshot);
         }
 
+        public async Task<DeviceSettingsSnapshot?> TryGetSnapshotAsync(string macAddress)
+        {
+            var path = GetBackupPath(macAddress, null);
+            if (!File.Exists(path)) return null;
+            var json = await File.ReadAllTextAsync(path, Encoding.UTF8).ConfigureAwait(false);
+            return JsonSerializer.Deserialize<DeviceSettingsSnapshot>(json);
+        }
+
+        public async Task<string> SaveSnapshotAsync(DeviceSettingsSnapshot snapshot)
+        {
+            var path = GetBackupPath(snapshot.MacAddress, null);
+            var json = JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true });
+            await File.WriteAllTextAsync(path, json, Encoding.UTF8).ConfigureAwait(false);
+            return path;
+        }
+
         public async Task<ServiceResponse> ApplyOverridesAsync(
             string macAddress,
             string detectorType,

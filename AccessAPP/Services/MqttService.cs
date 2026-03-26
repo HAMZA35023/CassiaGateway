@@ -68,6 +68,10 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     public event Func<SetUpdateChannelCommand, Task>? SetUpdateChannelRequested;
     public event Func<RebootCommand, Task>? RebootRequested;
 
+    // Peer backup sharing
+    public event Func<GetDeviceBackupCommand, Task>? GetDeviceBackupRequested;
+    public event Func<DeviceBackupResponseCommand, Task>? DeviceBackupResponseReceived;
+
     /// <summary>
     /// Fired after each successful MQTT publish (topic, raw payload bytes).
     /// Used by <see cref="LocalBrokerDiscoveryService"/> to mirror telemetry to discovered local brokers.
@@ -277,6 +281,12 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
             leaf = "resp";
         await PublishJsonAsync(TeleTopic(leaf), payload, retain: false, ct).ConfigureAwait(false);
     }
+
+    public async Task BroadcastDeviceBackupRequestAsync(GetDeviceBackupCommand cmd, CancellationToken ct = default)
+        => await PublishJsonAsync(CmdTopic("all", "get-device-backup"), cmd, retain: false, ct).ConfigureAwait(false);
+
+    public async Task PublishDeviceBackupResponseAsync(string requesterName, DeviceBackupResponseCommand msg, CancellationToken ct = default)
+        => await PublishJsonAsync(CmdTopic(requesterName, "device-backup-response"), msg, retain: false, ct).ConfigureAwait(false);
 
     private async Task PublishTeleJsonAsync(string leaf, object payload, string? networkIdOverride, string? nameOverride, CancellationToken ct = default)
     {
@@ -2091,6 +2101,20 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 }
             }
 
+
+            if (string.Equals(command, "get-device-backup", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch get-device-backup");
+                var dto = JsonSerializer.Deserialize<GetDeviceBackupCommand>(payload, JsonOptions) ?? new GetDeviceBackupCommand();
+                return GetDeviceBackupRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "device-backup-response", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch device-backup-response");
+                var dto = JsonSerializer.Deserialize<DeviceBackupResponseCommand>(payload, JsonOptions) ?? new DeviceBackupResponseCommand();
+                return DeviceBackupResponseReceived?.Invoke(dto) ?? Task.CompletedTask;
+            }
 
             AppLog.Warn($"HandleCommandAsync: ignored (unknown command '{command}')");
             return Task.CompletedTask;

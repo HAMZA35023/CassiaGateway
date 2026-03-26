@@ -55,7 +55,7 @@ public sealed class LocalServerSettings
 {
     public bool enabled { get; set; } = false;
     public int mqttPort { get; set; } = 1883;
-    public string accessAppChannel { get; set; } = "develop";
+    public string accessAppChannel { get; set; } = "stable";
     public string manifestBaseUrl { get; set; } = "https://prod.statistics.niko-test.nu/accessapp";
     public string accessAppRuntime { get; set; } = "windows-x64";
 
@@ -68,18 +68,19 @@ public sealed class LocalServerSettings
     public bool autoStartLocalServer { get; set; } = false;
 
     /// <summary>
-    /// Known Cassia gateway WAN IPs to unicast cassia-mqtt beacons to directly.
-    /// Required when AccessApp runs in an LXC container that cannot receive LAN broadcasts.
-    /// Auto-populated when a gateway connects to the local MQTT broker.
-    /// </summary>
-    public List<string> gatewayIps { get; set; } = new();
-
-    /// <summary>
     /// When true, WPF pushes its own NetworkId to all discovered AccessApp instances so
     /// they all subscribe and publish under the same network ID on the local broker.
     /// Only affects the local MQTT connection — each AccessApp's own configured ID is unchanged.
     /// </summary>
     public bool useSharedNetworkId { get; set; } = true;
+
+    /// <summary>
+    /// When true, WPF probes its own outbound IP and sends it as <c>mqttHost</c> in the
+    /// config-push payload so AccessApp knows which address to connect to.
+    /// When false, AccessApp derives the MQTT host from the TCP connection's remote IP —
+    /// simpler, but only correct when there is no NAT between WPF and the AccessApp container.
+    /// </summary>
+    public bool sendMqttHost { get; set; } = true;
 }
 
 public sealed class AccessAppSettings

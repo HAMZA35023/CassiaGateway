@@ -501,11 +501,19 @@ try
 
                         if (reuseConn)
                         {
-                            // Final disconnect — the one the user wants here, after the FW read.
+                            // Final action after FW verification read — the connection is still live here.
                             if (postUpdateSettingsRequested)
                             {
                                 connectionReusableForPostSettings = true;
                                 AppLog.Debug($"[POST] {mac} keeping connected session open for post-update settings.");
+                            }
+                            else if (RuntimeVariables.RebootDetectorAfterUpgrade)
+                            {
+                                // Reboot the sensor at the very end of the upgrade flow.
+                                // The device drops the BLE connection as it reboots — no explicit disconnect needed.
+                                await Task.Delay(2000).ConfigureAwait(false);
+                                await RebootDeviceAsync(mac).ConfigureAwait(false);
+                                UpgradeLogger.Log(logId, mac, "Device rebooted at end of upgrade flow", "Success", dev.FirmwareVersion);
                             }
                             else
                             {

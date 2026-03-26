@@ -193,3 +193,26 @@ public sealed class DeviceListItem
     public DateTimeOffset LastSeenUtc { get; set; }
     public bool IsStale { get; set; }
 }
+
+/// <summary>
+/// Broadcast command asking all peers if they hold a settings backup for the given MAC.
+/// Published to cmd/all/get-device-backup.
+/// </summary>
+public sealed class GetDeviceBackupCommand
+{
+    public string? MacAddress { get; set; }
+    public string? RequestId { get; set; }
+    /// <summary>Gateway name of the requester, so peers can address the response.</summary>
+    public string? RequesterName { get; set; }
+}
+
+/// <summary>
+/// Response published by a peer that holds the requested backup.
+/// Published to cmd/{requesterName}/device-backup-response.
+/// </summary>
+public sealed class DeviceBackupResponseCommand
+{
+    public string? RequestId { get; set; }
+    public string? MacAddress { get; set; }
+    public DeviceSettingsSnapshot? Snapshot { get; set; }
+}

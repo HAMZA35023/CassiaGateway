@@ -367,15 +367,60 @@ public partial class CassiaSettingsViewModel : ObservableObject
 
             var payload = BuildSavePayloadFromUi();
             RawSavePayloadPreviewJson = ToPrettyJson(payload);
-            if (!ContainsSettingChanges(payload))
+            if (!GetAllItems().Any(i => i.IsEditable && i.IsVisible && i.IsChanged))
             {
                 StatusText = "No changed settings to save.";
                 return;
             }
 
-            StatusText = "Saving cassia settings to all Cassias in network...";
+            StatusText = $"Saving cassia settings to {CassiaName}...";
             var result = await _main.SaveCassiaSettingsAsync(
-                "all",
+                CassiaName,
+                payload,
+                GatewayIp,
+                Username,
+                Password,
+                PasswordEncrypted);
+
+            ApplyResult(result, "Saved");
+        }
+        catch (Exception ex)
+        {
+            StatusText = "Save failed: " + ex.Message;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task SaveCurrentTab()
+    {
+        if (IsBusy || SelectedTab == null) return;
+        IsBusy = true;
+
+        try
+        {
+            if (!ValidateCurrentInput(out var validationError))
+            {
+                StatusText = validationError;
+                return;
+            }
+
+            var tabItems = SelectedTab.Sections.SelectMany(s => s.Items);
+            if (!tabItems.Any(i => i.IsEditable && i.IsVisible && i.IsChanged))
+            {
+                StatusText = $"No changed settings in the {SelectedTab.Title} tab.";
+                return;
+            }
+
+            var payload = BuildSavePayloadForTab(SelectedTab.Key);
+            RawSavePayloadPreviewJson = ToPrettyJson(payload);
+
+            StatusText = $"Saving {SelectedTab.Title} settings to {CassiaName}...";
+            var result = await _main.SaveCassiaSettingsAsync(
+                CassiaName,
                 payload,
                 GatewayIp,
                 Username,
@@ -875,11 +920,27 @@ public partial class CassiaSettingsViewModel : ObservableObject
                value.Equals("IIBH2-ATX2000-CN", StringComparison.OrdinalIgnoreCase);
     }
 
-    private JsonObject BuildSavePayloadFromUi()
+    private JsonObject BuildSavePayloadFromUi() =>
+        BuildSavePayloadFromItems(GetAllItems().Where(i => i.IsEditable && i.IsVisible));
+
+    private JsonObject BuildSavePayloadForTab(string tabKey)
+    {
+        var tab = NavigationTabs.FirstOrDefault(t =>
+            t.Key.Equals(tabKey, StringComparison.OrdinalIgnoreCase));
+        if (tab == null) return new JsonObject();
+        var items = tab.Sections.SelectMany(s => s.Items).Where(i => i.IsEditable && i.IsVisible);
+        return BuildSavePayloadFromItems(items);
+    }
+
+    private JsonObject BuildSavePayloadFromItems(IEnumerable<CassiaEditableSettingItem> items)
     {
         var payload = new JsonObject();
-        foreach (var item in GetAllItems().Where(i => i.IsEditable && i.IsVisible && i.IsChanged))
+        foreach (var item in items)
         {
+            // Skip gateway-masked passwords — sending "**********" back would overwrite with literal asterisks
+            if ((item.ValueText ?? "").Equals("**********", StringComparison.Ordinal))
+                continue;
+
             if (item.Path.Equals("bt_antenna_option", StringComparison.OrdinalIgnoreCase))
             {
                 ApplyBtAntennaOptionToPayload(payload, item.ValueText);
@@ -888,6 +949,28 @@ public partial class CassiaSettingsViewModel : ObservableObject
 
             SetPath(payload, item.Path, ParseItemValue(item));
         }
+
+        // Mirror web UI setBasic() post-processing
+        if (payload["wireless"] is JsonObject wirelessObj)
+        {
+            var addnew = wirelessObj["addnew"]?.ToString() ?? "";
+            if (addnew.Equals("no", StringComparison.OrdinalIgnoreCase))
+                payload["wireless1"] = new JsonObject();
+            wirelessObj.Remove("addnew");
+
+            if ((wirelessObj["mode"]?.ToString() ?? "").Equals("ap", StringComparison.OrdinalIgnoreCase))
+                wirelessObj["proto"] = "static";
+        }
+
+        // If wireless1 has no ssid it is not configured — send empty object so gateway doesn't error
+        if (payload["wireless1"] is JsonObject w1 &&
+            string.IsNullOrWhiteSpace(w1["ssid"]?.ToString()))
+            payload["wireless1"] = new JsonObject();
+
+        // adv_relay fields are only valid for repeater mode (fat=2) — remove for standalone/managed
+        var fat = payload["fat"]?.ToString() ?? "";
+        if (!fat.Equals("2", StringComparison.OrdinalIgnoreCase))
+            payload.Remove("adv_relay");
 
         var csrf = !string.IsNullOrWhiteSpace(_latestCsrf)
             ? _latestCsrf
@@ -1001,22 +1084,44 @@ public partial class CassiaSettingsViewModel : ObservableObject
 
     private static bool IsReadOnlyPath(string path)
     {
-        return path.StartsWith("version", StringComparison.OrdinalIgnoreCase) ||
-               path.StartsWith("show_model", StringComparison.OrdinalIgnoreCase) ||
-               path.StartsWith("model", StringComparison.OrdinalIgnoreCase) ||
-               path.StartsWith("mac", StringComparison.OrdinalIgnoreCase) ||
-               path.StartsWith("uptime", StringComparison.OrdinalIgnoreCase) ||
-               path.StartsWith("cpu.", StringComparison.OrdinalIgnoreCase) ||
-               path.StartsWith("mem.", StringComparison.OrdinalIgnoreCase) ||
-               path.StartsWith("disk.", StringComparison.OrdinalIgnoreCase) ||
-               path.StartsWith("mqtt_stat.", StringComparison.OrdinalIgnoreCase) ||
-               path.StartsWith("chipinfo.", StringComparison.OrdinalIgnoreCase) ||
-               path.StartsWith("wired.iface.", StringComparison.OrdinalIgnoreCase) ||
-               path.StartsWith("wireless_ap.iface.", StringComparison.OrdinalIgnoreCase) ||
-               path.Equals("SN", StringComparison.OrdinalIgnoreCase) ||
-               path.Equals("features", StringComparison.OrdinalIgnoreCase) ||
-               path.StartsWith("features.", StringComparison.OrdinalIgnoreCase) ||
-               path.Equals("timeconf.now", StringComparison.OrdinalIgnoreCase);
+        // Top-level read-only status fields
+        if (path.StartsWith("version", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("show_model", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("model", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("mac", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("uptime", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("cpu.", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("mem.", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("disk.", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("mqtt_stat.", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("chipinfo.", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("SN", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("features", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("features.", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("timeconf.now", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // Interface info and runtime stats — nested read-only objects from GET, never sent by web UI
+        if (path.Contains(".iface.", StringComparison.OrdinalIgnoreCase) ||
+            path.Contains(".speed.", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".iface", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".speed", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // Composite/derived read-only fields
+        if (path.Equals("wireless.dns", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("wireless1.dns", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("wired.dns", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("dongle.dns", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("wired.duplex", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("wired.trans_speed", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("wireless.disabled", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("wireless_ap.proto", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("wireless_ap.gateway", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("dongle.cnum", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return false;
     }
 
     private static IReadOnlyList<CassiaSelectOption> GetSelectOptions(string path, JsonNode? node)

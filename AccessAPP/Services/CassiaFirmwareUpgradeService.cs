@@ -1464,36 +1464,86 @@ return resp;
         }
 
         // Optional helpers
+
+        /// <summary>
+        /// Sends a DALI restore command and waits specifically for the 0x043F DaliRestoreDatabaseResult
+        /// notification (ignoring the 0x043E start-ack). Subscribes before writing to avoid race conditions.
+        /// Returns (Ok=true) on RESTORE_OK (status 0x01), (IsRestoreFailure=true) on RESTORE_FAILURE (status 0x02).
+        /// </summary>
+        private async Task<(bool Ok, bool IsRestoreFailure)> SendAndWaitForRestoreResultAsync(
+            string nodeMac, string command, int timeoutMs = 60000)
+        {
+            const string RestoreResultType = "3F04"; // 0x043F little-endian
+            var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            var subToken = _notificationService.Subscribe(nodeMac, (_, rawHex) =>
+            {
+                if (rawHex?.Length >= 6 &&
+                    rawHex.Substring(2, 4).Equals(RestoreResultType, StringComparison.OrdinalIgnoreCase))
+                {
+                    tcs.TrySetResult(rawHex);
+                }
+            });
+
+            try
+            {
+                using var writeResponse = await cassiaReadWriteService
+                    .WriteBleMessage(_gatewayIpAddress, nodeMac, 19, command, "?noresponse=1")
+                    .ConfigureAwait(false);
+
+                if (writeResponse.StatusCode != System.Net.HttpStatusCode.OK)
+                {
+                    AppLog.Warn($"[DALI RESTORE] BLE write failed ({writeResponse.StatusCode}) for {nodeMac}");
+                    return (false, false);
+                }
+
+                var completed = await Task.WhenAny(tcs.Task, Task.Delay(timeoutMs)).ConfigureAwait(false);
+                if (completed != tcs.Task)
+                {
+                    AppLog.Warn($"[DALI RESTORE] Timeout ({timeoutMs}ms) waiting for 0x043F result for {nodeMac}");
+                    return (false, false);
+                }
+
+                var rawHex = await tcs.Task;
+                if (rawHex.Length < 16)
+                {
+                    AppLog.Warn($"[DALI RESTORE] Response too short ({rawHex.Length} chars) for {nodeMac}");
+                    return (false, false);
+                }
+
+                // Status byte is at position 14-15 in the hex string (byte 7 of the 8-byte telegram)
+                var statusHex = rawHex.Substring(14, 2);
+                if (!byte.TryParse(statusHex, System.Globalization.NumberStyles.HexNumber, null, out var statusByte))
+                {
+                    AppLog.Warn($"[DALI RESTORE] Could not parse status byte '{statusHex}' for {nodeMac}");
+                    return (false, false);
+                }
+
+                AppLog.Debug($"[DALI RESTORE] 0x043F status=0x{statusByte:X2} for {nodeMac} (0x01=OK, 0x02=FAILURE)");
+                return (statusByte == 0x01, statusByte == 0x02);
+            }
+            finally
+            {
+                _notificationService.Unsubscribe(nodeMac, subToken);
+            }
+        }
+
         public async Task<bool> DaliRestore102Database(string nodeMac)
         {
-            string sensorCommand = "013C0407004812"; // DaliRestore102Database
-            var sensorResponse = await _connectService.GetDataFromBleDevice(
-                _gatewayIpAddress, _gatewayPort, nodeMac, sensorCommand);
-
-            bool resp = false;
-            if (sensorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(sensorResponse.Data))
-            {
-                AppLog.Debug(sensorResponse.Data);
-resp = true;
-            }
-
-            return resp;
+            const string sensorCommand = "013C0407004812"; // DaliRestore102Database (0x043C)
+            var (ok, isRestoreFailure) = await SendAndWaitForRestoreResultAsync(nodeMac, sensorCommand).ConfigureAwait(false);
+            if (isRestoreFailure)
+                AppLog.Warn($"[DALI RESTORE] 0x043F RESTORE_FAILURE for {nodeMac} — total new commissioning needed");
+            return ok;
         }
 
         public async Task<bool> DaliRestore103Database(string nodeMac)
         {
-            string sensorCommand = "013D040700FC64"; // DaliRestore103Database
-            var sensorResponse = await _connectService.GetDataFromBleDevice(
-                _gatewayIpAddress, _gatewayPort, nodeMac, sensorCommand);
-
-            bool resp = false;
-            if (sensorResponse.Status.ToString() == "OK" && !string.IsNullOrEmpty(sensorResponse.Data))
-            {
-                AppLog.Debug(sensorResponse.Data);
-resp = true;
-            }
-
-            return resp;
+            const string sensorCommand = "013D040700FC64"; // DaliRestore103Database (0x043D)
+            var (ok, isRestoreFailure) = await SendAndWaitForRestoreResultAsync(nodeMac, sensorCommand).ConfigureAwait(false);
+            if (isRestoreFailure)
+                AppLog.Warn($"[DALI RESTORE] 0x043F RESTORE_FAILURE for {nodeMac} — total new commissioning needed");
+            return ok;
         }
 
         // 0x0400 + len 0x0008. CRC16 is 0x61AD and encoded little-endian in telegrams => AD61.

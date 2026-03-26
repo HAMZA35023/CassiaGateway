@@ -53,7 +53,7 @@
         <Border Style="{StaticResource Card}" Padding="14" Margin="0,0,0,12">
             <StackPanel>
                 <TextBlock Text="{Binding WindowTitle}" FontSize="16" FontWeight="SemiBold"/>
-                <TextBlock Text="Mirrors Cassia HTML navigation and JSON binding. Save sends only changed keys."
+                <TextBlock Text="Mirrors Cassia HTML navigation and JSON binding. Save Tab sends only the active tab. Save All sends all tabs together."
                            Margin="0,4,0,8"
                            Foreground="{DynamicResource MutedBrush}"/>
 
@@ -269,8 +269,12 @@
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                 <Button Style="{StaticResource GhostButton}" Content="Load" Padding="18,8" Margin="0,0,8,0"
                         Command="{Binding RefreshCommand}"/>
-                <Button Style="{StaticResource PrimaryButton}" Content="Save" Padding="18,8" Margin="0,0,8,0"
-                        Command="{Binding SaveCommand}"/>
+                <Button Style="{StaticResource PrimaryButton}" Content="Save Tab" Padding="18,8" Margin="0,0,8,0"
+                        Command="{Binding SaveCurrentTabCommand}"
+                        ToolTip="Save only the settings visible in the currently selected tab"/>
+                <Button Style="{StaticResource PrimaryButton}" Content="Save All" Padding="18,8" Margin="0,0,8,0"
+                        Command="{Binding SaveCommand}"
+                        ToolTip="Save all settings from all tabs"/>
                 <Button Style="{StaticResource GhostButton}" Content="Close" Padding="18,8"
                         Command="{Binding CloseCommand}"/>
             </StackPanel>

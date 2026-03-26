@@ -21,13 +21,10 @@ public sealed class LocalMqttServerService : IDisposable
     public int Port { get; private set; }
 
     public event Action<bool, string>? StatusChanged;  // isRunning, message
-    /// <summary>
-    /// Fired when a non-localhost client successfully authenticates.
-    /// Argument is the remote IP address string (e.g. "192.168.1.42").
-    /// Use this to discover AccessApp instances that connected via the local MQTT server
-    /// without needing inbound UDP on the WPF machine.
-    /// </summary>
+    /// <summary>Fired when a non-localhost client successfully authenticates.</summary>
     public event Action<string>? RemoteClientConnected;
+    /// <summary>Fired when a non-localhost client disconnects.</summary>
+    public event Action<string>? RemoteClientDisconnected;
 
     public async Task StartAsync(int port)
     {
@@ -70,6 +67,24 @@ public sealed class LocalMqttServerService : IDisposable
                 }
             }
             catch { /* best-effort */ }
+            return Task.CompletedTask;
+        };
+
+        _server.ClientDisconnectedAsync += args =>
+        {
+            try
+            {
+                var endpoint = args.Endpoint ?? "";
+                var lastColon = endpoint.LastIndexOf(':');
+                var ip = lastColon > 0 ? endpoint[..lastColon] : endpoint;
+                ip = ip.Trim('[', ']');
+                if (!string.IsNullOrWhiteSpace(ip) && ip != "127.0.0.1" && ip != "::1" && ip != "0.0.0.0")
+                {
+                    AppLog.Info($"[LocalMqttServer] Remote client disconnected: {ip}");
+                    RemoteClientDisconnected?.Invoke(ip);
+                }
+            }
+            catch { }
             return Task.CompletedTask;
         };
 

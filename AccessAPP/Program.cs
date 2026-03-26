@@ -1023,6 +1023,30 @@ using (var scope = app.Services.CreateScope())
         });
     };
 
+    // Peer backup sharing: respond to other gateways asking if we have a settings backup for a MAC.
+    mqttService.GetDeviceBackupRequested += async cmd =>
+    {
+        if (string.IsNullOrWhiteSpace(cmd.MacAddress) ||
+            string.IsNullOrWhiteSpace(cmd.RequesterName) ||
+            string.IsNullOrWhiteSpace(cmd.RequestId))
+            return;
+
+        // Don't respond to our own broadcasts.
+        if (string.Equals(cmd.RequesterName, mqttService.CurrentOptions.Name, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var snapshot = await firmwareUpgradeService.SettingsBackupService.TryGetSnapshotAsync(cmd.MacAddress).ConfigureAwait(false);
+        if (snapshot is null) return;
+
+        AppLog.Info($"[PeerBackup] Responding to {cmd.RequesterName} with backup for {cmd.MacAddress}");
+        await mqttService.PublishDeviceBackupResponseAsync(cmd.RequesterName, new DeviceBackupResponseCommand
+        {
+            RequestId = cmd.RequestId,
+            MacAddress = cmd.MacAddress,
+            Snapshot = snapshot
+        }).ConfigureAwait(false);
+    };
+
 }
 
 // Configure the HTTP request pipeline.
