@@ -1471,7 +1471,7 @@ return resp;
         /// Returns (Ok=true) on RESTORE_OK (status 0x01), (IsRestoreFailure=true) on RESTORE_FAILURE (status 0x02).
         /// </summary>
         private async Task<(bool Ok, bool IsRestoreFailure)> SendAndWaitForRestoreResultAsync(
-            string nodeMac, string command, int timeoutMs = 60000)
+            string nodeMac, string command, int timeoutMs = 120000)
         {
             const string RestoreResultType = "3F04"; // 0x043F little-endian
             var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
