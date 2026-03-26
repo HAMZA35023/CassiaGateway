@@ -193,3 +193,18 @@ public sealed class DeviceListItem
     public DateTimeOffset LastSeenUtc { get; set; }
     public bool IsStale { get; set; }
 }
+
+public sealed class GetPirPeakCommand
+{
+    public List<string> Sensors { get; set; } = new();
+    public string? Pincode { get; set; }
+    public string? RequestId { get; set; }
+}
+
+public sealed class SetWalktestCommand
+{
+    public List<string> Sensors { get; set; } = new();
+    public bool Enabled { get; set; }
+    public string? Pincode { get; set; }
+    public string? RequestId { get; set; }
+}

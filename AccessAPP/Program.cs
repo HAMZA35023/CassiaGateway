@@ -399,6 +399,90 @@ using (var scope = app.Services.CreateScope())
         await mqttService.PublishTeleJsonAsync("fw-version", resp);
     };
 
+    mqttService.GetPirPeakRequested += async cmd =>
+    {
+        var macs = (cmd.Sensors ?? new List<string>())
+            .Where(m => !string.IsNullOrWhiteSpace(m))
+            .Select(m => m.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var pincode = cmd.Pincode ?? "";
+
+        var results = new List<object>();
+        var failed  = new List<object>();
+
+        foreach (var mac in macs)
+        {
+            var (_, data, error) = await firmwareUpgradeService.GetPirPeakForMacAsync(mac, pincode);
+
+            if (data != null)
+            {
+                results.Add(new
+                {
+                    mac,
+                    tickCount = data.TickCount,
+                    aMin = data.AMin, aMax = data.AMax, aDelta = data.ADelta,
+                    bMin = data.BMin, bMax = data.BMax, bDelta = data.BDelta,
+                    cMin = data.CMin, cMax = data.CMax, cDelta = data.CDelta,
+                    aLow = data.ALow, aT = data.AT, aHigh = data.AHigh, aDuration = data.ADuration,
+                    bLow = data.BLow, bT = data.BT, bHigh = data.BHigh, bDuration = data.BDuration,
+                    cLow = data.CLow, cT = data.CT, cHigh = data.CHigh, cDuration = data.CDuration,
+                });
+            }
+            else
+            {
+                failed.Add(new { mac, error });
+            }
+        }
+
+        await mqttService.PublishTeleJsonAsync("pir-peak", new
+        {
+            name      = mqttService.CurrentOptions.Name,
+            networkId = mqttService.CurrentOptions.NetworkId,
+            time      = DateTimeOffset.UtcNow,
+            requested = macs,
+            results,
+            failed
+        });
+    };
+
+    mqttService.SetWalktestRequested += async cmd =>
+    {
+        var macs = (cmd.Sensors ?? new List<string>())
+            .Where(m => !string.IsNullOrWhiteSpace(m))
+            .Select(m => m.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (macs.Count == 0) return;
+
+        var pincode = cmd.Pincode ?? "";
+        var results = new List<object>();
+        var failed  = new List<object>();
+
+        foreach (var mac in macs)
+        {
+            var (_, ok, error) = await firmwareUpgradeService.SetWalktestForMacAsync(mac, cmd.Enabled, pincode);
+
+            if (ok)
+                results.Add(new { mac, enabled = cmd.Enabled });
+            else
+                failed.Add(new { mac, error });
+        }
+
+        await mqttService.PublishTeleJsonAsync("walktest", new
+        {
+            name      = mqttService.CurrentOptions.Name,
+            networkId = mqttService.CurrentOptions.NetworkId,
+            time      = DateTimeOffset.UtcNow,
+            requested = macs,
+            enabled   = cmd.Enabled,
+            results,
+            failed
+        });
+    };
+
     // Dedup dictionary shared by get/set detector-settings handlers to discard duplicate MQTT
     // deliveries (same requestId fired multiple times when subscribed to multiple brokers).
     var detectorSettingsRecentIds = new System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase);

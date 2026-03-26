@@ -61,6 +61,12 @@ public interface IMqttService : IAsyncDisposable
 
     // Reboot the host system.
     event Func<RebootCommand, Task>? RebootRequested;
+
+    // PIR peak status polling.
+    event Func<GetPirPeakCommand, Task>? GetPirPeakRequested;
+
+    // Walk-test enable/disable (multi-color LED).
+    event Func<SetWalktestCommand, Task>? SetWalktestRequested;
 }
 
 // New: command DTO for request payload

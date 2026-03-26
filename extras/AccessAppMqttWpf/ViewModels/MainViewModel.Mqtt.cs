@@ -312,6 +312,18 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        if (kind == "tele" && leaf == "pir-peak")
+        {
+            HandlePirPeakTele(cassia, payload);
+            return;
+        }
+
+        if (kind == "tele" && leaf == "walktest")
+        {
+            HandleWalktestTele(cassia, payload);
+            return;
+        }
+
         if (kind == "tele" && leaf == "disconnect")
         {
             HandleDisconnectTele(cassia, payload);
