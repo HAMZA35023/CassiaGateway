@@ -29,6 +29,28 @@ internal sealed class SettingsRestoreStep : IDeviceUpgradeStep
         ctx.SettingsBackupPath ??= dev.SettingsBackupPath;
         if (string.IsNullOrWhiteSpace(ctx.SettingsBackupPath))
         {
+            // No local backup — ask peers on the same MQTT network before giving up.
+            UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "No local backup — querying peers via MQTT", "Info", ctx.FirmwareVersion);
+            var peerSnapshot = await svc.RequestPeerSnapshotAsync(ctx.MacAddress, ctx.LogId).ConfigureAwait(false);
+            if (peerSnapshot != null)
+            {
+                try
+                {
+                    var peerPath = await svc.SettingsBackupService.SaveSnapshotAsync(peerSnapshot).ConfigureAwait(false);
+                    ctx.SettingsBackupPath = peerPath;
+                    dev.SettingsBackupPath = peerPath;
+                    UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, $"Settings backup received from peer: {peerPath}", "Success", ctx.FirmwareVersion);
+                    AppLog.Info($"[PeerBackup] Saved peer backup for {ctx.MacAddress} to: {peerPath}");
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Warn($"[PeerBackup] Failed to save peer snapshot for {ctx.MacAddress}: {ex.Message}");
+                }
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(ctx.SettingsBackupPath))
+        {
             UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "Settings restore skipped (no backup file available)", "Failed", ctx.FirmwareVersion);
             AppLog.Error($" Settings restore skipped for {ctx.MacAddress} - no backup file available");
 
