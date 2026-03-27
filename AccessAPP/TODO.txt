@@ -1,11 +1,4 @@
 
-
 -> Cassia needs external antennas for 4G!
 
-
-
-
--> When using local, we need a button to search for new cassia (we connect to them one by one, and then we need to know what sensors there already is queued, so we dont queue them twice, so we need to make sure not to clear the upgradelog and queued devices. - when we connect to one again, then we should get the updated upgrade-log, so we can update the UI)
- - This is an option when we can connect them together in a local network.
- - Create a feature-branch for this.
 

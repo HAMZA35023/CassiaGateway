@@ -447,6 +447,35 @@ public partial class MainViewModel : ObservableObject
         });
     }
 
+    /// <summary>
+    /// Manually triggers a fast LAN scan to discover new or reconnected Cassia gateways
+    /// without clearing the local upgrade log or queue.
+    /// When a gateway reconnects, its upgrade log is re-requested so the UI stays current.
+    /// </summary>
+    [RelayCommand]
+    private void ScanForNewCassias()
+    {
+        if (!LocalMqttServer.IsRunning)
+        {
+            ConnectionStatus = "Local server must be running to scan for gateways.";
+            return;
+        }
+
+        // Allow re-requesting upgrade logs from gateways found in this scan
+        // (the guard in the auto-request logic skips gateways already seen this session).
+        _requestedUpgradeLogCassias.Clear();
+
+        Application.Current.Dispatcher.Invoke(() => LocalServerStatus = "Scanning for new gateways…");
+        _accessAppDiscovery.StartFastScan(onComplete: () =>
+        {
+            var count = _accessAppDiscovery.DiscoveredCount;
+            var msg = count == 0
+                ? "Scan done — no gateways found."
+                : $"Scan done — {count} gateway{(count == 1 ? "" : "s")} known.";
+            Application.Current.Dispatcher.Invoke(() => LocalServerStatus = msg);
+        });
+    }
+
     [RelayCommand]
     private void OpenLocalServerSettings()
     {
