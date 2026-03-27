@@ -141,8 +141,9 @@ public sealed class MqttClientService : IDisposable
         InvalidateCurrentSession();
 
         // Flush coalesced high-frequency topics on a fixed cadence.
-        _progressFlushTimer = new Timer(_ => FlushProgress(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
-        _discoveredFlushTimer = new Timer(_ => FlushDiscovered(), null, TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(15));
+        // Reduced from 5s/15s to 2s/5s for better UI responsiveness.
+        _progressFlushTimer = new Timer(_ => FlushProgress(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+        _discoveredFlushTimer = new Timer(_ => FlushDiscovered(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
     }
 
     public async Task ConnectAsync(
