@@ -159,18 +159,18 @@ public partial class MainViewModel : ObservableObject
 
             if (string.IsNullOrWhiteSpace(model))
             {
-                Application.Current.Dispatcher.Invoke(() =>
+                Application.Current.Dispatcher.InvokeAsync(() =>
                 {
                     qi.Status = "Cannot move: unknown model";
                     qi.LastUpdateUtc = DateTimeOffset.UtcNow;
                     MirrorQueueToDevice(qi);
                     RequestQueueRefresh();
-                });
+                }, DispatcherPriority.Background);
                 try { MessageBox.Show($"Cannot move {mac} to {newCassia} because detector model (P4x) could not be resolved. The backend requires DetectorType. Please refresh discovery so the model is known, or re-add the device.", "Unknown model", MessageBoxButton.OK, MessageBoxImage.Warning); } catch { }
                 return;
             }
 
-            Application.Current.Dispatcher.Invoke(() =>
+            Application.Current.Dispatcher.InvokeAsync(() =>
             {
                 qi.Cassia = newCassia;
                 qi.Status = "Requested update";
@@ -181,7 +181,7 @@ public partial class MainViewModel : ObservableObject
                 UpdateQueueRssiForMac(mac);
                 MirrorQueueToDevice(qi);
                 RequestQueueRefresh();
-            });
+            }, DispatcherPriority.Background);
 
             // Before queueing: send disconnect to /all to ensure no gateway is stuck on this device.
             try
@@ -557,7 +557,7 @@ public partial class MainViewModel : ObservableObject
                 if (resp?.FirmwareManifest == null || resp.FirmwareManifest.Count == 0)
                 return;
 
-                Application.Current.Dispatcher.Invoke(() =>
+                Application.Current.Dispatcher.InvokeAsync(() =>
                 {
                     var gw = CassiaGateways.FirstOrDefault(x => x.Name.Equals(cassia, StringComparison.OrdinalIgnoreCase));
                     if (gw == null)
@@ -573,7 +573,7 @@ public partial class MainViewModel : ObservableObject
                     // Debounced validate + update dropdowns
                     _fwManifestValidateTimer.Stop();
                     _fwManifestValidateTimer.Start();
-                });
+                }, DispatcherPriority.Background);
             }
             catch
             {
@@ -595,34 +595,40 @@ public partial class MainViewModel : ObservableObject
 
                 var now = DateTimeOffset.UtcNow;
 
-                Application.Current.Dispatcher.Invoke(() =>
+                // Extract all device data while the JsonDocument is still in scope.
+                var deviceData = new List<(string Mac, int Rssi, string Name, string ProductNumber, string Family, string Type, DateTimeOffset LastSeen)>();
+                foreach (var devEl in listEl.EnumerateArray())
                 {
-                    foreach (var devEl in listEl.EnumerateArray())
-                    {
-                        if (devEl.ValueKind != JsonValueKind.Object) continue;
+                    if (devEl.ValueKind != JsonValueKind.Object) continue;
 
-                        var mac = devEl.TryGetProperty("macAddress", out var macEl) ? (macEl.GetString() ?? "") : "";
-                        if (string.IsNullOrWhiteSpace(mac))
+                    var mac = devEl.TryGetProperty("macAddress", out var macEl) ? (macEl.GetString() ?? "") : "";
+                    if (string.IsNullOrWhiteSpace(mac))
                         mac = devEl.TryGetProperty("mac", out var macEl2) ? (macEl2.GetString() ?? "") : "";
+                    if (string.IsNullOrWhiteSpace(mac)) continue;
+                    mac = mac.Trim();
 
-                        if (string.IsNullOrWhiteSpace(mac)) continue;
-                        mac = mac.Trim();
+                    int rssi = int.MinValue;
+                    if (devEl.TryGetProperty("rssi", out var rssiEl))
+                    {
+                        if (rssiEl.ValueKind == JsonValueKind.Number) rssi = rssiEl.GetInt32();
+                        else if (rssiEl.ValueKind == JsonValueKind.String && int.TryParse(rssiEl.GetString(), out var rv)) rssi = rv;
+                    }
 
-                        int rssi = int.MinValue;
-                        if (devEl.TryGetProperty("rssi", out var rssiEl))
-                        {
-                            if (rssiEl.ValueKind == JsonValueKind.Number) rssi = rssiEl.GetInt32();
-                            else if (rssiEl.ValueKind == JsonValueKind.String && int.TryParse(rssiEl.GetString(), out var rv)) rssi = rv;
-                        }
-
-                        var detectorType = devEl.TryGetProperty("detectorType", out var dtEl) ? (dtEl.GetString() ?? "") : "";
-                        var detectorFamily = devEl.TryGetProperty("detectorFamily", out var dfEl) ? (dfEl.GetString() ?? "") : "";
-                        var productNumber = devEl.TryGetProperty("productNumber", out var pnEl) ? (pnEl.GetString() ?? "") : "";
-                        var name = devEl.TryGetProperty("name", out var nEl) ? (nEl.GetString() ?? "") : "";
-                        var lastSeenUtc = now;
-                        if (devEl.TryGetProperty("lastSeenUtc", out var lsEl) && lsEl.ValueKind == JsonValueKind.String && DateTimeOffset.TryParse(lsEl.GetString(), out var dto))
+                    var detectorType   = devEl.TryGetProperty("detectorType",   out var dtEl) ? (dtEl.GetString() ?? "") : "";
+                    var detectorFamily = devEl.TryGetProperty("detectorFamily", out var dfEl) ? (dfEl.GetString() ?? "") : "";
+                    var productNumber  = devEl.TryGetProperty("productNumber",  out var pnEl) ? (pnEl.GetString() ?? "") : "";
+                    var name           = devEl.TryGetProperty("name",           out var nEl)  ? (nEl.GetString()  ?? "") : "";
+                    var lastSeenUtc    = now;
+                    if (devEl.TryGetProperty("lastSeenUtc", out var lsEl) && lsEl.ValueKind == JsonValueKind.String && DateTimeOffset.TryParse(lsEl.GetString(), out var dto))
                         lastSeenUtc = dto;
 
+                    deviceData.Add((mac, rssi, name, productNumber, detectorFamily, detectorType, lastSeenUtc));
+                }
+
+                Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    foreach (var (mac, rssi, name, productNumber, detectorFamily, detectorType, lastSeenUtc) in deviceData)
+                    {
                         if (!_deviceByMac.TryGetValue(mac, out var d))
                         {
                             d = new DiscoveredDevice { Mac = mac };
@@ -638,14 +644,14 @@ public partial class MainViewModel : ObservableObject
 
                         // SensorModel: prefer detectorType if it looks like Pxx
                         if (!string.IsNullOrWhiteSpace(detectorType) && detectorType.Trim().StartsWith("P", StringComparison.OrdinalIgnoreCase))
-                        d.SensorModel = detectorType.Trim().ToUpperInvariant();
+                            d.SensorModel = detectorType.Trim().ToUpperInvariant();
                         else if (!string.IsNullOrWhiteSpace(d.ProductNumber) && _productToModel.TryGetValue(d.ProductNumber, out var m))
-                        d.SensorModel = m;
+                            d.SensorModel = m;
 
                         if (rssi != int.MinValue)
-                        d.UpdateFromCassia(cassia, rssi, lastSeenUtc);
+                            d.UpdateFromCassia(cassia, rssi, lastSeenUtc);
                         else
-                        d.LastSeenUtc = lastSeenUtc;
+                            d.LastSeenUtc = lastSeenUtc;
 
                         UpdateQueueRssiForMac(mac);
 
@@ -655,7 +661,7 @@ public partial class MainViewModel : ObservableObject
 
                     RecalculateAssignmentCounts();
                     RequestDevicesRefresh();
-                });
+                }, DispatcherPriority.Background);
             }
             catch { }
         }
@@ -672,12 +678,12 @@ public partial class MainViewModel : ObservableObject
                 var removed = root.TryGetProperty("removed", out var rEl) && rEl.ValueKind == JsonValueKind.Number ? rEl.GetInt32() : 0;
                 var message = root.TryGetProperty("message", out var mEl) ? (mEl.GetString() ?? "") : "";
 
-                Application.Current.Dispatcher.Invoke(() =>
+                Application.Current.Dispatcher.InvokeAsync(() =>
                 {
                     ConnectionStatus = success
                         ? $"[{cassia}] cleared device-list ({removed})"
                         : $"[{cassia}] clear-device-list failed: {message}";
-                });
+                }, DispatcherPriority.Background);
             }
             catch { }
         }
@@ -717,7 +723,7 @@ public partial class MainViewModel : ObservableObject
 
                 if (requested.Count == 0) return;
 
-                Application.Current.Dispatcher.Invoke(() =>
+                Application.Current.Dispatcher.InvokeAsync(() =>
                 {
                     foreach (var macRaw in requested)
                     {
@@ -741,7 +747,7 @@ public partial class MainViewModel : ObservableObject
 
                     RequestQueueRefresh();
                     RequestDevicesRefresh();
-                });
+                }, DispatcherPriority.Background);
             }
             catch { }
         }
@@ -757,16 +763,21 @@ public partial class MainViewModel : ObservableObject
 
                 var now = DateTimeOffset.UtcNow;
 
-                Application.Current.Dispatcher.Invoke(() =>
+                // Extract item data while the JsonDocument is still in scope.
+                var queueData = new List<(string Mac, string DetectorType, string Fw)>();
+                foreach (var item in listEl.EnumerateArray())
                 {
-                    foreach (var item in listEl.EnumerateArray())
+                    var mac = item.TryGetProperty("mac", out var m) ? (m.GetString() ?? "") : "";
+                    if (string.IsNullOrWhiteSpace(mac)) continue;
+                    var detectorType = item.TryGetProperty("detectorType", out var dt) ? (dt.GetString() ?? "") : "";
+                    var fw = item.TryGetProperty("firmwareVersion", out var fv) ? (fv.GetString() ?? "") : "";
+                    queueData.Add((mac, detectorType, fw));
+                }
+
+                Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    foreach (var (mac, detectorType, fw) in queueData)
                     {
-                        var mac = item.TryGetProperty("mac", out var m) ? (m.GetString() ?? "") : "";
-                        if (string.IsNullOrWhiteSpace(mac)) continue;
-
-                        var detectorType = item.TryGetProperty("detectorType", out var dt) ? (dt.GetString() ?? "") : "";
-                        var fw = item.TryGetProperty("firmwareVersion", out var fv) ? (fv.GetString() ?? "") : "";
-
                         var qi = QueueItems.FirstOrDefault(q => q.Mac.Equals(mac, StringComparison.OrdinalIgnoreCase));
                         if (qi == null)
                         {
@@ -798,7 +809,7 @@ public partial class MainViewModel : ObservableObject
 
                     RequestQueueRefresh();
                     RequestDevicesRefresh();
-                });
+                }, DispatcherPriority.Background);
 
             }
             catch { }
@@ -943,16 +954,21 @@ public partial class MainViewModel : ObservableObject
 
                 var now = DateTimeOffset.UtcNow;
 
-                Application.Current.Dispatcher.Invoke(() =>
+                // Extract item data while the JsonDocument is still in scope.
+                var programmingData = new List<(string Mac, string DetectorType, string Fw)>();
+                foreach (var item in listEl.EnumerateArray())
                 {
-                    foreach (var item in listEl.EnumerateArray())
+                    var mac = item.TryGetProperty("mac", out var m) ? (m.GetString() ?? "") : "";
+                    if (string.IsNullOrWhiteSpace(mac)) continue;
+                    var detectorType = item.TryGetProperty("detectorType", out var dt) ? (dt.GetString() ?? "") : "";
+                    var fw = item.TryGetProperty("firmwareVersion", out var fv) ? (fv.GetString() ?? "") : "";
+                    programmingData.Add((mac, detectorType, fw));
+                }
+
+                Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    foreach (var (mac, detectorType, fw) in programmingData)
                     {
-                        var mac = item.TryGetProperty("mac", out var m) ? (m.GetString() ?? "") : "";
-                        if (string.IsNullOrWhiteSpace(mac)) continue;
-
-                        var detectorType = item.TryGetProperty("detectorType", out var dt) ? (dt.GetString() ?? "") : "";
-                        var fw = item.TryGetProperty("firmwareVersion", out var fv) ? (fv.GetString() ?? "") : "";
-
                         var qi = QueueItems.FirstOrDefault(q => q.Mac.Equals(mac, StringComparison.OrdinalIgnoreCase));
                         if (qi == null)
                         {
@@ -981,7 +997,7 @@ public partial class MainViewModel : ObservableObject
 
                         MirrorQueueToDevice(qi);
                     }
-                });
+                }, DispatcherPriority.Background);
             }
             catch { }
         }
@@ -1004,7 +1020,7 @@ public partial class MainViewModel : ObservableObject
 
                 if (value <= 0) return;
 
-                Application.Current.Dispatcher.Invoke(() =>
+                Application.Current.Dispatcher.InvokeAsync(() =>
                 {
                     var gw = CassiaGateways.FirstOrDefault(x => x.Name.Equals(cassia, StringComparison.OrdinalIgnoreCase));
                     if (gw == null)
@@ -1017,7 +1033,7 @@ public partial class MainViewModel : ObservableObject
 
                     gw.ParallelProgrammers = value;
                     gw.ParallelProgrammersDesired = value;
-                });
+                }, DispatcherPriority.Background);
             }
             catch { }
         }

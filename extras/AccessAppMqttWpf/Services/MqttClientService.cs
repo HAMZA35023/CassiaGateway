@@ -38,7 +38,7 @@ public sealed class MqttClientService : IDisposable
     // Pending flags for event-driven flush.
     // Progress: truly immediate — flushed as soon as a message arrives (cheap, queue-only refresh).
     // Discovered: minimum 500ms batch window — collects all cassias before flushing (expensive,
-    //   triggers Dispatcher.Invoke + FilteredDevices.Refresh on the full device list).
+    //   triggers InvokeAsync(Background) + FilteredDevices.Refresh on the full device list).
     private volatile bool _progressPending;
     private volatile bool _discoveredPending;
     private long _lastDiscoveredFlushMs;

@@ -413,12 +413,12 @@ public partial class MainViewModel : ObservableObject
 
         _mqtt.ConnectionChanged += (connected, status) =>
         {
-            Application.Current.Dispatcher.Invoke(() =>
+            Application.Current.Dispatcher.InvokeAsync(() =>
             {
                 IsConnected = connected;
                 ConnectionStatus = status;
                 OnPropertyChanged(nameof(ConnectButtonText));
-            });
+            }, DispatcherPriority.Background);
 
             // We request FW manifests when we see each gateway's status (online)
             if (connected)
@@ -1060,10 +1060,10 @@ public partial class MainViewModel : ObservableObject
             var delay = _autoReconnectBackoff[Math.Min(attempt, _autoReconnectBackoff.Length - 1)];
             attempt++;
 
-            Application.Current.Dispatcher.Invoke(() =>
+            Application.Current.Dispatcher.InvokeAsync(() =>
             {
                 ConnectionStatus = $"Disconnected. Reconnecting in {delay.TotalSeconds:0}s...";
-            });
+            }, DispatcherPriority.Background);
 
             try
             {
@@ -1085,10 +1085,10 @@ public partial class MainViewModel : ObservableObject
             }
             catch (Exception ex)
             {
-                Application.Current.Dispatcher.Invoke(() =>
+                Application.Current.Dispatcher.InvokeAsync(() =>
                 {
                     ConnectionStatus = $"Reconnect failed: {ex.Message}";
-                });
+                }, DispatcherPriority.Background);
             }
         }
     }
