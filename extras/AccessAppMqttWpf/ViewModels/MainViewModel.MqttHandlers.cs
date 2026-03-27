@@ -817,13 +817,26 @@ public partial class MainViewModel : ObservableObject
                 return;
             }
 
-            await ResyncCoreAsync(ShouldResetSpeedHistoryForCurrentScope(), clearUi: true).ConfigureAwait(false);
+            var clearUpgradeLog = true;
+            if (UpgradeLogGroups.Count > 0)
+            {
+                var res = MessageBox.Show(
+                    "Clear the local upgrade log?\n\n" +
+                    "If a device was offline during this session, you may have missed some entries.\n" +
+                    "Choose 'No' to keep your local copy and merge in any new entries from gateways.",
+                    "Clear upgrade log?",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+                clearUpgradeLog = res == MessageBoxResult.Yes;
+            }
+
+            await ResyncCoreAsync(ShouldResetSpeedHistoryForCurrentScope(), clearUi: true, clearUpgradeLog: clearUpgradeLog).ConfigureAwait(false);
         }
 
         /// <summary>
         /// Clears all UI collections and internal caches.
         /// </summary>
-        private void ClearAllUiAndState(bool resetSpeedHistory)
+        private void ClearAllUiAndState(bool resetSpeedHistory, bool clearUpgradeLog = true)
         {
             Application.Current.Dispatcher.Invoke(() =>
             {
@@ -844,15 +857,18 @@ public partial class MainViewModel : ObservableObject
                 CassiaGateways.Clear();
                 CassiaNameOptions.Clear();
 
-                // Upgrade log views
-                UpgradeLogLines.Clear();
-                UpgradeLogGroups.Clear();
-                _upgradeLogGroupByKey.Clear();
-                UpgradeLogText = "";
-                _upgradeLogSb.Clear();
-                UpgradeLogReceivedLines = 0;
-                UpgradeLogTotalLines = 0;
-                UpgradeLogStatus = "";
+                if (clearUpgradeLog)
+                {
+                    // Upgrade log views
+                    UpgradeLogLines.Clear();
+                    UpgradeLogGroups.Clear();
+                    _upgradeLogGroupByKey.Clear();
+                    UpgradeLogText = "";
+                    _upgradeLogSb.Clear();
+                    UpgradeLogReceivedLines = 0;
+                    UpgradeLogTotalLines = 0;
+                    UpgradeLogStatus = "";
+                }
 
                 // Filters/selections that commonly keep stale selection pointers
                 SelectedDevice = null;
@@ -863,11 +879,12 @@ public partial class MainViewModel : ObservableObject
             });
 
             // Internal trackers
-            _latestUpgradeLogIdByMac.Clear();
+            if (clearUpgradeLog)
+                _latestUpgradeLogIdByMac.Clear();
             _progressByMac.Clear();
             _gwSeenMacs.Clear();
             _deviceAssignmentWired.Clear();
-            _requestedUpgradeLogCassias.Clear();
+            _requestedUpgradeLogCassias.Clear(); // always reset so we re-request fresh log from gateways
 
             _fwManifestRequestedForGw.Clear();
             _runtimeStateRequestedForGw.Clear();
@@ -884,10 +901,10 @@ public partial class MainViewModel : ObservableObject
         /// <summary>
         /// Clears UI/state and requests fresh snapshots the same way as on a new connect.
         /// </summary>
-        private async Task ResyncCoreAsync(bool resetSpeedHistory, bool clearUi)
+        private async Task ResyncCoreAsync(bool resetSpeedHistory, bool clearUi, bool clearUpgradeLog = true)
         {
             if (clearUi)
-                ClearAllUiAndState(resetSpeedHistory);
+                ClearAllUiAndState(resetSpeedHistory, clearUpgradeLog);
             else if (resetSpeedHistory)
                 _speedHistoryByGateway.Clear();
 
