@@ -532,6 +532,14 @@
                     </MenuItem.Icon>
                 </MenuItem>
                 <Separator/>
+                <MenuItem Header="Search for new Cassia…"
+                          Command="{Binding ScanForNewCassiasCommand}"
+                          ToolTip="Scan the local network for new or reconnected Cassia gateways. Does not clear the upgrade log or queue.">
+                    <MenuItem.Icon>
+                        <TextBlock Text="🔍" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <Separator/>
                 <MenuItem Header="Settings…"
                           Command="{Binding OpenLocalServerSettingsCommand}">
                     <MenuItem.Icon>
