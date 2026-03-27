@@ -35,9 +35,14 @@ public sealed class MqttClientService : IDisposable
     private readonly ConcurrentDictionary<string, BufferedPayload> _latestDiscoveredDeviceByTopicMac = new(StringComparer.OrdinalIgnoreCase); // key = topic|mac, value = device json
     private readonly ConcurrentDictionary<string, BufferedTimestamp> _latestDiscoveredTimeByTopic = new(StringComparer.OrdinalIgnoreCase);
 
-    // Pending flags for event-driven flush (0 = idle, 1 = flush scheduled).
+    // Pending flags for event-driven flush.
+    // Progress: truly immediate — flushed as soon as a message arrives (cheap, queue-only refresh).
+    // Discovered: minimum 500ms batch window — collects all cassias before flushing (expensive,
+    //   triggers Dispatcher.Invoke + FilteredDevices.Refresh on the full device list).
     private volatile bool _progressPending;
     private volatile bool _discoveredPending;
+    private long _lastDiscoveredFlushMs;
+    private const int DiscoveredMinIntervalMs = 500;
 
     private readonly MqttFactory _factory = new();
     private CancellationTokenSource? _cts;
@@ -441,7 +446,15 @@ public sealed class MqttClientService : IDisposable
     {
         if (_discoveredPending) return;
         _discoveredPending = true;
-        Task.Run(() => { _discoveredPending = false; FlushDiscovered(); });
+        var sinceLastMs = (int)Math.Min(DiscoveredMinIntervalMs, Environment.TickCount64 - Interlocked.Read(ref _lastDiscoveredFlushMs));
+        var delayMs = Math.Max(0, DiscoveredMinIntervalMs - sinceLastMs);
+        Task.Run(async () =>
+        {
+            if (delayMs > 0) await Task.Delay(delayMs).ConfigureAwait(false);
+            _discoveredPending = false;
+            Interlocked.Exchange(ref _lastDiscoveredFlushMs, Environment.TickCount64);
+            FlushDiscovered();
+        });
     }
 
     private void FlushProgress()
