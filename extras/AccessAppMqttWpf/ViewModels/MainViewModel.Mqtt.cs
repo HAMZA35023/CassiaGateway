@@ -452,6 +452,7 @@ if (kind == "tele" && leaf == "progress")
                 }
             }
             catch { }
+            ScheduleProgressFlushOnUi();
             return;
         }
 

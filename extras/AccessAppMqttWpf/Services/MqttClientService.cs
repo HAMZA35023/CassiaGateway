@@ -35,8 +35,9 @@ public sealed class MqttClientService : IDisposable
     private readonly ConcurrentDictionary<string, BufferedPayload> _latestDiscoveredDeviceByTopicMac = new(StringComparer.OrdinalIgnoreCase); // key = topic|mac, value = device json
     private readonly ConcurrentDictionary<string, BufferedTimestamp> _latestDiscoveredTimeByTopic = new(StringComparer.OrdinalIgnoreCase);
 
-    private readonly Timer _progressFlushTimer;
-    private readonly Timer _discoveredFlushTimer;
+    // Pending flags for event-driven flush (0 = idle, 1 = flush scheduled).
+    private volatile bool _progressPending;
+    private volatile bool _discoveredPending;
 
     private readonly MqttFactory _factory = new();
     private CancellationTokenSource? _cts;
@@ -114,13 +115,17 @@ public sealed class MqttClientService : IDisposable
                 {
                     var mac = TryExtractMacFromProgress(payload);
                     if (!string.IsNullOrWhiteSpace(mac))
+                    {
                         _latestProgressByTopicMac[$"{topic}|{mac}"] = new BufferedPayload(sessionId, payload);
+                        ScheduleProgressFlush();
+                    }
                     else
                         Message?.Invoke(topic, payload); // unknown shape, pass through
                 }
                 else if (IsLeaf(topic, "discovered"))
                 {
                     TryBufferDiscoveredPerMac(sessionId, topic, payload);
+                    ScheduleDiscoveredFlush();
                 }
                 else
                 {
@@ -139,11 +144,6 @@ public sealed class MqttClientService : IDisposable
     public MqttClientService()
     {
         InvalidateCurrentSession();
-
-        // Flush coalesced high-frequency topics on a fixed cadence.
-        // Reduced from 5s/15s to 2s/5s for better UI responsiveness.
-        _progressFlushTimer = new Timer(_ => FlushProgress(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
-        _discoveredFlushTimer = new Timer(_ => FlushDiscovered(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
     }
 
     public async Task ConnectAsync(
@@ -430,6 +430,20 @@ public sealed class MqttClientService : IDisposable
         }
     }
 
+    private void ScheduleProgressFlush()
+    {
+        if (_progressPending) return;
+        _progressPending = true;
+        Task.Run(() => { _progressPending = false; FlushProgress(); });
+    }
+
+    private void ScheduleDiscoveredFlush()
+    {
+        if (_discoveredPending) return;
+        _discoveredPending = true;
+        Task.Run(() => { _discoveredPending = false; FlushDiscovered(); });
+    }
+
     private void FlushProgress()
     {
         try
@@ -520,9 +534,6 @@ public sealed class MqttClientService : IDisposable
 
     public void Dispose()
     {
-        try { _progressFlushTimer.Dispose(); } catch { }
-        try { _discoveredFlushTimer.Dispose(); } catch { }
-
         _cts?.Cancel();
         _cts?.Dispose();
         try { _client?.Dispose(); } catch { }

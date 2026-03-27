@@ -445,18 +445,6 @@ public partial class MainViewModel : ObservableObject
         };
 
         _mqtt.Message += OnMqttMessage;
-        // Countdown labels for throttled UI updates (progress/discovered).
-        _uiCountdownTimer.Tick += (_, _) =>
-        {
-            _progressCountdownSec--;
-            if (_progressCountdownSec <= 0) _progressCountdownSec = 2;
-            ProgressUiCountdownText = $"Progress UI update in {_progressCountdownSec}s";
-
-            _discoveredCountdownSec--;
-            if (_discoveredCountdownSec <= 0) _discoveredCountdownSec = 5;
-            DiscoveredUiCountdownText = $"Discovered UI update in {_discoveredCountdownSec}s";
-        };
-        _uiCountdownTimer.Start();
 
 
 

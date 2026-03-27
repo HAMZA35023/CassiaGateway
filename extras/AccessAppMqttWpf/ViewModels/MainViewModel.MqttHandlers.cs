@@ -30,9 +30,8 @@ public partial class MainViewModel : ObservableObject
             if (_pendingDevicesRefresh) return;
             _pendingDevicesRefresh = true;
 
-            Application.Current.Dispatcher.InvokeAsync(async () =>
+            Application.Current.Dispatcher.InvokeAsync(() =>
             {
-                await Task.Delay(250); // throttle
                 _pendingDevicesRefresh = false;
 
                 // preserve selection
@@ -42,16 +41,15 @@ public partial class MainViewModel : ObservableObject
 
                 if (!string.IsNullOrWhiteSpace(selectedMac))
                 SelectedDevice = _devices.FirstOrDefault(d => d.Mac.Equals(selectedMac, StringComparison.OrdinalIgnoreCase));
-            });
+            }, DispatcherPriority.Background);
         }
         void RequestQueueRefresh()
         {
             if (_pendingQueueRefresh) return;
             _pendingQueueRefresh = true;
 
-            Application.Current.Dispatcher.InvokeAsync(async () =>
+            Application.Current.Dispatcher.InvokeAsync(() =>
             {
-                await Task.Delay(250); // throttle
                 _pendingQueueRefresh = false;
 
                 // preserve selection
@@ -66,7 +64,7 @@ public partial class MainViewModel : ObservableObject
 
                 if (!string.IsNullOrWhiteSpace(selectedMac))
                 SelectedQueueItem = QueueItems.FirstOrDefault(d => d.Mac.Equals(selectedMac, StringComparison.OrdinalIgnoreCase));
-            });
+            }, DispatcherPriority.Background);
         }
 
 

@@ -55,7 +55,7 @@ public partial class MainViewModel : ObservableObject
     // ---- Progress buffering (prevents UI lag / lost clicks when many % updates arrive) ----
     private readonly object _progressBufLock = new();
     private readonly Dictionary<string, BufferedProgress> _progressByMac = new(StringComparer.OrdinalIgnoreCase);
-    private System.Windows.Threading.DispatcherTimer _progressFlushTimer = null!;
+    private volatile bool _progressFlushPending;
 
     private sealed class BufferedProgress
     {
@@ -237,16 +237,18 @@ public partial class MainViewModel : ObservableObject
 
     private void InitProgressBuffering()
     {
-        // Flush buffered progress updates in small batches to keep UI responsive
-        _progressFlushTimer = new System.Windows.Threading.DispatcherTimer
+        // No-op: progress is flushed event-driven via ScheduleProgressFlushOnUi().
+    }
+
+    internal void ScheduleProgressFlushOnUi()
+    {
+        if (_progressFlushPending) return;
+        _progressFlushPending = true;
+        Application.Current?.Dispatcher?.InvokeAsync(() =>
         {
-            Interval = TimeSpan.FromMilliseconds(500)
-        };
-        _progressFlushTimer.Tick += (s2, e2) => FlushBufferedProgressOnUi();
-        _progressFlushTimer.Start();
-
-
-
+            _progressFlushPending = false;
+            FlushBufferedProgressOnUi();
+        }, System.Windows.Threading.DispatcherPriority.Background);
     }
 
     partial void OnDeviceFilterChanged(string value)

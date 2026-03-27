@@ -586,10 +586,6 @@
             </StatusBarItem>
             <StatusBarItem HorizontalAlignment="Right" HorizontalContentAlignment="Right">
                 <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="UI update cadence" Opacity="0.85" Margin="0,0,10,0"/>
-                    <TextBlock Text="{Binding ProgressUiCountdownText}" Margin="0,0,14,0" Opacity="0.85"/>
-                    <TextBlock Text="{Binding DiscoveredUiCountdownText}" Opacity="0.85"/>
-                    <TextBlock Text="   " Opacity="0.85"/>
                     <TextBlock Text="{Binding TotalSpeedStatusText}" Foreground="{DynamicResource MutedBrush}"/>
                     <Button Style="{StaticResource GhostButton}"
                             Content="Refresh UI"
