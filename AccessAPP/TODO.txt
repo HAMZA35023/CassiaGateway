@@ -1,6 +1,4 @@
 
--> WFP app - ask to clear local upgrade-log when resyncing - when a device is offline, we will miss the upgrade log from that, and want to keep using the local copy
-
 
 -> Cassia needs external antennas for 4G!
 
