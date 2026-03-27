@@ -436,12 +436,12 @@ public partial class MainWindow : Window
 
     private void ClearHostBleSelectionFromVm()
     {
-        Dispatcher.Invoke(() =>
+        Dispatcher.InvokeAsync(() =>
         {
             if (HostBleGrid == null) return;
             HostBleGrid.SelectedItem = null;
             HostBleGrid.SelectedItems?.Clear();
-        });
+        }, System.Windows.Threading.DispatcherPriority.Background);
     }
 
 

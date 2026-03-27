@@ -42,18 +42,8 @@ public partial class MainViewModel : ObservableObject
 
     public event Action? RequestClearHostBleSelection;
 
-    // ---- UI update cadence (throttled at MQTT client level) ----
-    // Progress updates are emitted every 2 seconds, discovered every 5 seconds.
-    // We show countdowns so users understand why numbers/statuses are not "live" per message.
-    private readonly DispatcherTimer _uiCountdownTimer = new() { Interval = TimeSpan.FromSeconds(1) };
-    private int _progressCountdownSec = 2;
-    private int _discoveredCountdownSec = 5;
-
-
     // Suppress repeated weak-RSSI warnings during bulk/batch queue operations
     private bool _suppressWeakRssiPrompt;
-    [ObservableProperty] private string progressUiCountdownText = "Progress UI update in 2s";
-    [ObservableProperty] private string discoveredUiCountdownText = "Discovered UI update in 5s";
 
 
     // ---- Firmware manifest (tele/.../fw-manifest) ----

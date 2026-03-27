@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.Input;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Windows;
+using System.Windows.Threading;
 using AccessAppMqttWpf;
 
 namespace AccessAppMqttWpf.ViewModels;
@@ -310,13 +311,13 @@ public partial class MainViewModel
             }
         }
 
-        Application.Current.Dispatcher.Invoke(() =>
+        Application.Current.Dispatcher.InvokeAsync(() =>
         {
             var text = string.IsNullOrWhiteSpace(result.Message)
                 ? (result.Success ? "Detector settings command completed." : "Detector settings command failed.")
                 : result.Message;
             ConnectionStatus = $"[{cassia}] {text}";
-        });
+        }, DispatcherPriority.Background);
 
         static string? ReadString(JsonElement obj, string propertyName)
         {

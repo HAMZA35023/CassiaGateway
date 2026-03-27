@@ -5,6 +5,7 @@ using System;
 using System.Diagnostics;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Threading;
 
 namespace AccessAppMqttWpf.ViewModels;
 
@@ -71,11 +72,11 @@ public partial class MainViewModel : ObservableObject
     {
         LocalMqttServer.StatusChanged += async (running, msg) =>
         {
-            Application.Current.Dispatcher.Invoke(() =>
+            await Application.Current.Dispatcher.InvokeAsync(() =>
             {
                 IsLocalServerRunning = running;
                 LocalServerStatus = msg;
-            });
+            }, DispatcherPriority.Background);
 
             // Announce / stop announcing the local broker on the LAN
             if (running)
@@ -91,14 +92,14 @@ public partial class MainViewModel : ObservableObject
                 LocalMqttServer.RemoteClientDisconnected += OnGatewayDisconnectedFromLocalMqtt;
 
                 // TCP fast scan: parallel HTTP probes, completes in ~300 ms on LAN.
-                Application.Current.Dispatcher.Invoke(() => LocalServerStatus = "Scanning for gateways…");
+                Application.Current.Dispatcher.InvokeAsync(() => LocalServerStatus = "Scanning for gateways…", DispatcherPriority.Background);
                 _accessAppDiscovery.StartFastScan(onComplete: () =>
                 {
                     var count = _accessAppDiscovery.DiscoveredCount;
                     var msg   = count == 0
                         ? "Scan done — no gateways found."
                         : $"Scan done — {count} gateway{(count == 1 ? "" : "s")} found.";
-                    Application.Current.Dispatcher.Invoke(() => LocalServerStatus = msg);
+                    Application.Current.Dispatcher.InvokeAsync(() => LocalServerStatus = msg, DispatcherPriority.Background);
                     AppLog.Info($"[MainViewModel] Fast scan complete: {count} gateway(s) discovered.");
                 });
             }
@@ -139,8 +140,8 @@ public partial class MainViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            Application.Current.Dispatcher.Invoke(() =>
-                ConnectionStatus = "Auto-start local MQTT failed: " + ex.Message);
+            Application.Current.Dispatcher.InvokeAsync(() =>
+                ConnectionStatus = "Auto-start local MQTT failed: " + ex.Message, DispatcherPriority.Background);
             return;
         }
 
@@ -193,13 +194,13 @@ public partial class MainViewModel : ObservableObject
         _localMqttActive = true;
 
         int localPort = LocalMqttServer.Port;
-        Application.Current.Dispatcher.Invoke(() =>
+        await Application.Current.Dispatcher.InvokeAsync(() =>
         {
             IsLocalMqttActive = true;
             MqttHost = "127.0.0.1";
             MqttPort = localPort;
             ConnectionStatus = $"Switching to local MQTT (127.0.0.1:{localPort})…";
-        });
+        }, DispatcherPriority.Background);
         try
         {
             // Treat broker switching as a manual handoff so delayed reconnect attempts
@@ -228,7 +229,7 @@ public partial class MainViewModel : ObservableObject
         int restorePort = _savedRemotePort;
         string restoreNetworkId = _savedRemoteNetworkId;
 
-        Application.Current.Dispatcher.Invoke(() =>
+        await Application.Current.Dispatcher.InvokeAsync(() =>
         {
             if (!string.IsNullOrWhiteSpace(restoreNetworkId))
                 NetworkId = restoreNetworkId;
@@ -239,7 +240,7 @@ public partial class MainViewModel : ObservableObject
             }
             IsLocalMqttActive = false;
             ConnectionStatus = "Switching back to public MQTT…";
-        });
+        }, DispatcherPriority.Background);
         try
         {
             // Treat broker switching as a manual handoff so delayed reconnect attempts
@@ -405,7 +406,7 @@ public partial class MainViewModel : ObservableObject
 
     private void OpenLocalServerSettingsForUpdate()
     {
-        Application.Current.Dispatcher.Invoke(() =>
+        Application.Current.Dispatcher.InvokeAsync(() =>
         {
             var wnd = new LocalServerSettingsWindow(this, autoDownloadAndLaunch: true)
             {
@@ -413,7 +414,7 @@ public partial class MainViewModel : ObservableObject
             };
             wnd.Show();
             wnd.Activate();
-        });
+        }, DispatcherPriority.Background);
     }
 
     private Task LaunchAccessAppFromSettingsAsync(LocalServerSettings s)
@@ -424,8 +425,8 @@ public partial class MainViewModel : ObservableObject
             var exe = AccessAppLauncherService.FindExecutable(localPath);
             if (exe == null)
             {
-                Application.Current.Dispatcher.Invoke(() =>
-                    ConnectionStatus = "AccessApp executable not found. Use Local Server Settings to download it.");
+                Application.Current.Dispatcher.InvokeAsync(() =>
+                    ConnectionStatus = "AccessApp executable not found. Use Local Server Settings to download it.", DispatcherPriority.Background);
                 return;
             }
 
@@ -434,10 +435,10 @@ public partial class MainViewModel : ObservableObject
                 username: "local", password: LocalMqttServerService.LocalToken);
             SetAccessAppProcess(proc);
 
-            Application.Current.Dispatcher.Invoke(() =>
+            Application.Current.Dispatcher.InvokeAsync(() =>
                 ConnectionStatus = proc != null
                     ? $"AccessApp started (PID {proc.Id})."
-                    : "Failed to start AccessApp.");
+                    : "Failed to start AccessApp.", DispatcherPriority.Background);
 
             // Probe own LAN IPs every 2 s until the local AccessApp responds (up to 30 s).
             // The fast scan fires before AccessApp has started listening, so without this
@@ -465,14 +466,14 @@ public partial class MainViewModel : ObservableObject
         // (the guard in the auto-request logic skips gateways already seen this session).
         _requestedUpgradeLogCassias.Clear();
 
-        Application.Current.Dispatcher.Invoke(() => LocalServerStatus = "Scanning for new gateways…");
+        Application.Current.Dispatcher.InvokeAsync(() => LocalServerStatus = "Scanning for new gateways…", DispatcherPriority.Background);
         _accessAppDiscovery.StartFastScan(onComplete: () =>
         {
             var count = _accessAppDiscovery.DiscoveredCount;
             var msg = count == 0
                 ? "Scan done — no gateways found."
                 : $"Scan done — {count} gateway{(count == 1 ? "" : "s")} known.";
-            Application.Current.Dispatcher.Invoke(() => LocalServerStatus = msg);
+            Application.Current.Dispatcher.InvokeAsync(() => LocalServerStatus = msg, DispatcherPriority.Background);
         });
     }
 
@@ -481,7 +482,7 @@ public partial class MainViewModel : ObservableObject
     {
         try
         {
-            Application.Current.Dispatcher.Invoke(() =>
+            Application.Current.Dispatcher.InvokeAsync(() =>
             {
                 var wnd = new LocalServerSettingsWindow(this)
                 {
@@ -489,7 +490,7 @@ public partial class MainViewModel : ObservableObject
                 };
                 wnd.Show();
                 wnd.Activate();
-            });
+            }, DispatcherPriority.Background);
         }
         catch (Exception ex)
         {
@@ -508,7 +509,7 @@ public partial class MainViewModel : ObservableObject
             proc.Exited += (_, _) =>
             {
                 _accessAppProcess = null;
-                Application.Current.Dispatcher.Invoke(RefreshAccessAppStatus);
+                Application.Current.Dispatcher.InvokeAsync(RefreshAccessAppStatus, DispatcherPriority.Background);
             };
         }
     }
@@ -551,7 +552,7 @@ public partial class MainViewModel : ObservableObject
             ? $"Gateway {ip} disconnected — scanning…"
             : $"Gateway {ip} disconnected — {count} still active, scanning…";
 
-        Application.Current.Dispatcher.Invoke(() => LocalServerStatus = msg);
+        Application.Current.Dispatcher.InvokeAsync(() => LocalServerStatus = msg, DispatcherPriority.Background);
         AppLog.Info($"[MainViewModel] Gateway {ip} disconnected — starting slow scan.");
         _accessAppDiscovery.StartSlowScan();
     }
@@ -566,7 +567,7 @@ public partial class MainViewModel : ObservableObject
         var msg   = count == 0
             ? $"Gateway {ip} lost."
             : $"Gateway {ip} lost — {count} still active.";
-        Application.Current.Dispatcher.Invoke(() => LocalServerStatus = msg);
+        Application.Current.Dispatcher.InvokeAsync(() => LocalServerStatus = msg, DispatcherPriority.Background);
     }
 
     public void ShutdownLocalServices()
