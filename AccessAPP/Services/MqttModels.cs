@@ -216,3 +216,21 @@ public sealed class DeviceBackupResponseCommand
     public string? MacAddress { get; set; }
     public DeviceSettingsSnapshot? Snapshot { get; set; }
 }
+
+// ── DALI Database read/write commands ─────────────────────────────────────
+
+/// <summary>Request to read the full DALI database from a connected, logged-in device.</summary>
+public sealed class DaliDbReadCommand
+{
+    /// <summary>Single MAC address of the target device.</summary>
+    public string Sensor { get; set; } = "";
+    public string? RequestId { get; set; }
+}
+
+/// <summary>Request to write a previously-read DALI database back to a device.</summary>
+public sealed class DaliDbWriteCommand
+{
+    public string Sensor { get; set; } = "";
+    public string? RequestId { get; set; }
+    public AccessAPP.Models.DaliDbSnapshot? Db { get; set; }
+}
