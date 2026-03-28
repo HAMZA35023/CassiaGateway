@@ -65,6 +65,10 @@ public interface IMqttService : IAsyncDisposable
     // Peer backup sharing: one gateway asks all peers for a device backup.
     event Func<GetDeviceBackupCommand, Task>? GetDeviceBackupRequested;
     event Func<DeviceBackupResponseCommand, Task>? DeviceBackupResponseReceived;
+
+    // DALI database read/write
+    event Func<DaliDbReadCommand, Task>?  DaliDbReadRequested;
+    event Func<DaliDbWriteCommand, Task>? DaliDbWriteRequested;
     Task BroadcastDeviceBackupRequestAsync(GetDeviceBackupCommand cmd, CancellationToken ct = default);
     Task PublishDeviceBackupResponseAsync(string requesterName, DeviceBackupResponseCommand msg, CancellationToken ct = default);
 }

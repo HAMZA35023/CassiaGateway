@@ -72,6 +72,10 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     public event Func<GetDeviceBackupCommand, Task>? GetDeviceBackupRequested;
     public event Func<DeviceBackupResponseCommand, Task>? DeviceBackupResponseReceived;
 
+    // DALI database read/write
+    public event Func<DaliDbReadCommand, Task>?  DaliDbReadRequested;
+    public event Func<DaliDbWriteCommand, Task>? DaliDbWriteRequested;
+
     /// <summary>
     /// Fired after each successful MQTT publish (topic, raw payload bytes).
     /// Used by <see cref="LocalBrokerDiscoveryService"/> to mirror telemetry to discovered local brokers.
@@ -2114,6 +2118,20 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 AppLog.Debug("HandleCommandAsync: dispatch device-backup-response");
                 var dto = JsonSerializer.Deserialize<DeviceBackupResponseCommand>(payload, JsonOptions) ?? new DeviceBackupResponseCommand();
                 return DeviceBackupResponseReceived?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "dali-db-read", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch dali-db-read");
+                var dto = JsonSerializer.Deserialize<DaliDbReadCommand>(payload, JsonOptions) ?? new DaliDbReadCommand();
+                return DaliDbReadRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "dali-db-write", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch dali-db-write");
+                var dto = JsonSerializer.Deserialize<DaliDbWriteCommand>(payload, JsonOptions) ?? new DaliDbWriteCommand();
+                return DaliDbWriteRequested?.Invoke(dto) ?? Task.CompletedTask;
             }
 
             AppLog.Warn($"HandleCommandAsync: ignored (unknown command '{command}')");
