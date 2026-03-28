@@ -2,6 +2,8 @@ using AccessAPP.Models;
 using AccessAPP.Services.BleAbstractions;
 using AccessAPP.Services.HelperClasses;
 using Microsoft.Extensions.Configuration;
+using System;
+using System.Net;
 
 namespace AccessAPP.Services;
 
@@ -9,13 +11,15 @@ namespace AccessAPP.Services;
 /// Reads and writes the full DALI database over BLE using the §6.1 restore-mode protocol
 /// (0x0500 enable → 0x0504/0x0506 get/set loop → 0x0502 disable).
 ///
-/// Precondition: the BLE device must already be connected and logged in.
+/// Connects and logs in to the device before starting, disconnects when done.
 /// </summary>
 public sealed class DaliDbService
 {
     private readonly IBleReadWriteService    _rw;
     private readonly IBleNotificationService _notif;
+    private readonly IBleConnectionService   _conn;
     private readonly string                  _gatewayIp;
+    private readonly int                     _gatewayPort;
 
     private const int BleHandle       = 19;
     private const int DefaultTimeoutMs = 10_000;
@@ -24,11 +28,14 @@ public sealed class DaliDbService
     public DaliDbService(
         IBleReadWriteService    readWriteService,
         IBleNotificationService notificationService,
+        IBleConnectionService   connectionService,
         IConfiguration          configuration)
     {
-        _rw        = readWriteService;
-        _notif     = notificationService;
-        _gatewayIp = configuration.GetValue<string>("GatewayConfiguration:IpAddress") ?? "127.0.0.1";
+        _rw          = readWriteService;
+        _notif       = notificationService;
+        _conn        = connectionService;
+        _gatewayIp   = configuration.GetValue<string>("GatewayConfiguration:IpAddress") ?? "127.0.0.1";
+        _gatewayPort = configuration.GetValue<int>("GatewayConfiguration:Port", 80);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -39,6 +46,7 @@ public sealed class DaliDbService
     {
         AppLog.Info($"[DaliDb] READ start for {mac}");
 
+        await ConnectAndLoginAsync(mac, ct).ConfigureAwait(false);
         await EnableAsync(mac, ct).ConfigureAwait(false);
         var snap = new DaliDbSnapshot();
 
@@ -86,13 +94,16 @@ public sealed class DaliDbService
                 SetInstanceData(snap, idx, result);
             }
 
-            // Infer family from instance data 0 response size
-            if (snap.InstanceData0 is { NotSupported: false } id0)
+            // Infer family from instance data 0 response size.
+            // Only set when the read actually returned data (length > 0 means the BLE write succeeded).
+            // BMS/Slave returns 6 bytes; Standard/Comfort returns 18 bytes for this dbType.
+            if (snap.InstanceData0 is { NotSupported: false } id0 && id0.Data.Length > 0)
                 snap.InstanceDataFamily = id0.Data.Length >= 18 ? "StandardComfort" : "BmsSlave";
         }
         finally
         {
             await DisableAsync(mac, default).ConfigureAwait(false);
+            await DisconnectAsync(mac).ConfigureAwait(false);
         }
 
         AppLog.Info($"[DaliDb] READ complete for {mac}");
@@ -103,6 +114,7 @@ public sealed class DaliDbService
     {
         AppLog.Info($"[DaliDb] WRITE start for {mac}");
 
+        await ConnectAndLoginAsync(mac, ct).ConfigureAwait(false);
         await EnableAsync(mac, ct).ConfigureAwait(false);
 
         try
@@ -189,12 +201,14 @@ public sealed class DaliDbService
 
             if (snap.Db103DeviceGeneral is { } dg103)
             {
-                var data = new byte[11];
-                dg103.DeviceGroups.CopyTo(data, 0);
-                dg103.RandomAddress.CopyTo(data, 4);
-                data[8]  = dg103.ApplicationActive;
-                data[9]  = dg103.PowerCycleNotification;
-                data[10] = dg103.LuxRange;
+                var data = new byte[13];
+                data[0] = dg103.ShortAddress;
+                dg103.DeviceGroups.CopyTo(data, 1);   // data[1..4]
+                dg103.RandomAddress.CopyTo(data, 5);  // data[5..8]
+                data[9]  = dg103.OperationMode;
+                data[10] = dg103.ApplicationActive;
+                data[11] = dg103.PowerCycleNotification;
+                data[12] = dg103.LuxRange;
                 await SetAsync(mac, DaliDbTelegram.DbType103DeviceGeneral, data, ct).ConfigureAwait(false);
             }
 
@@ -211,9 +225,41 @@ public sealed class DaliDbService
         finally
         {
             await DisableAsync(mac, default).ConfigureAwait(false);
+            await DisconnectAsync(mac).ConfigureAwait(false);
         }
 
         AppLog.Info($"[DaliDb] WRITE complete for {mac}");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Connect / Login / Disconnect
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private async Task ConnectAndLoginAsync(string mac, CancellationToken ct)
+    {
+        AppLog.Info($"[DaliDb] Connecting to {mac}");
+        var connectResult = await _conn.ConnectToBleDevice(_gatewayIp, _gatewayPort, mac, ct: ct)
+            .ConfigureAwait(false);
+        if (connectResult.Status != System.Net.HttpStatusCode.OK)
+            AppLog.Warn($"[DaliDb] Connect failed ({connectResult.Status}) for {mac}: {connectResult.Data}");
+
+        AppLog.Info($"[DaliDb] Logging in to {mac}");
+        var loginResult = await _conn.AttemptLogin(_gatewayIp, mac, ct).ConfigureAwait(false);
+        if (loginResult.Status != "OK")
+            AppLog.Warn($"[DaliDb] Login failed ({loginResult.Status}) for {mac}");
+    }
+
+    private async Task DisconnectAsync(string mac)
+    {
+        try
+        {
+            await _conn.DisconnectFromBleDevice(_gatewayIp, mac).ConfigureAwait(false);
+            AppLog.Info($"[DaliDb] Disconnected {mac}");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Warn($"[DaliDb] Disconnect error for {mac}: {ex.Message}");
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -367,14 +413,12 @@ public sealed class DaliDbService
         var (status, _, data) = await GetAsync(mac, DaliDbTelegram.DbType103DeviceGeneral, ct: ct).ConfigureAwait(false);
         if (status != DaliDbTelegram.StatusAck || data.Length < 13) return null;
         var g = new Dali103DeviceGeneral { ShortAddress = data[0] };
-        Array.Copy(data, 0, g.DeviceGroups,  0, 4);
-        Array.Copy(data, 4, g.RandomAddress, 0, 4);
-        g.OperationMode          = data[8];
-        g.ApplicationActive      = data[9];
-        g.PowerCycleNotification = data[10];
-        g.LuxRange               = data[11];
-        // Note: spec has ShortAddress at data[0] for 103 device general
-        g.ShortAddress = data[0];
+        Array.Copy(data, 1, g.DeviceGroups,  0, 4);  // data[1..4]
+        Array.Copy(data, 5, g.RandomAddress, 0, 4);  // data[5..8]
+        g.OperationMode          = data[9];
+        g.ApplicationActive      = data[10];
+        g.PowerCycleNotification = data[11];
+        g.LuxRange               = data[12];
         return g;
     }
 

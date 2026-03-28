@@ -619,6 +619,16 @@ public partial class MainWindow : Window
             };
             cm.Items.Add(detectorSettings);
 
+            if (vm.DeveloperModeUnlocked)
+            {
+                var openDb = new MenuItem { Header = "Open DB…" };
+                openDb.Click += (_, __) =>
+                {
+                    try { vm.OpenDaliDbEditorCommand?.Execute(device); } catch { }
+                };
+                cm.Items.Add(openDb);
+            }
+
             cm.Items.Add(new Separator());
 
             var forceUpdate = new MenuItem { Header = "Update (Force)" };
