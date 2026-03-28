@@ -1,5 +1,6 @@
 using AccessAppMqttWpf.Models;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 
 namespace AccessAppMqttWpf.ViewModels;
@@ -84,8 +85,18 @@ internal static class DaliDbMapper
             vm.Db102DeviceGeneral.ExtendedFadeTimeBase       = dg102.ExtendedFadeTimeBase;
             vm.Db102DeviceGeneral.ExtendedFadeTimeMultiplier = dg102.ExtendedFadeTimeMultiplier;
             vm.Db102DeviceGeneral.ShortAddress               = dg102.ShortAddress;
-            vm.Db102DeviceGeneral.RandomAddress              = BytesToHexStr(dg102.RandomAddress);
-            vm.Db102DeviceGeneral.GearGroups                 = BytesToHexStr(dg102.GearGroups);
+            if (dg102.RandomAddress.Length >= 4)
+            {
+                vm.Db102DeviceGeneral.RandomAddress0 = dg102.RandomAddress[0];
+                vm.Db102DeviceGeneral.RandomAddress1 = dg102.RandomAddress[1];
+                vm.Db102DeviceGeneral.RandomAddress2 = dg102.RandomAddress[2];
+                vm.Db102DeviceGeneral.RandomAddress3 = dg102.RandomAddress[3];
+            }
+            if (dg102.GearGroups.Length >= 2)
+            {
+                vm.Db102DeviceGeneral.GearGroup0 = dg102.GearGroups[0];
+                vm.Db102DeviceGeneral.GearGroup1 = dg102.GearGroups[1];
+            }
         }
 
         if (src.Db102DeviceScenes is { } ds102)
@@ -118,26 +129,45 @@ internal static class DaliDbMapper
         if (src.Db103DeviceGeneral is { } dg103)
         {
             vm.Db103DeviceGeneral.ShortAddress           = dg103.ShortAddress;
-            vm.Db103DeviceGeneral.DeviceGroups           = BytesToHexStr(dg103.DeviceGroups);
-            vm.Db103DeviceGeneral.RandomAddress          = BytesToHexStr(dg103.RandomAddress);
             vm.Db103DeviceGeneral.OperationMode          = dg103.OperationMode;
             vm.Db103DeviceGeneral.ApplicationActive      = dg103.ApplicationActive;
             vm.Db103DeviceGeneral.PowerCycleNotification = dg103.PowerCycleNotification;
             vm.Db103DeviceGeneral.LuxRange               = dg103.LuxRange;
+            if (dg103.DeviceGroups.Length >= 4)
+            {
+                vm.Db103DeviceGeneral.DeviceGroup0 = dg103.DeviceGroups[0];
+                vm.Db103DeviceGeneral.DeviceGroup1 = dg103.DeviceGroups[1];
+                vm.Db103DeviceGeneral.DeviceGroup2 = dg103.DeviceGroups[2];
+                vm.Db103DeviceGeneral.DeviceGroup3 = dg103.DeviceGroups[3];
+            }
+            if (dg103.RandomAddress.Length >= 4)
+            {
+                vm.Db103DeviceGeneral.RandomAddress0 = dg103.RandomAddress[0];
+                vm.Db103DeviceGeneral.RandomAddress1 = dg103.RandomAddress[1];
+                vm.Db103DeviceGeneral.RandomAddress2 = dg103.RandomAddress[2];
+                vm.Db103DeviceGeneral.RandomAddress3 = dg103.RandomAddress[3];
+            }
         }
 
+        // Instance data — parsed into named fields per §6.1.6 spec
         vm.InstanceDataFamily = src.InstanceDataFamily;
         foreach (var (id, idx) in new[] {
             (src.InstanceData0,0),(src.InstanceData1,1),(src.InstanceData2,2),
             (src.InstanceData3,3),(src.InstanceData4,4),(src.InstanceData5,5),(src.InstanceData6,6) })
         {
             if (id is null) continue;
-            vm.InstanceDataSections.Add(new Dali103InstanceDataVm {
+            var section = new Dali103InstanceDataParsedVm {
                 DbType       = id.DbType,
-                Label        = $"Instance Data {idx} (dbType {id.DbType})",
-                HexData      = id.NotSupported ? "(not supported)" : Convert.ToHexString(id.Data),
-                NotSupported = id.NotSupported
-            });
+                Label        = $"Instance Data {idx}  (dbType {id.DbType})",
+                NotSupported = id.NotSupported,
+            };
+            if (!id.NotSupported && id.Data.Length > 0)
+            {
+                var names = GetInstanceDataFieldNames(id.DbType, src.InstanceDataFamily);
+                for (int i = 0; i < Math.Min(names.Length, id.Data.Length); i++)
+                    section.Fields.Add(new InstanceFieldVm { Name = names[i], Value = id.Data[i] });
+            }
+            vm.InstanceDataSections.Add(section);
         }
 
         return vm;
@@ -208,8 +238,8 @@ internal static class DaliDbMapper
             ExtendedFadeTimeBase       = dg.ExtendedFadeTimeBase,
             ExtendedFadeTimeMultiplier = dg.ExtendedFadeTimeMultiplier,
             ShortAddress               = dg.ShortAddress,
-            RandomAddress              = HexStrToBytes(dg.RandomAddress, 4),
-            GearGroups                 = HexStrToBytes(dg.GearGroups, 2)
+            RandomAddress              = new[] { dg.RandomAddress0, dg.RandomAddress1, dg.RandomAddress2, dg.RandomAddress3 },
+            GearGroups                 = new[] { dg.GearGroup0, dg.GearGroup1 }
         };
 
         var sc = vm.Db102DeviceScenes;
@@ -231,8 +261,8 @@ internal static class DaliDbMapper
         var g3 = vm.Db103DeviceGeneral;
         snap.Db103DeviceGeneral = new AccessAPP.Models.Dali103DeviceGeneral {
             ShortAddress           = g3.ShortAddress,
-            DeviceGroups           = HexStrToBytes(g3.DeviceGroups, 4),
-            RandomAddress          = HexStrToBytes(g3.RandomAddress, 4),
+            DeviceGroups           = new[] { g3.DeviceGroup0, g3.DeviceGroup1, g3.DeviceGroup2, g3.DeviceGroup3 },
+            RandomAddress          = new[] { g3.RandomAddress0, g3.RandomAddress1, g3.RandomAddress2, g3.RandomAddress3 },
             OperationMode          = g3.OperationMode,
             ApplicationActive      = g3.ApplicationActive,
             PowerCycleNotification = g3.PowerCycleNotification,
@@ -245,7 +275,7 @@ internal static class DaliDbMapper
             var entry = new AccessAPP.Models.Dali103InstanceData {
                 DbType       = id.DbType,
                 NotSupported = id.NotSupported,
-                Data         = id.NotSupported ? Array.Empty<byte>() : HexStringToBytes(id.HexData)
+                Data         = id.NotSupported ? Array.Empty<byte>() : id.ToRawBytes()
             };
             byte idx = (byte)(id.DbType - 13);
             switch (idx)
@@ -263,27 +293,41 @@ internal static class DaliDbMapper
         return snap;
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    // ── Instance data field names per §6.1.6 spec ─────────────────────────────
 
-    private static string BytesToHexStr(byte[] bytes)
-        => string.Join(" ", bytes.Select(b => b.ToString("X2")));
-
-    private static byte[] HexStrToBytes(string s, int expectedLen)
+    internal static string[] GetInstanceDataFieldNames(byte dbType, string? family)
     {
-        var result = new byte[expectedLen];
-        var raw    = System.Text.RegularExpressions.Regex.Replace(s ?? "", "[^0-9A-Fa-f]", "");
-        for (int i = 0; i < expectedLen && i * 2 + 1 < raw.Length; i++)
-            result[i] = Convert.ToByte(raw.Substring(i * 2, 2), 16);
-        return result;
+        bool sc = string.Equals(family, "StandardComfort", StringComparison.OrdinalIgnoreCase);
+        return (dbType - 13) switch
+        {
+            // InstanceData0 — instance groups
+            0 when sc  => Seq("IG0", 6).Concat(Seq("IG1", 6)).Concat(Seq("IG2", 6)).ToArray(),
+            0          => Seq("IG0", 2).Concat(Seq("IG1", 2)).Concat(Seq("IG2", 2)).ToArray(),
+            // InstanceData1 — active / scheme / priority
+            1 when sc  => Seq("Active", 6).Concat(Seq("Scheme", 6)).Concat(Seq("Priority", 6)).ToArray(),
+            1          => Seq("Active", 2).Concat(Seq("Scheme", 2)).Concat(Seq("Priority", 2)).ToArray(),
+            // InstanceData2 — event filter
+            2 when sc  => FilterNames(0, 4),
+            2          => FilterNames(0, 2),
+            // InstanceData3 — event filter continued (SC only; BMS = NACK)
+            3 when sc  => FilterNames(4, 2),
+            // InstanceData4 — timing 303 (both families)
+            4          => new[] { "tDeadTime303", "tHold303", "tReport303" },
+            // InstanceData5 — timing 304 (both families)
+            5          => new[] { "tReport304", "tDeadTime304", "HysteresisMin304", "Hysteresis304" },
+            // InstanceData6 — push-button timing (SC only; BMS = NACK)
+            6 when sc  => Seq("tShort301", 4).Concat(Seq("tDouble301", 4))
+                                             .Concat(Seq("tRepeat301", 4))
+                                             .Concat(Seq("tStuck301", 4)).ToArray(),
+            _          => Array.Empty<string>()
+        };
     }
 
-    private static byte[] HexStringToBytes(string s)
-    {
-        var raw = System.Text.RegularExpressions.Regex.Replace(s ?? "", "[^0-9A-Fa-f]", "");
-        if (raw.Length == 0) return Array.Empty<byte>();
-        var result = new byte[raw.Length / 2];
-        for (int i = 0; i < result.Length; i++)
-            result[i] = Convert.ToByte(raw.Substring(i * 2, 2), 16);
-        return result;
-    }
+    private static IEnumerable<string> Seq(string prefix, int count)
+        => Enumerable.Range(0, count).Select(i => $"{prefix}_{i}");
+
+    private static string[] FilterNames(int startGroup, int groupCount)
+        => Enumerable.Range(startGroup, groupCount)
+                     .SelectMany(g => Enumerable.Range(0, 4).Select(b => $"Filter{g}_{b}"))
+                     .ToArray();
 }

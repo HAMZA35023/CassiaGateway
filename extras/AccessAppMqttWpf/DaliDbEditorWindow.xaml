@@ -308,15 +308,21 @@
                                     <TextBlock Text="ShortAddress"/>
                                     <TextBox Text="{Binding Snapshot.Db102DeviceGeneral.ShortAddress, UpdateSourceTrigger=PropertyChanged}"/>
                                 </StackPanel>
-                                <StackPanel Margin="0,0,16,8" Grid.Column="2">
-                                    <TextBlock Text="RandomAddress (hex)"/>
-                                    <TextBox Text="{Binding Snapshot.Db102DeviceGeneral.RandomAddress, UpdateSourceTrigger=PropertyChanged}"
-                                             FontFamily="Consolas"/>
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="RandomAddress [0-3]"/>
+                                    <UniformGrid Columns="4" Width="200" HorizontalAlignment="Left">
+                                        <TextBox Text="{Binding Snapshot.Db102DeviceGeneral.RandomAddress0, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,2,0"/>
+                                        <TextBox Text="{Binding Snapshot.Db102DeviceGeneral.RandomAddress1, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,2,0"/>
+                                        <TextBox Text="{Binding Snapshot.Db102DeviceGeneral.RandomAddress2, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,2,0"/>
+                                        <TextBox Text="{Binding Snapshot.Db102DeviceGeneral.RandomAddress3, UpdateSourceTrigger=PropertyChanged}"/>
+                                    </UniformGrid>
                                 </StackPanel>
                                 <StackPanel Margin="0,0,16,8">
-                                    <TextBlock Text="GearGroups (hex)"/>
-                                    <TextBox Text="{Binding Snapshot.Db102DeviceGeneral.GearGroups, UpdateSourceTrigger=PropertyChanged}"
-                                             FontFamily="Consolas"/>
+                                    <TextBlock Text="GearGroups [0-1]  (bitmask)"/>
+                                    <UniformGrid Columns="2" Width="100" HorizontalAlignment="Left">
+                                        <TextBox Text="{Binding Snapshot.Db102DeviceGeneral.GearGroup0, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,2,0"/>
+                                        <TextBox Text="{Binding Snapshot.Db102DeviceGeneral.GearGroup1, UpdateSourceTrigger=PropertyChanged}"/>
+                                    </UniformGrid>
                                 </StackPanel>
                             </UniformGrid>
                         </Border>
@@ -414,14 +420,22 @@
                                     <TextBox Text="{Binding Snapshot.Db103DeviceGeneral.LuxRange, UpdateSourceTrigger=PropertyChanged}"/>
                                 </StackPanel>
                                 <StackPanel Margin="0,0,16,0">
-                                    <TextBlock Text="DeviceGroups (hex)"/>
-                                    <TextBox Text="{Binding Snapshot.Db103DeviceGeneral.DeviceGroups, UpdateSourceTrigger=PropertyChanged}"
-                                             FontFamily="Consolas"/>
+                                    <TextBlock Text="DeviceGroups [0-3]  (bitmask)"/>
+                                    <UniformGrid Columns="4" Width="200" HorizontalAlignment="Left">
+                                        <TextBox Text="{Binding Snapshot.Db103DeviceGeneral.DeviceGroup0, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,2,0"/>
+                                        <TextBox Text="{Binding Snapshot.Db103DeviceGeneral.DeviceGroup1, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,2,0"/>
+                                        <TextBox Text="{Binding Snapshot.Db103DeviceGeneral.DeviceGroup2, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,2,0"/>
+                                        <TextBox Text="{Binding Snapshot.Db103DeviceGeneral.DeviceGroup3, UpdateSourceTrigger=PropertyChanged}"/>
+                                    </UniformGrid>
                                 </StackPanel>
                                 <StackPanel Margin="0,0,16,0">
-                                    <TextBlock Text="RandomAddress (hex)"/>
-                                    <TextBox Text="{Binding Snapshot.Db103DeviceGeneral.RandomAddress, UpdateSourceTrigger=PropertyChanged}"
-                                             FontFamily="Consolas"/>
+                                    <TextBlock Text="RandomAddress [0-3]"/>
+                                    <UniformGrid Columns="4" Width="200" HorizontalAlignment="Left">
+                                        <TextBox Text="{Binding Snapshot.Db103DeviceGeneral.RandomAddress0, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,2,0"/>
+                                        <TextBox Text="{Binding Snapshot.Db103DeviceGeneral.RandomAddress1, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,2,0"/>
+                                        <TextBox Text="{Binding Snapshot.Db103DeviceGeneral.RandomAddress2, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,2,0"/>
+                                        <TextBox Text="{Binding Snapshot.Db103DeviceGeneral.RandomAddress3, UpdateSourceTrigger=PropertyChanged}"/>
+                                    </UniformGrid>
                                 </StackPanel>
                             </UniformGrid>
                         </Border>
@@ -433,30 +447,41 @@
                                        Foreground="{DynamicResource AccentBrush}"
                                        FontWeight="SemiBold" VerticalAlignment="Center"/>
                         </StackPanel>
-                        <Border Style="{StaticResource Card}" Padding="4" Margin="0,0,0,4">
-                            <DataGrid ItemsSource="{Binding Snapshot.InstanceDataSections}"
-                                      AutoGenerateColumns="False" IsReadOnly="False"
-                                      CanUserAddRows="False" CanUserDeleteRows="False"
-                                      HeadersVisibility="Column">
-                                <DataGrid.Columns>
-                                    <DataGridTextColumn Header="DbType"       Width="70"   Binding="{Binding DbType}"       IsReadOnly="True"/>
-                                    <DataGridTextColumn Header="Label"        Width="200"  Binding="{Binding Label}"        IsReadOnly="True"/>
-                                    <DataGridCheckBoxColumn Header="N/A"      Width="40"   Binding="{Binding NotSupported}" IsReadOnly="True"/>
-                                    <DataGridTextColumn Header="Hex Data"     Width="*"    Binding="{Binding HexData}">
-                                        <DataGridTextColumn.ElementStyle>
-                                            <Style TargetType="TextBlock">
-                                                <Setter Property="FontFamily" Value="Consolas"/>
-                                            </Style>
-                                        </DataGridTextColumn.ElementStyle>
-                                        <DataGridTextColumn.EditingElementStyle>
-                                            <Style TargetType="TextBox">
-                                                <Setter Property="FontFamily" Value="Consolas"/>
-                                            </Style>
-                                        </DataGridTextColumn.EditingElementStyle>
-                                    </DataGridTextColumn>
-                                </DataGrid.Columns>
-                            </DataGrid>
-                        </Border>
+                        <ItemsControl ItemsSource="{Binding Snapshot.InstanceDataSections}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Style="{StaticResource Card}" Padding="10,8" Margin="0,0,0,6">
+                                        <StackPanel>
+                                            <!-- Section header row -->
+                                            <DockPanel Margin="0,0,0,6">
+                                                <TextBlock Text="{Binding Label}" FontWeight="SemiBold"
+                                                           VerticalAlignment="Center"/>
+                                                <TextBlock DockPanel.Dock="Right"
+                                                           Text="Not supported"
+                                                           Foreground="{DynamicResource MutedBrush}"
+                                                           VerticalAlignment="Center"
+                                                           Visibility="{Binding NotSupported, Converter={StaticResource BoolToVis}}"/>
+                                            </DockPanel>
+                                            <!-- Named fields grid (hidden when not supported) -->
+                                            <DataGrid ItemsSource="{Binding Fields}"
+                                                      Visibility="{Binding IsAvailable, Converter={StaticResource BoolToVis}}"
+                                                      AutoGenerateColumns="False" IsReadOnly="False"
+                                                      CanUserAddRows="False" CanUserDeleteRows="False"
+                                                      HeadersVisibility="Column" MaxHeight="300"
+                                                      HorizontalScrollBarVisibility="Disabled">
+                                                <DataGrid.Columns>
+                                                    <DataGridTextColumn Header="Field" Width="200"
+                                                                        Binding="{Binding Name}"
+                                                                        IsReadOnly="True"/>
+                                                    <DataGridTextColumn Header="Value" Width="80"
+                                                                        Binding="{Binding Value, UpdateSourceTrigger=PropertyChanged}"/>
+                                                </DataGrid.Columns>
+                                            </DataGrid>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
 
                     </StackPanel>
                 </ScrollViewer>

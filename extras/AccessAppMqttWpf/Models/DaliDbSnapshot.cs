@@ -32,7 +32,7 @@ public partial class DaliDbSnapshotVm : ObservableObject
     [ObservableProperty] private Dali103DeviceGeneralVm db103DeviceGeneral = new();
 
     [ObservableProperty] private string? instanceDataFamily; // "StandardComfort" | "BmsSlave" | null
-    public ObservableCollection<Dali103InstanceDataVm> InstanceDataSections { get; } = new();
+    public ObservableCollection<Dali103InstanceDataParsedVm> InstanceDataSections { get; } = new();
 }
 
 // ─── 102 Application ─────────────────────────────────────────────────────────
@@ -147,8 +147,14 @@ public partial class Dali102DeviceGeneralVm : ObservableObject
     [ObservableProperty] private byte extendedFadeTimeBase;
     [ObservableProperty] private byte extendedFadeTimeMultiplier;
     [ObservableProperty] private byte shortAddress;
-    [ObservableProperty] private string randomAddress = "00 00 00 00";
-    [ObservableProperty] private string gearGroups    = "00 00";
+    // RandomAddress — 4 individual bytes
+    [ObservableProperty] private byte randomAddress0;
+    [ObservableProperty] private byte randomAddress1;
+    [ObservableProperty] private byte randomAddress2;
+    [ObservableProperty] private byte randomAddress3;
+    // GearGroups — 2 individual bytes (bitmask: bit N = member of DALI group N)
+    [ObservableProperty] private byte gearGroup0;  // groups 0-7
+    [ObservableProperty] private byte gearGroup1;  // groups 8-15
 }
 
 public partial class Dali102DeviceScenesVm : ObservableObject
@@ -183,18 +189,44 @@ public partial class Dali103DeviceHeaderVm : ObservableObject
 public partial class Dali103DeviceGeneralVm : ObservableObject
 {
     [ObservableProperty] private byte shortAddress;
-    [ObservableProperty] private string deviceGroups  = "00 00 00 00";
-    [ObservableProperty] private string randomAddress = "00 00 00 00";
+    // DeviceGroups — 4 individual bytes (bitmask: bit N = member of device group N)
+    [ObservableProperty] private byte deviceGroup0;  // groups 0-7
+    [ObservableProperty] private byte deviceGroup1;  // groups 8-15
+    [ObservableProperty] private byte deviceGroup2;  // groups 16-23
+    [ObservableProperty] private byte deviceGroup3;  // groups 24-31
+    // RandomAddress — 4 individual bytes
+    [ObservableProperty] private byte randomAddress0;
+    [ObservableProperty] private byte randomAddress1;
+    [ObservableProperty] private byte randomAddress2;
+    [ObservableProperty] private byte randomAddress3;
     [ObservableProperty] private byte operationMode;
     [ObservableProperty] private byte applicationActive;
     [ObservableProperty] private byte powerCycleNotification;
     [ObservableProperty] private byte luxRange;
 }
 
-public partial class Dali103InstanceDataVm : ObservableObject
+// ─── 103 Instance Data (parsed) ──────────────────────────────────────────────
+
+/// <summary>One named byte field within an instance-data section.</summary>
+public partial class InstanceFieldVm : ObservableObject
 {
-    [ObservableProperty] private byte   dbType;
-    [ObservableProperty] private string label        = "";
-    [ObservableProperty] private string hexData      = "";
-    [ObservableProperty] private bool   notSupported;
+    public string Name { get; init; } = "";
+    [ObservableProperty] private byte value;
+}
+
+/// <summary>
+/// Parsed view of one instance-data slot (dbType 13-19).
+/// Fields are populated from raw bytes using the §6.1.6 spec field names.
+/// </summary>
+public partial class Dali103InstanceDataParsedVm : ObservableObject
+{
+    public byte   DbType       { get; set; }
+    public string Label        { get; set; } = "";
+    public bool   NotSupported { get; set; }
+    public bool   IsAvailable  => !NotSupported;
+
+    public ObservableCollection<InstanceFieldVm> Fields { get; } = new();
+
+    /// <summary>Returns raw bytes from the current field values (for serialisation).</summary>
+    public byte[] ToRawBytes() => Fields.Select(f => f.Value).ToArray();
 }

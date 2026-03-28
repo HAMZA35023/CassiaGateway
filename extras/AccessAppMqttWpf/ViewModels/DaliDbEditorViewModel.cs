@@ -162,7 +162,9 @@ public partial class DaliDbEditorViewModel : ObservableObject, IDisposable
         sg.ExtendedFadeTimeBase = dg.ExtendedFadeTimeBase;
         sg.ExtendedFadeTimeMultiplier = dg.ExtendedFadeTimeMultiplier;
         sg.ShortAddress = dg.ShortAddress;
-        sg.RandomAddress = dg.RandomAddress; sg.GearGroups = dg.GearGroups;
+        sg.RandomAddress0 = dg.RandomAddress0; sg.RandomAddress1 = dg.RandomAddress1;
+        sg.RandomAddress2 = dg.RandomAddress2; sg.RandomAddress3 = dg.RandomAddress3;
+        sg.GearGroup0 = dg.GearGroup0; sg.GearGroup1 = dg.GearGroup1;
 
         // 102 Device Scenes
         var ds = src.Db102DeviceScenes;
@@ -185,10 +187,13 @@ public partial class DaliDbEditorViewModel : ObservableObject, IDisposable
         // 103 Device General
         var d3 = src.Db103DeviceGeneral;
         var s3 = Snapshot.Db103DeviceGeneral;
-        s3.ShortAddress=d3.ShortAddress; s3.DeviceGroups=d3.DeviceGroups;
-        s3.RandomAddress=d3.RandomAddress; s3.OperationMode=d3.OperationMode;
+        s3.ShortAddress=d3.ShortAddress; s3.OperationMode=d3.OperationMode;
         s3.ApplicationActive=d3.ApplicationActive; s3.PowerCycleNotification=d3.PowerCycleNotification;
         s3.LuxRange=d3.LuxRange;
+        s3.DeviceGroup0=d3.DeviceGroup0; s3.DeviceGroup1=d3.DeviceGroup1;
+        s3.DeviceGroup2=d3.DeviceGroup2; s3.DeviceGroup3=d3.DeviceGroup3;
+        s3.RandomAddress0=d3.RandomAddress0; s3.RandomAddress1=d3.RandomAddress1;
+        s3.RandomAddress2=d3.RandomAddress2; s3.RandomAddress3=d3.RandomAddress3;
 
         // Instance data
         Snapshot.InstanceDataFamily = src.InstanceDataFamily;
