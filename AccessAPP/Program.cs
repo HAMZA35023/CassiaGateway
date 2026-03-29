@@ -313,6 +313,27 @@ using (var scope = app.Services.CreateScope())
         }
     });
 
+    // On Linux: remove the .prev backup directory left by the deployer once the app starts successfully.
+    if (OperatingSystem.IsLinux())
+    {
+        const string prevDir = "/home/cassia/FWUpgrade.prev";
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                if (Directory.Exists(prevDir))
+                {
+                    Directory.Delete(prevDir, recursive: true);
+                    AppLog.Info($"[Startup] Removed previous deployment backup: {prevDir}");
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn($"[Startup] Could not remove {prevDir}: {ex.Message}");
+            }
+        });
+    }
+
     // Hook incoming MQTT commands to your services
     var firmwareUpgradeService = serviceProvider.GetRequiredService<CassiaFirmwareUpgradeService>();
     var deviceStorageService = serviceProvider.GetRequiredService<DeviceStorageService>();
