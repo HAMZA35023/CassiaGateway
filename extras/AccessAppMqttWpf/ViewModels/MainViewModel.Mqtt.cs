@@ -154,7 +154,10 @@ public partial class MainViewModel : ObservableObject
             });
         }
 
-        if (!net.Equals(NetworkId, StringComparison.OrdinalIgnoreCase))
+        // In local mode we subscribed with a wildcard networkId so all AccessApp instances
+        // are visible even before they adopt the shared networkId via the HTTP push.
+        // In remote mode, filter strictly to the configured NetworkId.
+        if (!_localMqttActive && !net.Equals(NetworkId, StringComparison.OrdinalIgnoreCase))
             return;
 
         var kind = m.Groups["kind"].Value.ToLowerInvariant();

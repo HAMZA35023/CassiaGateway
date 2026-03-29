@@ -20,6 +20,7 @@ internal static class DaliDbMapper
         // 102 App Header
         if (src.Db102AppHeader is { } h102)
         {
+            vm.Db102AppHeader.IsPresent = true;
             vm.Db102AppHeader.Version   = h102.Version;
             vm.Db102AppHeader.DaliDbLen = h102.DaliDbLen;
         }
@@ -27,6 +28,7 @@ internal static class DaliDbMapper
         // 102 App Common
         if (src.Db102AppCommon is { } c102)
         {
+            vm.Db102AppCommon.IsPresent          = true;
             vm.Db102AppCommon.MaxLevel           = c102.MaxLevel;
             vm.Db102AppCommon.MinLevel           = c102.MinLevel;
             vm.Db102AppCommon.PowerOnLevel       = c102.PowerOnLevel;
@@ -52,6 +54,7 @@ internal static class DaliDbMapper
         // 103 App
         if (src.Db103AppHeader is { } h103)
         {
+            vm.Db103AppHeader.IsPresent = true;
             vm.Db103AppHeader.Version   = h103.Version;
             vm.Db103AppHeader.DaliDbLen = h103.DaliDbLen;
         }
@@ -71,10 +74,14 @@ internal static class DaliDbMapper
 
         // 102 Device
         if (src.Db102DeviceHeader is { } dh102)
-            vm.Db102DeviceHeader.Version = dh102.Version;
+        {
+            vm.Db102DeviceHeader.IsPresent = true;
+            vm.Db102DeviceHeader.Version   = dh102.Version;
+        }
 
         if (src.Db102DeviceGeneral is { } dg102)
         {
+            vm.Db102DeviceGeneral.IsPresent                  = true;
             vm.Db102DeviceGeneral.LastLightLevel             = dg102.LastLightLevel;
             vm.Db102DeviceGeneral.PowerOnLevel               = dg102.PowerOnLevel;
             vm.Db102DeviceGeneral.SystemFailureLevel         = dg102.SystemFailureLevel;
@@ -101,6 +108,7 @@ internal static class DaliDbMapper
 
         if (src.Db102DeviceScenes is { } ds102)
         {
+            vm.Db102DeviceScenes.IsPresent = true;
             var sc = vm.Db102DeviceScenes;
             sc.Scene0=ds102.SceneLevel[0]; sc.Scene1=ds102.SceneLevel[1];
             sc.Scene2=ds102.SceneLevel[2]; sc.Scene3=ds102.SceneLevel[3];
@@ -114,6 +122,7 @@ internal static class DaliDbMapper
 
         if (src.Db102DeviceDt208 is { } dt208)
         {
+            vm.Db102DeviceDt208.IsPresent               = true;
             vm.Db102DeviceDt208.UpSwitchOnThreshold    = dt208.UpSwitchOnThreshold;
             vm.Db102DeviceDt208.UpSwitchOffThreshold   = dt208.UpSwitchOffThreshold;
             vm.Db102DeviceDt208.DownSwitchOnThreshold  = dt208.DownSwitchOnThreshold;
@@ -124,10 +133,14 @@ internal static class DaliDbMapper
 
         // 103 Device
         if (src.Db103DeviceHeader is { } dh103)
-            vm.Db103DeviceHeader.Version = dh103.Version;
+        {
+            vm.Db103DeviceHeader.IsPresent = true;
+            vm.Db103DeviceHeader.Version   = dh103.Version;
+        }
 
         if (src.Db103DeviceGeneral is { } dg103)
         {
+            vm.Db103DeviceGeneral.IsPresent              = true;
             vm.Db103DeviceGeneral.ShortAddress           = dg103.ShortAddress;
             vm.Db103DeviceGeneral.OperationMode          = dg103.OperationMode;
             vm.Db103DeviceGeneral.ApplicationActive      = dg103.ApplicationActive;
@@ -179,22 +192,24 @@ internal static class DaliDbMapper
     {
         var snap = new AccessAPP.Models.DaliDbSnapshot();
 
-        snap.Db102AppHeader = new AccessAPP.Models.Dali102AppHeader {
-            Version   = vm.Db102AppHeader.Version,
-            DaliDbLen = vm.Db102AppHeader.DaliDbLen
-        };
+        if (vm.Db102AppHeader.IsPresent)
+            snap.Db102AppHeader = new AccessAPP.Models.Dali102AppHeader {
+                Version   = vm.Db102AppHeader.Version,
+                DaliDbLen = vm.Db102AppHeader.DaliDbLen
+            };
 
-        snap.Db102AppCommon = new AccessAPP.Models.Dali102AppDeviceCommon {
-            MaxLevel           = vm.Db102AppCommon.MaxLevel,
-            MinLevel           = vm.Db102AppCommon.MinLevel,
-            PowerOnLevel       = vm.Db102AppCommon.PowerOnLevel,
-            SystemFailureLevel = vm.Db102AppCommon.SystemFailureLevel,
-            FadeRate           = vm.Db102AppCommon.FadeRate,
-            FadeTime           = vm.Db102AppCommon.FadeTime,
-            ExtendedFadeTime   = vm.Db102AppCommon.ExtendedFadeTime,
-            RelayCutOffSA      = vm.Db102AppCommon.RelayCutOffSA,
-            RelayHvacSA        = vm.Db102AppCommon.RelayHvacSA
-        };
+        if (vm.Db102AppCommon.IsPresent)
+            snap.Db102AppCommon = new AccessAPP.Models.Dali102AppDeviceCommon {
+                MaxLevel           = vm.Db102AppCommon.MaxLevel,
+                MinLevel           = vm.Db102AppCommon.MinLevel,
+                PowerOnLevel       = vm.Db102AppCommon.PowerOnLevel,
+                SystemFailureLevel = vm.Db102AppCommon.SystemFailureLevel,
+                FadeRate           = vm.Db102AppCommon.FadeRate,
+                FadeTime           = vm.Db102AppCommon.FadeTime,
+                ExtendedFadeTime   = vm.Db102AppCommon.ExtendedFadeTime,
+                RelayCutOffSA      = vm.Db102AppCommon.RelayCutOffSA,
+                RelayHvacSA        = vm.Db102AppCommon.RelayHvacSA
+            };
 
         foreach (var t in vm.Db102AppDeviceTypes)
             snap.Db102AppDeviceTypes.Add(new AccessAPP.Models.Dali102AppDeviceTypes {
@@ -211,10 +226,11 @@ internal static class DaliDbMapper
             snap.Db102AppDeviceScenes.Add(entry);
         }
 
-        snap.Db103AppHeader = new AccessAPP.Models.Dali103AppHeader {
-            Version   = vm.Db103AppHeader.Version,
-            DaliDbLen = vm.Db103AppHeader.DaliDbLen
-        };
+        if (vm.Db103AppHeader.IsPresent)
+            snap.Db103AppHeader = new AccessAPP.Models.Dali103AppHeader {
+                Version   = vm.Db103AppHeader.Version,
+                DaliDbLen = vm.Db103AppHeader.DaliDbLen
+            };
 
         foreach (var it in vm.Db103AppInstanceTypes)
         {
@@ -223,51 +239,66 @@ internal static class DaliDbMapper
             snap.Db103AppInstanceTypes.Add(entry);
         }
 
-        snap.Db102DeviceHeader  = new AccessAPP.Models.Dali102DeviceHeader  { Version = vm.Db102DeviceHeader.Version };
-        snap.Db103DeviceHeader  = new AccessAPP.Models.Dali103DeviceHeader  { Version = vm.Db103DeviceHeader.Version };
+        if (vm.Db102DeviceHeader.IsPresent)
+            snap.Db102DeviceHeader = new AccessAPP.Models.Dali102DeviceHeader { Version = vm.Db102DeviceHeader.Version };
 
-        var dg = vm.Db102DeviceGeneral;
-        snap.Db102DeviceGeneral = new AccessAPP.Models.Dali102DeviceGeneral {
-            LastLightLevel             = dg.LastLightLevel,
-            PowerOnLevel               = dg.PowerOnLevel,
-            SystemFailureLevel         = dg.SystemFailureLevel,
-            MinLevel                   = dg.MinLevel,
-            MaxLevel                   = dg.MaxLevel,
-            FadeRate                   = dg.FadeRate,
-            FadeTime                   = dg.FadeTime,
-            ExtendedFadeTimeBase       = dg.ExtendedFadeTimeBase,
-            ExtendedFadeTimeMultiplier = dg.ExtendedFadeTimeMultiplier,
-            ShortAddress               = dg.ShortAddress,
-            RandomAddress              = new[] { dg.RandomAddress0, dg.RandomAddress1, dg.RandomAddress2, dg.RandomAddress3 },
-            GearGroups                 = new[] { dg.GearGroup0, dg.GearGroup1 }
-        };
+        if (vm.Db102DeviceGeneral.IsPresent)
+        {
+            var dg = vm.Db102DeviceGeneral;
+            snap.Db102DeviceGeneral = new AccessAPP.Models.Dali102DeviceGeneral {
+                LastLightLevel             = dg.LastLightLevel,
+                PowerOnLevel               = dg.PowerOnLevel,
+                SystemFailureLevel         = dg.SystemFailureLevel,
+                MinLevel                   = dg.MinLevel,
+                MaxLevel                   = dg.MaxLevel,
+                FadeRate                   = dg.FadeRate,
+                FadeTime                   = dg.FadeTime,
+                ExtendedFadeTimeBase       = dg.ExtendedFadeTimeBase,
+                ExtendedFadeTimeMultiplier = dg.ExtendedFadeTimeMultiplier,
+                ShortAddress               = dg.ShortAddress,
+                RandomAddress              = new[] { dg.RandomAddress0, dg.RandomAddress1, dg.RandomAddress2, dg.RandomAddress3 },
+                GearGroups                 = new[] { dg.GearGroup0, dg.GearGroup1 }
+            };
+        }
 
-        var sc = vm.Db102DeviceScenes;
-        snap.Db102DeviceScenes = new AccessAPP.Models.Dali102DeviceScenes {
-            SceneLevel = new[] { sc.Scene0,sc.Scene1,sc.Scene2,sc.Scene3,sc.Scene4,sc.Scene5,sc.Scene6,sc.Scene7,
-                                 sc.Scene8,sc.Scene9,sc.Scene10,sc.Scene11,sc.Scene12,sc.Scene13,sc.Scene14,sc.Scene15 }
-        };
+        if (vm.Db102DeviceScenes.IsPresent)
+        {
+            var sc = vm.Db102DeviceScenes;
+            snap.Db102DeviceScenes = new AccessAPP.Models.Dali102DeviceScenes {
+                SceneLevel = new[] { sc.Scene0,sc.Scene1,sc.Scene2,sc.Scene3,sc.Scene4,sc.Scene5,sc.Scene6,sc.Scene7,
+                                     sc.Scene8,sc.Scene9,sc.Scene10,sc.Scene11,sc.Scene12,sc.Scene13,sc.Scene14,sc.Scene15 }
+            };
+        }
 
-        var dt = vm.Db102DeviceDt208;
-        snap.Db102DeviceDt208 = new AccessAPP.Models.Dali102DeviceDt208 {
-            UpSwitchOnThreshold    = dt.UpSwitchOnThreshold,
-            UpSwitchOffThreshold   = dt.UpSwitchOffThreshold,
-            DownSwitchOnThreshold  = dt.DownSwitchOnThreshold,
-            DownSwitchOffThreshold = dt.DownSwitchOffThreshold,
-            ErrorHoldOffTime       = dt.ErrorHoldOffTime,
-            SwitchStatus           = dt.SwitchStatus
-        };
+        if (vm.Db102DeviceDt208.IsPresent)
+        {
+            var dt = vm.Db102DeviceDt208;
+            snap.Db102DeviceDt208 = new AccessAPP.Models.Dali102DeviceDt208 {
+                UpSwitchOnThreshold    = dt.UpSwitchOnThreshold,
+                UpSwitchOffThreshold   = dt.UpSwitchOffThreshold,
+                DownSwitchOnThreshold  = dt.DownSwitchOnThreshold,
+                DownSwitchOffThreshold = dt.DownSwitchOffThreshold,
+                ErrorHoldOffTime       = dt.ErrorHoldOffTime,
+                SwitchStatus           = dt.SwitchStatus
+            };
+        }
 
-        var g3 = vm.Db103DeviceGeneral;
-        snap.Db103DeviceGeneral = new AccessAPP.Models.Dali103DeviceGeneral {
-            ShortAddress           = g3.ShortAddress,
-            DeviceGroups           = new[] { g3.DeviceGroup0, g3.DeviceGroup1, g3.DeviceGroup2, g3.DeviceGroup3 },
-            RandomAddress          = new[] { g3.RandomAddress0, g3.RandomAddress1, g3.RandomAddress2, g3.RandomAddress3 },
-            OperationMode          = g3.OperationMode,
-            ApplicationActive      = g3.ApplicationActive,
-            PowerCycleNotification = g3.PowerCycleNotification,
-            LuxRange               = g3.LuxRange
-        };
+        if (vm.Db103DeviceHeader.IsPresent)
+            snap.Db103DeviceHeader = new AccessAPP.Models.Dali103DeviceHeader { Version = vm.Db103DeviceHeader.Version };
+
+        if (vm.Db103DeviceGeneral.IsPresent)
+        {
+            var g3 = vm.Db103DeviceGeneral;
+            snap.Db103DeviceGeneral = new AccessAPP.Models.Dali103DeviceGeneral {
+                ShortAddress           = g3.ShortAddress,
+                DeviceGroups           = new[] { g3.DeviceGroup0, g3.DeviceGroup1, g3.DeviceGroup2, g3.DeviceGroup3 },
+                RandomAddress          = new[] { g3.RandomAddress0, g3.RandomAddress1, g3.RandomAddress2, g3.RandomAddress3 },
+                OperationMode          = g3.OperationMode,
+                ApplicationActive      = g3.ApplicationActive,
+                PowerCycleNotification = g3.PowerCycleNotification,
+                LuxRange               = g3.LuxRange
+            };
+        }
 
         snap.InstanceDataFamily = vm.InstanceDataFamily;
         foreach (var id in vm.InstanceDataSections)

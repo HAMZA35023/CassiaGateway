@@ -39,12 +39,14 @@ public partial class DaliDbSnapshotVm : ObservableObject
 
 public partial class Dali102AppHeaderVm : ObservableObject
 {
+    public bool IsPresent { get; set; }
     [ObservableProperty] private byte version;
     [ObservableProperty] private byte daliDbLen;
 }
 
 public partial class Dali102AppCommonVm : ObservableObject
 {
+    public bool IsPresent { get; set; }
     [ObservableProperty] private byte maxLevel;
     [ObservableProperty] private byte minLevel;
     [ObservableProperty] private byte powerOnLevel;
@@ -110,6 +112,7 @@ public partial class Dali102AppDeviceScenesVm : ObservableObject
 
 public partial class Dali103AppHeaderVm : ObservableObject
 {
+    public bool IsPresent { get; set; }
     [ObservableProperty] private byte version;
     [ObservableProperty] private byte daliDbLen;
 }
@@ -132,11 +135,13 @@ public partial class Dali103AppInstanceTypesVm : ObservableObject
 
 public partial class Dali102DeviceHeaderVm : ObservableObject
 {
+    public bool IsPresent { get; set; }
     [ObservableProperty] private byte version;
 }
 
 public partial class Dali102DeviceGeneralVm : ObservableObject
 {
+    public bool IsPresent { get; set; }
     [ObservableProperty] private byte lastLightLevel;
     [ObservableProperty] private byte powerOnLevel;
     [ObservableProperty] private byte systemFailureLevel;
@@ -159,6 +164,7 @@ public partial class Dali102DeviceGeneralVm : ObservableObject
 
 public partial class Dali102DeviceScenesVm : ObservableObject
 {
+    public bool IsPresent { get; set; }
     [ObservableProperty] private byte scene0;  [ObservableProperty] private byte scene1;
     [ObservableProperty] private byte scene2;  [ObservableProperty] private byte scene3;
     [ObservableProperty] private byte scene4;  [ObservableProperty] private byte scene5;
@@ -171,6 +177,7 @@ public partial class Dali102DeviceScenesVm : ObservableObject
 
 public partial class Dali102DeviceDt208Vm : ObservableObject
 {
+    public bool IsPresent { get; set; }
     [ObservableProperty] private byte upSwitchOnThreshold;
     [ObservableProperty] private byte upSwitchOffThreshold;
     [ObservableProperty] private byte downSwitchOnThreshold;
@@ -183,11 +190,13 @@ public partial class Dali102DeviceDt208Vm : ObservableObject
 
 public partial class Dali103DeviceHeaderVm : ObservableObject
 {
+    public bool IsPresent { get; set; }
     [ObservableProperty] private byte version;
 }
 
 public partial class Dali103DeviceGeneralVm : ObservableObject
 {
+    public bool IsPresent { get; set; }
     [ObservableProperty] private byte shortAddress;
     // DeviceGroups — 4 individual bytes (bitmask: bit N = member of device group N)
     [ObservableProperty] private byte deviceGroup0;  // groups 0-7

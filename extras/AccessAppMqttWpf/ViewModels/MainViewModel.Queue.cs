@@ -583,8 +583,19 @@ public partial class MainViewModel : ObservableObject
             ? "accessapp/{networkId}/cmd/{cassia}/{command}"
             : CommandTopicTemplate;
 
+        // In local mode, use the gateway's actual networkId (it may not have adopted the
+        // shared networkId yet). Fall back to the global NetworkId if unknown.
+        string net = NetworkId ?? "";
+        if (_localMqttActive && !string.IsNullOrWhiteSpace(cassia))
+        {
+            var gw = CassiaGateways.FirstOrDefault(
+                x => x.Name.Equals(cassia, StringComparison.OrdinalIgnoreCase));
+            if (gw != null && !string.IsNullOrWhiteSpace(gw.NetworkId))
+                net = gw.NetworkId;
+        }
+
         return tpl
-            .Replace("{networkId}", NetworkId ?? "", StringComparison.OrdinalIgnoreCase)
+            .Replace("{networkId}", net, StringComparison.OrdinalIgnoreCase)
             .Replace("{cassia}", cassia ?? "", StringComparison.OrdinalIgnoreCase)
             .Replace("{command}", command ?? "", StringComparison.OrdinalIgnoreCase);
     }

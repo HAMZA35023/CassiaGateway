@@ -917,16 +917,20 @@ public partial class MainViewModel : ObservableObject
             else if (resetSpeedHistory)
                 _speedHistoryByGateway.Clear();
 
-            // Ensure subscriptions exist for the current NetworkId.
+            // Ensure subscriptions exist.
+            // In local mode we subscribe with a wildcard networkId (+) so we see every
+            // AccessApp instance regardless of which networkId it is currently using —
+            // some may not yet have received the shared-networkId push.
             try
             {
-                var net = (NetworkId ?? "").Trim();
-                if (!string.IsNullOrWhiteSpace(net) && !string.Equals(_lastSubscribedNetworkId, net, StringComparison.OrdinalIgnoreCase))
+                var subscribeNet = _localMqttActive ? "+" : (NetworkId ?? "").Trim();
+                if (!string.IsNullOrWhiteSpace(subscribeNet) &&
+                    !string.Equals(_lastSubscribedNetworkId, subscribeNet, StringComparison.OrdinalIgnoreCase))
                 {
-                    await _mqtt.SubscribeAsync($"accessapp/{net}/tele/#").ConfigureAwait(false);
-                    await _mqtt.SubscribeAsync($"accessapp/{net}/tele/+/upgrade-log", qos: 1).ConfigureAwait(false);
-                    await _mqtt.SubscribeAsync($"accessapp/{net}/cmd/#").ConfigureAwait(false);
-                    _lastSubscribedNetworkId = net;
+                    await _mqtt.SubscribeAsync($"accessapp/{subscribeNet}/tele/#").ConfigureAwait(false);
+                    await _mqtt.SubscribeAsync($"accessapp/{subscribeNet}/tele/+/upgrade-log", qos: 1).ConfigureAwait(false);
+                    await _mqtt.SubscribeAsync($"accessapp/{subscribeNet}/cmd/#").ConfigureAwait(false);
+                    _lastSubscribedNetworkId = subscribeNet;
                 }
             }
             catch
