@@ -37,4 +37,12 @@ public sealed class PirPeakSample
     public uint CT { get; init; }
     public uint CHigh { get; init; }
     public uint CDuration { get; init; }
+
+    // Trigger thresholds from opcode 0x0240 (null if not yet received)
+    public ushort? TrigA { get; init; }
+    public ushort? TrigB { get; init; }
+    public ushort? TrigC { get; init; }
+
+    // Walktest state read at session start (null if not yet received)
+    public bool? WalktestActive { get; init; }
 }

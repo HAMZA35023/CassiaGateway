@@ -9,7 +9,7 @@ namespace AccessAPP.Services.HelperClasses;
 ///   4..27  : 6 × float32 (AMin, AMax, BMin, BMax, CMin, CMax)
 ///   28..75 : 12 × uint32 (A: Low,T,High,Dur; B: Low,T,High,Dur; C: Low,T,High,Dur)
 /// </summary>
-public sealed class PirPeakStatusData
+public sealed record PirPeakStatusData
 {
     public uint TickCount { get; init; }
 
@@ -38,6 +38,14 @@ public sealed class PirPeakStatusData
     public uint CT { get; init; }
     public uint CHigh { get; init; }
     public uint CDuration { get; init; }
+
+    // Trigger levels from opcode 0x0240 — set by the session after a separate read
+    public ushort? TrigA { get; init; }
+    public ushort? TrigB { get; init; }
+    public ushort? TrigC { get; init; }
+
+    // Walktest state read from user config at session start
+    public bool? WalktestActive { get; init; }
 
     public static PirPeakStatusData? Parse(ReadOnlySpan<byte> data)
     {

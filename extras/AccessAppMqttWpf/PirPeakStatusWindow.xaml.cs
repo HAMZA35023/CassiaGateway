@@ -3,20 +3,21 @@ using AccessAppMqttWpf.ViewModels;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
-using System.Windows.Threading;
 
 namespace AccessAppMqttWpf;
 
 public partial class PirPeakStatusWindow : Window, IDisposable
 {
     private readonly MainViewModel _vm;
-    private readonly DispatcherTimer _pollTimer;
 
     // Visible time window and custom drag-zoom range
     private TimeSpan _visibleWindow = TimeSpan.FromMinutes(10);
@@ -40,6 +41,8 @@ public partial class PirPeakStatusWindow : Window, IDisposable
 
     // Pre-select request (set before window loads)
     private string? _preSelectCassia;
+    private string? _preSelectMac;
+    private bool _deviceMode; // true when opened for a specific device — hides the dropdowns
 
     // Current selection keys
     private string? _selectedCassiaName;
@@ -53,9 +56,6 @@ public partial class PirPeakStatusWindow : Window, IDisposable
     {
         _vm = vm;
         InitializeComponent();
-
-        _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
-        _pollTimer.Tick += PollTimer_Tick;
 
         Loaded   += OnLoaded;
         Unloaded += OnUnloaded;
@@ -77,31 +77,71 @@ public partial class PirPeakStatusWindow : Window, IDisposable
         _preSelectCassia = cassiaName;
     }
 
+    public void PreSelectDevice(string cassiaName, string mac)
+    {
+        _preSelectCassia = cassiaName;
+        _preSelectMac    = mac;
+        _deviceMode      = true;
+    }
+
     // -------------------------------------------------------------------------
     // Lifecycle
     // -------------------------------------------------------------------------
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        _vm.PirPeakSampleReceived += OnPirPeakSampleReceived;
+        _vm.PirPeakSampleReceived  += OnPirPeakSampleReceived;
         _vm.WalktestResultReceived += OnWalktestResultReceived;
 
-        PopulateCassiaCombo();
+        if (_deviceMode)
+        {
+            GatewayLabel.Visibility = Visibility.Collapsed;
+            CassiaCombo.Visibility  = Visibility.Collapsed;
+            DeviceLabel.Visibility  = Visibility.Collapsed;
+            DeviceCombo.Visibility  = Visibility.Collapsed;
 
-        _pollTimer.Start();
-        SendPoll();
+            _selectedCassiaName = _preSelectCassia;
+            _selectedDeviceKey  = string.IsNullOrWhiteSpace(_preSelectMac) ? null
+                                  : $"{_preSelectCassia}|{_preSelectMac}";
+            var mac = _preSelectMac;
+            _preSelectCassia = null;
+            _preSelectMac    = null;
+
+            if (_selectedDeviceKey != null && WalktestCheck != null)
+                WalktestCheck.IsEnabled = true;
+
+            Title = $"PIR Peak Status — {mac}";
+
+            StartSession(_selectedCassiaName, mac);
+        }
+        else
+        {
+            PopulateCassiaCombo();
+        }
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
-        _pollTimer.Stop();
-        _vm.PirPeakSampleReceived -= OnPirPeakSampleReceived;
+        _vm.PirPeakSampleReceived  -= OnPirPeakSampleReceived;
         _vm.WalktestResultReceived -= OnWalktestResultReceived;
+        StopCurrentSession();
     }
 
-    public void Dispose()
+    public void Dispose() { }
+
+    private void StartSession(string? cassiaName, string? mac)
     {
-        _pollTimer.Stop();
+        if (string.IsNullOrWhiteSpace(cassiaName) || string.IsNullOrWhiteSpace(mac)) return;
+        _ = _vm.SendStartPirPeakCommandAsync(cassiaName, mac);
+    }
+
+    private void StopCurrentSession()
+    {
+        if (_selectedCassiaName == null || _selectedDeviceKey == null) return;
+        var idx = _selectedDeviceKey.IndexOf('|');
+        if (idx < 0) return;
+        var mac = _selectedDeviceKey[(idx + 1)..];
+        _ = _vm.SendStopPirPeakCommandAsync(_selectedCassiaName, mac);
     }
 
     // -------------------------------------------------------------------------
@@ -178,11 +218,16 @@ public partial class PirPeakStatusWindow : Window, IDisposable
     {
         if (DeviceCombo.SelectedItem is string key)
         {
+            StopCurrentSession();
+
             _selectedDeviceKey = key;
             _customRangeUtc = null;
-            // Enable walktest checkbox once a device is selected
             if (WalktestCheck != null) WalktestCheck.IsEnabled = true;
             Redraw();
+
+            var idx = key.IndexOf('|');
+            if (idx >= 0)
+                StartSession(_selectedCassiaName, key[(idx + 1)..]);
         }
     }
 
@@ -207,12 +252,16 @@ public partial class PirPeakStatusWindow : Window, IDisposable
         _paused = !_paused;
         PauseButton.Content = _paused ? "Resume" : "Pause";
         if (_paused)
-            _pollTimer.Stop();
+            StopCurrentSession();
         else
-        {
-            _pollTimer.Start();
-            SendPoll();
-        }
+            StartSession(_selectedCassiaName, GetSelectedMac());
+    }
+
+    private string? GetSelectedMac()
+    {
+        if (_selectedDeviceKey == null) return null;
+        var idx = _selectedDeviceKey.IndexOf('|');
+        return idx >= 0 ? _selectedDeviceKey[(idx + 1)..] : null;
     }
 
     private void ClearButton_Click(object sender, RoutedEventArgs e)
@@ -272,42 +321,217 @@ public partial class PirPeakStatusWindow : Window, IDisposable
     }
 
     // -------------------------------------------------------------------------
-    // Polling
-    // -------------------------------------------------------------------------
-
-    private async void PollTimer_Tick(object? sender, EventArgs e) => await SendPollAsync();
-
-    private void SendPoll() => _ = SendPollAsync();
-
-    private async System.Threading.Tasks.Task SendPollAsync()
-    {
-        if (_selectedCassiaName == null) return;
-        if (_selectedDeviceKey == null) return;
-
-        // Extract MAC from key "cassiaName|MAC"
-        var idx = _selectedDeviceKey.IndexOf('|');
-        if (idx < 0) return;
-        var mac = _selectedDeviceKey[(idx + 1)..];
-
-        await _vm.SendGetPirPeakCommandAsync(_selectedCassiaName, new[] { mac });
-    }
-
-    // -------------------------------------------------------------------------
     // Incoming samples
     // -------------------------------------------------------------------------
 
     private void OnPirPeakSampleReceived(string key, PirPeakSample sample)
     {
-        // Refresh device combo in case a new device appeared
-        if (_selectedCassiaName != null)
-            PopulateDeviceCombo(_selectedCassiaName);
-
         if (!string.Equals(key, _selectedDeviceKey, StringComparison.OrdinalIgnoreCase))
             return;
+
+        // Initialise walktest checkbox from the device state read at session start
+        if (sample.WalktestActive.HasValue && !_walktestBusy && WalktestCheck != null)
+        {
+            _suppressWalktestEvent = true;
+            WalktestCheck.IsChecked = sample.WalktestActive.Value;
+            _suppressWalktestEvent = false;
+        }
 
         if (!_paused)
             Redraw();
     }
+
+    // -------------------------------------------------------------------------
+    // Export: copy to clipboard / PDF
+    // -------------------------------------------------------------------------
+
+    private void CopyButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (ChartBorder.ActualWidth < 1) return;
+        try
+        {
+            Clipboard.SetImage(RenderExportBitmap());
+            StatusText.Text = "Chart copied to clipboard.";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Copy failed: {ex.Message}";
+        }
+    }
+
+    private void ExportSvgButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (ChartBorder.ActualWidth < 1) return;
+
+        var dlg = new Microsoft.Win32.SaveFileDialog
+        {
+            Title    = "Export PIR Peak Chart",
+            Filter   = "SVG files (*.svg)|*.svg",
+            FileName = $"PIR_Peak_{DateTime.Now:yyyyMMdd_HHmmss}.svg"
+        };
+        if (dlg.ShowDialog(this) != true) return;
+
+        ExportSvgButton.IsEnabled = false;
+        try
+        {
+            File.WriteAllText(dlg.FileName, GenerateChartSvg(), Encoding.UTF8);
+            StatusText.Text = $"Exported {System.IO.Path.GetFileName(dlg.FileName)}.";
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"SVG export failed: {ex.Message}";
+        }
+        finally
+        {
+            ExportSvgButton.IsEnabled = true;
+        }
+    }
+
+    /// <summary>Generates a vector SVG of the chart canvas with a raster legend strip.</summary>
+    private string GenerateChartSvg()
+    {
+        double cw  = ChartBorder.ActualWidth;
+        double ch  = ChartBorder.ActualHeight;
+        double lh  = LegendBorder.ActualHeight;
+        const double gap = 8.0;
+        double totalH = ch + gap + lh;
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\"");
+        sb.AppendLine($"     width=\"{cw:F0}\" height=\"{totalH:F0}\" viewBox=\"0 0 {cw:F2} {totalH:F2}\">");
+
+        // Overall background
+        sb.AppendLine($"  <rect width=\"{cw:F2}\" height=\"{totalH:F2}\" fill=\"white\"/>");
+
+        // Chart border background
+        sb.AppendLine($"  <rect x=\"0\" y=\"0\" width=\"{cw:F2}\" height=\"{ch:F2}\" rx=\"10\" ry=\"10\" fill=\"#FAFAFA\" stroke=\"#E6E6EB\" stroke-width=\"1\"/>");
+
+        // All chart canvas children as vector elements
+        foreach (UIElement el in ChartCanvas.Children)
+            AppendSvgElement(sb, el, "  ");
+
+        // Legend rendered as embedded PNG (StackPanel layout — too complex to vectorize)
+        sb.AppendLine($"  <image x=\"0\" y=\"{ch + gap:F2}\" width=\"{cw:F2}\" height=\"{lh:F2}\"");
+        sb.AppendLine($"         xlink:href=\"data:image/png;base64,{RenderLegendPng(cw, lh)}\"/>");
+
+        sb.AppendLine("</svg>");
+        return sb.ToString();
+    }
+
+    private string RenderLegendPng(double w, double h)
+    {
+        var rtb = new RenderTargetBitmap((int)(w * 2), (int)(h * 2), 192, 192, PixelFormats.Pbgra32);
+        var dv  = new DrawingVisual();
+        using (var ctx = dv.RenderOpen())
+            ctx.DrawRectangle(new VisualBrush(LegendBorder), null, new Rect(0, 0, w, h));
+        rtb.Render(dv);
+        var enc = new PngBitmapEncoder();
+        enc.Frames.Add(BitmapFrame.Create(rtb));
+        using var ms = new MemoryStream();
+        enc.Save(ms);
+        return Convert.ToBase64String(ms.ToArray());
+    }
+
+    /// <summary>Renders chart + legend to a high-DPI bitmap (used for clipboard).</summary>
+    private BitmapSource RenderExportBitmap(double scale = 2.0)
+    {
+        double totalW = ChartBorder.ActualWidth;
+        double totalH = ChartBorder.ActualHeight + 8 + LegendBorder.ActualHeight;
+        var rtb = new RenderTargetBitmap(
+            (int)(totalW * scale), (int)(totalH * scale),
+            96.0 * scale, 96.0 * scale, PixelFormats.Pbgra32);
+        var dv = new DrawingVisual();
+        using (var ctx = dv.RenderOpen())
+        {
+            ctx.DrawRectangle(Brushes.White, null, new Rect(0, 0, totalW, totalH));
+            ctx.DrawRectangle(new VisualBrush(ChartBorder),  null,
+                new Rect(0, 0, ChartBorder.ActualWidth, ChartBorder.ActualHeight));
+            ctx.DrawRectangle(new VisualBrush(LegendBorder), null,
+                new Rect(0, ChartBorder.ActualHeight + 8, LegendBorder.ActualWidth, LegendBorder.ActualHeight));
+        }
+        rtb.Render(dv);
+        return rtb;
+    }
+
+    // -------------------------------------------------------------------------
+    // SVG element writers
+    // -------------------------------------------------------------------------
+
+    private static void AppendSvgElement(StringBuilder sb, UIElement el, string indent)
+    {
+        switch (el)
+        {
+            case Line l:
+            {
+                sb.Append($"{indent}<line x1=\"{l.X1:F2}\" y1=\"{l.Y1:F2}\" x2=\"{l.X2:F2}\" y2=\"{l.Y2:F2}\"");
+                sb.Append($" {SvgStroke(l.Stroke, l.StrokeThickness)}");
+                if (l.StrokeDashArray?.Count > 0)
+                    sb.Append($" stroke-dasharray=\"{SvgDashArray(l.StrokeDashArray, l.StrokeThickness)}\"");
+                sb.AppendLine("/>");
+                break;
+            }
+            case Polyline pl when pl.Points.Count >= 2:
+                sb.AppendLine($"{indent}<polyline points=\"{SvgPoints(pl.Points)}\"" +
+                              $" {SvgStroke(pl.Stroke, pl.StrokeThickness)} fill=\"none\"" +
+                              " stroke-linejoin=\"round\" stroke-linecap=\"round\"/>");
+                break;
+
+            case Polygon pg when pg.Points.Count >= 3:
+                sb.AppendLine($"{indent}<polygon points=\"{SvgPoints(pg.Points)}\"" +
+                              $" {SvgFill(pg.Fill)} {SvgStroke(pg.Stroke, pg.StrokeThickness)}/>");
+                break;
+
+            case Rectangle r:
+            {
+                var x = Canvas.GetLeft(r); if (double.IsNaN(x)) x = 0;
+                var y = Canvas.GetTop(r);  if (double.IsNaN(y)) y = 0;
+                sb.AppendLine($"{indent}<rect x=\"{x:F2}\" y=\"{y:F2}\" width=\"{r.Width:F2}\" height=\"{r.Height:F2}\"" +
+                              $" rx=\"{r.RadiusX:F1}\" ry=\"{r.RadiusY:F1}\"" +
+                              $" {SvgFill(r.Fill)} {SvgStroke(r.Stroke, r.StrokeThickness)}/>");
+                break;
+            }
+            case TextBlock tb:
+            {
+                var x = Canvas.GetLeft(tb); if (double.IsNaN(x)) x = 0;
+                var y = Canvas.GetTop(tb);  if (double.IsNaN(y)) y = 0;
+                // SVG text y = baseline; WPF Canvas.Top = top of element; approximate ascender ≈ 0.82 × fontSize
+                var baseline = y + tb.FontSize * 0.82;
+                sb.AppendLine($"{indent}<text x=\"{x:F2}\" y=\"{baseline:F2}\"" +
+                              $" font-family=\"Segoe UI,sans-serif\" font-size=\"{tb.FontSize:F1}\"" +
+                              $" {SvgFill(tb.Foreground)}>{SvgEscape(tb.Text)}</text>");
+                break;
+            }
+        }
+    }
+
+    private static string SvgStroke(Brush? brush, double width)
+    {
+        if (brush == null) return "stroke=\"none\"";
+        return $"stroke=\"{SvgRgb(brush)}\" stroke-opacity=\"{SvgAlpha(brush):F3}\" stroke-width=\"{width:F2}\"";
+    }
+
+    private static string SvgFill(Brush? brush)
+    {
+        if (brush == null || SvgAlpha(brush) < 0.004) return "fill=\"none\"";
+        return $"fill=\"{SvgRgb(brush)}\" fill-opacity=\"{SvgAlpha(brush):F3}\"";
+    }
+
+    private static string SvgRgb(Brush brush) =>
+        brush is SolidColorBrush scb
+            ? $"#{scb.Color.R:X2}{scb.Color.G:X2}{scb.Color.B:X2}"
+            : "none";
+
+    private static double SvgAlpha(Brush brush) =>
+        brush is SolidColorBrush scb ? scb.Color.A / 255.0 : 1.0;
+
+    private static string SvgPoints(PointCollection pts) =>
+        string.Join(" ", pts.Select(static p => $"{p.X:F2},{p.Y:F2}"));
+
+    private static string SvgDashArray(DoubleCollection arr, double width) =>
+        string.Join(",", arr.Select(d => (d * width).ToString("F2", CultureInfo.InvariantCulture)));
+
+    private static string SvgEscape(string s) =>
+        s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
 
     // -------------------------------------------------------------------------
     // Chart drawing
@@ -376,6 +600,12 @@ public partial class PirPeakStatusWindow : Window, IDisposable
         {
             yMin = 0;
             yMax = samples.Max(s => Math.Max(s.ADelta, Math.Max(s.BDelta, s.CDelta)));
+            // Extend Y axis to always show trigger levels, even when signal is below them
+            // 0xFFFF (65535) means "disabled" — skip it
+            var ls = samples[^1];
+            if (ls.TrigA.HasValue && ls.TrigA.Value != ushort.MaxValue) yMax = Math.Max(yMax, ls.TrigA.Value);
+            if (ls.TrigB.HasValue && ls.TrigB.Value != ushort.MaxValue) yMax = Math.Max(yMax, ls.TrigB.Value);
+            if (ls.TrigC.HasValue && ls.TrigC.Value != ushort.MaxValue) yMax = Math.Max(yMax, ls.TrigC.Value);
         }
 
         if (yMax <= yMin) yMax = yMin + 1;
@@ -395,8 +625,12 @@ public partial class PirPeakStatusWindow : Window, IDisposable
         DrawPolyline(samples, s => s.BDelta, left, top, w, h, minT, dt, yMin, yRange, BrushB, 2.2);
         DrawPolyline(samples, s => s.CDelta, left, top, w, h, minT, dt, yMin, yRange, BrushC, 2.2);
 
-        // Update header labels from latest sample
+        // Trigger level lines (horizontal, from opcode 0x0240 — latest sample's TrigA/B/C)
+        // 0xFFFF (65535) means "disabled" — skip it
         var last = samples[^1];
+        if (last.TrigA.HasValue && last.TrigA.Value != ushort.MaxValue) DrawTriggerLine(last.TrigA.Value, left, top, w, h, yMin, yRange, BrushA);
+        if (last.TrigB.HasValue && last.TrigB.Value != ushort.MaxValue) DrawTriggerLine(last.TrigB.Value, left, top, w, h, yMin, yRange, BrushB);
+        if (last.TrigC.HasValue && last.TrigC.Value != ushort.MaxValue) DrawTriggerLine(last.TrigC.Value, left, top, w, h, yMin, yRange, BrushC);
         TickText.Text   = last.TickCount.ToString();
         DeltaAText.Text = last.ADelta.ToString("0.##");
         DeltaBText.Text = last.BDelta.ToString("0.##");
@@ -535,6 +769,23 @@ public partial class PirPeakStatusWindow : Window, IDisposable
         };
 
         ChartCanvas.Children.Add(poly);
+    }
+
+    private void DrawTriggerLine(uint trigValue, double left, double top, double w, double h,
+                                 double yMin, double yRange, Brush brush)
+    {
+        var v    = (double)trigValue;
+        var norm = Math.Max(0, Math.Min(1, (v - yMin) / yRange));
+        var y    = top + (h - norm * h);
+
+        ChartCanvas.Children.Add(new Line
+        {
+            X1 = left, Y1 = y, X2 = left + w, Y2 = y,
+            Stroke = ThemeAlphaBrush(brush, 180),
+            StrokeThickness = 1.2,
+            StrokeDashArray = new System.Windows.Media.DoubleCollection { 6, 3 },
+            SnapsToDevicePixels = true
+        });
     }
 
     // -------------------------------------------------------------------------

@@ -52,13 +52,13 @@
 
                 <!-- Right: selectors + controls -->
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="Gateway:" VerticalAlignment="Center"
+                    <TextBlock x:Name="GatewayLabel" Text="Gateway:" VerticalAlignment="Center"
                                Foreground="{DynamicResource MutedBrush}" Margin="0,0,6,0"/>
                     <ComboBox x:Name="CassiaCombo"
                               Width="160" VerticalAlignment="Center" Margin="0,0,12,0"
                               SelectionChanged="CassiaCombo_SelectionChanged"/>
 
-                    <TextBlock Text="Device:" VerticalAlignment="Center"
+                    <TextBlock x:Name="DeviceLabel" Text="Device:" VerticalAlignment="Center"
                                Foreground="{DynamicResource MutedBrush}" Margin="0,0,6,0"/>
                     <ComboBox x:Name="DeviceCombo"
                               Width="200" VerticalAlignment="Center" Margin="0,0,12,0"
@@ -88,15 +88,21 @@
                     <Button x:Name="PauseButton" Content="Pause" Width="70" Margin="0,0,6,0"
                             Click="PauseButton_Click"
                             Style="{DynamicResource DefaultButtonStyle}"/>
-                    <Button Content="Clear" Width="60"
+                    <Button Content="Clear" Width="60" Margin="0,0,6,0"
                             Click="ClearButton_Click"
+                            Style="{DynamicResource DefaultButtonStyle}"/>
+                    <Button Content="Copy" Width="60" Margin="0,0,6,0"
+                            Click="CopyButton_Click"
+                            Style="{DynamicResource DefaultButtonStyle}"/>
+                    <Button x:Name="ExportSvgButton" Content="SVG" Width="55"
+                            Click="ExportSvgButton_Click"
                             Style="{DynamicResource DefaultButtonStyle}"/>
                 </StackPanel>
             </Grid>
         </Border>
 
         <!-- Chart area -->
-        <Border Grid.Row="1"
+        <Border x:Name="ChartBorder" Grid.Row="1"
                 CornerRadius="10"
                 BorderBrush="{DynamicResource BorderBrush}"
                 BorderThickness="1"
@@ -113,7 +119,7 @@
         </Border>
 
         <!-- Legend row -->
-        <Border Grid.Row="2"
+        <Border x:Name="LegendBorder" Grid.Row="2"
                 CornerRadius="8"
                 BorderBrush="{DynamicResource BorderBrush}"
                 BorderThickness="1"

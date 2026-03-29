@@ -105,6 +105,11 @@ public partial class MainViewModel : ObservableObject
                     ALow = U(r, "aLow"), AT = U(r, "aT"), AHigh = U(r, "aHigh"), ADuration = U(r, "aDuration"),
                     BLow = U(r, "bLow"), BT = U(r, "bT"), BHigh = U(r, "bHigh"), BDuration = U(r, "bDuration"),
                     CLow = U(r, "cLow"), CT = U(r, "cT"), CHigh = U(r, "cHigh"), CDuration = U(r, "cDuration"),
+                    TrigA = r.TryGetProperty("trigA", out var tA) && tA.ValueKind == JsonValueKind.Number ? (ushort?)tA.GetUInt16() : null,
+                    TrigB = r.TryGetProperty("trigB", out var tB) && tB.ValueKind == JsonValueKind.Number ? (ushort?)tB.GetUInt16() : null,
+                    TrigC = r.TryGetProperty("trigC", out var tC) && tC.ValueKind == JsonValueKind.Number ? (ushort?)tC.GetUInt16() : null,
+                    WalktestActive = r.TryGetProperty("walktestActive", out var wa) && wa.ValueKind != JsonValueKind.Null
+                        ? wa.ValueKind == JsonValueKind.True : (bool?)null,
                 };
 
                 AppendPirPeakSample(cassia, sample);
