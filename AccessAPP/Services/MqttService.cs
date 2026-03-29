@@ -68,6 +68,12 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     public event Func<SetUpdateChannelCommand, Task>? SetUpdateChannelRequested;
     public event Func<RebootCommand, Task>? RebootRequested;
 
+    // PIR peak status polling
+    public event Func<GetPirPeakCommand, Task>? GetPirPeakRequested;
+
+    // Walk-test enable/disable
+    public event Func<SetWalktestCommand, Task>? SetWalktestRequested;
+
     // Peer backup sharing
     public event Func<GetDeviceBackupCommand, Task>? GetDeviceBackupRequested;
     public event Func<DeviceBackupResponseCommand, Task>? DeviceBackupResponseReceived;
@@ -2105,6 +2111,34 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 }
             }
 
+
+            if (string.Equals(command, "get-pir-peak", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch get-pir-peak");
+                GetPirPeakCommand dto;
+                try
+                {
+                    dto = string.IsNullOrWhiteSpace(payload)
+                        ? new GetPirPeakCommand()
+                        : JsonSerializer.Deserialize<GetPirPeakCommand>(payload, JsonOptions) ?? new GetPirPeakCommand();
+                }
+                catch { dto = new GetPirPeakCommand(); }
+                return GetPirPeakRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "set-walktest", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch set-walktest");
+                SetWalktestCommand wt;
+                try
+                {
+                    wt = string.IsNullOrWhiteSpace(payload)
+                        ? new SetWalktestCommand()
+                        : JsonSerializer.Deserialize<SetWalktestCommand>(payload, JsonOptions) ?? new SetWalktestCommand();
+                }
+                catch { wt = new SetWalktestCommand(); }
+                return SetWalktestRequested?.Invoke(wt) ?? Task.CompletedTask;
+            }
 
             if (string.Equals(command, "get-device-backup", StringComparison.OrdinalIgnoreCase))
             {

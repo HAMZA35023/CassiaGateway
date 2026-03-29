@@ -69,6 +69,90 @@ public partial class MainViewModel : ObservableObject
         catch { }
     }
 
+    private void HandlePirPeakTele(string cassia, string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+
+            if (!root.TryGetProperty("results", out var resultsEl) || resultsEl.ValueKind != JsonValueKind.Array)
+                return;
+
+            var time = root.TryGetProperty("time", out var tEl) && tEl.TryGetDateTimeOffset(out var dto)
+                ? dto : DateTimeOffset.UtcNow;
+
+            foreach (var r in resultsEl.EnumerateArray())
+            {
+                if (r.ValueKind != JsonValueKind.Object) continue;
+
+                var mac = r.TryGetProperty("mac", out var mEl) ? (mEl.GetString() ?? "").Trim() : "";
+                if (string.IsNullOrWhiteSpace(mac)) continue;
+
+                static float F(JsonElement el, string name) =>
+                    el.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.Number ? (float)p.GetDouble() : 0f;
+                static uint U(JsonElement el, string name) =>
+                    el.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.Number ? p.GetUInt32() : 0u;
+
+                var sample = new AccessAppMqttWpf.Models.PirPeakSample
+                {
+                    TimeUtc   = time,
+                    Mac       = mac,
+                    TickCount = U(r, "tickCount"),
+                    AMin = F(r, "aMin"), AMax = F(r, "aMax"),
+                    BMin = F(r, "bMin"), BMax = F(r, "bMax"),
+                    CMin = F(r, "cMin"), CMax = F(r, "cMax"),
+                    ALow = U(r, "aLow"), AT = U(r, "aT"), AHigh = U(r, "aHigh"), ADuration = U(r, "aDuration"),
+                    BLow = U(r, "bLow"), BT = U(r, "bT"), BHigh = U(r, "bHigh"), BDuration = U(r, "bDuration"),
+                    CLow = U(r, "cLow"), CT = U(r, "cT"), CHigh = U(r, "cHigh"), CDuration = U(r, "cDuration"),
+                    TrigA = r.TryGetProperty("trigA", out var tA) && tA.ValueKind == JsonValueKind.Number ? (ushort?)tA.GetUInt16() : null,
+                    TrigB = r.TryGetProperty("trigB", out var tB) && tB.ValueKind == JsonValueKind.Number ? (ushort?)tB.GetUInt16() : null,
+                    TrigC = r.TryGetProperty("trigC", out var tC) && tC.ValueKind == JsonValueKind.Number ? (ushort?)tC.GetUInt16() : null,
+                    WalktestActive = r.TryGetProperty("walktestActive", out var wa) && wa.ValueKind != JsonValueKind.Null
+                        ? wa.ValueKind == JsonValueKind.True : (bool?)null,
+                };
+
+                AppendPirPeakSample(cassia, sample);
+            }
+        }
+        catch { }
+    }
+
+    private void HandleWalktestTele(string cassia, string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+
+            bool enabled = root.TryGetProperty("enabled", out var enEl) && enEl.ValueKind == JsonValueKind.True;
+
+            // Fire event for successful results
+            if (root.TryGetProperty("results", out var resultsEl) && resultsEl.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var r in resultsEl.EnumerateArray())
+                {
+                    var mac = r.TryGetProperty("mac", out var mEl) ? (mEl.GetString() ?? "").Trim() : "";
+                    if (!string.IsNullOrWhiteSpace(mac))
+                        RaiseWalktestResult(cassia, mac, enabled, success: true, error: null);
+                }
+            }
+
+            // Fire event for failed results
+            if (root.TryGetProperty("failed", out var failedEl) && failedEl.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var r in failedEl.EnumerateArray())
+                {
+                    var mac = r.TryGetProperty("mac", out var mEl) ? (mEl.GetString() ?? "").Trim() : "";
+                    var error = r.TryGetProperty("error", out var eEl) ? eEl.GetString() : null;
+                    if (!string.IsNullOrWhiteSpace(mac))
+                        RaiseWalktestResult(cassia, mac, enabled, success: false, error);
+                }
+            }
+        }
+        catch { }
+    }
+
     private void HandleDisconnectTele(string cassia, string payload)
     {
         try

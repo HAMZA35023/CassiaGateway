@@ -194,6 +194,21 @@ public sealed class DeviceListItem
     public bool IsStale { get; set; }
 }
 
+public sealed class GetPirPeakCommand
+{
+    public List<string> Sensors { get; set; } = new();
+    public string? Pincode { get; set; }
+    public string? RequestId { get; set; }
+}
+
+public sealed class SetWalktestCommand
+{
+    public List<string> Sensors { get; set; } = new();
+    public bool Enabled { get; set; }
+    public string? Pincode { get; set; }
+    public string? RequestId { get; set; }
+}
+
 /// <summary>
 /// Broadcast command asking all peers if they hold a settings backup for the given MAC.
 /// Published to cmd/all/get-device-backup.

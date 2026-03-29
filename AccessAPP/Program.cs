@@ -313,6 +313,27 @@ using (var scope = app.Services.CreateScope())
         }
     });
 
+    // On Linux: remove the .prev backup directory left by the deployer once the app starts successfully.
+    if (OperatingSystem.IsLinux())
+    {
+        const string prevDir = "/home/cassia/FWUpgrade.prev";
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                if (Directory.Exists(prevDir))
+                {
+                    Directory.Delete(prevDir, recursive: true);
+                    AppLog.Info($"[Startup] Removed previous deployment backup: {prevDir}");
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLog.Warn($"[Startup] Could not remove {prevDir}: {ex.Message}");
+            }
+        });
+    }
+
     // Hook incoming MQTT commands to your services
     var firmwareUpgradeService = serviceProvider.GetRequiredService<CassiaFirmwareUpgradeService>();
     var deviceStorageService = serviceProvider.GetRequiredService<DeviceStorageService>();
@@ -398,6 +419,156 @@ using (var scope = app.Services.CreateScope())
         };
 
         await mqttService.PublishTeleJsonAsync("fw-version", resp);
+    };
+
+    // Active PIR peak sessions: MAC → (CTS, Task, Pincode, IntervalMs)
+    var pirPeakSessions = new System.Collections.Concurrent.ConcurrentDictionary<string, (CancellationTokenSource Cts, Task SessionTask, string Pincode, int IntervalMs)>(StringComparer.OrdinalIgnoreCase);
+
+    Task StartPirPeakForMac(string mac, string pincode, int intervalMs)
+    {
+        var cts = new CancellationTokenSource();
+        if (!pirPeakSessions.TryAdd(mac, (cts, Task.CompletedTask, pincode, intervalMs)))
+        {
+            cts.Dispose();
+            return Task.CompletedTask;
+        }
+
+        var task = Task.Run(async () =>
+        {
+            try
+            {
+                await firmwareUpgradeService.RunPirPeakSessionAsync(mac, pincode, intervalMs, async data =>
+                {
+                    await mqttService.PublishTeleJsonAsync("pir-peak", new
+                    {
+                        name      = mqttService.CurrentOptions.Name,
+                        networkId = mqttService.CurrentOptions.NetworkId,
+                        time      = DateTimeOffset.UtcNow,
+                        results   = new[]
+                        {
+                            new
+                            {
+                                mac,
+                                tickCount = data.TickCount,
+                                aMin = data.AMin, aMax = data.AMax,
+                                bMin = data.BMin, bMax = data.BMax,
+                                cMin = data.CMin, cMax = data.CMax,
+                                aLow = data.ALow, aT = data.AT, aHigh = data.AHigh, aDuration = data.ADuration,
+                                bLow = data.BLow, bT = data.BT, bHigh = data.BHigh, bDuration = data.BDuration,
+                                cLow = data.CLow, cT = data.CT, cHigh = data.CHigh, cDuration = data.CDuration,
+                                trigA = data.TrigA, trigB = data.TrigB, trigC = data.TrigC,
+                                walktestActive = data.WalktestActive,
+                            }
+                        }
+                    });
+                }, cts.Token);
+            }
+            finally
+            {
+                pirPeakSessions.TryRemove(mac, out var removed);
+                removed.Cts?.Dispose();
+            }
+        });
+
+        // Store the real task so callers can await it
+        pirPeakSessions.TryUpdate(mac, (cts, task, pincode, intervalMs), (cts, Task.CompletedTask, pincode, intervalMs));
+        return Task.CompletedTask;
+    }
+
+    mqttService.StartPirPeakRequested += cmd =>
+    {
+        var mac = cmd.Sensor?.Trim();
+        if (string.IsNullOrWhiteSpace(mac)) return Task.CompletedTask;
+
+        // Already running — ignore duplicate start
+        if (pirPeakSessions.ContainsKey(mac))
+        {
+            AppLog.Debug($"[PirPeak] Session already running for {mac}, ignoring start");
+            return Task.CompletedTask;
+        }
+
+        var pincode    = cmd.Pincode ?? "";
+        var intervalMs = cmd.IntervalMs > 0 ? cmd.IntervalMs : 1500;
+        return StartPirPeakForMac(mac, pincode, intervalMs);
+    };
+
+    mqttService.StopPirPeakRequested += cmd =>
+    {
+        var mac = cmd.Sensor?.Trim();
+        if (string.IsNullOrWhiteSpace(mac))
+        {
+            // Stop all sessions
+            foreach (var key in pirPeakSessions.Keys.ToList())
+            {
+                if (pirPeakSessions.TryRemove(key, out var info))
+                {
+                    info.Cts.Cancel();
+                    info.Cts.Dispose();
+                }
+            }
+        }
+        else if (pirPeakSessions.TryRemove(mac, out var info))
+        {
+            info.Cts.Cancel();
+            info.Cts.Dispose();
+        }
+        return Task.CompletedTask;
+    };
+
+    mqttService.SetWalktestRequested += async cmd =>
+    {
+        var macs = (cmd.Sensors ?? new List<string>())
+            .Where(m => !string.IsNullOrWhiteSpace(m))
+            .Select(m => m.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (macs.Count == 0) return;
+
+        var pincode = cmd.Pincode ?? "";
+        var results = new List<object>();
+        var failed  = new List<object>();
+
+        foreach (var mac in macs)
+        {
+            // Stop any active PIR peak session for this MAC before touching the BLE device,
+            // then restart it after walktest to avoid two sessions fighting over the same BLE connection.
+            (string Pincode, int IntervalMs)? pirPeakRestart = null;
+
+            if (pirPeakSessions.TryRemove(mac, out var pirInfo))
+            {
+                pirPeakRestart = (pirInfo.Pincode, pirInfo.IntervalMs);
+                pirInfo.Cts.Cancel();
+                AppLog.Info($"[Walktest] Pausing PIR peak session for {mac} during walktest");
+                try { await pirInfo.SessionTask.WaitAsync(TimeSpan.FromSeconds(10)); } catch { }
+                pirInfo.Cts.Dispose();
+            }
+
+            var (_, ok, error) = await firmwareUpgradeService.SetWalktestForMacAsync(mac, cmd.Enabled, pincode);
+
+            if (ok)
+                results.Add(new { mac, enabled = cmd.Enabled });
+            else
+                failed.Add(new { mac, error });
+
+            // Restart PIR peak session if it was running before
+            if (pirPeakRestart.HasValue)
+            {
+                AppLog.Info($"[Walktest] Restarting PIR peak session for {mac} after walktest");
+                StartPirPeakForMac(mac, pirPeakRestart.Value.Pincode, pirPeakRestart.Value.IntervalMs);
+            }
+        }
+
+        await mqttService.PublishTeleJsonAsync("walktest", new
+        {
+            name      = mqttService.CurrentOptions.Name,
+            networkId = mqttService.CurrentOptions.NetworkId,
+            time      = DateTimeOffset.UtcNow,
+            requested = macs,
+            enabled   = cmd.Enabled,
+            results,
+            failed
+        });
     };
 
     // Dedup dictionary shared by get/set detector-settings handlers to discard duplicate MQTT
