@@ -68,8 +68,12 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     public event Func<SetUpdateChannelCommand, Task>? SetUpdateChannelRequested;
     public event Func<RebootCommand, Task>? RebootRequested;
 
-    // PIR peak status polling
+    // PIR peak status polling (legacy single-shot)
     public event Func<GetPirPeakCommand, Task>? GetPirPeakRequested;
+
+    // PIR peak persistent session start/stop
+    public event Func<StartPirPeakCommand, Task>? StartPirPeakRequested;
+    public event Func<StopPirPeakCommand, Task>?  StopPirPeakRequested;
 
     // Walk-test enable/disable
     public event Func<SetWalktestCommand, Task>? SetWalktestRequested;
@@ -2124,6 +2128,24 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 }
                 catch { dto = new GetPirPeakCommand(); }
                 return GetPirPeakRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "start-pir-peak", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch start-pir-peak");
+                var dto2 = string.IsNullOrWhiteSpace(payload)
+                    ? new StartPirPeakCommand()
+                    : JsonSerializer.Deserialize<StartPirPeakCommand>(payload, JsonOptions) ?? new StartPirPeakCommand();
+                return StartPirPeakRequested?.Invoke(dto2) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "stop-pir-peak", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch stop-pir-peak");
+                var dto2 = string.IsNullOrWhiteSpace(payload)
+                    ? new StopPirPeakCommand()
+                    : JsonSerializer.Deserialize<StopPirPeakCommand>(payload, JsonOptions) ?? new StopPirPeakCommand();
+                return StopPirPeakRequested?.Invoke(dto2) ?? Task.CompletedTask;
             }
 
             if (string.Equals(command, "set-walktest", StringComparison.OrdinalIgnoreCase))

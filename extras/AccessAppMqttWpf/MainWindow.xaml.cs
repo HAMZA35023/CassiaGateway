@@ -627,6 +627,13 @@ public partial class MainWindow : Window
                     try { vm.OpenDaliDbEditorCommand?.Execute(device); } catch { }
                 };
                 cm.Items.Add(openDb);
+
+                var pirPeak = new MenuItem { Header = "PIR peak status…" };
+                pirPeak.Click += (_, __) =>
+                {
+                    try { vm.OpenPirPeakStatusForDeviceCommand?.Execute(device); } catch { }
+                };
+                cm.Items.Add(pirPeak);
             }
 
             cm.Items.Add(new Separator());

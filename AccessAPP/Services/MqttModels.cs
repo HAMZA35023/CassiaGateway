@@ -201,6 +201,22 @@ public sealed class GetPirPeakCommand
     public string? RequestId { get; set; }
 }
 
+/// <summary>Start a persistent PIR peak polling session for a single sensor.</summary>
+public sealed class StartPirPeakCommand
+{
+    public string? Sensor { get; set; }
+    public string? Pincode { get; set; }
+    public int IntervalMs { get; set; } = 1500;
+    public string? RequestId { get; set; }
+}
+
+/// <summary>Stop a running PIR peak session. Null Sensor = stop all.</summary>
+public sealed class StopPirPeakCommand
+{
+    public string? Sensor { get; set; }
+    public string? RequestId { get; set; }
+}
+
 public sealed class SetWalktestCommand
 {
     public List<string> Sensors { get; set; } = new();

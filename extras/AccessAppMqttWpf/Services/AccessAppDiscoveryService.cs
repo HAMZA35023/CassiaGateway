@@ -406,7 +406,7 @@ public sealed class AccessAppDiscoveryService : IDisposable
         }
 
         var seen       = new HashSet<uint>();   // deduplicate when two interfaces share the same /24
-        var candidates = new List<string>();
+        var candidates = new List<string> { "127.0.0.1" }; // always probe localhost first
 
         foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
         {

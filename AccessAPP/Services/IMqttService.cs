@@ -62,8 +62,12 @@ public interface IMqttService : IAsyncDisposable
     // Reboot the host system.
     event Func<RebootCommand, Task>? RebootRequested;
 
-    // PIR peak status polling.
+    // PIR peak status polling (legacy single-shot).
     event Func<GetPirPeakCommand, Task>? GetPirPeakRequested;
+
+    // PIR peak persistent session start/stop.
+    event Func<StartPirPeakCommand, Task>? StartPirPeakRequested;
+    event Func<StopPirPeakCommand, Task>?  StopPirPeakRequested;
 
     // Walk-test enable/disable (multi-color LED).
     event Func<SetWalktestCommand, Task>? SetWalktestRequested;

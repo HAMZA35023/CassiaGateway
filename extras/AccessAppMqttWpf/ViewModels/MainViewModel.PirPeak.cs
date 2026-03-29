@@ -107,31 +107,47 @@ public partial class MainViewModel
         catch { }
     }
 
-    /// <summary>
-    /// Sends a get-pir-peak command to the specified gateway for the given MAC addresses.
-    /// </summary>
-    internal async Task SendGetPirPeakCommandAsync(string cassiaName, IEnumerable<string> macs, string? pincode = null)
+    /// <summary>Starts a persistent PIR peak session on the gateway for a single MAC.</summary>
+    internal async Task SendStartPirPeakCommandAsync(string cassiaName, string mac, string? pincode = null, int intervalMs = 1000)
     {
         if (!IsConnected) return;
-        if (string.IsNullOrWhiteSpace(cassiaName)) return;
+        if (string.IsNullOrWhiteSpace(cassiaName) || string.IsNullOrWhiteSpace(mac)) return;
 
         var payload = new
         {
-            sensors = macs.Where(m => !string.IsNullOrWhiteSpace(m)).Distinct().ToList(),
-            pincode = string.IsNullOrWhiteSpace(pincode) ? null : pincode
+            sensor     = mac,
+            intervalMs,
+            pincode    = string.IsNullOrWhiteSpace(pincode) ? null : pincode
         };
 
         try
         {
-            var topic = BuildCmdTopic(cassiaName, "get-pir-peak");
+            var topic = BuildCmdTopic(cassiaName, "start-pir-peak");
+            await _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
+        }
+        catch { }
+    }
+
+    /// <summary>Stops the running PIR peak session on the gateway for a single MAC.</summary>
+    internal async Task SendStopPirPeakCommandAsync(string cassiaName, string mac)
+    {
+        if (!IsConnected) return;
+        if (string.IsNullOrWhiteSpace(cassiaName) || string.IsNullOrWhiteSpace(mac)) return;
+
+        var payload = new { sensor = mac };
+
+        try
+        {
+            var topic = BuildCmdTopic(cassiaName, "stop-pir-peak");
             await _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token).ConfigureAwait(false);
         }
         catch { }
     }
 
     [RelayCommand]
-    private void OpenPirPeakStatus(string? cassiaName)
+    private void OpenPirPeakStatusForDevice(DiscoveredDevice? device)
     {
+        if (device == null) return;
         try
         {
             var wnd = new PirPeakStatusWindow(this)
@@ -139,27 +155,8 @@ public partial class MainViewModel
                 Owner = Application.Current.MainWindow
             };
 
-            if (!string.IsNullOrWhiteSpace(cassiaName))
-                wnd.PreSelectCassia(cassiaName);
+            wnd.PreSelectDevice(device.AssignedCassia, device.Mac);
 
-            wnd.Show();
-            wnd.Activate();
-        }
-        catch (Exception ex)
-        {
-            ConnectionStatus = $"Open PIR Peak Status failed: {ex.Message}";
-        }
-    }
-
-    [RelayCommand]
-    private void OpenPirPeakStatusAll()
-    {
-        try
-        {
-            var wnd = new PirPeakStatusWindow(this)
-            {
-                Owner = Application.Current.MainWindow
-            };
             wnd.Show();
             wnd.Activate();
         }
