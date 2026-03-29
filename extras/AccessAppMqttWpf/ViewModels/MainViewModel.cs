@@ -413,12 +413,12 @@ public partial class MainViewModel : ObservableObject
 
         _mqtt.ConnectionChanged += (connected, status) =>
         {
-            Application.Current.Dispatcher.Invoke(() =>
+            Application.Current.Dispatcher.InvokeAsync(() =>
             {
                 IsConnected = connected;
                 ConnectionStatus = status;
                 OnPropertyChanged(nameof(ConnectButtonText));
-            });
+            }, DispatcherPriority.Background);
 
             // We request FW manifests when we see each gateway's status (online)
             if (connected)
@@ -445,18 +445,6 @@ public partial class MainViewModel : ObservableObject
         };
 
         _mqtt.Message += OnMqttMessage;
-        // Countdown labels for throttled UI updates (progress/discovered).
-        _uiCountdownTimer.Tick += (_, _) =>
-        {
-            _progressCountdownSec--;
-            if (_progressCountdownSec <= 0) _progressCountdownSec = 5;
-            ProgressUiCountdownText = $"Progress UI update in {_progressCountdownSec}s";
-
-            _discoveredCountdownSec--;
-            if (_discoveredCountdownSec <= 0) _discoveredCountdownSec = 15;
-            DiscoveredUiCountdownText = $"Discovered UI update in {_discoveredCountdownSec}s";
-        };
-        _uiCountdownTimer.Start();
 
 
 
@@ -1072,10 +1060,10 @@ public partial class MainViewModel : ObservableObject
             var delay = _autoReconnectBackoff[Math.Min(attempt, _autoReconnectBackoff.Length - 1)];
             attempt++;
 
-            Application.Current.Dispatcher.Invoke(() =>
+            Application.Current.Dispatcher.InvokeAsync(() =>
             {
                 ConnectionStatus = $"Disconnected. Reconnecting in {delay.TotalSeconds:0}s...";
-            });
+            }, DispatcherPriority.Background);
 
             try
             {
@@ -1097,10 +1085,10 @@ public partial class MainViewModel : ObservableObject
             }
             catch (Exception ex)
             {
-                Application.Current.Dispatcher.Invoke(() =>
+                Application.Current.Dispatcher.InvokeAsync(() =>
                 {
                     ConnectionStatus = $"Reconnect failed: {ex.Message}";
-                });
+                }, DispatcherPriority.Background);
             }
         }
     }

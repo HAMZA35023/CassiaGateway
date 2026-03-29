@@ -208,3 +208,44 @@ public sealed class SetWalktestCommand
     public string? Pincode { get; set; }
     public string? RequestId { get; set; }
 }
+
+/// <summary>
+/// Broadcast command asking all peers if they hold a settings backup for the given MAC.
+/// Published to cmd/all/get-device-backup.
+/// </summary>
+public sealed class GetDeviceBackupCommand
+{
+    public string? MacAddress { get; set; }
+    public string? RequestId { get; set; }
+    /// <summary>Gateway name of the requester, so peers can address the response.</summary>
+    public string? RequesterName { get; set; }
+}
+
+/// <summary>
+/// Response published by a peer that holds the requested backup.
+/// Published to cmd/{requesterName}/device-backup-response.
+/// </summary>
+public sealed class DeviceBackupResponseCommand
+{
+    public string? RequestId { get; set; }
+    public string? MacAddress { get; set; }
+    public DeviceSettingsSnapshot? Snapshot { get; set; }
+}
+
+// ── DALI Database read/write commands ─────────────────────────────────────
+
+/// <summary>Request to read the full DALI database from a connected, logged-in device.</summary>
+public sealed class DaliDbReadCommand
+{
+    /// <summary>Single MAC address of the target device.</summary>
+    public string Sensor { get; set; } = "";
+    public string? RequestId { get; set; }
+}
+
+/// <summary>Request to write a previously-read DALI database back to a device.</summary>
+public sealed class DaliDbWriteCommand
+{
+    public string Sensor { get; set; } = "";
+    public string? RequestId { get; set; }
+    public AccessAPP.Models.DaliDbSnapshot? Db { get; set; }
+}

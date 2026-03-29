@@ -984,6 +984,7 @@ public partial class MainViewModel : ObservableObject
             {
                 // ignore malformed lines
             }
+            ScheduleProgressFlushOnUi();
         }
 
         private void RequestUpgradeLogTextRefresh()

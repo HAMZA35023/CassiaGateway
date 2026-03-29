@@ -144,6 +144,7 @@ builder.Services.AddSingleton<ScanBleDevice>();
 builder.Services.AddSingleton<CassiaPinCodeService>();
 builder.Services.AddSingleton<DeviceStorageService>();
 builder.Services.AddSingleton<CassiaFirmwareUpgradeService>();
+builder.Services.AddSingleton<DaliDbService>();
 builder.Services.AddScoped<FirmwareUploadService>();
 builder.Services.AddSingleton<FirmwareManifestService>();
 builder.Services.AddSingleton<LedRangeLocalStateStore>();
@@ -1105,6 +1106,83 @@ using (var scope = app.Services.CreateScope())
             stdout = result.StdOut,
             stderr = result.StdErr
         });
+    };
+
+    // Peer backup sharing: respond to other gateways asking if we have a settings backup for a MAC.
+    mqttService.GetDeviceBackupRequested += async cmd =>
+    {
+        if (string.IsNullOrWhiteSpace(cmd.MacAddress) ||
+            string.IsNullOrWhiteSpace(cmd.RequesterName) ||
+            string.IsNullOrWhiteSpace(cmd.RequestId))
+            return;
+
+        // Don't respond to our own broadcasts.
+        if (string.Equals(cmd.RequesterName, mqttService.CurrentOptions.Name, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var snapshot = await firmwareUpgradeService.SettingsBackupService.TryGetSnapshotAsync(cmd.MacAddress).ConfigureAwait(false);
+        if (snapshot is null) return;
+
+        AppLog.Info($"[PeerBackup] Responding to {cmd.RequesterName} with backup for {cmd.MacAddress}");
+        await mqttService.PublishDeviceBackupResponseAsync(cmd.RequesterName, new DeviceBackupResponseCommand
+        {
+            RequestId = cmd.RequestId,
+            MacAddress = cmd.MacAddress,
+            Snapshot = snapshot
+        }).ConfigureAwait(false);
+    };
+
+    // ── DALI Database read/write ──────────────────────────────────────────────
+    var daliDbService = serviceProvider.GetRequiredService<DaliDbService>();
+
+    mqttService.DaliDbReadRequested += async cmd =>
+    {
+        var mac = (cmd.Sensor ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(mac))
+        {
+            await mqttService.PublishTeleJsonAsync("dali-db",
+                new { mac = "", status = "error", error = "sensor MAC required" }).ConfigureAwait(false);
+            return;
+        }
+
+        AppLog.Info($"[DaliDb] dali-db-read requested for {mac}");
+        try
+        {
+            var db = await daliDbService.ReadAsync(mac).ConfigureAwait(false);
+            await mqttService.PublishTeleJsonAsync("dali-db",
+                new { mac, status = "ok", requestId = cmd.RequestId, db }).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error($"[DaliDb] Read failed for {mac}: {ex.Message}");
+            await mqttService.PublishTeleJsonAsync("dali-db",
+                new { mac, status = "error", requestId = cmd.RequestId, error = ex.Message }).ConfigureAwait(false);
+        }
+    };
+
+    mqttService.DaliDbWriteRequested += async cmd =>
+    {
+        var mac = (cmd.Sensor ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(mac) || cmd.Db is null)
+        {
+            await mqttService.PublishTeleJsonAsync("dali-db",
+                new { mac, status = "error", error = "sensor MAC and db payload required" }).ConfigureAwait(false);
+            return;
+        }
+
+        AppLog.Info($"[DaliDb] dali-db-write requested for {mac}");
+        try
+        {
+            await daliDbService.WriteAsync(mac, cmd.Db).ConfigureAwait(false);
+            await mqttService.PublishTeleJsonAsync("dali-db",
+                new { mac, status = "write-ok", requestId = cmd.RequestId }).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error($"[DaliDb] Write failed for {mac}: {ex.Message}");
+            await mqttService.PublishTeleJsonAsync("dali-db",
+                new { mac, status = "error", requestId = cmd.RequestId, error = ex.Message }).ConfigureAwait(false);
+        }
     };
 
 }

@@ -67,6 +67,16 @@ public interface IMqttService : IAsyncDisposable
 
     // Walk-test enable/disable (multi-color LED).
     event Func<SetWalktestCommand, Task>? SetWalktestRequested;
+
+    // Peer backup sharing: one gateway asks all peers for a device backup.
+    event Func<GetDeviceBackupCommand, Task>? GetDeviceBackupRequested;
+    event Func<DeviceBackupResponseCommand, Task>? DeviceBackupResponseReceived;
+
+    // DALI database read/write
+    event Func<DaliDbReadCommand, Task>?  DaliDbReadRequested;
+    event Func<DaliDbWriteCommand, Task>? DaliDbWriteRequested;
+    Task BroadcastDeviceBackupRequestAsync(GetDeviceBackupCommand cmd, CancellationToken ct = default);
+    Task PublishDeviceBackupResponseAsync(string requesterName, DeviceBackupResponseCommand msg, CancellationToken ct = default);
 }
 
 // New: command DTO for request payload

@@ -537,6 +537,14 @@
                     </MenuItem.Icon>
                 </MenuItem>
                 <Separator/>
+                <MenuItem Header="Search for new Cassia…"
+                          Command="{Binding ScanForNewCassiasCommand}"
+                          ToolTip="Scan the local network for new or reconnected Cassia gateways. Does not clear the upgrade log or queue.">
+                    <MenuItem.Icon>
+                        <TextBlock Text="🔍" Style="{StaticResource MenuIconGlyph}"/>
+                    </MenuItem.Icon>
+                </MenuItem>
+                <Separator/>
                 <MenuItem Header="Settings…"
                           Command="{Binding OpenLocalServerSettingsCommand}">
                     <MenuItem.Icon>
@@ -583,10 +591,6 @@
             </StatusBarItem>
             <StatusBarItem HorizontalAlignment="Right" HorizontalContentAlignment="Right">
                 <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="UI update cadence" Opacity="0.85" Margin="0,0,10,0"/>
-                    <TextBlock Text="{Binding ProgressUiCountdownText}" Margin="0,0,14,0" Opacity="0.85"/>
-                    <TextBlock Text="{Binding DiscoveredUiCountdownText}" Opacity="0.85"/>
-                    <TextBlock Text="   " Opacity="0.85"/>
                     <TextBlock Text="{Binding TotalSpeedStatusText}" Foreground="{DynamicResource MutedBrush}"/>
                     <Button Style="{StaticResource GhostButton}"
                             Content="Refresh UI"
@@ -1574,6 +1578,10 @@
                                                     <MenuItem Header="Detector settings..."
                                                               Visibility="{Binding PlacementTarget.Tag.DeveloperModeUnlocked, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"
                                                               Command="{Binding PlacementTarget.Tag.OpenDetectorSettingsCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                              CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                                    <MenuItem Header="Open DB&#x2026;"
+                                                              Visibility="{Binding PlacementTarget.Tag.DeveloperModeUnlocked, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"
+                                                              Command="{Binding PlacementTarget.Tag.OpenDaliDbEditorCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                                               CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
                                                 </ContextMenu>
                                             </Setter.Value>

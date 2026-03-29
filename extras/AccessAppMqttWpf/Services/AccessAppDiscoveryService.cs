@@ -132,8 +132,7 @@ public sealed class AccessAppDiscoveryService : IDisposable
 
         _fastScanTask = Task.Run(async () =>
         {
-            // Parallel.ForEachAsync streams work without pre-allocating all tasks, so
-            // a /16 scan (65k hosts) won't flood the thread pool or the GC.
+            // Parallel.ForEachAsync streams work without pre-allocating all tasks.
             await Parallel.ForEachAsync(candidates,
                 new ParallelOptions { MaxDegreeOfParallelism = 200, CancellationToken = ct },
                 async (ip, innerCt) => await TryDiscoverAndPushAsync(ip, innerCt).ConfigureAwait(false))
@@ -182,13 +181,12 @@ public sealed class AccessAppDiscoveryService : IDisposable
 
     private static List<string> GetOwnLanIps()
     {
-        var result = new List<string>();
+        // Always include loopback so a locally-launched AccessApp is probed immediately.
+        var result = new List<string> { "127.0.0.1" };
         foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
         {
             if (ni.OperationalStatus != OperationalStatus.Up) continue;
-            if (ni.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
-            if (ni.NetworkInterfaceType == NetworkInterfaceType.Tunnel) continue;
-            if (IsVirtualAdapter(ni)) continue;
+            if (!IsPhysicalAdapter(ni)) continue;
             foreach (var addr in ni.GetIPProperties().UnicastAddresses)
                 if (addr.Address.AddressFamily == AddressFamily.InterNetwork)
                     result.Add(addr.Address.ToString());
@@ -392,10 +390,9 @@ public sealed class AccessAppDiscoveryService : IDisposable
     // ── Subnet enumeration ────────────────────────────────────────────────────
 
     /// <summary>
-    /// Enumerates host IPs to scan, covering the /16 supernet of each active LAN interface.
-    /// This ensures cross-subnet devices (e.g. gateway at 192.168.40.1 when WPF is on
-    /// 192.168.0.x/24) are discovered without requiring the user to configure IPs manually.
-    /// Subnets narrower than /8 are safe; /8 and wider are skipped (too many hosts).
+    /// Enumerates host IPs to scan across the configured subnet of each active physical
+    /// (Ethernet / Wi-Fi) interface.  The scan range is capped at /24 (254 hosts) so we
+    /// never flood a large corporate network; narrower masks are respected as-is.
     /// </summary>
     private List<string> BuildSubnetCandidates()
     {
@@ -408,30 +405,26 @@ public sealed class AccessAppDiscoveryService : IDisposable
                     ownIps.Add(addr.Address.ToString());
         }
 
-        var seen       = new HashSet<uint>();   // deduplicate when multiple interfaces share the same /16
+        var seen       = new HashSet<uint>();   // deduplicate when two interfaces share the same /24
         var candidates = new List<string>();
 
         foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
         {
             if (ni.OperationalStatus != OperationalStatus.Up) continue;
-            if (ni.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
-            if (ni.NetworkInterfaceType == NetworkInterfaceType.Tunnel) continue;
-            if (IsVirtualAdapter(ni)) continue;
+            if (!IsPhysicalAdapter(ni)) continue;
 
             foreach (var addr in ni.GetIPProperties().UnicastAddresses)
             {
                 if (addr.Address.AddressFamily != AddressFamily.InterNetwork) continue;
-                if (addr.PrefixLength < 8) continue;  // skip /0–/7 (too many hosts)
+
+                // Cap scan range to /24 — never generate more than 254 candidates per interface.
+                int scanPrefix = Math.Max(addr.PrefixLength, 24);
+                uint scanMask  = PrefixToMask(scanPrefix);
 
                 var ipBytes = addr.Address.GetAddressBytes();
-                uint ipUint = ToUInt32BE(ipBytes);
-
-                // Clamp to /16 so we cover the whole 192.168.x.x block even when the
-                // interface is configured with a narrower mask (e.g. /24).
-                const int ScanPrefix = 16;
-                const uint ScanMask  = 0xFFFF_0000u;  // /16
-                uint net       = ipUint & ScanMask;
-                uint broadcast = net | ~ScanMask;
+                uint ipUint    = ToUInt32BE(ipBytes);
+                uint net       = ipUint & scanMask;
+                uint broadcast = net | ~scanMask;
 
                 for (uint h = net + 1; h < broadcast; h++)
                 {
@@ -446,19 +439,38 @@ public sealed class AccessAppDiscoveryService : IDisposable
         return candidates;
     }
 
+    private static uint PrefixToMask(int prefix)
+    {
+        if (prefix <= 0)  return 0u;
+        if (prefix >= 32) return 0xFFFF_FFFFu;
+        return ~((1u << (32 - prefix)) - 1u);
+    }
+
     private static uint   ToUInt32BE(byte[] b) =>
         ((uint)b[0] << 24) | ((uint)b[1] << 16) | ((uint)b[2] << 8) | b[3];
     private static byte[] FromUInt32BE(uint v) =>
         new[] { (byte)(v >> 24), (byte)(v >> 16), (byte)(v >> 8), (byte)v };
 
-    private static bool IsVirtualAdapter(NetworkInterface ni)
+    /// <summary>
+    /// True only for physical Ethernet or Wi-Fi adapters.
+    /// Type check alone is insufficient — VMware/Hyper-V/WSL2 host adapters also report
+    /// as Ethernet, so we combine the type whitelist with a description blacklist.
+    /// </summary>
+    private static bool IsPhysicalAdapter(NetworkInterface ni)
     {
+        if (ni.NetworkInterfaceType != NetworkInterfaceType.Ethernet &&
+            ni.NetworkInterfaceType != NetworkInterfaceType.Wireless80211)
+            return false;
+
         var desc = ni.Description ?? "";
-        return desc.Contains("Virtual",     StringComparison.OrdinalIgnoreCase)
-            || desc.Contains("Hyper-V",     StringComparison.OrdinalIgnoreCase)
-            || desc.Contains("TAP-Windows", StringComparison.OrdinalIgnoreCase)
-            || desc.Contains("WireGuard",   StringComparison.OrdinalIgnoreCase)
-            || desc.Contains("vEthernet",   StringComparison.OrdinalIgnoreCase);
+        return !desc.Contains("Virtual",     StringComparison.OrdinalIgnoreCase)
+            && !desc.Contains("Hyper-V",     StringComparison.OrdinalIgnoreCase)
+            && !desc.Contains("TAP-Windows", StringComparison.OrdinalIgnoreCase)
+            && !desc.Contains("WireGuard",   StringComparison.OrdinalIgnoreCase)
+            && !desc.Contains("vEthernet",   StringComparison.OrdinalIgnoreCase)
+            && !desc.Contains("VMware",      StringComparison.OrdinalIgnoreCase)
+            && !desc.Contains("VirtualBox",  StringComparison.OrdinalIgnoreCase)
+            && !desc.Contains("WSL",         StringComparison.OrdinalIgnoreCase);
     }
 
     private static string GetOutboundIpFor(string targetIp)
