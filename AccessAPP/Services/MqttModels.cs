@@ -248,6 +248,22 @@ public sealed class DeviceBackupResponseCommand
     public DeviceSettingsSnapshot? Snapshot { get; set; }
 }
 
+// ── DALI Logger start/stop commands ───────────────────────────────────────
+
+/// <summary>Start a persistent DALI bus logging session for a single sensor.</summary>
+public sealed class DaliLogStartCommand
+{
+    public string Sensor { get; set; } = "";
+    public string? RequestId { get; set; }
+}
+
+/// <summary>Stop a running DALI bus logging session. Null/empty Sensor = stop all.</summary>
+public sealed class DaliLogStopCommand
+{
+    public string? Sensor { get; set; }
+    public string? RequestId { get; set; }
+}
+
 // ── DALI Database read/write commands ─────────────────────────────────────
 
 /// <summary>Request to read the full DALI database from a connected, logged-in device.</summary>

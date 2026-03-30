@@ -76,6 +76,10 @@ public interface IMqttService : IAsyncDisposable
     event Func<GetDeviceBackupCommand, Task>? GetDeviceBackupRequested;
     event Func<DeviceBackupResponseCommand, Task>? DeviceBackupResponseReceived;
 
+    // DALI bus logger start/stop
+    event Func<DaliLogStartCommand, Task>? DaliLogStartRequested;
+    event Func<DaliLogStopCommand, Task>?  DaliLogStopRequested;
+
     // DALI database read/write
     event Func<DaliDbReadCommand, Task>?  DaliDbReadRequested;
     event Func<DaliDbWriteCommand, Task>? DaliDbWriteRequested;

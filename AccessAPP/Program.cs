@@ -1219,6 +1219,86 @@ using (var scope = app.Services.CreateScope())
         }).ConfigureAwait(false);
     };
 
+    // ── DALI Bus Logger ───────────────────────────────────────────────────────
+    // Active sessions: MAC → CancellationTokenSource
+    var daliLogSessions = new System.Collections.Concurrent.ConcurrentDictionary<string, CancellationTokenSource>(StringComparer.OrdinalIgnoreCase);
+
+    Task StartDaliLogForMac(string mac)
+    {
+        var cts = new CancellationTokenSource();
+        if (!daliLogSessions.TryAdd(mac, cts))
+        {
+            cts.Dispose();
+            return Task.CompletedTask;
+        }
+
+        var task = Task.Run(async () =>
+        {
+            try
+            {
+                await firmwareUpgradeService.RunDaliLogSessionAsync(
+                    mac,
+                    async frames =>
+                    {
+                        await mqttService.PublishTeleJsonAsync("dali-log", new
+                        {
+                            name      = mqttService.CurrentOptions.Name,
+                            networkId = mqttService.CurrentOptions.NetworkId,
+                            time      = DateTimeOffset.UtcNow,
+                            mac,
+                            frames
+                        }).ConfigureAwait(false);
+                    },
+                    cts.Token).ConfigureAwait(false);
+            }
+            finally
+            {
+                daliLogSessions.TryRemove(mac, out var removed);
+                removed?.Dispose();
+            }
+        });
+
+        return Task.CompletedTask;
+    }
+
+    mqttService.DaliLogStartRequested += cmd =>
+    {
+        var mac = (cmd.Sensor ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(mac)) return Task.CompletedTask;
+
+        if (daliLogSessions.ContainsKey(mac))
+        {
+            AppLog.Debug($"[DaliLog] Session already running for {mac}, ignoring start");
+            return Task.CompletedTask;
+        }
+
+        AppLog.Info($"[DaliLog] Starting session for {mac}");
+        return StartDaliLogForMac(mac);
+    };
+
+    mqttService.DaliLogStopRequested += cmd =>
+    {
+        var mac = (cmd.Sensor ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(mac))
+        {
+            foreach (var key in daliLogSessions.Keys.ToList())
+            {
+                if (daliLogSessions.TryRemove(key, out var info))
+                {
+                    info.Cancel();
+                    info.Dispose();
+                }
+            }
+        }
+        else if (daliLogSessions.TryRemove(mac, out var info))
+        {
+            AppLog.Info($"[DaliLog] Stopping session for {mac}");
+            info.Cancel();
+            info.Dispose();
+        }
+        return Task.CompletedTask;
+    };
+
     // ── DALI Database read/write ──────────────────────────────────────────────
     var daliDbService = serviceProvider.GetRequiredService<DaliDbService>();
 

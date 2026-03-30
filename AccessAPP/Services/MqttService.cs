@@ -82,6 +82,10 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     public event Func<GetDeviceBackupCommand, Task>? GetDeviceBackupRequested;
     public event Func<DeviceBackupResponseCommand, Task>? DeviceBackupResponseReceived;
 
+    // DALI bus logger start/stop
+    public event Func<DaliLogStartCommand, Task>? DaliLogStartRequested;
+    public event Func<DaliLogStopCommand, Task>?  DaliLogStopRequested;
+
     // DALI database read/write
     public event Func<DaliDbReadCommand, Task>?  DaliDbReadRequested;
     public event Func<DaliDbWriteCommand, Task>? DaliDbWriteRequested;
@@ -2174,6 +2178,24 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 AppLog.Debug("HandleCommandAsync: dispatch device-backup-response");
                 var dto = JsonSerializer.Deserialize<DeviceBackupResponseCommand>(payload, JsonOptions) ?? new DeviceBackupResponseCommand();
                 return DeviceBackupResponseReceived?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "start-dali-log", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch start-dali-log");
+                var dto = string.IsNullOrWhiteSpace(payload)
+                    ? new DaliLogStartCommand()
+                    : JsonSerializer.Deserialize<DaliLogStartCommand>(payload, JsonOptions) ?? new DaliLogStartCommand();
+                return DaliLogStartRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "stop-dali-log", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch stop-dali-log");
+                var dto = string.IsNullOrWhiteSpace(payload)
+                    ? new DaliLogStopCommand()
+                    : JsonSerializer.Deserialize<DaliLogStopCommand>(payload, JsonOptions) ?? new DaliLogStopCommand();
+                return DaliLogStopRequested?.Invoke(dto) ?? Task.CompletedTask;
             }
 
             if (string.Equals(command, "dali-db-read", StringComparison.OrdinalIgnoreCase))
