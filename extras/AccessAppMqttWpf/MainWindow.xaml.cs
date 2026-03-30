@@ -436,12 +436,12 @@ public partial class MainWindow : Window
 
     private void ClearHostBleSelectionFromVm()
     {
-        Dispatcher.Invoke(() =>
+        Dispatcher.InvokeAsync(() =>
         {
             if (HostBleGrid == null) return;
             HostBleGrid.SelectedItem = null;
             HostBleGrid.SelectedItems?.Clear();
-        });
+        }, System.Windows.Threading.DispatcherPriority.Background);
     }
 
 
@@ -618,6 +618,23 @@ public partial class MainWindow : Window
                 try { vm.OpenDetectorSettingsCommand?.Execute(device); } catch { }
             };
             cm.Items.Add(detectorSettings);
+
+            if (vm.DeveloperModeUnlocked)
+            {
+                var openDb = new MenuItem { Header = "Open DB…" };
+                openDb.Click += (_, __) =>
+                {
+                    try { vm.OpenDaliDbEditorCommand?.Execute(device); } catch { }
+                };
+                cm.Items.Add(openDb);
+
+                var pirPeak = new MenuItem { Header = "PIR peak status…" };
+                pirPeak.Click += (_, __) =>
+                {
+                    try { vm.OpenPirPeakStatusForDeviceCommand?.Execute(device); } catch { }
+                };
+                cm.Items.Add(pirPeak);
+            }
 
             cm.Items.Add(new Separator());
 

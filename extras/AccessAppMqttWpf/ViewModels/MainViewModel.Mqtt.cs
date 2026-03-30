@@ -154,7 +154,10 @@ public partial class MainViewModel : ObservableObject
             });
         }
 
-        if (!net.Equals(NetworkId, StringComparison.OrdinalIgnoreCase))
+        // In local mode we subscribed with a wildcard networkId so all AccessApp instances
+        // are visible even before they adopt the shared networkId via the HTTP push.
+        // In remote mode, filter strictly to the configured NetworkId.
+        if (!_localMqttActive && !net.Equals(NetworkId, StringComparison.OrdinalIgnoreCase))
             return;
 
         var kind = m.Groups["kind"].Value.ToLowerInvariant();
@@ -192,7 +195,7 @@ public partial class MainViewModel : ObservableObject
                     if (upEl.ValueKind == JsonValueKind.Number) uptimeSeconds = upEl.GetInt64();
                     else if (upEl.ValueKind == JsonValueKind.String && long.TryParse(upEl.GetString(), out var uv)) uptimeSeconds = uv;
                 }
-                Application.Current.Dispatcher.Invoke(() =>
+                Application.Current.Dispatcher.InvokeAsync(() =>
                 {
                     var gw = CassiaGateways.FirstOrDefault(x => x.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
                     if (gw == null)
@@ -200,7 +203,6 @@ public partial class MainViewModel : ObservableObject
                         gw = new CassiaGateway { Name = name, NetworkId = net };
                         RestoreSpeedHistoryIfPresent(gw);
                         CassiaGateways.Add(gw);
-                        SortCassiaGatewaysByName();
                         SortCassiaGatewaysByName();
                     }
 
@@ -246,7 +248,7 @@ public partial class MainViewModel : ObservableObject
 
                     MaybeAutoRequestUpgradeLogAfterStatus(gw);
 
-                });
+                }, DispatcherPriority.Background);
             }
             catch { }
             return;
@@ -312,6 +314,18 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        if (kind == "tele" && leaf == "pir-peak")
+        {
+            HandlePirPeakTele(cassia, payload);
+            return;
+        }
+
+        if (kind == "tele" && leaf == "walktest")
+        {
+            HandleWalktestTele(cassia, payload);
+            return;
+        }
+
         if (kind == "tele" && leaf == "disconnect")
         {
             HandleDisconnectTele(cassia, payload);
@@ -363,6 +377,12 @@ public partial class MainViewModel : ObservableObject
         if (kind == "tele" && leaf == "shell")
         {
             RaiseShellResponse(cassia, payload);
+            return;
+        }
+
+        if (kind == "tele" && leaf == "dali-db")
+        {
+            HandleDaliDbTele(cassia, payload);
             return;
         }
 
@@ -452,6 +472,7 @@ if (kind == "tele" && leaf == "progress")
                 }
             }
             catch { }
+            ScheduleProgressFlushOnUi();
             return;
         }
 
@@ -464,90 +485,91 @@ if (kind == "tele" && leaf == "progress")
 
                 var ts = root.TryGetProperty("time", out var t) && t.TryGetDateTimeOffset(out var dto) ? dto : DateTimeOffset.UtcNow;
 
-                if (root.TryGetProperty("devices", out var arr) && arr.ValueKind == JsonValueKind.Array)
+                if (!root.TryGetProperty("devices", out var arr) || arr.ValueKind != JsonValueKind.Array)
+                    return;
+
+                // Extract device data while the JsonDocument is still in scope.
+                // InvokeAsync(Background) runs after the using block exits, so JsonElements
+                // would be disposed — capture only plain strings and value types here.
+                var deviceData = new List<(string Mac, int Rssi, string Name, string ProductNumber, string Family, string Type)>();
+                foreach (var dev in arr.EnumerateArray())
                 {
-                    Application.Current.Dispatcher.Invoke(() =>
+                    var mac = dev.TryGetProperty("mac", out var macEl) ? macEl.GetString() ?? "" : "";
+                    if (string.IsNullOrWhiteSpace(mac)) continue;
+                    var rssi = dev.TryGetProperty("rssi", out var rssiEl) && rssiEl.TryGetInt32(out var r) ? r : int.MinValue;
+                    var dn   = dev.TryGetProperty("name",           out var nameEl) ? nameEl.GetString() ?? "" : "";
+                    var pn   = dev.TryGetProperty("productNumber",  out var pnEl)   ? pnEl.GetString()  ?? "" : "";
+                    var fam  = dev.TryGetProperty("detectorFamily", out var famEl)  ? famEl.GetString() ?? "" : "";
+                    var typ  = dev.TryGetProperty("detectorType",   out var typEl)  ? typEl.GetString() ?? "" : "";
+                    deviceData.Add((mac, rssi, dn, pn, fam, typ));
+                }
+
+                // Background priority: runs after input events and rendering — button clicks
+                // are never preempted. (Background=4 < Input=5 < Render=7 < Normal=9 < Send=10)
+                Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    var gw = CassiaGateways.FirstOrDefault(x => x.Name.Equals(cassia, StringComparison.OrdinalIgnoreCase));
+                    if (gw == null)
                     {
-                        var gw = CassiaGateways.FirstOrDefault(x => x.Name.Equals(cassia, StringComparison.OrdinalIgnoreCase));
-                        if (gw == null)
-                        {
-                            gw = new CassiaGateway { Name = cassia, NetworkId = net };
-                            CassiaGateways.Add(gw);
-                            SortCassiaGatewaysByName();
-                        }
+                        gw = new CassiaGateway { Name = cassia, NetworkId = net };
+                        CassiaGateways.Add(gw);
+                        SortCassiaGatewaysByName();
+                    }
 
-                        EnsureCassiaOption(gw.Name);
-
+                    EnsureCassiaOption(gw.Name);
                     EnsureCassiaOption(cassia);
 
-                        if (!LogGatewayOptions.Any(x => x.Equals(cassia, StringComparison.OrdinalIgnoreCase)))
-                            LogGatewayOptions.Add(cassia);
+                    if (!LogGatewayOptions.Any(x => x.Equals(cassia, StringComparison.OrdinalIgnoreCase)))
+                        LogGatewayOptions.Add(cassia);
 
-                        gw.LastSeenUtc = ts;
-                        gw.State = "online";
+                    gw.LastSeenUtc = ts;
+                    gw.State = "online";
 
-                        if (!_gwSeenMacs.TryGetValue(cassia, out var seen))
+                    if (!_gwSeenMacs.TryGetValue(cassia, out var seen))
+                    {
+                        seen = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        _gwSeenMacs[cassia] = seen;
+                    }
+
+                    foreach (var (mac, rssi, dn, pn, fam, typ) in deviceData)
+                    {
+                        seen.Add(mac);
+
+                        if (!_deviceByMac.TryGetValue(mac, out var existing))
                         {
-                            seen = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                            _gwSeenMacs[cassia] = seen;
+                            existing = new DiscoveredDevice { Mac = mac };
+                            _deviceByMac[mac] = existing;
+                            _devices.Add(existing);
                         }
 
-                        foreach (var dev in arr.EnumerateArray())
+                        EnsureDeviceAssignmentWiring(existing);
+                        ApplyCachedStatusToDevice(existing);
+
+                        ApplyDeviceNameWithGuards(existing, dn);
+                        if (!string.IsNullOrWhiteSpace(fam)) existing.DetectorFamily = fam;
+                        if (!string.IsNullOrWhiteSpace(typ)) existing.DetectorType = typ;
+
+                        if (!string.IsNullOrWhiteSpace(pn))
                         {
-                            var mac = dev.TryGetProperty("mac", out var macEl) ? macEl.GetString() ?? "" : "";
-                            if (string.IsNullOrWhiteSpace(mac)) continue;
-
-                            // Track unique MACs per gateway
-                            seen.Add(mac);
-
-                            var rssi = dev.TryGetProperty("rssi", out var rssiEl) && rssiEl.TryGetInt32(out var r) ? r : int.MinValue;
-                            var dn = dev.TryGetProperty("name", out var nameEl) ? nameEl.GetString() ?? "" : "";
-                            var pn = dev.TryGetProperty("productNumber", out var pnEl) ? pnEl.GetString() ?? "" : "";
-                            var fam = dev.TryGetProperty("detectorFamily", out var famEl) ? famEl.GetString() ?? "" : "";
-                            var typ = dev.TryGetProperty("detectorType", out var typEl) ? typEl.GetString() ?? "" : "";
-
-                            
-if (!_deviceByMac.TryGetValue(mac, out var existing))
-{
-    existing = new DiscoveredDevice { Mac = mac };
-    _deviceByMac[mac] = existing;
-    _devices.Add(existing);
-}
-
-                            EnsureDeviceAssignmentWiring(existing);
-                            ApplyCachedStatusToDevice(existing);
-
-                            ApplyDeviceNameWithGuards(existing, dn);
-                            if (!string.IsNullOrWhiteSpace(fam)) existing.DetectorFamily = fam;
-                            if (!string.IsNullOrWhiteSpace(typ)) existing.DetectorType = typ;
-
-                            if (!string.IsNullOrWhiteSpace(pn))
-                            {
-                                existing.ProductNumber = pn;
-                                if (_productToModel.TryGetValue(pn, out var model))
-                                    existing.SensorModel = model;
-                            }
-                            else if (!string.IsNullOrWhiteSpace(existing.ProductNumber) && _productToModel.TryGetValue(existing.ProductNumber, out var model2))
-                            {
-                                existing.SensorModel = model2;
-                            }
-
-                            existing.UpdateFromCassia(cassia, rssi, ts);
-                            UpdateQueueRssiForMac(mac);
-                            EnsureStickyAssignment(existing);
+                            existing.ProductNumber = pn;
+                            if (_productToModel.TryGetValue(pn, out var model))
+                                existing.SensorModel = model;
+                        }
+                        else if (!string.IsNullOrWhiteSpace(existing.ProductNumber) && _productToModel.TryGetValue(existing.ProductNumber, out var model2))
+                        {
+                            existing.SensorModel = model2;
                         }
 
+                        existing.UpdateFromCassia(cassia, rssi, ts);
+                        UpdateQueueRssiForMac(mac);
+                        EnsureStickyAssignment(existing);
+                    }
 
-                        // show unique count since last clear
-                        gw.DevicesSeen = seen.Count;
-
-                        // Update per-gateway assignment counts
-                        RecalculateAssignmentCounts();
-
-                        RequestDevicesRefresh();
-                        OnPropertyChanged(nameof(DevicesSubtitle));
-                    });
-                }
+                    gw.DevicesSeen = seen.Count;
+                    RecalculateAssignmentCounts();
+                    RequestDevicesRefresh();
+                    OnPropertyChanged(nameof(DevicesSubtitle));
+                }, DispatcherPriority.Background);
             }
             catch { }
             return;

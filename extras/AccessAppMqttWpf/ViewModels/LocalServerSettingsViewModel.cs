@@ -164,8 +164,8 @@ public partial class LocalServerSettingsViewModel : ObservableObject, IDisposabl
                 var exe = AccessAppLauncherService.FindExecutable(localPath);
                 if (exe == null)
                 {
-                    Application.Current.Dispatcher.Invoke(() =>
-                        StatusText = "AccessApp executable not found. Download it first or set a local path.");
+                    Application.Current.Dispatcher.InvokeAsync(() =>
+                        StatusText = "AccessApp executable not found. Download it first or set a local path.", System.Windows.Threading.DispatcherPriority.Background);
                     return;
                 }
 
@@ -174,15 +174,15 @@ public partial class LocalServerSettingsViewModel : ObservableObject, IDisposabl
                     username: "local", password: LocalMqttServerService.LocalToken);
                 _main.SetAccessAppProcess(proc);
 
-                Application.Current.Dispatcher.Invoke(() =>
+                Application.Current.Dispatcher.InvokeAsync(() =>
                     StatusText = proc != null
                         ? $"AccessApp started (PID {proc.Id})."
-                        : "Failed to start AccessApp.");
+                        : "Failed to start AccessApp.", System.Windows.Threading.DispatcherPriority.Background);
             }
             catch (Exception ex)
             {
-                Application.Current.Dispatcher.Invoke(() =>
-                    StatusText = $"Start AccessApp failed: {ex.Message}");
+                Application.Current.Dispatcher.InvokeAsync(() =>
+                    StatusText = $"Start AccessApp failed: {ex.Message}", System.Windows.Threading.DispatcherPriority.Background);
             }
         });
     }
@@ -205,7 +205,7 @@ public partial class LocalServerSettingsViewModel : ObservableObject, IDisposabl
         {
             var progress = new Progress<double>(p =>
             {
-                Application.Current.Dispatcher.Invoke(() => DownloadProgress = p);
+                Application.Current.Dispatcher.InvokeAsync(() => DownloadProgress = p, System.Windows.Threading.DispatcherPriority.Background);
             });
 
             var (success, message, version) = await AccessAppLauncherService.DownloadAndExtractAsync(
@@ -228,7 +228,7 @@ public partial class LocalServerSettingsViewModel : ObservableObject, IDisposabl
                             MessageBoxImage.Question));
 
                     if (close == MessageBoxResult.Yes)
-                        Application.Current.Dispatcher.Invoke(() => RequestClose?.Invoke());
+                        Application.Current.Dispatcher.InvokeAsync(() => RequestClose?.Invoke(), System.Windows.Threading.DispatcherPriority.Background);
                 }
             }
         }

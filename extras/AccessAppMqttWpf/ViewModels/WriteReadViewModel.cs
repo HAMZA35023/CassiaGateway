@@ -74,7 +74,7 @@ public partial class WriteReadViewModel : ObservableObject
         if (Application.Current.Dispatcher.CheckAccess())
             doSet();
         else
-            Application.Current.Dispatcher.Invoke(doSet);
+            Application.Current.Dispatcher.InvokeAsync(doSet, System.Windows.Threading.DispatcherPriority.Background);
     }
 
 

@@ -194,6 +194,37 @@ public sealed class DeviceListItem
     public bool IsStale { get; set; }
 }
 
+public sealed class GetPirPeakCommand
+{
+    public List<string> Sensors { get; set; } = new();
+    public string? Pincode { get; set; }
+    public string? RequestId { get; set; }
+}
+
+/// <summary>Start a persistent PIR peak polling session for a single sensor.</summary>
+public sealed class StartPirPeakCommand
+{
+    public string? Sensor { get; set; }
+    public string? Pincode { get; set; }
+    public int IntervalMs { get; set; } = 1500;
+    public string? RequestId { get; set; }
+}
+
+/// <summary>Stop a running PIR peak session. Null Sensor = stop all.</summary>
+public sealed class StopPirPeakCommand
+{
+    public string? Sensor { get; set; }
+    public string? RequestId { get; set; }
+}
+
+public sealed class SetWalktestCommand
+{
+    public List<string> Sensors { get; set; } = new();
+    public bool Enabled { get; set; }
+    public string? Pincode { get; set; }
+    public string? RequestId { get; set; }
+}
+
 /// <summary>
 /// Broadcast command asking all peers if they hold a settings backup for the given MAC.
 /// Published to cmd/all/get-device-backup.
@@ -215,4 +246,38 @@ public sealed class DeviceBackupResponseCommand
     public string? RequestId { get; set; }
     public string? MacAddress { get; set; }
     public DeviceSettingsSnapshot? Snapshot { get; set; }
+}
+
+// ── DALI Logger start/stop commands ───────────────────────────────────────
+
+/// <summary>Start a persistent DALI bus logging session for a single sensor.</summary>
+public sealed class DaliLogStartCommand
+{
+    public string Sensor { get; set; } = "";
+    public string? RequestId { get; set; }
+}
+
+/// <summary>Stop a running DALI bus logging session. Null/empty Sensor = stop all.</summary>
+public sealed class DaliLogStopCommand
+{
+    public string? Sensor { get; set; }
+    public string? RequestId { get; set; }
+}
+
+// ── DALI Database read/write commands ─────────────────────────────────────
+
+/// <summary>Request to read the full DALI database from a connected, logged-in device.</summary>
+public sealed class DaliDbReadCommand
+{
+    /// <summary>Single MAC address of the target device.</summary>
+    public string Sensor { get; set; } = "";
+    public string? RequestId { get; set; }
+}
+
+/// <summary>Request to write a previously-read DALI database back to a device.</summary>
+public sealed class DaliDbWriteCommand
+{
+    public string Sensor { get; set; } = "";
+    public string? RequestId { get; set; }
+    public AccessAPP.Models.DaliDbSnapshot? Db { get; set; }
 }

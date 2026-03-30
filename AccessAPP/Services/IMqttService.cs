@@ -62,9 +62,27 @@ public interface IMqttService : IAsyncDisposable
     // Reboot the host system.
     event Func<RebootCommand, Task>? RebootRequested;
 
+    // PIR peak status polling (legacy single-shot).
+    event Func<GetPirPeakCommand, Task>? GetPirPeakRequested;
+
+    // PIR peak persistent session start/stop.
+    event Func<StartPirPeakCommand, Task>? StartPirPeakRequested;
+    event Func<StopPirPeakCommand, Task>?  StopPirPeakRequested;
+
+    // Walk-test enable/disable (multi-color LED).
+    event Func<SetWalktestCommand, Task>? SetWalktestRequested;
+
     // Peer backup sharing: one gateway asks all peers for a device backup.
     event Func<GetDeviceBackupCommand, Task>? GetDeviceBackupRequested;
     event Func<DeviceBackupResponseCommand, Task>? DeviceBackupResponseReceived;
+
+    // DALI bus logger start/stop
+    event Func<DaliLogStartCommand, Task>? DaliLogStartRequested;
+    event Func<DaliLogStopCommand, Task>?  DaliLogStopRequested;
+
+    // DALI database read/write
+    event Func<DaliDbReadCommand, Task>?  DaliDbReadRequested;
+    event Func<DaliDbWriteCommand, Task>? DaliDbWriteRequested;
     Task BroadcastDeviceBackupRequestAsync(GetDeviceBackupCommand cmd, CancellationToken ct = default);
     Task PublishDeviceBackupResponseAsync(string requesterName, DeviceBackupResponseCommand msg, CancellationToken ct = default);
 }

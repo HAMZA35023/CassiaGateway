@@ -147,14 +147,15 @@ public sealed class LocalDiscoveryBeaconService : IDisposable
         foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
         {
             if (ni.OperationalStatus != OperationalStatus.Up) continue;
-            if (ni.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
-            if (ni.NetworkInterfaceType == NetworkInterfaceType.Tunnel) continue;
-            if (IsVirtualAdapter(ni)) continue;
+            if (!IsPhysicalAdapter(ni)) continue;
 
             foreach (var addr in ni.GetIPProperties().UnicastAddresses)
             {
                 if (addr.Address.AddressFamily != AddressFamily.InterNetwork) continue;
-                var mask = MaskFromPrefix(addr.IPv4Mask, addr.PrefixLength);
+
+                // Cap scan range to /24 — never broadcast beyond 254 hosts.
+                int effectivePrefix = Math.Max(addr.PrefixLength, 24);
+                var mask = MaskFromPrefix(null, effectivePrefix);
                 if (mask == null) continue;
 
                 var ip        = addr.Address.GetAddressBytes();
@@ -170,14 +171,26 @@ public sealed class LocalDiscoveryBeaconService : IDisposable
         return result;
     }
 
-    private static bool IsVirtualAdapter(NetworkInterface ni)
+    /// <summary>
+    /// True only for physical Ethernet or Wi-Fi adapters.
+    /// Type check alone is insufficient — VMware/Hyper-V/WSL2 host adapters also report
+    /// as Ethernet, so we combine the type whitelist with a description blacklist.
+    /// </summary>
+    private static bool IsPhysicalAdapter(NetworkInterface ni)
     {
+        if (ni.NetworkInterfaceType != NetworkInterfaceType.Ethernet &&
+            ni.NetworkInterfaceType != NetworkInterfaceType.Wireless80211)
+            return false;
+
         var desc = ni.Description ?? "";
-        return desc.Contains("Virtual",     StringComparison.OrdinalIgnoreCase)
-            || desc.Contains("Hyper-V",     StringComparison.OrdinalIgnoreCase)
-            || desc.Contains("TAP-Windows", StringComparison.OrdinalIgnoreCase)
-            || desc.Contains("WireGuard",   StringComparison.OrdinalIgnoreCase)
-            || desc.Contains("vEthernet",   StringComparison.OrdinalIgnoreCase);
+        return !desc.Contains("Virtual",     StringComparison.OrdinalIgnoreCase)
+            && !desc.Contains("Hyper-V",     StringComparison.OrdinalIgnoreCase)
+            && !desc.Contains("TAP-Windows", StringComparison.OrdinalIgnoreCase)
+            && !desc.Contains("WireGuard",   StringComparison.OrdinalIgnoreCase)
+            && !desc.Contains("vEthernet",   StringComparison.OrdinalIgnoreCase)
+            && !desc.Contains("VMware",      StringComparison.OrdinalIgnoreCase)
+            && !desc.Contains("VirtualBox",  StringComparison.OrdinalIgnoreCase)
+            && !desc.Contains("WSL",         StringComparison.OrdinalIgnoreCase);
     }
 
     private static byte[]? MaskFromPrefix(IPAddress? ipv4Mask, int prefixLength)

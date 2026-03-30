@@ -1,18 +1,4 @@
 
--> WFP app - ask to clear local upgrade-log when resyncing - when a device is offline, we will miss the upgrade log from that, and want to keep using the local copy
-
-
 -> Cassia needs external antennas for 4G!
 
--> Now the WPF app should not warn if it is failed anymore, as we ask other pears the there backup, so it does not need to be sticky.
-
-
-
-MINOR:
--> the UI cadance in the WPF app, does not give a good expirience for the user - what can we do about that?
-
-
--> When using local, we need a button to search for new cassia (we connect to them one by one, and then we need to know what sensors there already is queued, so we dont queue them twice, so we need to make sure not to clear the upgradelog and queued devices. - when we connect to one again, then we should get the updated upgrade-log, so we can update the UI)
- - This is an option when we can connect them together in a local network.
- - Create a feature-branch for this.
 
