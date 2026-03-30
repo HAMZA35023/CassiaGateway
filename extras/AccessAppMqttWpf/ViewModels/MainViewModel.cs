@@ -1017,7 +1017,7 @@ public partial class MainViewModel : ObservableObject
                     MqttPassword ?? "",
                     UseTls,
                     IgnoreTlsErrors,
-                    MqttTopic,
+                    string.Empty,   // subscriptions handled by ResyncCoreAsync; no catch-all here
                     _appCts.Token).ConfigureAwait(false);
             }
             finally

@@ -118,6 +118,48 @@ public partial class MainViewModel : ObservableObject
         catch { }
     }
 
+    // Deduplicates dali-log MQTT messages that arrive twice when the local AccessApp has
+    // discovered the WPF's local broker via UDP beacon and mirrors telemetry to it in addition
+    // to the primary broker connection. Key = "mac|framesHex|batchTimeMs"; value = seen-at time.
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _recentDaliLogKeys =
+        new(StringComparer.Ordinal);
+
+    private void HandleDaliLogTele(string cassia, string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+
+            var mac = root.TryGetProperty("mac", out var macEl) ? (macEl.GetString() ?? "").Trim() : "";
+            if (string.IsNullOrWhiteSpace(mac)) return;
+
+            if (!root.TryGetProperty("frames", out var framesEl) || framesEl.ValueKind != JsonValueKind.String)
+                return;
+
+            var framesHex = framesEl.GetString() ?? "";
+            if (string.IsNullOrEmpty(framesHex)) return;
+
+            DateTimeOffset batchTime = DateTimeOffset.UtcNow;
+            if (root.TryGetProperty("time", out var timeEl) && timeEl.TryGetDateTimeOffset(out var dto))
+                batchTime = dto;
+
+            // Deduplicate: same mac+frames+batchTime within 3 s = mirror duplicate, skip.
+            var dedupKey = $"{mac}|{framesHex}|{batchTime.ToUnixTimeMilliseconds()}";
+            var now = DateTimeOffset.UtcNow;
+            if (!_recentDaliLogKeys.TryAdd(dedupKey, now))
+                return; // already processed this exact batch
+
+            // Prune stale dedup keys (older than 5 s) to avoid unbounded growth.
+            foreach (var kv in _recentDaliLogKeys)
+                if ((now - kv.Value).TotalSeconds > 5)
+                    _recentDaliLogKeys.TryRemove(kv.Key, out _);
+
+            AppendDaliLogFrames(cassia, mac, framesHex, batchTime);
+        }
+        catch { }
+    }
+
     private void HandleWalktestTele(string cassia, string payload)
     {
         try

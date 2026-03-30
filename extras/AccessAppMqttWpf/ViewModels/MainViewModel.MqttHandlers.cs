@@ -905,6 +905,7 @@ public partial class MainViewModel : ObservableObject
 
             _lastFwManifestMissingHash = "";
             _fwManifestTimeoutArmed = false;
+            _lastSubscribedNetworkId = ""; // reset so ResyncCoreAsync re-subscribes on next connect
         }
 
         /// <summary>
@@ -918,19 +919,18 @@ public partial class MainViewModel : ObservableObject
                 _speedHistoryByGateway.Clear();
 
             // Ensure subscriptions exist.
-            // In local mode we subscribe with a wildcard networkId (+) so we see every
-            // AccessApp instance regardless of which networkId it is currently using —
-            // some may not yet have received the shared-networkId push.
+            // Always subscribe with + wildcard so no re-subscription is needed when the user
+            // switches NetworkId — OnMqttMessage filters by NetworkId at the application layer.
+            // IMPORTANT: ConnectAsync must NOT subscribe to any overlapping topic (e.g. accessapp/#)
+            // because overlapping subscriptions cause the broker to deliver each message once per
+            // matching subscription, resulting in duplicate entries in the UI.
             try
             {
-                var subscribeNet = _localMqttActive ? "+" : (NetworkId ?? "").Trim();
-                if (!string.IsNullOrWhiteSpace(subscribeNet) &&
-                    !string.Equals(_lastSubscribedNetworkId, subscribeNet, StringComparison.OrdinalIgnoreCase))
+                if (_lastSubscribedNetworkId != "+")
                 {
-                    await _mqtt.SubscribeAsync($"accessapp/{subscribeNet}/tele/#").ConfigureAwait(false);
-                    await _mqtt.SubscribeAsync($"accessapp/{subscribeNet}/tele/+/upgrade-log", qos: 1).ConfigureAwait(false);
-                    await _mqtt.SubscribeAsync($"accessapp/{subscribeNet}/cmd/#").ConfigureAwait(false);
-                    _lastSubscribedNetworkId = subscribeNet;
+                    await _mqtt.SubscribeAsync("accessapp/+/tele/#").ConfigureAwait(false);
+                    await _mqtt.SubscribeAsync("accessapp/+/cmd/#").ConfigureAwait(false);
+                    _lastSubscribedNetworkId = "+";
                 }
             }
             catch

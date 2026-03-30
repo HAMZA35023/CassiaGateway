@@ -380,6 +380,12 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        if (kind == "tele" && leaf == "dali-log")
+        {
+            HandleDaliLogTele(cassia, payload);
+            return;
+        }
+
         if (kind == "tele" && leaf == "dali-db")
         {
             HandleDaliDbTele(cassia, payload);

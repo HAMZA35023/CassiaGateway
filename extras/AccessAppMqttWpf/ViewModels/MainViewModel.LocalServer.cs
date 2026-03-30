@@ -296,7 +296,7 @@ public partial class MainViewModel : ObservableObject
         _isConnecting = true;
         try
         {
-            await _mqtt.ConnectAsync(host, port, user, pass, tls, ignoreTls, MqttTopic, _appCts.Token);
+            await _mqtt.ConnectAsync(host, port, user, pass, tls, ignoreTls, string.Empty, _appCts.Token);
         }
         finally
         {
