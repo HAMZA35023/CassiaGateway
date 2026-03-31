@@ -93,6 +93,8 @@ public partial class MainViewModel : ObservableObject
             _discoveredBufByCassia.Clear();
         }
 
+        var anyNewDevices = false;
+
         foreach (var (cassia, batch) in snapshot)
         {
             var gw = CassiaGateways.FirstOrDefault(x => x.Name.Equals(cassia, StringComparison.OrdinalIgnoreCase));
@@ -128,6 +130,7 @@ public partial class MainViewModel : ObservableObject
                     existing = new DiscoveredDevice { Mac = mac };
                     _deviceByMac[mac] = existing;
                     _devices.Add(existing);
+                    anyNewDevices = true;
                 }
 
                 EnsureDeviceAssignmentWiring(existing);
@@ -157,7 +160,10 @@ public partial class MainViewModel : ObservableObject
         }
 
         RecalculateAssignmentCounts();
-        RequestDevicesRefresh();
+        // Only refresh the CollectionView when new devices appear — existing-device updates
+        // (RSSI, last-seen, name) are handled by INotifyPropertyChanged on DiscoveredDevice.
+        if (anyNewDevices)
+            RequestDevicesRefresh();
         OnPropertyChanged(nameof(DevicesSubtitle));
     }
 
@@ -229,6 +235,8 @@ public partial class MainViewModel : ObservableObject
             _deviceListBufByMac.Clear();
         }
 
+        var anyNewDevices = false;
+
         foreach (var (mac, e) in snapshot)
         {
             if (!_deviceByMac.TryGetValue(mac, out var d))
@@ -237,6 +245,7 @@ public partial class MainViewModel : ObservableObject
                 WireDeviceAssignmentHooks(d);
                 _deviceByMac[mac] = d;
                 _devices.Add(d);
+                anyNewDevices = true;
             }
 
             ApplyDeviceNameWithGuards(d, e.Name);
@@ -260,6 +269,7 @@ public partial class MainViewModel : ObservableObject
         }
 
         RecalculateAssignmentCounts();
-        RequestDevicesRefresh();
+        if (anyNewDevices)
+            RequestDevicesRefresh();
     }
 }

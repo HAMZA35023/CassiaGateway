@@ -26,24 +26,49 @@ namespace AccessAppMqttWpf.ViewModels;
 
 public partial class MainViewModel : ObservableObject
 {
+        private const int DevicesRefreshThrottleMs = 500;
+
         private void RequestDevicesRefresh()
         {
-            if (_pendingDevicesRefresh) return;
+            if (_pendingDevicesRefresh || _deferredDevicesRefresh) return;
+
+            // Throttle: if the last refresh ran less than 500 ms ago, defer until the
+            // window expires instead of firing another expensive DataGrid re-render.
+            var elapsedMs = (long)Stopwatch.GetElapsedTime(_lastDevicesRefreshTick).TotalMilliseconds;
+            if (_lastDevicesRefreshTick != 0 && elapsedMs < DevicesRefreshThrottleMs)
+            {
+                _deferredDevicesRefresh = true;
+                var remaining = DevicesRefreshThrottleMs - (int)elapsedMs;
+                var timer = new System.Windows.Threading.DispatcherTimer(DispatcherPriority.Background)
+                {
+                    Interval = TimeSpan.FromMilliseconds(remaining)
+                };
+                timer.Tick += (s, e) =>
+                {
+                    timer.Stop();
+                    _deferredDevicesRefresh = false;
+                    RequestDevicesRefresh();
+                };
+                timer.Start();
+                return;
+            }
+
             _pendingDevicesRefresh = true;
 
             Application.Current.Dispatcher.InvokeAsync(() =>
             {
                 _pendingDevicesRefresh = false;
+                _lastDevicesRefreshTick = Stopwatch.GetTimestamp();
 
                 // preserve selection
                 var selectedMac = SelectedDevice?.Mac;
 
                 var swRefresh = Stopwatch.StartNew();
-            FilteredDevices.Refresh();
-            PerfLog.Measure("FilteredDevices.Refresh", swRefresh.ElapsedMilliseconds);
+                FilteredDevices.Refresh();
+                PerfLog.Measure("FilteredDevices.Refresh", swRefresh.ElapsedMilliseconds);
 
                 if (!string.IsNullOrWhiteSpace(selectedMac))
-                SelectedDevice = _devices.FirstOrDefault(d => d.Mac.Equals(selectedMac, StringComparison.OrdinalIgnoreCase));
+                    SelectedDevice = _devices.FirstOrDefault(d => d.Mac.Equals(selectedMac, StringComparison.OrdinalIgnoreCase));
             }, DispatcherPriority.Background);
         }
         void RequestQueueRefresh()
