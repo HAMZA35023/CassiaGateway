@@ -21,6 +21,7 @@ using System.Windows.Data;
 using System.Windows.Threading;
 using Microsoft.VisualBasic;
 using AccessAppMqttWpf;
+using System.Diagnostics;
 
 namespace AccessAppMqttWpf.ViewModels;
 
@@ -244,10 +245,14 @@ public partial class MainViewModel : ObservableObject
     {
         if (_progressFlushPending) return;
         _progressFlushPending = true;
+        var t0Flush = Stopwatch.GetTimestamp();
         Application.Current?.Dispatcher?.InvokeAsync(() =>
         {
+            var flushLag = (long)Stopwatch.GetElapsedTime(t0Flush).TotalMilliseconds;
             _progressFlushPending = false;
+            var swFlush = Stopwatch.StartNew();
             FlushBufferedProgressOnUi();
+            PerfLog.UiWork("progress-flush", flushLag, swFlush.ElapsedMilliseconds);
         }, System.Windows.Threading.DispatcherPriority.Background);
     }
 

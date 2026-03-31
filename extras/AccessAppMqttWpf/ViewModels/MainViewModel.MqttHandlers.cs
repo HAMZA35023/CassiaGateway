@@ -20,6 +20,7 @@ using System.Windows.Data;
 using System.Windows.Threading;
 using Microsoft.VisualBasic;
 using AccessAppMqttWpf;
+using System.Diagnostics;
 
 namespace AccessAppMqttWpf.ViewModels;
 
@@ -37,7 +38,9 @@ public partial class MainViewModel : ObservableObject
                 // preserve selection
                 var selectedMac = SelectedDevice?.Mac;
 
-                FilteredDevices.Refresh();
+                var swRefresh = Stopwatch.StartNew();
+            FilteredDevices.Refresh();
+            PerfLog.Measure("FilteredDevices.Refresh", swRefresh.ElapsedMilliseconds);
 
                 if (!string.IsNullOrWhiteSpace(selectedMac))
                 SelectedDevice = _devices.FirstOrDefault(d => d.Mac.Equals(selectedMac, StringComparison.OrdinalIgnoreCase));
@@ -625,43 +628,7 @@ public partial class MainViewModel : ObservableObject
                     deviceData.Add((mac, rssi, name, productNumber, detectorFamily, detectorType, lastSeenUtc));
                 }
 
-                Application.Current.Dispatcher.InvokeAsync(() =>
-                {
-                    foreach (var (mac, rssi, name, productNumber, detectorFamily, detectorType, lastSeenUtc) in deviceData)
-                    {
-                        if (!_deviceByMac.TryGetValue(mac, out var d))
-                        {
-                            d = new DiscoveredDevice { Mac = mac };
-                            WireDeviceAssignmentHooks(d);
-                            _deviceByMac[mac] = d;
-                            _devices.Add(d);
-                        }
-
-                        ApplyDeviceNameWithGuards(d, name);
-                        d.ProductNumber = string.IsNullOrWhiteSpace(productNumber) ? d.ProductNumber : productNumber;
-                        d.DetectorFamily = string.IsNullOrWhiteSpace(detectorFamily) ? d.DetectorFamily : detectorFamily;
-                        d.DetectorType = string.IsNullOrWhiteSpace(detectorType) ? d.DetectorType : detectorType;
-
-                        // SensorModel: prefer detectorType if it looks like Pxx
-                        if (!string.IsNullOrWhiteSpace(detectorType) && detectorType.Trim().StartsWith("P", StringComparison.OrdinalIgnoreCase))
-                            d.SensorModel = detectorType.Trim().ToUpperInvariant();
-                        else if (!string.IsNullOrWhiteSpace(d.ProductNumber) && _productToModel.TryGetValue(d.ProductNumber, out var m))
-                            d.SensorModel = m;
-
-                        if (rssi != int.MinValue)
-                            d.UpdateFromCassia(cassia, rssi, lastSeenUtc);
-                        else
-                            d.LastSeenUtc = lastSeenUtc;
-
-                        UpdateQueueRssiForMac(mac);
-
-                        ApplyCachedStatusToDevice(d);
-                        EnsureStickyAssignment(d);
-                    }
-
-                    RecalculateAssignmentCounts();
-                    RequestDevicesRefresh();
-                }, DispatcherPriority.Background);
+                BufferDeviceList(cassia, deviceData);
             }
             catch { }
         }
