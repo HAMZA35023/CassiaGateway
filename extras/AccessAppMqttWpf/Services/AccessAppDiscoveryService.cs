@@ -118,6 +118,19 @@ public sealed class AccessAppDiscoveryService : IDisposable
     // ── Public scan API ───────────────────────────────────────────────────────
 
     /// <summary>
+    /// Probes a single IP immediately. Use when a gateway connects to the local MQTT broker
+    /// but was not in the known-entries set (e.g. it self-reconnected after being evicted by
+    /// <see cref="MaxPushFails"/>). If the probe succeeds the entry is re-added and the
+    /// normal re-push loop takes over. No-ops if the IP is already known.
+    /// </summary>
+    public void EnsureIpProbed(string ip)
+    {
+        if (_cts == null || _entries.ContainsKey(ip)) return;
+        var ct = _cts.Token;
+        Task.Run(() => TryDiscoverAndPushAsync(ip, ct), ct);
+    }
+
+    /// <summary>
     /// Probes all host IPs in local subnet(s) in parallel (TCP port 60000, ~300 ms total).
     /// Each confirmed AccessApp immediately receives a config push.
     /// <paramref name="onComplete"/> is invoked after all probes finish.

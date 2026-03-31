@@ -533,12 +533,14 @@ public partial class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// AccessApp connected to our MQTT broker — it received and acted on the config push.
-    /// No action needed beyond what OnGatewayFound already did.
+    /// AccessApp connected to our MQTT broker. If it isn't already tracked (e.g. it
+    /// self-reconnected after being evicted by the re-push fail counter), re-probe it
+    /// immediately so it gets back into the managed set and starts receiving re-pushes.
     /// </summary>
     private void OnGatewayConnectedToLocalMqtt(string ip)
     {
         AppLog.Info($"[MainViewModel] Gateway {ip} connected to local MQTT broker.");
+        _accessAppDiscovery.EnsureIpProbed(ip);
     }
 
     /// <summary>
