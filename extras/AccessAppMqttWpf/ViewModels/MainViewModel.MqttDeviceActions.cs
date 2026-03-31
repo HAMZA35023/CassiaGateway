@@ -688,6 +688,11 @@ public partial class MainViewModel : ObservableObject
             _progressByMac.Clear();
         }
 
+        // Only refresh the QueueView when sort order can actually change:
+        // new item added, device becomes terminal (sort key 0→1), or new run starts (sort key 1→0).
+        // Pure progress-% updates don't affect sort order — bindings handle the display directly.
+        var needsQueueRefresh = false;
+
         foreach (var p in batch)
         {
             // Protect terminal completion state from being overwritten by late/duplicate progress=100 "Programming" updates.
@@ -720,6 +725,7 @@ public partial class MainViewModel : ObservableObject
                     cs.LastUpgradeSuccessUtc = null;
                     cs.LastTargetFw = "";
                     cs.IsInQueue = true;
+                    needsQueueRefresh = true; // sort key can flip 1→0
                 }
                 else if (pctRounded >= 100 && IsNonTerminalStage(p.Stage)
                 && string.Equals(cs.ProcessStatus?.Trim(), "Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase))
@@ -748,6 +754,7 @@ public partial class MainViewModel : ObservableObject
             if (terminalNow)
             {
                 cs.IsInQueue = false;
+                needsQueueRefresh = true; // sort key flips 0→1
             }
             else if (activeNow)
             {
@@ -759,6 +766,7 @@ public partial class MainViewModel : ObservableObject
                 cs.LastUpgradeSuccessUtc = null;
                 cs.LastTargetFw = "";
                 cs.IsInQueue = true;
+                needsQueueRefresh = true; // sort key can flip 1→0
             }
 
             cs.LastUpdateUtc = p.TimeUtc;
@@ -773,6 +781,7 @@ public partial class MainViewModel : ObservableObject
             {
                 qi = new QueueItem { Mac = p.Mac };
                 QueueItems.Add(qi);
+                needsQueueRefresh = true; // new item needs placement in sorted view
             }
 
             // Only apply if newer than the current queue row
@@ -806,7 +815,8 @@ public partial class MainViewModel : ObservableObject
             qi.LastUpdateUtc = p.TimeUtc;
         }
 
-        RequestQueueRefresh();
+        if (needsQueueRefresh)
+            RequestQueueRefresh();
     }
 
     private static bool IsTerminalQueueStatus(string? status)
