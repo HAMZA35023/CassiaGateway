@@ -634,6 +634,13 @@ public partial class MainWindow : Window
                     try { vm.OpenPirPeakStatusForDeviceCommand?.Execute(device); } catch { }
                 };
                 cm.Items.Add(pirPeak);
+
+                var daliLog = new MenuItem { Header = "DALI Logger…" };
+                daliLog.Click += (_, __) =>
+                {
+                    try { vm.OpenDaliLogForDeviceCommand?.Execute(device); } catch { }
+                };
+                cm.Items.Add(daliLog);
             }
 
             cm.Items.Add(new Separator());

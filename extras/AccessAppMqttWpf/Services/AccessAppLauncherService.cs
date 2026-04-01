@@ -149,14 +149,16 @@ public sealed class AccessAppLauncherService
     }
 
     /// <summary>
-    /// Writes a local mqtt.json and starts the AccessAPP process pointing to the local MQTT server.
+    /// Writes a local mqtt.json and starts the AccessAPP process pointing to the specified MQTT server.
     /// Returns the started Process, or null on failure.
     /// </summary>
     public static Process? StartAccessApp(
         string executablePath,
-        int mqttPort,
         string networkId,
         string cassia = "local-cassia",
+        string host = "127.0.0.1",
+        int port = 1883,
+        bool useTls = false,
         string username = "",
         string password = "")
     {
@@ -170,9 +172,9 @@ public sealed class AccessAppLauncherService
             {
                 name = cassia,
                 networkId = networkId,
-                host = "127.0.0.1",
-                port = mqttPort,
-                useTls = false,
+                host,
+                port,
+                useTls,
                 username,
                 password,
                 baseTopic = "accessapp",

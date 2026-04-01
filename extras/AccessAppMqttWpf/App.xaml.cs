@@ -51,6 +51,7 @@ public partial class App : Application
     {
         base.OnStartup(e);
         Services.AppLog.Init();
+        Services.PerfLog.Init();
         try
         {
             var settings = SettingsStore.Load();

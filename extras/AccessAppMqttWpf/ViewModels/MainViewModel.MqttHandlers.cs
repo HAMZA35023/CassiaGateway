@@ -20,27 +20,55 @@ using System.Windows.Data;
 using System.Windows.Threading;
 using Microsoft.VisualBasic;
 using AccessAppMqttWpf;
+using System.Diagnostics;
 
 namespace AccessAppMqttWpf.ViewModels;
 
 public partial class MainViewModel : ObservableObject
 {
+        private const int DevicesRefreshThrottleMs = 500;
+
         private void RequestDevicesRefresh()
         {
-            if (_pendingDevicesRefresh) return;
+            if (_pendingDevicesRefresh || _deferredDevicesRefresh) return;
+
+            // Throttle: if the last refresh ran less than 500 ms ago, defer until the
+            // window expires instead of firing another expensive DataGrid re-render.
+            var elapsedMs = (long)Stopwatch.GetElapsedTime(_lastDevicesRefreshTick).TotalMilliseconds;
+            if (_lastDevicesRefreshTick != 0 && elapsedMs < DevicesRefreshThrottleMs)
+            {
+                _deferredDevicesRefresh = true;
+                var remaining = DevicesRefreshThrottleMs - (int)elapsedMs;
+                var timer = new System.Windows.Threading.DispatcherTimer(DispatcherPriority.Background)
+                {
+                    Interval = TimeSpan.FromMilliseconds(remaining)
+                };
+                timer.Tick += (s, e) =>
+                {
+                    timer.Stop();
+                    _deferredDevicesRefresh = false;
+                    RequestDevicesRefresh();
+                };
+                timer.Start();
+                return;
+            }
+
             _pendingDevicesRefresh = true;
 
             Application.Current.Dispatcher.InvokeAsync(() =>
             {
                 _pendingDevicesRefresh = false;
+                _lastDevicesRefreshTick = Stopwatch.GetTimestamp();
 
                 // preserve selection
                 var selectedMac = SelectedDevice?.Mac;
 
+                var swRefresh = Stopwatch.StartNew();
                 FilteredDevices.Refresh();
+                PerfLog.Measure("FilteredDevices.Refresh", swRefresh.ElapsedMilliseconds);
 
                 if (!string.IsNullOrWhiteSpace(selectedMac))
-                SelectedDevice = _devices.FirstOrDefault(d => d.Mac.Equals(selectedMac, StringComparison.OrdinalIgnoreCase));
+                    SelectedDevice = _devices.FirstOrDefault(d => d.Mac.Equals(selectedMac, StringComparison.OrdinalIgnoreCase));
             }, DispatcherPriority.Background);
         }
         void RequestQueueRefresh()
@@ -625,43 +653,7 @@ public partial class MainViewModel : ObservableObject
                     deviceData.Add((mac, rssi, name, productNumber, detectorFamily, detectorType, lastSeenUtc));
                 }
 
-                Application.Current.Dispatcher.InvokeAsync(() =>
-                {
-                    foreach (var (mac, rssi, name, productNumber, detectorFamily, detectorType, lastSeenUtc) in deviceData)
-                    {
-                        if (!_deviceByMac.TryGetValue(mac, out var d))
-                        {
-                            d = new DiscoveredDevice { Mac = mac };
-                            WireDeviceAssignmentHooks(d);
-                            _deviceByMac[mac] = d;
-                            _devices.Add(d);
-                        }
-
-                        ApplyDeviceNameWithGuards(d, name);
-                        d.ProductNumber = string.IsNullOrWhiteSpace(productNumber) ? d.ProductNumber : productNumber;
-                        d.DetectorFamily = string.IsNullOrWhiteSpace(detectorFamily) ? d.DetectorFamily : detectorFamily;
-                        d.DetectorType = string.IsNullOrWhiteSpace(detectorType) ? d.DetectorType : detectorType;
-
-                        // SensorModel: prefer detectorType if it looks like Pxx
-                        if (!string.IsNullOrWhiteSpace(detectorType) && detectorType.Trim().StartsWith("P", StringComparison.OrdinalIgnoreCase))
-                            d.SensorModel = detectorType.Trim().ToUpperInvariant();
-                        else if (!string.IsNullOrWhiteSpace(d.ProductNumber) && _productToModel.TryGetValue(d.ProductNumber, out var m))
-                            d.SensorModel = m;
-
-                        if (rssi != int.MinValue)
-                            d.UpdateFromCassia(cassia, rssi, lastSeenUtc);
-                        else
-                            d.LastSeenUtc = lastSeenUtc;
-
-                        UpdateQueueRssiForMac(mac);
-
-                        ApplyCachedStatusToDevice(d);
-                        EnsureStickyAssignment(d);
-                    }
-
-                    RecalculateAssignmentCounts();
-                    RequestDevicesRefresh();
-                }, DispatcherPriority.Background);
+                BufferDeviceList(cassia, deviceData);
             }
             catch { }
         }
@@ -905,6 +897,7 @@ public partial class MainViewModel : ObservableObject
 
             _lastFwManifestMissingHash = "";
             _fwManifestTimeoutArmed = false;
+            _lastSubscribedNetworkId = ""; // reset so ResyncCoreAsync re-subscribes on next connect
         }
 
         /// <summary>
@@ -918,19 +911,18 @@ public partial class MainViewModel : ObservableObject
                 _speedHistoryByGateway.Clear();
 
             // Ensure subscriptions exist.
-            // In local mode we subscribe with a wildcard networkId (+) so we see every
-            // AccessApp instance regardless of which networkId it is currently using —
-            // some may not yet have received the shared-networkId push.
+            // Always subscribe with + wildcard so no re-subscription is needed when the user
+            // switches NetworkId — OnMqttMessage filters by NetworkId at the application layer.
+            // IMPORTANT: ConnectAsync must NOT subscribe to any overlapping topic (e.g. accessapp/#)
+            // because overlapping subscriptions cause the broker to deliver each message once per
+            // matching subscription, resulting in duplicate entries in the UI.
             try
             {
-                var subscribeNet = _localMqttActive ? "+" : (NetworkId ?? "").Trim();
-                if (!string.IsNullOrWhiteSpace(subscribeNet) &&
-                    !string.Equals(_lastSubscribedNetworkId, subscribeNet, StringComparison.OrdinalIgnoreCase))
+                if (_lastSubscribedNetworkId != "+")
                 {
-                    await _mqtt.SubscribeAsync($"accessapp/{subscribeNet}/tele/#").ConfigureAwait(false);
-                    await _mqtt.SubscribeAsync($"accessapp/{subscribeNet}/tele/+/upgrade-log", qos: 1).ConfigureAwait(false);
-                    await _mqtt.SubscribeAsync($"accessapp/{subscribeNet}/cmd/#").ConfigureAwait(false);
-                    _lastSubscribedNetworkId = subscribeNet;
+                    await _mqtt.SubscribeAsync("accessapp/+/tele/#").ConfigureAwait(false);
+                    await _mqtt.SubscribeAsync("accessapp/+/cmd/#").ConfigureAwait(false);
+                    _lastSubscribedNetworkId = "+";
                 }
             }
             catch

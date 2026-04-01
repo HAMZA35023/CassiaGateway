@@ -118,6 +118,48 @@ public partial class MainViewModel : ObservableObject
         catch { }
     }
 
+    // Deduplicates dali-log MQTT messages that arrive twice when the local AccessApp has
+    // discovered the WPF's local broker via UDP beacon and mirrors telemetry to it in addition
+    // to the primary broker connection. Key = "mac|framesHex|batchTimeMs"; value = seen-at time.
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _recentDaliLogKeys =
+        new(StringComparer.Ordinal);
+
+    private void HandleDaliLogTele(string cassia, string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+
+            var mac = root.TryGetProperty("mac", out var macEl) ? (macEl.GetString() ?? "").Trim() : "";
+            if (string.IsNullOrWhiteSpace(mac)) return;
+
+            if (!root.TryGetProperty("frames", out var framesEl) || framesEl.ValueKind != JsonValueKind.String)
+                return;
+
+            var framesHex = framesEl.GetString() ?? "";
+            if (string.IsNullOrEmpty(framesHex)) return;
+
+            DateTimeOffset batchTime = DateTimeOffset.UtcNow;
+            if (root.TryGetProperty("time", out var timeEl) && timeEl.TryGetDateTimeOffset(out var dto))
+                batchTime = dto;
+
+            // Deduplicate: same mac+frames+batchTime within 3 s = mirror duplicate, skip.
+            var dedupKey = $"{mac}|{framesHex}|{batchTime.ToUnixTimeMilliseconds()}";
+            var now = DateTimeOffset.UtcNow;
+            if (!_recentDaliLogKeys.TryAdd(dedupKey, now))
+                return; // already processed this exact batch
+
+            // Prune stale dedup keys (older than 5 s) to avoid unbounded growth.
+            foreach (var kv in _recentDaliLogKeys)
+                if ((now - kv.Value).TotalSeconds > 5)
+                    _recentDaliLogKeys.TryRemove(kv.Key, out _);
+
+            AppendDaliLogFrames(cassia, mac, framesHex, batchTime);
+        }
+        catch { }
+    }
+
     private void HandleWalktestTele(string cassia, string payload)
     {
         try
@@ -646,6 +688,11 @@ public partial class MainViewModel : ObservableObject
             _progressByMac.Clear();
         }
 
+        // Only refresh the QueueView when sort order can actually change:
+        // new item added, device becomes terminal (sort key 0→1), or new run starts (sort key 1→0).
+        // Pure progress-% updates don't affect sort order — bindings handle the display directly.
+        var needsQueueRefresh = false;
+
         foreach (var p in batch)
         {
             // Protect terminal completion state from being overwritten by late/duplicate progress=100 "Programming" updates.
@@ -678,6 +725,7 @@ public partial class MainViewModel : ObservableObject
                     cs.LastUpgradeSuccessUtc = null;
                     cs.LastTargetFw = "";
                     cs.IsInQueue = true;
+                    needsQueueRefresh = true; // sort key can flip 1→0
                 }
                 else if (pctRounded >= 100 && IsNonTerminalStage(p.Stage)
                 && string.Equals(cs.ProcessStatus?.Trim(), "Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase))
@@ -706,6 +754,7 @@ public partial class MainViewModel : ObservableObject
             if (terminalNow)
             {
                 cs.IsInQueue = false;
+                needsQueueRefresh = true; // sort key flips 0→1
             }
             else if (activeNow)
             {
@@ -717,6 +766,7 @@ public partial class MainViewModel : ObservableObject
                 cs.LastUpgradeSuccessUtc = null;
                 cs.LastTargetFw = "";
                 cs.IsInQueue = true;
+                needsQueueRefresh = true; // sort key can flip 1→0
             }
 
             cs.LastUpdateUtc = p.TimeUtc;
@@ -731,6 +781,7 @@ public partial class MainViewModel : ObservableObject
             {
                 qi = new QueueItem { Mac = p.Mac };
                 QueueItems.Add(qi);
+                needsQueueRefresh = true; // new item needs placement in sorted view
             }
 
             // Only apply if newer than the current queue row
@@ -764,7 +815,8 @@ public partial class MainViewModel : ObservableObject
             qi.LastUpdateUtc = p.TimeUtc;
         }
 
-        RequestQueueRefresh();
+        if (needsQueueRefresh)
+            RequestQueueRefresh();
     }
 
     private static bool IsTerminalQueueStatus(string? status)

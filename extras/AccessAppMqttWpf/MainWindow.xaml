@@ -1574,6 +1574,10 @@
                                                               Visibility="{Binding PlacementTarget.Tag.DeveloperModeUnlocked, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"
                                                               Command="{Binding PlacementTarget.Tag.OpenPirPeakStatusForDeviceCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                                               CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                                    <MenuItem Header="DALI Logger&#x2026;"
+                                                              Visibility="{Binding PlacementTarget.Tag.DeveloperModeUnlocked, RelativeSource={RelativeSource AncestorType=ContextMenu}, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}"
+                                                              Command="{Binding PlacementTarget.Tag.OpenDaliLogForDeviceCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                              CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
                                                 </ContextMenu>
                                             </Setter.Value>
                                         </Setter>

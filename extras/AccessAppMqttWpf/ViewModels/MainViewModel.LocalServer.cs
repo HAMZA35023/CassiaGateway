@@ -82,8 +82,9 @@ public partial class MainViewModel : ObservableObject
             if (running)
             {
                 var ls = _store.Load().localServer;
-                _discoveryBeacon.Start(LocalMqttServer.Port, NetworkId);
-                _accessAppDiscovery.Start(LocalMqttServer.Port, NetworkId, useSharedNetworkId: ls.useSharedNetworkId, sendMqttHost: ls.sendMqttHost);
+                var effectiveNetworkId = ls.useSharedNetworkId ? Environment.MachineName.ToLower() : NetworkId;
+                _discoveryBeacon.Start(LocalMqttServer.Port, effectiveNetworkId);
+                _accessAppDiscovery.Start(LocalMqttServer.Port, effectiveNetworkId, useSharedNetworkId: ls.useSharedNetworkId, sendMqttHost: ls.sendMqttHost);
 
                 // Wire events
                 _accessAppDiscovery.GatewayFound += OnGatewayFound;
@@ -194,9 +195,13 @@ public partial class MainViewModel : ObservableObject
         _localMqttActive = true;
 
         int localPort = LocalMqttServer.Port;
+        var localSettings = _store.Load().localServer;
+        var effectiveNetworkId = localSettings.useSharedNetworkId ? Environment.MachineName.ToLower() : remoteNetworkId;
+
         await Application.Current.Dispatcher.InvokeAsync(() =>
         {
             IsLocalMqttActive = true;
+            NetworkId = effectiveNetworkId;
             MqttHost = "127.0.0.1";
             MqttPort = localPort;
             ConnectionStatus = $"Switching to local MQTT (127.0.0.1:{localPort})…";
@@ -296,7 +301,7 @@ public partial class MainViewModel : ObservableObject
         _isConnecting = true;
         try
         {
-            await _mqtt.ConnectAsync(host, port, user, pass, tls, ignoreTls, MqttTopic, _appCts.Token);
+            await _mqtt.ConnectAsync(host, port, user, pass, tls, ignoreTls, string.Empty, _appCts.Token);
         }
         finally
         {
@@ -430,9 +435,37 @@ public partial class MainViewModel : ObservableObject
                 return;
             }
 
-            var proc = AccessAppLauncherService.StartAccessApp(exe, LocalMqttServer.Port, NetworkId,
+            string appNetworkId, appHost, appUser, appPass;
+            int appPort;
+            bool appTls;
+
+            if (s.useSharedNetworkId)
+            {
+                // Primary = prod.statistics with machine-name networkId.
+                // The local broker is auto-discovered via UDP beacon and becomes a secondary connection.
+                var mqttCfg = _store.Load().mqtt;
+                appNetworkId = Environment.MachineName.ToLower();
+                appHost      = mqttCfg.host;
+                appPort      = mqttCfg.port;
+                appTls       = mqttCfg.useTls;
+                appUser      = mqttCfg.username;
+                appPass      = mqttCfg.password;
+            }
+            else
+            {
+                appNetworkId = NetworkId;
+                appHost      = "127.0.0.1";
+                appPort      = LocalMqttServer.Port;
+                appTls       = false;
+                appUser      = "local";
+                appPass      = LocalMqttServerService.LocalToken;
+            }
+
+            var proc = AccessAppLauncherService.StartAccessApp(exe,
+                networkId: appNetworkId,
                 cassia: Environment.MachineName.ToLower(),
-                username: "local", password: LocalMqttServerService.LocalToken);
+                host: appHost, port: appPort, useTls: appTls,
+                username: appUser, password: appPass);
             SetAccessAppProcess(proc);
 
             Application.Current.Dispatcher.InvokeAsync(() =>
@@ -533,12 +566,14 @@ public partial class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// AccessApp connected to our MQTT broker — it received and acted on the config push.
-    /// No action needed beyond what OnGatewayFound already did.
+    /// AccessApp connected to our MQTT broker. If it isn't already tracked (e.g. it
+    /// self-reconnected after being evicted by the re-push fail counter), re-probe it
+    /// immediately so it gets back into the managed set and starts receiving re-pushes.
     /// </summary>
     private void OnGatewayConnectedToLocalMqtt(string ip)
     {
         AppLog.Info($"[MainViewModel] Gateway {ip} connected to local MQTT broker.");
+        _accessAppDiscovery.EnsureIpProbed(ip);
     }
 
     /// <summary>
