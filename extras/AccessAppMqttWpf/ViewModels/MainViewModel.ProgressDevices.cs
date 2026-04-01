@@ -21,6 +21,7 @@ using System.Windows.Data;
 using System.Windows.Threading;
 using Microsoft.VisualBasic;
 using AccessAppMqttWpf;
+using System.Diagnostics;
 
 namespace AccessAppMqttWpf.ViewModels;
 
@@ -55,7 +56,7 @@ public partial class MainViewModel : ObservableObject
     // ---- Progress buffering (prevents UI lag / lost clicks when many % updates arrive) ----
     private readonly object _progressBufLock = new();
     private readonly Dictionary<string, BufferedProgress> _progressByMac = new(StringComparer.OrdinalIgnoreCase);
-    private System.Windows.Threading.DispatcherTimer _progressFlushTimer = null!;
+    private volatile bool _progressFlushPending;
 
     private sealed class BufferedProgress
     {
@@ -237,16 +238,22 @@ public partial class MainViewModel : ObservableObject
 
     private void InitProgressBuffering()
     {
-        // Flush buffered progress updates in small batches to keep UI responsive
-        _progressFlushTimer = new System.Windows.Threading.DispatcherTimer
+        // No-op: progress is flushed event-driven via ScheduleProgressFlushOnUi().
+    }
+
+    internal void ScheduleProgressFlushOnUi()
+    {
+        if (_progressFlushPending) return;
+        _progressFlushPending = true;
+        var t0Flush = Stopwatch.GetTimestamp();
+        Application.Current?.Dispatcher?.InvokeAsync(() =>
         {
-            Interval = TimeSpan.FromMilliseconds(500)
-        };
-        _progressFlushTimer.Tick += (s2, e2) => FlushBufferedProgressOnUi();
-        _progressFlushTimer.Start();
-
-
-
+            var flushLag = (long)Stopwatch.GetElapsedTime(t0Flush).TotalMilliseconds;
+            _progressFlushPending = false;
+            var swFlush = Stopwatch.StartNew();
+            FlushBufferedProgressOnUi();
+            PerfLog.UiWork("progress-flush", flushLag, swFlush.ElapsedMilliseconds);
+        }, System.Windows.Threading.DispatcherPriority.Background);
     }
 
     partial void OnDeviceFilterChanged(string value)

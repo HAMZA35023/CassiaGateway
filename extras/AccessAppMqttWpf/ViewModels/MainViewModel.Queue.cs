@@ -583,8 +583,19 @@ public partial class MainViewModel : ObservableObject
             ? "accessapp/{networkId}/cmd/{cassia}/{command}"
             : CommandTopicTemplate;
 
+        // In local mode, use the gateway's actual networkId (it may not have adopted the
+        // shared networkId yet). Fall back to the global NetworkId if unknown.
+        string net = NetworkId ?? "";
+        if (_localMqttActive && !string.IsNullOrWhiteSpace(cassia))
+        {
+            var gw = CassiaGateways.FirstOrDefault(
+                x => x.Name.Equals(cassia, StringComparison.OrdinalIgnoreCase));
+            if (gw != null && !string.IsNullOrWhiteSpace(gw.NetworkId))
+                net = gw.NetworkId;
+        }
+
         return tpl
-            .Replace("{networkId}", NetworkId ?? "", StringComparison.OrdinalIgnoreCase)
+            .Replace("{networkId}", net, StringComparison.OrdinalIgnoreCase)
             .Replace("{cassia}", cassia ?? "", StringComparison.OrdinalIgnoreCase)
             .Replace("{command}", command ?? "", StringComparison.OrdinalIgnoreCase);
     }
@@ -1201,38 +1212,6 @@ public partial class MainViewModel : ObservableObject
         RequestDevicesRefresh();
     }
 
-    private bool TryGetPreferredCassiaFromLatestFailure(string mac, out string cassia, out DateTimeOffset whenLocal)
-    {
-        cassia = "";
-        whenLocal = DateTimeOffset.MinValue;
-        mac = (mac ?? "").Trim();
-        if (mac.Length == 0) return false;
-
-        // Find the latest log group we have for this MAC.
-        UpgradeLogGroup? latest = null;
-        foreach (var g in UpgradeLogGroups)
-        {
-            if (g == null) continue;
-            var gMac = (g.Mac ?? "").Trim();
-            if (gMac.Length == 0) gMac = (g.LatestMac ?? "").Trim();
-            if (gMac.Length == 0) continue;
-            if (!gMac.Equals(mac, StringComparison.OrdinalIgnoreCase)) continue;
-
-            if (latest == null || g.LastTimeLocal > latest.LastTimeLocal)
-                latest = g;
-        }
-
-        if (latest == null) return false;
-        if (!latest.ContainsCompletionFailed) return false;
-
-        var c = (latest.Cassia ?? "").Trim();
-        if (c.Length == 0) return false;
-
-        cassia = c;
-        whenLocal = latest.LastTimeLocal;
-        return true;
-    }
-
     private static string NormalizeDetectorModel(string? value)
     {
         var s = (value ?? "").Trim().ToUpperInvariant();
@@ -1360,14 +1339,6 @@ public partial class MainViewModel : ObservableObject
         if (!string.IsNullOrWhiteSpace(fw) && !fw.Trim().StartsWith("v", StringComparison.OrdinalIgnoreCase))
             fw = "";
 
-        // If the latest upgrade attempt for this MAC failed, prefer using the SAME Cassia again
-        // (it likely holds the settings backup). We only deviate if the device is not within reach
-        // and the user explicitly chooses to use the currently suggested Cassia instead.
-        var preferredFailureCassia = "";
-        DateTimeOffset preferredFailureWhen = DateTimeOffset.MinValue;
-        var hasPreferredFailureCassia = TryGetPreferredCassiaFromLatestFailure(d.Mac, out preferredFailureCassia, out preferredFailureWhen);
-
-        
     // Determine Cassia for update:
     //  - If strongest RSSI is < RssiAllowBalancingThreshold: ALWAYS use the closest Cassia (highest RSSI).
     //  - If strongest RSSI is >= RssiAllowBalancingThreshold: allow load-balancing (queue+programming+assigned), but still prefer the closest on ties.
@@ -1442,42 +1413,6 @@ public partial class MainViewModel : ObservableObject
         }
     }
 }
-
-        // Apply preferred failure Cassia (sticky) if relevant.
-        if (hasPreferredFailureCassia)
-        {
-            var pref = (preferredFailureCassia ?? "").Trim();
-            if (pref.Length > 0 && !string.Equals(pref, cassia, StringComparison.OrdinalIgnoreCase))
-            {
-                // Consider "within reach" if we have a reading and it's not extremely weak.
-                var prefHasRssi = d.CassiaRssi.TryGetValue(pref, out var prefRssi);
-                var withinReach = prefHasRssi && prefRssi >= RssiWarnQueueThreshold;
-
-                if (withinReach)
-                {
-                    cassia = pref;
-                }
-                else
-                {
-                    var prefRssiTxt = prefHasRssi ? $"{prefRssi} dBm" : "(no RSSI)";
-                    var suggested = cassia;
-
-                    var res = MessageBox.Show(
-                        $"This device previously FAILED on {pref} ({preferredFailureWhen.ToLocalTime():yyyy-MM-dd HH:mm:ss}).\n" +
-                        $"We should ideally use the same Cassia again because it likely has the settings backup.\n\n" +
-                        $"But RSSI to {pref} is {prefRssiTxt}, so it may be out of reach.\n\n" +
-                        $"Use {pref} anyway?\n\n" +
-                        $"Yes = use {pref} (sticky)\n" +
-                        $"No = use suggested {suggested}",
-                        "Reuse Cassia for failed device",
-                        MessageBoxButton.YesNo,
-                        MessageBoxImage.Warning);
-
-                    if (res == MessageBoxResult.Yes)
-                        cassia = pref;
-                }
-            }
-        }
 
     if (string.IsNullOrWhiteSpace(cassia))
 {

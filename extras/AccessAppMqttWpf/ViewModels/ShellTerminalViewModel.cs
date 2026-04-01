@@ -115,11 +115,11 @@ public partial class ShellTerminalViewModel : ObservableObject, IDisposable
 
     private void AppendLine(string text)
     {
-        Application.Current?.Dispatcher.Invoke(() =>
+        Application.Current?.Dispatcher.InvokeAsync(() =>
         {
             OutputText += text + "\n";
             OutputAppended?.Invoke();
-        });
+        }, System.Windows.Threading.DispatcherPriority.Background);
     }
 
     private string ComputeHmac(string cmd, long ts)

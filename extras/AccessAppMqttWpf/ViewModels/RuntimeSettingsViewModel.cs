@@ -383,7 +383,7 @@ public partial class RuntimeSettingsViewModel : ObservableObject, IDisposable
 
         await RefreshAsync().ConfigureAwait(false);
 
-        Application.Current.Dispatcher.Invoke(() => RequestClose?.Invoke());
+        Application.Current.Dispatcher.InvokeAsync(() => RequestClose?.Invoke(), System.Windows.Threading.DispatcherPriority.Background);
     }
 
     [RelayCommand]
@@ -402,7 +402,7 @@ public partial class RuntimeSettingsViewModel : ObservableObject, IDisposable
 
         var snapshot = await _main.RequestRuntimeVariablesAsync(SourceCassia).ConfigureAwait(false);
 
-        Application.Current.Dispatcher.Invoke(() =>
+        Application.Current.Dispatcher.InvokeAsync(() =>
         {
             if (snapshot != null)
             {
@@ -416,17 +416,17 @@ public partial class RuntimeSettingsViewModel : ObservableObject, IDisposable
             }
 
             IsLoading = false;
-        });
+        }, System.Windows.Threading.DispatcherPriority.Background);
     }
 
     private void OnRuntimeVariablesReceived(string cassia, IReadOnlyDictionary<string, RuntimeVariableValue> vars)
     {
         if (!string.Equals(cassia, SourceCassia, StringComparison.OrdinalIgnoreCase)) return;
 
-        Application.Current.Dispatcher.Invoke(() =>
+        Application.Current.Dispatcher.InvokeAsync(() =>
         {
             ReplaceVariables(vars, "Updated");
-        });
+        }, System.Windows.Threading.DispatcherPriority.Background);
     }
 
     private void ReplaceVariables(IReadOnlyDictionary<string, RuntimeVariableValue> vars, string statusPrefix)

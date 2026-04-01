@@ -984,6 +984,7 @@ public partial class MainViewModel : ObservableObject
             {
                 // ignore malformed lines
             }
+            ScheduleProgressFlushOnUi();
         }
 
         private void RequestUpgradeLogTextRefresh()
@@ -1182,6 +1183,8 @@ public partial class MainViewModel : ObservableObject
         }
 
         private bool _pendingDevicesRefresh;
+        private bool _deferredDevicesRefresh;
+        private long _lastDevicesRefreshTick;
         private bool _pendingQueueRefresh;
 
 

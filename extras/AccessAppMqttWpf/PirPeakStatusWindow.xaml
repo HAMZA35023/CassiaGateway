@@ -1,0 +1,154 @@
+<Window x:Class="AccessAppMqttWpf.PirPeakStatusWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="AccessAPP - PIR Peak Status"
+        Height="660" Width="1100"
+        WindowStartupLocation="CenterOwner"
+        MinHeight="480" MinWidth="820"
+        Background="{DynamicResource BgBrush}">
+
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Toolbar -->
+        <Border Grid.Row="0"
+                CornerRadius="10"
+                BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="1"
+                Background="{DynamicResource CardBrush}"
+                Padding="10"
+                Margin="0,0,0,8"
+                SnapsToDevicePixels="True">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Left: title + last sample info -->
+                <StackPanel Grid.Column="0" Orientation="Vertical">
+                    <TextBlock x:Name="GraphTitleText"
+                               Text="PIR Peak Status"
+                               FontSize="16"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource TextBrush}"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                        <TextBlock Text="Tick:" Foreground="{DynamicResource MutedBrush}" Margin="0,0,4,0"/>
+                        <TextBlock x:Name="TickText" FontWeight="SemiBold" Margin="0,0,14,0"/>
+                        <TextBlock Text="Δ A:" Foreground="{DynamicResource MutedBrush}" Margin="0,0,4,0"/>
+                        <TextBlock x:Name="DeltaAText" FontWeight="SemiBold" Foreground="#EF4444" Margin="0,0,14,0"/>
+                        <TextBlock Text="Δ B:" Foreground="{DynamicResource MutedBrush}" Margin="0,0,4,0"/>
+                        <TextBlock x:Name="DeltaBText" FontWeight="SemiBold" Foreground="#3B82F6" Margin="0,0,14,0"/>
+                        <TextBlock Text="Δ C:" Foreground="{DynamicResource MutedBrush}" Margin="0,0,4,0"/>
+                        <TextBlock x:Name="DeltaCText" FontWeight="SemiBold" Foreground="#22C55E" Margin="0,0,14,0"/>
+                        <TextBlock x:Name="LastUpdateText" Foreground="{DynamicResource MutedBrush}" FontSize="11"/>
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- Right: selectors + controls -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock x:Name="GatewayLabel" Text="Gateway:" VerticalAlignment="Center"
+                               Foreground="{DynamicResource MutedBrush}" Margin="0,0,6,0"/>
+                    <ComboBox x:Name="CassiaCombo"
+                              Width="160" VerticalAlignment="Center" Margin="0,0,12,0"
+                              SelectionChanged="CassiaCombo_SelectionChanged"/>
+
+                    <TextBlock x:Name="DeviceLabel" Text="Device:" VerticalAlignment="Center"
+                               Foreground="{DynamicResource MutedBrush}" Margin="0,0,6,0"/>
+                    <ComboBox x:Name="DeviceCombo"
+                              Width="200" VerticalAlignment="Center" Margin="0,0,12,0"
+                              SelectionChanged="DeviceCombo_SelectionChanged"/>
+
+                    <TextBlock Text="Window:" VerticalAlignment="Center"
+                               Foreground="{DynamicResource MutedBrush}" Margin="0,0,6,0"/>
+                    <ComboBox x:Name="TimeframeCombo"
+                              Width="90" VerticalAlignment="Center" Margin="0,0,12,0"
+                              SelectionChanged="TimeframeCombo_SelectionChanged">
+                        <ComboBoxItem Tag="00:01:00">1 min</ComboBoxItem>
+                        <ComboBoxItem Tag="00:05:00">5 min</ComboBoxItem>
+                        <ComboBoxItem Tag="00:10:00" IsSelected="True">10 min</ComboBoxItem>
+                        <ComboBoxItem Tag="00:30:00">30 min</ComboBoxItem>
+                        <ComboBoxItem Tag="01:00:00">60 min</ComboBoxItem>
+                    </ComboBox>
+
+                    <CheckBox x:Name="ShowMinMaxCheck" Content="Min/Max"
+                              VerticalAlignment="Center" Margin="0,0,12,0"
+                              Checked="ShowMinMaxCheck_Changed" Unchecked="ShowMinMaxCheck_Changed"/>
+
+                    <CheckBox x:Name="WalktestCheck" Content="Walktest"
+                              VerticalAlignment="Center" Margin="0,0,12,0"
+                              IsEnabled="False"
+                              Click="WalktestCheck_Click"/>
+
+                    <Button x:Name="PauseButton" Content="Pause" Width="70" Margin="0,0,6,0"
+                            Click="PauseButton_Click"
+                            Style="{DynamicResource DefaultButtonStyle}"/>
+                    <Button Content="Clear" Width="60" Margin="0,0,6,0"
+                            Click="ClearButton_Click"
+                            Style="{DynamicResource DefaultButtonStyle}"/>
+                    <Button Content="Copy" Width="60" Margin="0,0,6,0"
+                            Click="CopyButton_Click"
+                            Style="{DynamicResource DefaultButtonStyle}"/>
+                    <Button x:Name="ExportSvgButton" Content="SVG" Width="55"
+                            Click="ExportSvgButton_Click"
+                            Style="{DynamicResource DefaultButtonStyle}"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Chart area -->
+        <Border x:Name="ChartBorder" Grid.Row="1"
+                CornerRadius="10"
+                BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="1"
+                Background="{DynamicResource CardBrush}"
+                Margin="0,0,0,8"
+                SnapsToDevicePixels="True">
+            <Grid>
+                <Canvas x:Name="ChartCanvas" ClipToBounds="True"/>
+                <Canvas x:Name="OverlayCanvas" ClipToBounds="True"
+                        MouseLeftButtonDown="OverlayCanvas_MouseLeftButtonDown"
+                        MouseMove="OverlayCanvas_MouseMove"
+                        MouseLeftButtonUp="OverlayCanvas_MouseLeftButtonUp"/>
+            </Grid>
+        </Border>
+
+        <!-- Legend row -->
+        <Border x:Name="LegendBorder" Grid.Row="2"
+                CornerRadius="8"
+                BorderBrush="{DynamicResource BorderBrush}"
+                BorderThickness="1"
+                Background="{DynamicResource CardBrush}"
+                Padding="10,6"
+                Margin="0,0,0,8"
+                SnapsToDevicePixels="True">
+            <StackPanel Orientation="Horizontal">
+                <Rectangle Width="24" Height="4" RadiusX="2" RadiusY="2" Fill="#EF4444" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                <TextBlock Text="Channel A (Δ)" Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center" Margin="0,0,16,0"/>
+                <Rectangle Width="24" Height="4" RadiusX="2" RadiusY="2" Fill="#3B82F6" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                <TextBlock Text="Channel B (Δ)" Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center" Margin="0,0,16,0"/>
+                <Rectangle Width="24" Height="4" RadiusX="2" RadiusY="2" Fill="#22C55E" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                <TextBlock Text="Channel C (Δ)" Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center" Margin="0,0,24,0"/>
+                <Rectangle Width="16" Height="2" RadiusX="1" RadiusY="1" Fill="#EF4444" Opacity="0.5" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                <TextBlock Text="Min/Max A" Foreground="{DynamicResource MutedBrush}" FontSize="11" VerticalAlignment="Center" Margin="0,0,16,0"/>
+                <Rectangle Width="16" Height="2" RadiusX="1" RadiusY="1" Fill="#3B82F6" Opacity="0.5" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                <TextBlock Text="Min/Max B" Foreground="{DynamicResource MutedBrush}" FontSize="11" VerticalAlignment="Center" Margin="0,0,16,0"/>
+                <Rectangle Width="16" Height="2" RadiusX="1" RadiusY="1" Fill="#22C55E" Opacity="0.5" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                <TextBlock Text="Min/Max C" Foreground="{DynamicResource MutedBrush}" FontSize="11" VerticalAlignment="Center"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Status bar -->
+        <TextBlock Grid.Row="3"
+                   x:Name="StatusText"
+                   Text="Waiting for data..."
+                   Foreground="{DynamicResource MutedBrush}"
+                   FontSize="11"
+                   HorizontalAlignment="Left"/>
+    </Grid>
+</Window>

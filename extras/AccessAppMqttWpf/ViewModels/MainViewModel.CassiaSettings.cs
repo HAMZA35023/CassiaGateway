@@ -235,14 +235,14 @@ public partial class MainViewModel : ObservableObject
             }
         }
 
-        Application.Current.Dispatcher.Invoke(() =>
+        Application.Current.Dispatcher.InvokeAsync(() =>
         {
             var text = string.IsNullOrWhiteSpace(result.Message)
                 ? (result.Success ? "Cassia settings command completed." : "Cassia settings command failed.")
                 : result.Message;
 
             ConnectionStatus = $"[{cassia}] {text}";
-        });
+        }, DispatcherPriority.Background);
 
         static string? ReadString(JsonElement obj, string propertyName)
         {

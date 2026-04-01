@@ -32,10 +32,7 @@ public partial class LocalServerSettingsViewModel : ObservableObject, IDisposabl
     [ObservableProperty] private bool autoStartLocalServer;
     [ObservableProperty] private bool autoStartAccessApp;
     [ObservableProperty] private bool useSharedNetworkId = true;
-    /// <summary>Comma-separated list of known Cassia WAN IPs for unicast discovery.</summary>
-    [ObservableProperty] private string gatewayIpsText = "";
-    [ObservableProperty] private bool isScanning;
-    [ObservableProperty] private double scanProgress;
+    [ObservableProperty] private bool sendMqttHost = true;
 
     public string[] RuntimeOptions { get; } = new[]
     {
@@ -53,6 +50,7 @@ public partial class LocalServerSettingsViewModel : ObservableObject, IDisposabl
     public string LocalServerStatus => _main.LocalServerStatus;
     public bool IsAccessAppRunning => _main.IsAccessAppRunning;
     public string AccessAppProcessStatus => _main.AccessAppProcessStatus;
+    public bool DeveloperModeUnlocked => _main.DeveloperModeUnlocked;
 
     public string StartStopServerLabel => IsLocalServerRunning ? "Stop server" : "Start server";
     public string StartStopAccessAppLabel => IsAccessAppRunning ? "Stop AccessApp" : "Start AccessApp";
@@ -73,7 +71,7 @@ public partial class LocalServerSettingsViewModel : ObservableObject, IDisposabl
         AutoStartLocalServer = s.autoStartLocalServer;
         AutoStartAccessApp = s.autoStartAccessApp;
         UseSharedNetworkId = s.useSharedNetworkId;
-        GatewayIpsText = string.Join(", ", s.gatewayIps);
+        SendMqttHost = s.sendMqttHost;
 
         RefreshInstalledVersion();
 
@@ -166,25 +164,51 @@ public partial class LocalServerSettingsViewModel : ObservableObject, IDisposabl
                 var exe = AccessAppLauncherService.FindExecutable(localPath);
                 if (exe == null)
                 {
-                    Application.Current.Dispatcher.Invoke(() =>
-                        StatusText = "AccessApp executable not found. Download it first or set a local path.");
+                    Application.Current.Dispatcher.InvokeAsync(() =>
+                        StatusText = "AccessApp executable not found. Download it first or set a local path.", System.Windows.Threading.DispatcherPriority.Background);
                     return;
                 }
 
-                var proc = AccessAppLauncherService.StartAccessApp(exe, _main.LocalMqttServer.Port, _main.NetworkId,
+                string appNetworkId, appHost, appUser, appPass;
+                int appPort;
+                bool appTls;
+
+                if (UseSharedNetworkId)
+                {
+                    var mqttCfg = _store.Load().mqtt;
+                    appNetworkId = Environment.MachineName.ToLower();
+                    appHost      = mqttCfg.host;
+                    appPort      = mqttCfg.port;
+                    appTls       = mqttCfg.useTls;
+                    appUser      = mqttCfg.username;
+                    appPass      = mqttCfg.password;
+                }
+                else
+                {
+                    appNetworkId = _main.NetworkId;
+                    appHost      = "127.0.0.1";
+                    appPort      = _main.LocalMqttServer.Port;
+                    appTls       = false;
+                    appUser      = "local";
+                    appPass      = LocalMqttServerService.LocalToken;
+                }
+
+                var proc = AccessAppLauncherService.StartAccessApp(exe,
+                    networkId: appNetworkId,
                     cassia: Environment.MachineName.ToLower(),
-                    username: "local", password: LocalMqttServerService.LocalToken);
+                    host: appHost, port: appPort, useTls: appTls,
+                    username: appUser, password: appPass);
                 _main.SetAccessAppProcess(proc);
 
-                Application.Current.Dispatcher.Invoke(() =>
+                Application.Current.Dispatcher.InvokeAsync(() =>
                     StatusText = proc != null
                         ? $"AccessApp started (PID {proc.Id})."
-                        : "Failed to start AccessApp.");
+                        : "Failed to start AccessApp.", System.Windows.Threading.DispatcherPriority.Background);
             }
             catch (Exception ex)
             {
-                Application.Current.Dispatcher.Invoke(() =>
-                    StatusText = $"Start AccessApp failed: {ex.Message}");
+                Application.Current.Dispatcher.InvokeAsync(() =>
+                    StatusText = $"Start AccessApp failed: {ex.Message}", System.Windows.Threading.DispatcherPriority.Background);
             }
         });
     }
@@ -207,7 +231,7 @@ public partial class LocalServerSettingsViewModel : ObservableObject, IDisposabl
         {
             var progress = new Progress<double>(p =>
             {
-                Application.Current.Dispatcher.Invoke(() => DownloadProgress = p);
+                Application.Current.Dispatcher.InvokeAsync(() => DownloadProgress = p, System.Windows.Threading.DispatcherPriority.Background);
             });
 
             var (success, message, version) = await AccessAppLauncherService.DownloadAndExtractAsync(
@@ -230,7 +254,7 @@ public partial class LocalServerSettingsViewModel : ObservableObject, IDisposabl
                             MessageBoxImage.Question));
 
                     if (close == MessageBoxResult.Yes)
-                        Application.Current.Dispatcher.Invoke(() => RequestClose?.Invoke());
+                        Application.Current.Dispatcher.InvokeAsync(() => RequestClose?.Invoke(), System.Windows.Threading.DispatcherPriority.Background);
                 }
             }
         }
@@ -275,64 +299,10 @@ public partial class LocalServerSettingsViewModel : ObservableObject, IDisposabl
         all.localServer.autoStartLocalServer = AutoStartLocalServer;
         all.localServer.autoStartAccessApp = AutoStartAccessApp;
         all.localServer.useSharedNetworkId = UseSharedNetworkId;
-        all.localServer.gatewayIps = ParseGatewayIps(GatewayIpsText);
+        all.localServer.sendMqttHost = SendMqttHost;
         _store.Save(all);
         StatusText = "Settings saved.";
     }
-
-    [RelayCommand]
-    private async Task ScanForGatewaysAsync()
-    {
-        if (IsScanning) return;
-        IsScanning    = true;
-        ScanProgress  = 0;
-        StatusText    = "Scanning subnet for AccessApp instances…";
-
-        try
-        {
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-            var progress  = new Progress<(int done, int total)>(p =>
-                Application.Current.Dispatcher.Invoke(() =>
-                    ScanProgress = p.total > 0 ? (double)p.done / p.total : 0));
-
-            var found = await GatewayScannerService.ScanAsync(progress, cts.Token);
-
-            if (found.Count == 0)
-            {
-                StatusText = "Scan complete — no AccessApp instances found.";
-                return;
-            }
-
-            // Merge into existing IPs
-            var existing = ParseGatewayIps(GatewayIpsText);
-            foreach (var ip in found)
-                if (!existing.Contains(ip, StringComparer.OrdinalIgnoreCase))
-                    existing.Add(ip);
-
-            GatewayIpsText = string.Join(", ", existing);
-            StatusText = $"Scan complete — found: {string.Join(", ", found)}";
-
-            // Auto-save
-            SaveSettings();
-        }
-        catch (OperationCanceledException)
-        {
-            StatusText = "Scan timed out.";
-        }
-        catch (Exception ex)
-        {
-            StatusText = $"Scan failed: {ex.Message}";
-        }
-        finally
-        {
-            IsScanning = false;
-        }
-    }
-
-    private static List<string> ParseGatewayIps(string text) =>
-        new(text.Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
-                .Select(s => s.Trim())
-                .Where(s => s.Length > 0));
 
     public void Dispose()
     {

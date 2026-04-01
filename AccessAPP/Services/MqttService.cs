@@ -68,6 +68,28 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
     public event Func<SetUpdateChannelCommand, Task>? SetUpdateChannelRequested;
     public event Func<RebootCommand, Task>? RebootRequested;
 
+    // PIR peak status polling (legacy single-shot)
+    public event Func<GetPirPeakCommand, Task>? GetPirPeakRequested;
+
+    // PIR peak persistent session start/stop
+    public event Func<StartPirPeakCommand, Task>? StartPirPeakRequested;
+    public event Func<StopPirPeakCommand, Task>?  StopPirPeakRequested;
+
+    // Walk-test enable/disable
+    public event Func<SetWalktestCommand, Task>? SetWalktestRequested;
+
+    // Peer backup sharing
+    public event Func<GetDeviceBackupCommand, Task>? GetDeviceBackupRequested;
+    public event Func<DeviceBackupResponseCommand, Task>? DeviceBackupResponseReceived;
+
+    // DALI bus logger start/stop
+    public event Func<DaliLogStartCommand, Task>? DaliLogStartRequested;
+    public event Func<DaliLogStopCommand, Task>?  DaliLogStopRequested;
+
+    // DALI database read/write
+    public event Func<DaliDbReadCommand, Task>?  DaliDbReadRequested;
+    public event Func<DaliDbWriteCommand, Task>? DaliDbWriteRequested;
+
     /// <summary>
     /// Fired after each successful MQTT publish (topic, raw payload bytes).
     /// Used by <see cref="LocalBrokerDiscoveryService"/> to mirror telemetry to discovered local brokers.
@@ -277,6 +299,12 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
             leaf = "resp";
         await PublishJsonAsync(TeleTopic(leaf), payload, retain: false, ct).ConfigureAwait(false);
     }
+
+    public async Task BroadcastDeviceBackupRequestAsync(GetDeviceBackupCommand cmd, CancellationToken ct = default)
+        => await PublishJsonAsync(CmdTopic("all", "get-device-backup"), cmd, retain: false, ct).ConfigureAwait(false);
+
+    public async Task PublishDeviceBackupResponseAsync(string requesterName, DeviceBackupResponseCommand msg, CancellationToken ct = default)
+        => await PublishJsonAsync(CmdTopic(requesterName, "device-backup-response"), msg, retain: false, ct).ConfigureAwait(false);
 
     private async Task PublishTeleJsonAsync(string leaf, object payload, string? networkIdOverride, string? nameOverride, CancellationToken ct = default)
     {
@@ -2091,6 +2119,98 @@ public sealed class MqttService : IMqttService, IUpgradeMqttPublisher
                 }
             }
 
+
+            if (string.Equals(command, "get-pir-peak", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch get-pir-peak");
+                GetPirPeakCommand dto;
+                try
+                {
+                    dto = string.IsNullOrWhiteSpace(payload)
+                        ? new GetPirPeakCommand()
+                        : JsonSerializer.Deserialize<GetPirPeakCommand>(payload, JsonOptions) ?? new GetPirPeakCommand();
+                }
+                catch { dto = new GetPirPeakCommand(); }
+                return GetPirPeakRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "start-pir-peak", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch start-pir-peak");
+                var dto2 = string.IsNullOrWhiteSpace(payload)
+                    ? new StartPirPeakCommand()
+                    : JsonSerializer.Deserialize<StartPirPeakCommand>(payload, JsonOptions) ?? new StartPirPeakCommand();
+                return StartPirPeakRequested?.Invoke(dto2) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "stop-pir-peak", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch stop-pir-peak");
+                var dto2 = string.IsNullOrWhiteSpace(payload)
+                    ? new StopPirPeakCommand()
+                    : JsonSerializer.Deserialize<StopPirPeakCommand>(payload, JsonOptions) ?? new StopPirPeakCommand();
+                return StopPirPeakRequested?.Invoke(dto2) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "set-walktest", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch set-walktest");
+                SetWalktestCommand wt;
+                try
+                {
+                    wt = string.IsNullOrWhiteSpace(payload)
+                        ? new SetWalktestCommand()
+                        : JsonSerializer.Deserialize<SetWalktestCommand>(payload, JsonOptions) ?? new SetWalktestCommand();
+                }
+                catch { wt = new SetWalktestCommand(); }
+                return SetWalktestRequested?.Invoke(wt) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "get-device-backup", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch get-device-backup");
+                var dto = JsonSerializer.Deserialize<GetDeviceBackupCommand>(payload, JsonOptions) ?? new GetDeviceBackupCommand();
+                return GetDeviceBackupRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "device-backup-response", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch device-backup-response");
+                var dto = JsonSerializer.Deserialize<DeviceBackupResponseCommand>(payload, JsonOptions) ?? new DeviceBackupResponseCommand();
+                return DeviceBackupResponseReceived?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "start-dali-log", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch start-dali-log");
+                var dto = string.IsNullOrWhiteSpace(payload)
+                    ? new DaliLogStartCommand()
+                    : JsonSerializer.Deserialize<DaliLogStartCommand>(payload, JsonOptions) ?? new DaliLogStartCommand();
+                return DaliLogStartRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "stop-dali-log", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch stop-dali-log");
+                var dto = string.IsNullOrWhiteSpace(payload)
+                    ? new DaliLogStopCommand()
+                    : JsonSerializer.Deserialize<DaliLogStopCommand>(payload, JsonOptions) ?? new DaliLogStopCommand();
+                return DaliLogStopRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "dali-db-read", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch dali-db-read");
+                var dto = JsonSerializer.Deserialize<DaliDbReadCommand>(payload, JsonOptions) ?? new DaliDbReadCommand();
+                return DaliDbReadRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
+
+            if (string.Equals(command, "dali-db-write", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLog.Debug("HandleCommandAsync: dispatch dali-db-write");
+                var dto = JsonSerializer.Deserialize<DaliDbWriteCommand>(payload, JsonOptions) ?? new DaliDbWriteCommand();
+                return DaliDbWriteRequested?.Invoke(dto) ?? Task.CompletedTask;
+            }
 
             AppLog.Warn($"HandleCommandAsync: ignored (unknown command '{command}')");
             return Task.CompletedTask;

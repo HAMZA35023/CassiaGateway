@@ -52,6 +52,8 @@ public static class LoggingBootstrapper
                     path: Path.Combine(logDir, "accessapp-.log"),
                     rollingInterval: RollingInterval.Day,
                     retainedFileCountLimit: 10,
+                    fileSizeLimitBytes: 15 * 1024 * 1024,
+                    rollOnFileSizeLimit: true,
                     shared: true,
                     flushToDiskInterval: TimeSpan.FromSeconds(1),
                     outputTemplate: fileTemplate
@@ -166,21 +168,53 @@ public static class LoggingBootstrapper
         return dict;
     }
 
+    private const long SelfLogMaxBytes = 15 * 1024 * 1024;
+
     private static void EnableSerilogSelfLog(string logDir)
     {
         try
         {
             var selfLogPath = Path.Combine(logDir, "serilog-selflog.txt");
-            var writer = new StreamWriter(new FileStream(selfLogPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
-            {
-                AutoFlush = true
-            };
+            var writer = new CappedFileWriter(selfLogPath, SelfLogMaxBytes);
             Serilog.Debugging.SelfLog.Enable(TextWriter.Synchronized(writer));
             Console.WriteLine($"[info] Serilog SelfLog writing to {selfLogPath}");
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[warn] Failed to enable Serilog SelfLog: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// A TextWriter that appends to a file and truncates it (starts fresh) once it exceeds
+    /// <paramref name="maxBytes"/>, ensuring the file never grows beyond the cap at runtime.
+    /// </summary>
+    private sealed class CappedFileWriter : TextWriter
+    {
+        private readonly string _path;
+        private readonly long _maxBytes;
+
+        public CappedFileWriter(string path, long maxBytes)
+        {
+            _path = path;
+            _maxBytes = maxBytes;
+        }
+
+        public override System.Text.Encoding Encoding => System.Text.Encoding.UTF8;
+
+        public override void WriteLine(string? value)
+        {
+            try
+            {
+                var mode = File.Exists(_path) && new FileInfo(_path).Length > _maxBytes
+                    ? FileMode.Create   // truncate: exceeded cap
+                    : FileMode.Append;
+
+                using var fs = new FileStream(_path, mode, FileAccess.Write, FileShare.ReadWrite);
+                using var sw = new StreamWriter(fs, System.Text.Encoding.UTF8) { AutoFlush = true };
+                sw.WriteLine(value);
+            }
+            catch { /* best-effort */ }
         }
     }
 

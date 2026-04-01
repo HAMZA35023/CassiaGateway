@@ -140,15 +140,22 @@ internal sealed class PostActorStep : IDeviceUpgradeStep
             }
 
             dev.restore102Success = resp;
-            if (!resp && dev.requires102Restore)
+
+            if (resp)
             {
-                ctx.Response.Success = false;
-                ctx.Response.StatusCode = 500;
-                ctx.Response.Message = "DALI Restore 102 Database failed after retries";
-                dev.LastFailureReason = ctx.Response.Message;
-                dev.shouldRetry = false;
-                dev.finalUpgradeResult = "Failed";
-                return false;
+                UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "DALI Restore 102 Database: OK", "Success", ctx.FirmwareVersion);
+            }
+            else
+            {
+                UpgradeLogger.Log(ctx.LogId, ctx.MacAddress, "DALI Restore 102 Database: FAILURE — total new commissioning required", "Warn", ctx.FirmwareVersion);
+                if (dev.requires102Restore)
+                {
+                    ctx.Response.Message = "DALI Restore 102 Database failed — total new commissioning required";
+                    dev.LastFailureReason = ctx.Response.Message;
+                    dev.shouldRetry = false;
+                    dev.finalUpgradeResult = "Warn";
+                    return false;
+                }
             }
         }
 

@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Net;
+using System.Net.Http;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -10,205 +13,308 @@ using System.Threading.Tasks;
 namespace AccessAppMqttWpf.Services;
 
 /// <summary>
-/// Listens on UDP port <see cref="BeaconPort"/> for "cassia-accessapp" beacons broadcast by
-/// AccessApp instances on the LAN.  When a new instance is discovered, pushes the local MQTT
-/// broker settings to it via HTTP POST to its <c>/api/local-mqtt</c> endpoint.
+/// Discovers AccessApp instances on the local network via TCP/HTTP on port 60000 and pushes
+/// the local MQTT broker configuration to them.
 ///
-/// The push payload includes <c>mqttHost</c> — WPF's own outbound IP probed via the OS
-/// routing table — so that AccessApp uses the correct LAN IP even when it is running inside
-/// a NAT container and <c>HttpContext.Connection.RemoteIpAddress</c> would return the
-/// container's gateway rather than WPF's real address.
+/// Discovery flow:
+///   1. <see cref="StartFastScan"/> fires parallel HTTP GET probes to all hosts in the local
+///      subnet(s).  Any host whose <c>GET /api/local-mqtt</c> response contains
+///      <c>"cassia-accessapp"</c> is immediately sent a config push via POST.
+///      The whole scan completes in ~300 ms regardless of subnet size.
+///
+///   2. A periodic re-push loop sends the config to all known hosts every 30 s.
+///      This keeps AccessApp's in-memory <c>LOCAL_MQTT_HOST</c> alive and doubles as
+///      a health check.  Three consecutive failures fire <see cref="GatewayLost"/>.
+///
+///   3. <see cref="StartSlowScan"/> (called when a gateway goes offline) probes subnet
+///      candidates one per cycle (3 s) for up to 2 minutes as a reconnect fallback.
 /// </summary>
 public sealed class AccessAppDiscoveryService : IDisposable
 {
-    public const int BeaconPort = 60004;
-    private const int PushIntervalMs  = 30_000; // re-push config every 30 s
-    private const int BeaconTimeoutMs = 60_000; // remove after silence
+    // ── Constants ─────────────────────────────────────────────────────────────
 
-    private readonly ConcurrentDictionary<string, DiscoveredEntry> _entries =
+    private const int HttpPort           = 60000;
+    private const int ScanTimeoutMs      = 400;    // per-host timeout during fast/slow scan probes
+    private const int PushTimeoutMs      = 5_000;  // timeout for periodic re-pushes
+    private const int RePushIntervalMs   = 30_000;
+    private const int MaxPushFails       = 3;
+    private const int SlowScanIntervalMs = 3_000;
+    private const int SlowScanMaxMs      = 120_000;
+
+    // ── Events / state ────────────────────────────────────────────────────────
+
+    /// <summary>Fired on the thread-pool when a new AccessApp is discovered and configured.</summary>
+    public event Action<string>? GatewayFound;
+
+    /// <summary>Fired on the thread-pool after <see cref="MaxPushFails"/> consecutive re-push
+    /// failures, indicating the gateway is likely offline.</summary>
+    public event Action<string>? GatewayLost;
+
+    /// <summary>Number of AccessApp instances currently considered alive.</summary>
+    public int DiscoveredCount => _entries.Count;
+
+    // ── Internals ─────────────────────────────────────────────────────────────
+
+    private readonly ConcurrentDictionary<string, GatewayEntry> _entries =
         new(StringComparer.OrdinalIgnoreCase);
 
-    private CancellationTokenSource? _cts;
-    private Task? _listenTask;
-    private Task? _cleanupTask;
+    // Separate clients so scan probes use a short timeout without affecting re-push reliability.
+    private readonly HttpClient _scanHttp = new() { Timeout = TimeSpan.FromMilliseconds(ScanTimeoutMs) };
+    private readonly HttpClient _pushHttp = new() { Timeout = TimeSpan.FromMilliseconds(PushTimeoutMs) };
 
     private int    _mqttPort;
-    private string _networkId = "";
+    private string _networkId           = "";
     private bool   _useSharedNetworkId;
-    private LocalMqttServerService? _mqttServer;
+    private bool   _sendMqttHost        = true;
 
-    public bool IsRunning => _listenTask != null && !_listenTask.IsCompleted;
+    // Slow scan
+    private Queue<string>? _slowQueue;
+    private DateTimeOffset  _slowDeadline;
+    private readonly object _slowLock = new();
 
-    // ── Lifecycle ────────────────────────────────────────────────────────────
+    private CancellationTokenSource? _cts;
+    private Task? _rePushTask;
+    private Task? _slowScanTask;
+    private Task? _fastScanTask;
 
-    public void Start(int mqttPort, string networkId, LocalMqttServerService? mqttServer = null, bool useSharedNetworkId = false)
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
+
+    public void Start(int mqttPort, string networkId, LocalMqttServerService? mqttServer = null, bool useSharedNetworkId = false, bool sendMqttHost = true)
     {
         Stop();
-        _mqttPort            = mqttPort;
-        _networkId           = networkId;
-        _useSharedNetworkId  = useSharedNetworkId;
-
-        if (mqttServer != null)
-            mqttServer.RemoteClientConnected += OnRemoteClientConnected;
-        _mqttServer = mqttServer;
+        _mqttPort           = mqttPort;
+        _networkId          = networkId;
+        _useSharedNetworkId = useSharedNetworkId;
+        _sendMqttHost       = sendMqttHost;
+        _entries.Clear();
+        lock (_slowLock) { _slowQueue = null; _slowDeadline = DateTimeOffset.MinValue; }
 
         _cts         = new CancellationTokenSource();
-        _listenTask  = Task.Run(() => ListenLoopAsync(_cts.Token));
-        _cleanupTask = Task.Run(() => CleanupLoopAsync(_cts.Token));
-        AppLog.Info($"[AccessAppDiscovery] Started — listening for AccessApp beacons on UDP {BeaconPort}");
-    }
+        _rePushTask  = Task.Run(() => RePushLoopAsync(_cts.Token));
 
-    /// <summary>
-    /// Called when an AccessApp connects to the local MQTT server from a remote IP.
-    /// Pushes the MQTT config back so the AccessApp sets LOCAL_MQTT_HOST and maintains
-    /// the connection without relying on UDP broadcast.
-    /// </summary>
-    private void OnRemoteClientConnected(string ip)
-    {
-        const int httpPort = 60000;
-        var key   = $"{ip}:{httpPort}";
-        var entry = _entries.GetOrAdd(key, _ => new DiscoveredEntry(ip, httpPort));
-        var isNew = entry.LastPushedUtc == DateTimeOffset.MinValue;
-        entry.UpdateLastSeen();
-
-        AppLog.Info($"[AccessAppDiscovery] Remote MQTT client connected from {ip} — pushing config (isNew={isNew})");
-
-        if (isNew || (DateTimeOffset.UtcNow - entry.LastPushedUtc).TotalMilliseconds > PushIntervalMs)
-            _ = PushConfigAsync(entry, _cts?.Token ?? CancellationToken.None);
+        AppLog.Info($"[AccessAppDiscovery] Started — MQTT port {mqttPort}, networkId={networkId}");
     }
 
     public void Stop()
     {
-        if (_mqttServer != null)
-        {
-            _mqttServer.RemoteClientConnected -= OnRemoteClientConnected;
-            _mqttServer = null;
-        }
-
         _cts?.Cancel();
-        try { _listenTask?.Wait(1000); }  catch { }
-        try { _cleanupTask?.Wait(1000); } catch { }
+        try { _fastScanTask?.Wait(500);  } catch { }
+        try { _slowScanTask?.Wait(500);  } catch { }
+        try { _rePushTask?.Wait(1000);   } catch { }
         _cts?.Dispose();
-        _cts         = null;
-        _listenTask  = null;
-        _cleanupTask = null;
+        _cts = null;
+        _fastScanTask = _slowScanTask = _rePushTask = null;
         _entries.Clear();
         AppLog.Info("[AccessAppDiscovery] Stopped.");
     }
 
-    public void Dispose() => Stop();
-
-    // ── UDP listen loop ───────────────────────────────────────────────────────
-
-    private async Task ListenLoopAsync(CancellationToken ct)
+    public void Dispose()
     {
-        UdpClient? udp = null;
-        try
-        {
-            udp = new UdpClient();
-            udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-            udp.Client.Bind(new IPEndPoint(IPAddress.Any, BeaconPort));
-            AppLog.Info($"[AccessAppDiscovery] UDP socket bound on port {BeaconPort}");
-        }
-        catch (Exception ex)
-        {
-            AppLog.Error($"[AccessAppDiscovery] Cannot bind UDP port {BeaconPort}: {ex.Message}");
-            udp?.Dispose();
-            return;
-        }
+        Stop();
+        _scanHttp.Dispose();
+        _pushHttp.Dispose();
+    }
 
-        using (udp)
+    // ── Public scan API ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Probes a single IP immediately. Use when a gateway connects to the local MQTT broker
+    /// but was not in the known-entries set (e.g. it self-reconnected after being evicted by
+    /// <see cref="MaxPushFails"/>). If the probe succeeds the entry is re-added and the
+    /// normal re-push loop takes over. No-ops if the IP is already known.
+    /// </summary>
+    public void EnsureIpProbed(string ip)
+    {
+        if (_cts == null || _entries.ContainsKey(ip)) return;
+        var ct = _cts.Token;
+        Task.Run(() => TryDiscoverAndPushAsync(ip, ct), ct);
+    }
+
+    /// <summary>
+    /// Probes all host IPs in local subnet(s) in parallel (TCP port 60000, ~300 ms total).
+    /// Each confirmed AccessApp immediately receives a config push.
+    /// <paramref name="onComplete"/> is invoked after all probes finish.
+    /// </summary>
+    public void StartFastScan(Action? onComplete = null)
+    {
+        if (_cts == null) return;
+        var ct = _cts.Token;
+
+        var candidates = BuildSubnetCandidates();
+        AppLog.Info($"[AccessAppDiscovery] Fast scan — {candidates.Count} candidates ({ScanTimeoutMs} ms timeout, ≤200 concurrent).");
+
+        _fastScanTask = Task.Run(async () =>
         {
-            while (!ct.IsCancellationRequested)
+            // Parallel.ForEachAsync streams work without pre-allocating all tasks.
+            await Parallel.ForEachAsync(candidates,
+                new ParallelOptions { MaxDegreeOfParallelism = 200, CancellationToken = ct },
+                async (ip, innerCt) => await TryDiscoverAndPushAsync(ip, innerCt).ConfigureAwait(false))
+                .ConfigureAwait(false);
+
+            AppLog.Info($"[AccessAppDiscovery] Fast scan complete — {_entries.Count} gateway(s) found.");
+            onComplete?.Invoke();
+        }, ct);
+    }
+
+    /// <summary>
+    /// Probes the local machine's own LAN IPs every <paramref name="intervalMs"/> ms until
+    /// at least one AccessApp responds or <paramref name="maxWaitMs"/> elapses.
+    /// Call this immediately after launching a local AccessApp process so WPF finds it
+    /// as soon as it finishes starting up — without waiting for a full subnet rescan.
+    /// </summary>
+    public void StartLocalAccessAppProbe(int intervalMs = 2000, int maxWaitMs = 30_000)
+    {
+        if (_cts == null) return;
+        var ct = _cts.Token;
+
+        Task.Run(async () =>
+        {
+            var deadline = DateTimeOffset.UtcNow.AddMilliseconds(maxWaitMs);
+            var localIps = GetOwnLanIps();
+            AppLog.Info($"[AccessAppDiscovery] Local probe started — watching {string.Join(", ", localIps)} every {intervalMs} ms.");
+
+            while (!ct.IsCancellationRequested && DateTimeOffset.UtcNow < deadline)
             {
-                try
-                {
-                    var result = await udp.ReceiveAsync(ct).ConfigureAwait(false);
-                    AppLog.Info($"[AccessAppDiscovery] UDP packet received from {result.RemoteEndPoint}: {Encoding.UTF8.GetString(result.Buffer)}");
-                    ProcessBeacon(result.Buffer, ct);
-                }
+                if (_entries.Count > 0) break; // already found something
+
+                foreach (var ip in localIps)
+                    await TryDiscoverAndPushAsync(ip, ct).ConfigureAwait(false);
+
+                if (_entries.Count > 0) break;
+
+                try { await Task.Delay(intervalMs, ct).ConfigureAwait(false); }
                 catch (OperationCanceledException) { break; }
-                catch { }
             }
-        }
+
+            AppLog.Info(_entries.Count > 0
+                ? $"[AccessAppDiscovery] Local probe complete — found {_entries.Count} gateway(s)."
+                : "[AccessAppDiscovery] Local probe timed out — no local AccessApp found.");
+        }, ct);
     }
 
-    private static readonly JsonSerializerOptions _jsonOpts = new() { PropertyNameCaseInsensitive = true };
-
-    private void ProcessBeacon(byte[] data, CancellationToken ct)
+    private static List<string> GetOwnLanIps()
     {
-        try
+        // Always include loopback so a locally-launched AccessApp is probed immediately.
+        var result = new List<string> { "127.0.0.1" };
+        foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
         {
-            var json   = Encoding.UTF8.GetString(data);
-            var beacon = JsonSerializer.Deserialize<AccessAppBeacon>(json, _jsonOpts);
-            if (beacon?.Service != "cassia-accessapp" || string.IsNullOrWhiteSpace(beacon.Host))
-                return;
-
-            var key   = $"{beacon.Host}:{beacon.HttpPort}";
-            var entry = _entries.GetOrAdd(key, _ => new DiscoveredEntry(beacon.Host!, beacon.HttpPort));
-
-            var isNew = entry.LastPushedUtc == DateTimeOffset.MinValue;
-            entry.UpdateLastSeen();
-
-            if (isNew || (DateTimeOffset.UtcNow - entry.LastPushedUtc).TotalMilliseconds > PushIntervalMs)
-            {
-                if (isNew)
-                    AppLog.Info($"[AccessAppDiscovery] Discovered AccessApp at {key} (name={beacon.Name}, networkId={beacon.NetworkId}) — pushing MQTT config");
-                _ = PushConfigAsync(entry, ct);
-            }
+            if (ni.OperationalStatus != OperationalStatus.Up) continue;
+            if (!IsPhysicalAdapter(ni)) continue;
+            foreach (var addr in ni.GetIPProperties().UnicastAddresses)
+                if (addr.Address.AddressFamily == AddressFamily.InterNetwork)
+                    result.Add(addr.Address.ToString());
         }
-        catch { }
+        return result;
     }
 
-    // ── Config push ───────────────────────────────────────────────────────────
+    /// <summary>
+    /// Starts a slow sequential scan of all subnet candidates (one probe every
+    /// <see cref="SlowScanIntervalMs"/> ms) for up to <see cref="SlowScanMaxMs"/> ms.
+    /// Call when a gateway goes offline to find it again if it restarted.
+    /// Replaces any previously running slow scan.
+    /// </summary>
+    public void StartSlowScan()
+    {
+        if (_cts == null) return;
+        var ct = _cts.Token;
 
-    private async Task PushConfigAsync(DiscoveredEntry entry, CancellationToken ct)
+        var candidates = BuildSubnetCandidates();
+        lock (_slowLock)
+        {
+            _slowQueue    = new Queue<string>(candidates);
+            _slowDeadline = DateTimeOffset.UtcNow.AddMilliseconds(SlowScanMaxMs);
+        }
+
+        // Cancel previous slow scan task if running and restart.
+        _slowScanTask = Task.Run(() => SlowScanLoopAsync(ct), ct);
+        AppLog.Info($"[AccessAppDiscovery] Slow scan started — {candidates.Count} candidates over max {SlowScanMaxMs / 1000} s.");
+    }
+
+    // ── Probe + push ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Probes <paramref name="ip"/> by posting the MQTT config directly.
+    /// A 200 response means it's an AccessApp and it is already configured — one round-trip
+    /// handles both discovery and setup with no AccessApp changes required.
+    /// Any other outcome (404, timeout, refused) is silently ignored.
+    /// </summary>
+    private async Task TryDiscoverAndPushAsync(string ip, CancellationToken ct)
+    {
+        if (_entries.ContainsKey(ip)) return; // already known this session
+
+        // Use a temporary entry to attempt the push. Only register on success so
+        // the entries dictionary reflects confirmed, reachable AccessApp instances.
+        var candidate = new GatewayEntry(ip);
+        var success   = await PushConfigAsync(candidate, _scanHttp, ct).ConfigureAwait(false);
+        if (!success) return;
+
+        // POST returned 200 — this is AccessApp and is now configured.
+        if (_entries.TryAdd(ip, candidate))
+        {
+            AppLog.Info($"[AccessAppDiscovery] Discovered AccessApp at {ip}.");
+            GatewayFound?.Invoke(ip);
+        }
+    }
+
+    /// <summary>
+    /// Pushes the local MQTT broker config to <paramref name="entry"/>.
+    /// Returns true on HTTP 200, false on any error or non-success status.
+    /// Pass <see cref="_scanHttp"/> for discovery probes and <see cref="_pushHttp"/> for
+    /// periodic re-pushes so timeouts are appropriate for each use.
+    /// </summary>
+    private async Task<bool> PushConfigAsync(GatewayEntry entry, HttpClient http, CancellationToken ct)
     {
         if (!await entry.PushGate.WaitAsync(0).ConfigureAwait(false))
-            return; // another push is already in progress
+            return false; // concurrent push already in progress
 
         try
         {
-            using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-            var url = $"http://{entry.Host}:{entry.HttpPort}/api/local-mqtt";
-
-            // Probe the outbound IP we would use to reach this specific host.
-            // This is necessary when the Cassia gateway runs AccessApp in an LXC container
-            // where HttpContext.Connection.RemoteIpAddress returns the NAT gateway IP
-            // rather than WPF's real LAN IP.
-            var mqttHost = GetOutboundIpFor(entry.Host);
-            if (string.IsNullOrWhiteSpace(mqttHost))
-                AppLog.Warn($"[AccessAppDiscovery] Could not probe outbound IP for {entry.Host} — omitting mqttHost from payload");
+            string? mqttHost = null;
+            if (_sendMqttHost)
+            {
+                mqttHost = GetOutboundIpFor(entry.Host);
+                if (string.IsNullOrWhiteSpace(mqttHost))
+                {
+                    AppLog.Warn($"[AccessAppDiscovery] Cannot probe outbound IP for {entry.Host} — skipping push.");
+                    return false;
+                }
+            }
 
             var payload = new
             {
                 token     = LocalMqttServerService.LocalToken,
                 mqttPort  = _mqttPort,
-                mqttHost,  // WPF's real LAN IP; empty string → AccessApp falls back to callerIp
-                // Push WPF's networkId only when "use shared network ID" is enabled.
-                networkId = _useSharedNetworkId ? _networkId : null
+                mqttHost,                           // null when sendMqttHost=false → AccessApp uses RemoteIpAddress
+                networkId = _useSharedNetworkId ? _networkId : (string?)null
             };
 
-            var body = new System.Net.Http.StringContent(
-                JsonSerializer.Serialize(payload),
-                Encoding.UTF8,
-                "application/json");
+            var body = new StringContent(
+                JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
 
-            var response = await http.PostAsync(url, body, ct).ConfigureAwait(false);
+            var response = await http.PostAsync(
+                $"http://{entry.Host}:{HttpPort}/api/local-mqtt", body, ct).ConfigureAwait(false);
+
             if (response.IsSuccessStatusCode)
             {
-                entry.LastPushedUtc = DateTimeOffset.UtcNow;
-                var networkIdSuffix = _useSharedNetworkId ? $", networkId={_networkId}" : "";
-                AppLog.Info($"[AccessAppDiscovery] Pushed MQTT config (host={mqttHost}, port={_mqttPort}{networkIdSuffix}) to {entry.Host}:{entry.HttpPort} — OK");
+                entry.LastPushedUtc        = DateTimeOffset.UtcNow;
+                entry.ConsecutivePushFails = 0;
+                var suffix = _useSharedNetworkId ? $", networkId={_networkId}" : "";
+                AppLog.Info($"[AccessAppDiscovery] Config pushed to {entry.Host} (mqttHost={mqttHost}, port={_mqttPort}{suffix}) — OK");
+                return true;
             }
-            else
-            {
-                AppLog.Warn($"[AccessAppDiscovery] Push to {entry.Host}:{entry.HttpPort} returned HTTP {(int)response.StatusCode}");
-            }
+
+            AppLog.Warn($"[AccessAppDiscovery] Push to {entry.Host} returned HTTP {(int)response.StatusCode}");
+            return false;
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            AppLog.Warn($"[AccessAppDiscovery] Push to {entry.Host} timed out.");
+            return false;
         }
         catch (Exception ex)
         {
-            AppLog.Warn($"[AccessAppDiscovery] Push to {entry.Host}:{entry.HttpPort} failed: {ex.Message}");
+            AppLog.Warn($"[AccessAppDiscovery] Push to {entry.Host} failed: {ex.Message}");
+            return false;
         }
         finally
         {
@@ -216,11 +322,170 @@ public sealed class AccessAppDiscoveryService : IDisposable
         }
     }
 
+    // ── Background loops ──────────────────────────────────────────────────────
+
     /// <summary>
-    /// Uses the OS routing table to determine which local IP would be used when sending a
-    /// packet to <paramref name="targetIp"/>.  The UDP socket is never actually sent —
-    /// Connect() on a UDP socket is a local routing-table query only.
+    /// Re-pushes the MQTT config to every known gateway every <see cref="RePushIntervalMs"/> ms.
+    /// Consecutive failures increment a counter; after <see cref="MaxPushFails"/> the entry is
+    /// removed and <see cref="GatewayLost"/> is fired.
     /// </summary>
+    private async Task RePushLoopAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try { await Task.Delay(RePushIntervalMs, ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) { break; }
+
+            foreach (var kv in _entries)
+            {
+                var entry   = kv.Value;
+                var success = await PushConfigAsync(entry, _pushHttp, ct).ConfigureAwait(false);
+
+                if (!success)
+                {
+                    entry.ConsecutivePushFails++;
+                    AppLog.Warn($"[AccessAppDiscovery] Re-push fail #{entry.ConsecutivePushFails} for {entry.Host}");
+
+                    if (entry.ConsecutivePushFails >= MaxPushFails &&
+                        _entries.TryRemove(entry.Host, out _))
+                    {
+                        AppLog.Info($"[AccessAppDiscovery] Gateway lost (push failed {MaxPushFails}x): {entry.Host}");
+                        entry.PushGate.Dispose();
+                        GatewayLost?.Invoke(entry.Host);
+                    }
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Sequential slow scan: probes one candidate every <see cref="SlowScanIntervalMs"/> ms
+    /// until the deadline or the queue is empty.
+    /// </summary>
+    private async Task SlowScanLoopAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            string? ip = null;
+            lock (_slowLock)
+            {
+                if (_slowQueue == null || DateTimeOffset.UtcNow >= _slowDeadline)
+                {
+                    if (_slowQueue != null)
+                    {
+                        AppLog.Info("[AccessAppDiscovery] Slow scan deadline reached.");
+                        _slowQueue = null;
+                    }
+                    return;
+                }
+
+                // Skip already-known IPs.
+                while (_slowQueue.Count > 0 && _entries.ContainsKey(_slowQueue.Peek()))
+                    _slowQueue.Dequeue();
+
+                _slowQueue.TryDequeue(out ip);
+
+                if (_slowQueue.Count == 0)
+                {
+                    AppLog.Info("[AccessAppDiscovery] Slow scan exhausted all candidates.");
+                    _slowQueue = null;
+                }
+            }
+
+            if (ip != null)
+                await TryDiscoverAndPushAsync(ip, ct).ConfigureAwait(false);
+
+            try { await Task.Delay(SlowScanIntervalMs, ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) { break; }
+        }
+    }
+
+    // ── Subnet enumeration ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Enumerates host IPs to scan across the configured subnet of each active physical
+    /// (Ethernet / Wi-Fi) interface.  The scan range is capped at /24 (254 hosts) so we
+    /// never flood a large corporate network; narrower masks are respected as-is.
+    /// </summary>
+    private List<string> BuildSubnetCandidates()
+    {
+        var ownIps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (ni.OperationalStatus != OperationalStatus.Up) continue;
+            foreach (var addr in ni.GetIPProperties().UnicastAddresses)
+                if (addr.Address.AddressFamily == AddressFamily.InterNetwork)
+                    ownIps.Add(addr.Address.ToString());
+        }
+
+        var seen       = new HashSet<uint>();   // deduplicate when two interfaces share the same /24
+        var candidates = new List<string> { "127.0.0.1" }; // always probe localhost first
+
+        foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (ni.OperationalStatus != OperationalStatus.Up) continue;
+            if (!IsPhysicalAdapter(ni)) continue;
+
+            foreach (var addr in ni.GetIPProperties().UnicastAddresses)
+            {
+                if (addr.Address.AddressFamily != AddressFamily.InterNetwork) continue;
+
+                // Cap scan range to /24 — never generate more than 254 candidates per interface.
+                int scanPrefix = Math.Max(addr.PrefixLength, 24);
+                uint scanMask  = PrefixToMask(scanPrefix);
+
+                var ipBytes = addr.Address.GetAddressBytes();
+                uint ipUint    = ToUInt32BE(ipBytes);
+                uint net       = ipUint & scanMask;
+                uint broadcast = net | ~scanMask;
+
+                for (uint h = net + 1; h < broadcast; h++)
+                {
+                    if (!seen.Add(h)) continue;
+                    var ip = new IPAddress(FromUInt32BE(h)).ToString();
+                    if (!ownIps.Contains(ip) && !_entries.ContainsKey(ip))
+                        candidates.Add(ip);
+                }
+            }
+        }
+
+        return candidates;
+    }
+
+    private static uint PrefixToMask(int prefix)
+    {
+        if (prefix <= 0)  return 0u;
+        if (prefix >= 32) return 0xFFFF_FFFFu;
+        return ~((1u << (32 - prefix)) - 1u);
+    }
+
+    private static uint   ToUInt32BE(byte[] b) =>
+        ((uint)b[0] << 24) | ((uint)b[1] << 16) | ((uint)b[2] << 8) | b[3];
+    private static byte[] FromUInt32BE(uint v) =>
+        new[] { (byte)(v >> 24), (byte)(v >> 16), (byte)(v >> 8), (byte)v };
+
+    /// <summary>
+    /// True only for physical Ethernet or Wi-Fi adapters.
+    /// Type check alone is insufficient — VMware/Hyper-V/WSL2 host adapters also report
+    /// as Ethernet, so we combine the type whitelist with a description blacklist.
+    /// </summary>
+    private static bool IsPhysicalAdapter(NetworkInterface ni)
+    {
+        if (ni.NetworkInterfaceType != NetworkInterfaceType.Ethernet &&
+            ni.NetworkInterfaceType != NetworkInterfaceType.Wireless80211)
+            return false;
+
+        var desc = ni.Description ?? "";
+        return !desc.Contains("Virtual",     StringComparison.OrdinalIgnoreCase)
+            && !desc.Contains("Hyper-V",     StringComparison.OrdinalIgnoreCase)
+            && !desc.Contains("TAP-Windows", StringComparison.OrdinalIgnoreCase)
+            && !desc.Contains("WireGuard",   StringComparison.OrdinalIgnoreCase)
+            && !desc.Contains("vEthernet",   StringComparison.OrdinalIgnoreCase)
+            && !desc.Contains("VMware",      StringComparison.OrdinalIgnoreCase)
+            && !desc.Contains("VirtualBox",  StringComparison.OrdinalIgnoreCase)
+            && !desc.Contains("WSL",         StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string GetOutboundIpFor(string targetIp)
     {
         try
@@ -232,46 +497,15 @@ public sealed class AccessAppDiscoveryService : IDisposable
         catch { return ""; }
     }
 
-    // ── Cleanup loop ──────────────────────────────────────────────────────────
+    // ── Inner types ───────────────────────────────────────────────────────────
 
-    private async Task CleanupLoopAsync(CancellationToken ct)
+    private sealed class GatewayEntry
     {
-        while (!ct.IsCancellationRequested)
-        {
-            try { await Task.Delay(10_000, ct).ConfigureAwait(false); }
-            catch (OperationCanceledException) { break; }
+        public string          Host                 { get; }
+        public DateTimeOffset  LastPushedUtc        { get; set; } = DateTimeOffset.MinValue;
+        public int             ConsecutivePushFails { get; set; }
+        public SemaphoreSlim   PushGate             { get; } = new(1, 1);
 
-            var now = DateTimeOffset.UtcNow;
-            foreach (var kv in _entries)
-            {
-                if ((now - kv.Value.LastSeenUtc).TotalMilliseconds > BeaconTimeoutMs)
-                    if (_entries.TryRemove(kv.Key, out var removed))
-                        removed.PushGate.Dispose();
-            }
-        }
-    }
-
-    // ── DTOs / helpers ────────────────────────────────────────────────────────
-
-    private sealed class AccessAppBeacon
-    {
-        public string? Service   { get; set; }
-        public string? Host      { get; set; }
-        public int     HttpPort  { get; set; } = 60000;
-        public string? Name      { get; set; }
-        public string? NetworkId { get; set; }
-    }
-
-    private sealed class DiscoveredEntry
-    {
-        public string           Host          { get; }
-        public int              HttpPort      { get; }
-        public DateTimeOffset   LastSeenUtc   { get; private set; } = DateTimeOffset.UtcNow;
-        /// <summary>MinValue on first discovery — guarantees the first beacon triggers a push.</summary>
-        public DateTimeOffset   LastPushedUtc { get; set; } = DateTimeOffset.MinValue;
-        public SemaphoreSlim    PushGate      { get; } = new(1, 1);
-
-        public DiscoveredEntry(string host, int httpPort) { Host = host; HttpPort = httpPort; }
-        public void UpdateLastSeen() => LastSeenUtc = DateTimeOffset.UtcNow;
+        public GatewayEntry(string host) => Host = host;
     }
 }

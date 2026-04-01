@@ -72,7 +72,10 @@ public class WindowsNativeScanDevice : IDisposable
                 !mac.StartsWith(_macPrefix, StringComparison.OrdinalIgnoreCase))
                 return;
 
-            int rssi = args.RawSignalStrengthInDBm;
+            // Windows BLE reports RSSI ~10-15 dBm higher than Linux/Cassia hardware.
+            // Apply a correction offset so values are comparable across backends.
+            const int RssiCorrectionDb = 20;
+            int rssi = args.RawSignalStrengthInDBm + RssiCorrectionDb;
 
             // Extract manufacturer data bytes from the advertisement.
             byte[]? mfBytes = ExtractManufacturerDataBytes(args.Advertisement, mac);

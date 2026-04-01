@@ -1,0 +1,493 @@
+<Window x:Class="AccessAppMqttWpf.DaliDbEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="{Binding Title}"
+        Height="820" Width="1100"
+        MinHeight="600" MinWidth="820"
+        WindowStartupLocation="CenterOwner">
+
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+
+        <!-- Section header style -->
+        <Style x:Key="SectionHeader" TargetType="TextBlock">
+            <Setter Property="FontSize"   Value="13"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin"     Value="0,0,0,6"/>
+        </Style>
+
+        <!-- Read-only hex column -->
+        <Style x:Key="HexCell" TargetType="TextBox">
+            <Setter Property="FontFamily"  Value="Consolas"/>
+            <Setter Property="IsReadOnly"  Value="True"/>
+            <Setter Property="Background"  Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+    </Window.Resources>
+
+    <DockPanel>
+
+        <!-- ── Toolbar ───────────────────────────────────────────────────── -->
+        <Border DockPanel.Dock="Top"
+                Style="{StaticResource Card}"
+                Padding="12,8" Margin="12,12,12,6">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+                    <TextBlock Text="{Binding Title}"
+                               FontSize="15" FontWeight="SemiBold"
+                               VerticalAlignment="Center" Margin="0,0,20,0"/>
+                </StackPanel>
+
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Style="{StaticResource GhostButton}"
+                            Content="Import JSON…" Padding="12,6" Margin="0,0,6,0"
+                            Command="{Binding ImportJsonCommand}"/>
+                    <Button Style="{StaticResource GhostButton}"
+                            Content="Export JSON…" Padding="12,6" Margin="0,0,6,0"
+                            Command="{Binding ExportJsonCommand}"/>
+                    <Button Style="{StaticResource PrimaryButton}"
+                            Content="Write to Device" Padding="14,6" Margin="0,0,6,0"
+                            Command="{Binding SaveToDeviceCommand}"/>
+                    <Button Style="{StaticResource GhostButton}"
+                            Content="Close" Padding="12,6"
+                            Command="{Binding CloseCommand}"/>
+                </StackPanel>
+
+                <!-- status bar (centre) -->
+                <TextBlock Text="{Binding StatusText}"
+                           Foreground="{DynamicResource MutedBrush}"
+                           VerticalAlignment="Center"
+                           HorizontalAlignment="Center"
+                           TextTrimming="CharacterEllipsis"/>
+            </DockPanel>
+        </Border>
+
+        <!-- ── Status / busy ─────────────────────────────────────────────── -->
+        <Border DockPanel.Dock="Top"
+                Background="{DynamicResource AccentBrush}"
+                Padding="10,4"
+                Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="Operation in progress…"
+                       Foreground="White" FontWeight="SemiBold"/>
+        </Border>
+
+        <!-- ── Tab content ───────────────────────────────────────────────── -->
+        <TabControl Margin="12,0,12,12">
+
+            <!-- ═══ 102 Application ════════════════════════════════════════ -->
+            <TabItem Header="102 App">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="12">
+
+                        <!-- Header -->
+                        <TextBlock Text="Header" Style="{StaticResource SectionHeader}"/>
+                        <Border Style="{StaticResource Card}" Padding="12" Margin="0,0,0,12">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="160"/>
+                                    <ColumnDefinition Width="80"/>
+                                    <ColumnDefinition Width="40"/>
+                                    <ColumnDefinition Width="80"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Version"    VerticalAlignment="Center"/>
+                                <TextBox Grid.Column="1" Text="{Binding Snapshot.Db102AppHeader.Version, UpdateSourceTrigger=PropertyChanged}"/>
+                                <TextBlock Grid.Column="2" Text="Len" VerticalAlignment="Center" Margin="8,0"/>
+                                <TextBox Grid.Column="3" Text="{Binding Snapshot.Db102AppHeader.DaliDbLen, UpdateSourceTrigger=PropertyChanged}"/>
+                            </Grid>
+                        </Border>
+
+                        <!-- Common -->
+                        <TextBlock Text="Common settings" Style="{StaticResource SectionHeader}"/>
+                        <Border Style="{StaticResource Card}" Padding="12" Margin="0,0,0,12">
+                            <UniformGrid Columns="4" HorizontalAlignment="Left">
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="MaxLevel"/>
+                                    <TextBox Text="{Binding Snapshot.Db102AppCommon.MaxLevel, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="MinLevel"/>
+                                    <TextBox Text="{Binding Snapshot.Db102AppCommon.MinLevel, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="PowerOnLevel"/>
+                                    <TextBox Text="{Binding Snapshot.Db102AppCommon.PowerOnLevel, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="SystemFailureLevel"/>
+                                    <TextBox Text="{Binding Snapshot.Db102AppCommon.SystemFailureLevel, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="FadeRate"/>
+                                    <TextBox Text="{Binding Snapshot.Db102AppCommon.FadeRate, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="FadeTime"/>
+                                    <TextBox Text="{Binding Snapshot.Db102AppCommon.FadeTime, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="ExtFadeTime"/>
+                                    <TextBox Text="{Binding Snapshot.Db102AppCommon.ExtendedFadeTime, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="RelayCutOffSA"/>
+                                    <TextBox Text="{Binding Snapshot.Db102AppCommon.RelayCutOffSA, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="RelayHvacSA"/>
+                                    <TextBox Text="{Binding Snapshot.Db102AppCommon.RelayHvacSA, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                            </UniformGrid>
+                        </Border>
+
+                        <!-- Device Types -->
+                        <TextBlock Text="Device Types (per short-address)" Style="{StaticResource SectionHeader}"/>
+                        <Border Style="{StaticResource Card}" Padding="4" Margin="0,0,0,12">
+                            <DataGrid ItemsSource="{Binding Snapshot.Db102AppDeviceTypes}"
+                                      AutoGenerateColumns="False" IsReadOnly="False"
+                                      CanUserAddRows="False" CanUserDeleteRows="False"
+                                      HeadersVisibility="Column" MaxHeight="200">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="SA"          Width="60"  Binding="{Binding ShortAddress}"/>
+                                    <DataGridTextColumn Header="DeviceType0" Width="100" Binding="{Binding DeviceType0}"/>
+                                    <DataGridTextColumn Header="DeviceType1" Width="100" Binding="{Binding DeviceType1}"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Border>
+
+                        <!-- Device Groups -->
+                        <TextBlock Text="Device Groups (per short-address)" Style="{StaticResource SectionHeader}"/>
+                        <Border Style="{StaticResource Card}" Padding="4" Margin="0,0,0,12">
+                            <DataGrid ItemsSource="{Binding Snapshot.Db102AppDeviceGroups}"
+                                      AutoGenerateColumns="False" IsReadOnly="False"
+                                      CanUserAddRows="False" CanUserDeleteRows="False"
+                                      HeadersVisibility="Column" MaxHeight="200">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="SA"          Width="60"  Binding="{Binding ShortAddress}"/>
+                                    <DataGridTextColumn Header="DaliGroup0"  Width="80"  Binding="{Binding DaliGroup0}"/>
+                                    <DataGridTextColumn Header="DaliGroup1"  Width="80"  Binding="{Binding DaliGroup1}"/>
+                                    <DataGridTextColumn Header="Groups 0-7"  Width="100" Binding="{Binding Groups0to7}"  IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="Groups 8-15" Width="100" Binding="{Binding Groups8to15}" IsReadOnly="True"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Border>
+
+                        <!-- Device Scenes -->
+                        <TextBlock Text="Device Scenes (per short-address)" Style="{StaticResource SectionHeader}"/>
+                        <Border Style="{StaticResource Card}" Padding="4" Margin="0,0,0,4">
+                            <DataGrid ItemsSource="{Binding Snapshot.Db102AppDeviceScenes}"
+                                      AutoGenerateColumns="False" IsReadOnly="False"
+                                      CanUserAddRows="False" CanUserDeleteRows="False"
+                                      HeadersVisibility="Column" MaxHeight="240"
+                                      HorizontalScrollBarVisibility="Auto">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="SA" Width="50" Binding="{Binding ShortAddress}"/>
+                                    <DataGridTextColumn Header="S0"  Width="38" Binding="{Binding Scene0}"/>
+                                    <DataGridTextColumn Header="S1"  Width="38" Binding="{Binding Scene1}"/>
+                                    <DataGridTextColumn Header="S2"  Width="38" Binding="{Binding Scene2}"/>
+                                    <DataGridTextColumn Header="S3"  Width="38" Binding="{Binding Scene3}"/>
+                                    <DataGridTextColumn Header="S4"  Width="38" Binding="{Binding Scene4}"/>
+                                    <DataGridTextColumn Header="S5"  Width="38" Binding="{Binding Scene5}"/>
+                                    <DataGridTextColumn Header="S6"  Width="38" Binding="{Binding Scene6}"/>
+                                    <DataGridTextColumn Header="S7"  Width="38" Binding="{Binding Scene7}"/>
+                                    <DataGridTextColumn Header="S8"  Width="38" Binding="{Binding Scene8}"/>
+                                    <DataGridTextColumn Header="S9"  Width="38" Binding="{Binding Scene9}"/>
+                                    <DataGridTextColumn Header="S10" Width="38" Binding="{Binding Scene10}"/>
+                                    <DataGridTextColumn Header="S11" Width="38" Binding="{Binding Scene11}"/>
+                                    <DataGridTextColumn Header="S12" Width="38" Binding="{Binding Scene12}"/>
+                                    <DataGridTextColumn Header="S13" Width="38" Binding="{Binding Scene13}"/>
+                                    <DataGridTextColumn Header="S14" Width="38" Binding="{Binding Scene14}"/>
+                                    <DataGridTextColumn Header="S15" Width="38" Binding="{Binding Scene15}"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Border>
+
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- ═══ 103 Application ════════════════════════════════════════ -->
+            <TabItem Header="103 App">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="12">
+
+                        <TextBlock Text="Header" Style="{StaticResource SectionHeader}"/>
+                        <Border Style="{StaticResource Card}" Padding="12" Margin="0,0,0,12">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="160"/>
+                                    <ColumnDefinition Width="80"/>
+                                    <ColumnDefinition Width="40"/>
+                                    <ColumnDefinition Width="80"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Version"    VerticalAlignment="Center"/>
+                                <TextBox Grid.Column="1" Text="{Binding Snapshot.Db103AppHeader.Version, UpdateSourceTrigger=PropertyChanged}"/>
+                                <TextBlock Grid.Column="2" Text="Len" VerticalAlignment="Center" Margin="8,0"/>
+                                <TextBox Grid.Column="3" Text="{Binding Snapshot.Db103AppHeader.DaliDbLen, UpdateSourceTrigger=PropertyChanged}"/>
+                            </Grid>
+                        </Border>
+
+                        <TextBlock Text="Instance Types (per short-address)" Style="{StaticResource SectionHeader}"/>
+                        <Border Style="{StaticResource Card}" Padding="4" Margin="0,0,0,4">
+                            <DataGrid ItemsSource="{Binding Snapshot.Db103AppInstanceTypes}"
+                                      AutoGenerateColumns="False" IsReadOnly="False"
+                                      CanUserAddRows="False" CanUserDeleteRows="False"
+                                      HeadersVisibility="Column" MaxHeight="300"
+                                      HorizontalScrollBarVisibility="Auto">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="SA"  Width="50" Binding="{Binding ShortAddress}"/>
+                                    <DataGridTextColumn Header="IT0" Width="46" Binding="{Binding InstanceType0}"/>
+                                    <DataGridTextColumn Header="IT1" Width="46" Binding="{Binding InstanceType1}"/>
+                                    <DataGridTextColumn Header="IT2" Width="46" Binding="{Binding InstanceType2}"/>
+                                    <DataGridTextColumn Header="IT3" Width="46" Binding="{Binding InstanceType3}"/>
+                                    <DataGridTextColumn Header="IT4" Width="46" Binding="{Binding InstanceType4}"/>
+                                    <DataGridTextColumn Header="IT5" Width="46" Binding="{Binding InstanceType5}"/>
+                                    <DataGridTextColumn Header="IT6" Width="46" Binding="{Binding InstanceType6}"/>
+                                    <DataGridTextColumn Header="IT7" Width="46" Binding="{Binding InstanceType7}"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Border>
+
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- ═══ 102 Device ═════════════════════════════════════════════ -->
+            <TabItem Header="102 Device">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="12">
+
+                        <TextBlock Text="Header" Style="{StaticResource SectionHeader}"/>
+                        <Border Style="{StaticResource Card}" Padding="12" Margin="0,0,0,12">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="Version" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <TextBox Text="{Binding Snapshot.Db102DeviceHeader.Version, UpdateSourceTrigger=PropertyChanged}" Width="80"/>
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Text="General" Style="{StaticResource SectionHeader}"/>
+                        <Border Style="{StaticResource Card}" Padding="12" Margin="0,0,0,12">
+                            <UniformGrid Columns="4" HorizontalAlignment="Left">
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="LastLightLevel"/>
+                                    <TextBox Text="{Binding Snapshot.Db102DeviceGeneral.LastLightLevel, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="PowerOnLevel"/>
+                                    <TextBox Text="{Binding Snapshot.Db102DeviceGeneral.PowerOnLevel, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="SystemFailureLevel"/>
+                                    <TextBox Text="{Binding Snapshot.Db102DeviceGeneral.SystemFailureLevel, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="MinLevel"/>
+                                    <TextBox Text="{Binding Snapshot.Db102DeviceGeneral.MinLevel, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="MaxLevel"/>
+                                    <TextBox Text="{Binding Snapshot.Db102DeviceGeneral.MaxLevel, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="FadeRate"/>
+                                    <TextBox Text="{Binding Snapshot.Db102DeviceGeneral.FadeRate, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="FadeTime"/>
+                                    <TextBox Text="{Binding Snapshot.Db102DeviceGeneral.FadeTime, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="ExtFadeTimeBase"/>
+                                    <TextBox Text="{Binding Snapshot.Db102DeviceGeneral.ExtendedFadeTimeBase, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="ExtFadeTimeMul"/>
+                                    <TextBox Text="{Binding Snapshot.Db102DeviceGeneral.ExtendedFadeTimeMultiplier, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="ShortAddress"/>
+                                    <TextBox Text="{Binding Snapshot.Db102DeviceGeneral.ShortAddress, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="RandomAddress [0-3]"/>
+                                    <UniformGrid Columns="4" Width="200" HorizontalAlignment="Left">
+                                        <TextBox Text="{Binding Snapshot.Db102DeviceGeneral.RandomAddress0, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,2,0"/>
+                                        <TextBox Text="{Binding Snapshot.Db102DeviceGeneral.RandomAddress1, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,2,0"/>
+                                        <TextBox Text="{Binding Snapshot.Db102DeviceGeneral.RandomAddress2, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,2,0"/>
+                                        <TextBox Text="{Binding Snapshot.Db102DeviceGeneral.RandomAddress3, UpdateSourceTrigger=PropertyChanged}"/>
+                                    </UniformGrid>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="GearGroups [0-1]  (bitmask)"/>
+                                    <UniformGrid Columns="2" Width="100" HorizontalAlignment="Left">
+                                        <TextBox Text="{Binding Snapshot.Db102DeviceGeneral.GearGroup0, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,2,0"/>
+                                        <TextBox Text="{Binding Snapshot.Db102DeviceGeneral.GearGroup1, UpdateSourceTrigger=PropertyChanged}"/>
+                                    </UniformGrid>
+                                </StackPanel>
+                            </UniformGrid>
+                        </Border>
+
+                        <TextBlock Text="Scenes" Style="{StaticResource SectionHeader}"/>
+                        <Border Style="{StaticResource Card}" Padding="12" Margin="0,0,0,12">
+                            <UniformGrid Columns="8" HorizontalAlignment="Left">
+                                <StackPanel Margin="0,0,10,8"><TextBlock Text="S0"/><TextBox Text="{Binding Snapshot.Db102DeviceScenes.Scene0, UpdateSourceTrigger=PropertyChanged}" Width="50"/></StackPanel>
+                                <StackPanel Margin="0,0,10,8"><TextBlock Text="S1"/><TextBox Text="{Binding Snapshot.Db102DeviceScenes.Scene1, UpdateSourceTrigger=PropertyChanged}" Width="50"/></StackPanel>
+                                <StackPanel Margin="0,0,10,8"><TextBlock Text="S2"/><TextBox Text="{Binding Snapshot.Db102DeviceScenes.Scene2, UpdateSourceTrigger=PropertyChanged}" Width="50"/></StackPanel>
+                                <StackPanel Margin="0,0,10,8"><TextBlock Text="S3"/><TextBox Text="{Binding Snapshot.Db102DeviceScenes.Scene3, UpdateSourceTrigger=PropertyChanged}" Width="50"/></StackPanel>
+                                <StackPanel Margin="0,0,10,8"><TextBlock Text="S4"/><TextBox Text="{Binding Snapshot.Db102DeviceScenes.Scene4, UpdateSourceTrigger=PropertyChanged}" Width="50"/></StackPanel>
+                                <StackPanel Margin="0,0,10,8"><TextBlock Text="S5"/><TextBox Text="{Binding Snapshot.Db102DeviceScenes.Scene5, UpdateSourceTrigger=PropertyChanged}" Width="50"/></StackPanel>
+                                <StackPanel Margin="0,0,10,8"><TextBlock Text="S6"/><TextBox Text="{Binding Snapshot.Db102DeviceScenes.Scene6, UpdateSourceTrigger=PropertyChanged}" Width="50"/></StackPanel>
+                                <StackPanel Margin="0,0,10,8"><TextBlock Text="S7"/><TextBox Text="{Binding Snapshot.Db102DeviceScenes.Scene7, UpdateSourceTrigger=PropertyChanged}" Width="50"/></StackPanel>
+                                <StackPanel Margin="0,0,10,0"><TextBlock Text="S8"/><TextBox Text="{Binding Snapshot.Db102DeviceScenes.Scene8, UpdateSourceTrigger=PropertyChanged}" Width="50"/></StackPanel>
+                                <StackPanel Margin="0,0,10,0"><TextBlock Text="S9"/><TextBox Text="{Binding Snapshot.Db102DeviceScenes.Scene9, UpdateSourceTrigger=PropertyChanged}" Width="50"/></StackPanel>
+                                <StackPanel Margin="0,0,10,0"><TextBlock Text="S10"/><TextBox Text="{Binding Snapshot.Db102DeviceScenes.Scene10, UpdateSourceTrigger=PropertyChanged}" Width="50"/></StackPanel>
+                                <StackPanel Margin="0,0,10,0"><TextBlock Text="S11"/><TextBox Text="{Binding Snapshot.Db102DeviceScenes.Scene11, UpdateSourceTrigger=PropertyChanged}" Width="50"/></StackPanel>
+                                <StackPanel Margin="0,0,10,0"><TextBlock Text="S12"/><TextBox Text="{Binding Snapshot.Db102DeviceScenes.Scene12, UpdateSourceTrigger=PropertyChanged}" Width="50"/></StackPanel>
+                                <StackPanel Margin="0,0,10,0"><TextBlock Text="S13"/><TextBox Text="{Binding Snapshot.Db102DeviceScenes.Scene13, UpdateSourceTrigger=PropertyChanged}" Width="50"/></StackPanel>
+                                <StackPanel Margin="0,0,10,0"><TextBlock Text="S14"/><TextBox Text="{Binding Snapshot.Db102DeviceScenes.Scene14, UpdateSourceTrigger=PropertyChanged}" Width="50"/></StackPanel>
+                                <StackPanel Margin="0,0,10,0"><TextBlock Text="S15"/><TextBox Text="{Binding Snapshot.Db102DeviceScenes.Scene15, UpdateSourceTrigger=PropertyChanged}" Width="50"/></StackPanel>
+                            </UniformGrid>
+                        </Border>
+
+                        <TextBlock Text="DT208 (Occupancy/Motion)" Style="{StaticResource SectionHeader}"/>
+                        <Border Style="{StaticResource Card}" Padding="12" Margin="0,0,0,4">
+                            <UniformGrid Columns="4" HorizontalAlignment="Left">
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="UpSwitchOnThreshold"/>
+                                    <TextBox Text="{Binding Snapshot.Db102DeviceDt208.UpSwitchOnThreshold, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="UpSwitchOffThreshold"/>
+                                    <TextBox Text="{Binding Snapshot.Db102DeviceDt208.UpSwitchOffThreshold, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="DownSwitchOnThreshold"/>
+                                    <TextBox Text="{Binding Snapshot.Db102DeviceDt208.DownSwitchOnThreshold, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="DownSwitchOffThreshold"/>
+                                    <TextBox Text="{Binding Snapshot.Db102DeviceDt208.DownSwitchOffThreshold, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="ErrorHoldOffTime"/>
+                                    <TextBox Text="{Binding Snapshot.Db102DeviceDt208.ErrorHoldOffTime, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="SwitchStatus"/>
+                                    <TextBox Text="{Binding Snapshot.Db102DeviceDt208.SwitchStatus, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                            </UniformGrid>
+                        </Border>
+
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- ═══ 103 Device ═════════════════════════════════════════════ -->
+            <TabItem Header="103 Device">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="12">
+
+                        <TextBlock Text="Header" Style="{StaticResource SectionHeader}"/>
+                        <Border Style="{StaticResource Card}" Padding="12" Margin="0,0,0,12">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="Version" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <TextBox Text="{Binding Snapshot.Db103DeviceHeader.Version, UpdateSourceTrigger=PropertyChanged}" Width="80"/>
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Text="General" Style="{StaticResource SectionHeader}"/>
+                        <Border Style="{StaticResource Card}" Padding="12" Margin="0,0,0,12">
+                            <UniformGrid Columns="4" HorizontalAlignment="Left">
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="ShortAddress"/>
+                                    <TextBox Text="{Binding Snapshot.Db103DeviceGeneral.ShortAddress, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="OperationMode"/>
+                                    <TextBox Text="{Binding Snapshot.Db103DeviceGeneral.OperationMode, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="ApplicationActive"/>
+                                    <TextBox Text="{Binding Snapshot.Db103DeviceGeneral.ApplicationActive, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,8">
+                                    <TextBlock Text="PowerCycleNotif"/>
+                                    <TextBox Text="{Binding Snapshot.Db103DeviceGeneral.PowerCycleNotification, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="LuxRange"/>
+                                    <TextBox Text="{Binding Snapshot.Db103DeviceGeneral.LuxRange, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="DeviceGroups [0-3]  (bitmask)"/>
+                                    <UniformGrid Columns="4" Width="200" HorizontalAlignment="Left">
+                                        <TextBox Text="{Binding Snapshot.Db103DeviceGeneral.DeviceGroup0, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,2,0"/>
+                                        <TextBox Text="{Binding Snapshot.Db103DeviceGeneral.DeviceGroup1, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,2,0"/>
+                                        <TextBox Text="{Binding Snapshot.Db103DeviceGeneral.DeviceGroup2, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,2,0"/>
+                                        <TextBox Text="{Binding Snapshot.Db103DeviceGeneral.DeviceGroup3, UpdateSourceTrigger=PropertyChanged}"/>
+                                    </UniformGrid>
+                                </StackPanel>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="RandomAddress [0-3]"/>
+                                    <UniformGrid Columns="4" Width="200" HorizontalAlignment="Left">
+                                        <TextBox Text="{Binding Snapshot.Db103DeviceGeneral.RandomAddress0, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,2,0"/>
+                                        <TextBox Text="{Binding Snapshot.Db103DeviceGeneral.RandomAddress1, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,2,0"/>
+                                        <TextBox Text="{Binding Snapshot.Db103DeviceGeneral.RandomAddress2, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,2,0"/>
+                                        <TextBox Text="{Binding Snapshot.Db103DeviceGeneral.RandomAddress3, UpdateSourceTrigger=PropertyChanged}"/>
+                                    </UniformGrid>
+                                </StackPanel>
+                            </UniformGrid>
+                        </Border>
+
+                        <!-- Instance Data -->
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                            <TextBlock Text="Instance Data" Style="{StaticResource SectionHeader}" Margin="0,0,12,0"/>
+                            <TextBlock Text="{Binding Snapshot.InstanceDataFamily}"
+                                       Foreground="{DynamicResource AccentBrush}"
+                                       FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <ItemsControl ItemsSource="{Binding Snapshot.InstanceDataSections}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Style="{StaticResource Card}" Padding="10,8" Margin="0,0,0,6">
+                                        <StackPanel>
+                                            <!-- Section header row -->
+                                            <DockPanel Margin="0,0,0,6">
+                                                <TextBlock Text="{Binding Label}" FontWeight="SemiBold"
+                                                           VerticalAlignment="Center"/>
+                                                <TextBlock DockPanel.Dock="Right"
+                                                           Text="Not supported"
+                                                           Foreground="{DynamicResource MutedBrush}"
+                                                           VerticalAlignment="Center"
+                                                           Visibility="{Binding NotSupported, Converter={StaticResource BoolToVis}}"/>
+                                            </DockPanel>
+                                            <!-- Named fields grid (hidden when not supported) -->
+                                            <DataGrid ItemsSource="{Binding Fields}"
+                                                      Visibility="{Binding IsAvailable, Converter={StaticResource BoolToVis}}"
+                                                      AutoGenerateColumns="False" IsReadOnly="False"
+                                                      CanUserAddRows="False" CanUserDeleteRows="False"
+                                                      HeadersVisibility="Column" MaxHeight="300"
+                                                      HorizontalScrollBarVisibility="Disabled">
+                                                <DataGrid.Columns>
+                                                    <DataGridTextColumn Header="Field" Width="200"
+                                                                        Binding="{Binding Name}"
+                                                                        IsReadOnly="True"/>
+                                                    <DataGridTextColumn Header="Value" Width="80"
+                                                                        Binding="{Binding Value, UpdateSourceTrigger=PropertyChanged}"/>
+                                                </DataGrid.Columns>
+                                            </DataGrid>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+        </TabControl>
+
+    </DockPanel>
+</Window>

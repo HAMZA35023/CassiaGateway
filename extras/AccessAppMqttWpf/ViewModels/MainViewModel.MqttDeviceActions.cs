@@ -34,33 +34,163 @@ public partial class MainViewModel : ObservableObject
             if (!root.TryGetProperty("results", out var resultsEl) || resultsEl.ValueKind != JsonValueKind.Array)
                 return;
 
-            Application.Current.Dispatcher.Invoke(() =>
+            // Extract data while the JsonDocument is still in scope.
+            var fwResults = new List<(string Mac, string App)>();
+            foreach (var r in resultsEl.EnumerateArray())
             {
-                foreach (var r in resultsEl.EnumerateArray())
+                if (r.ValueKind != JsonValueKind.Object) continue;
+                var mac = (r.TryGetProperty("mac", out var m) ? (m.GetString() ?? "") : "").Trim();
+                if (string.IsNullOrWhiteSpace(mac)) continue;
+                var ver = r.TryGetProperty("version", out var v) ? (v.GetString() ?? "") : "";
+
+                // Extract the Sensor App version when the backend returns a full combined string.
+                var app = "";
+                var mm = SensorAppFromStatusRx.Match(ver ?? "");
+                if (mm.Success) app = mm.Groups["app"].Value;
+                if (string.IsNullOrWhiteSpace(app))
+                    app = (ver ?? "").Trim();
+                fwResults.Add((mac, app));
+            }
+
+            Application.Current.Dispatcher.InvokeAsync(() =>
+            {
+                foreach (var (mac, app) in fwResults)
                 {
-                    if (r.ValueKind != JsonValueKind.Object) continue;
-                    var mac = r.TryGetProperty("mac", out var m) ? (m.GetString() ?? "") : "";
-                    var ver = r.TryGetProperty("version", out var v) ? (v.GetString() ?? "") : "";
-                    mac = (mac ?? "").Trim();
-                    if (string.IsNullOrWhiteSpace(mac)) continue;
-
-                    // Extract the Sensor App version when the backend returns a full combined string.
-                    var app = "";
-                    var mm = SensorAppFromStatusRx.Match(ver ?? "");
-                    if (mm.Success) app = mm.Groups["app"].Value;
-                    if (string.IsNullOrWhiteSpace(app))
-                        app = (ver ?? "").Trim();
-
                     var cs = GetOrCreateCache(mac);
                     cs.CurrentFw = app;
-                    cs.CurrentFwFromGetFw = true;   // ✅ mark as Get FW sourced
-
+                    cs.CurrentFwFromGetFw = true;
 
                     var dev = FindDiscoveredDevice(mac);
                     if (dev != null)
                         dev.CurrentFw = app;
                 }
-            });
+            }, DispatcherPriority.Background);
+        }
+        catch { }
+    }
+
+    private void HandlePirPeakTele(string cassia, string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+
+            if (!root.TryGetProperty("results", out var resultsEl) || resultsEl.ValueKind != JsonValueKind.Array)
+                return;
+
+            var time = root.TryGetProperty("time", out var tEl) && tEl.TryGetDateTimeOffset(out var dto)
+                ? dto : DateTimeOffset.UtcNow;
+
+            foreach (var r in resultsEl.EnumerateArray())
+            {
+                if (r.ValueKind != JsonValueKind.Object) continue;
+
+                var mac = r.TryGetProperty("mac", out var mEl) ? (mEl.GetString() ?? "").Trim() : "";
+                if (string.IsNullOrWhiteSpace(mac)) continue;
+
+                static float F(JsonElement el, string name) =>
+                    el.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.Number ? (float)p.GetDouble() : 0f;
+                static uint U(JsonElement el, string name) =>
+                    el.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.Number ? p.GetUInt32() : 0u;
+
+                var sample = new AccessAppMqttWpf.Models.PirPeakSample
+                {
+                    TimeUtc   = time,
+                    Mac       = mac,
+                    TickCount = U(r, "tickCount"),
+                    AMin = F(r, "aMin"), AMax = F(r, "aMax"),
+                    BMin = F(r, "bMin"), BMax = F(r, "bMax"),
+                    CMin = F(r, "cMin"), CMax = F(r, "cMax"),
+                    ALow = U(r, "aLow"), AT = U(r, "aT"), AHigh = U(r, "aHigh"), ADuration = U(r, "aDuration"),
+                    BLow = U(r, "bLow"), BT = U(r, "bT"), BHigh = U(r, "bHigh"), BDuration = U(r, "bDuration"),
+                    CLow = U(r, "cLow"), CT = U(r, "cT"), CHigh = U(r, "cHigh"), CDuration = U(r, "cDuration"),
+                    TrigA = r.TryGetProperty("trigA", out var tA) && tA.ValueKind == JsonValueKind.Number ? (ushort?)tA.GetUInt16() : null,
+                    TrigB = r.TryGetProperty("trigB", out var tB) && tB.ValueKind == JsonValueKind.Number ? (ushort?)tB.GetUInt16() : null,
+                    TrigC = r.TryGetProperty("trigC", out var tC) && tC.ValueKind == JsonValueKind.Number ? (ushort?)tC.GetUInt16() : null,
+                    WalktestActive = r.TryGetProperty("walktestActive", out var wa) && wa.ValueKind != JsonValueKind.Null
+                        ? wa.ValueKind == JsonValueKind.True : (bool?)null,
+                };
+
+                AppendPirPeakSample(cassia, sample);
+            }
+        }
+        catch { }
+    }
+
+    // Deduplicates dali-log MQTT messages that arrive twice when the local AccessApp has
+    // discovered the WPF's local broker via UDP beacon and mirrors telemetry to it in addition
+    // to the primary broker connection. Key = "mac|framesHex|batchTimeMs"; value = seen-at time.
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _recentDaliLogKeys =
+        new(StringComparer.Ordinal);
+
+    private void HandleDaliLogTele(string cassia, string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+
+            var mac = root.TryGetProperty("mac", out var macEl) ? (macEl.GetString() ?? "").Trim() : "";
+            if (string.IsNullOrWhiteSpace(mac)) return;
+
+            if (!root.TryGetProperty("frames", out var framesEl) || framesEl.ValueKind != JsonValueKind.String)
+                return;
+
+            var framesHex = framesEl.GetString() ?? "";
+            if (string.IsNullOrEmpty(framesHex)) return;
+
+            DateTimeOffset batchTime = DateTimeOffset.UtcNow;
+            if (root.TryGetProperty("time", out var timeEl) && timeEl.TryGetDateTimeOffset(out var dto))
+                batchTime = dto;
+
+            // Deduplicate: same mac+frames+batchTime within 3 s = mirror duplicate, skip.
+            var dedupKey = $"{mac}|{framesHex}|{batchTime.ToUnixTimeMilliseconds()}";
+            var now = DateTimeOffset.UtcNow;
+            if (!_recentDaliLogKeys.TryAdd(dedupKey, now))
+                return; // already processed this exact batch
+
+            // Prune stale dedup keys (older than 5 s) to avoid unbounded growth.
+            foreach (var kv in _recentDaliLogKeys)
+                if ((now - kv.Value).TotalSeconds > 5)
+                    _recentDaliLogKeys.TryRemove(kv.Key, out _);
+
+            AppendDaliLogFrames(cassia, mac, framesHex, batchTime);
+        }
+        catch { }
+    }
+
+    private void HandleWalktestTele(string cassia, string payload)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+
+            bool enabled = root.TryGetProperty("enabled", out var enEl) && enEl.ValueKind == JsonValueKind.True;
+
+            // Fire event for successful results
+            if (root.TryGetProperty("results", out var resultsEl) && resultsEl.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var r in resultsEl.EnumerateArray())
+                {
+                    var mac = r.TryGetProperty("mac", out var mEl) ? (mEl.GetString() ?? "").Trim() : "";
+                    if (!string.IsNullOrWhiteSpace(mac))
+                        RaiseWalktestResult(cassia, mac, enabled, success: true, error: null);
+                }
+            }
+
+            // Fire event for failed results
+            if (root.TryGetProperty("failed", out var failedEl) && failedEl.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var r in failedEl.EnumerateArray())
+                {
+                    var mac = r.TryGetProperty("mac", out var mEl) ? (mEl.GetString() ?? "").Trim() : "";
+                    var error = r.TryGetProperty("error", out var eEl) ? eEl.GetString() : null;
+                    if (!string.IsNullOrWhiteSpace(mac))
+                        RaiseWalktestResult(cassia, mac, enabled, success: false, error);
+                }
+            }
         }
         catch { }
     }
@@ -74,27 +204,31 @@ public partial class MainViewModel : ObservableObject
             if (!root.TryGetProperty("results", out var resultsEl) || resultsEl.ValueKind != JsonValueKind.Array)
                 return;
 
-            Application.Current.Dispatcher.Invoke(() =>
+            // Extract data while the JsonDocument is still in scope.
+            var disconnectResults = new List<(string Mac, bool Ok)>();
+            foreach (var r in resultsEl.EnumerateArray())
             {
-                foreach (var r in resultsEl.EnumerateArray())
+                if (r.ValueKind != JsonValueKind.Object) continue;
+                var mac = (r.TryGetProperty("mac", out var m) ? (m.GetString() ?? "") : "").Trim();
+                if (string.IsNullOrWhiteSpace(mac)) continue;
+                var ok = true;
+                if (r.TryGetProperty("success", out var s))
                 {
-                    if (r.ValueKind != JsonValueKind.Object) continue;
-                    var mac = r.TryGetProperty("mac", out var m) ? (m.GetString() ?? "") : "";
-                    mac = (mac ?? "").Trim();
-                    if (string.IsNullOrWhiteSpace(mac)) continue;
+                    if (s.ValueKind == JsonValueKind.False) ok = false;
+                    else if (s.ValueKind == JsonValueKind.True) ok = true;
+                }
+                disconnectResults.Add((mac, ok));
+            }
 
-                    var ok = true;
-                    if (r.TryGetProperty("success", out var s))
-                    {
-                        if (s.ValueKind == JsonValueKind.False) ok = false;
-                        else if (s.ValueKind == JsonValueKind.True) ok = true;
-                    }
-
+            Application.Current.Dispatcher.InvokeAsync(() =>
+            {
+                foreach (var (mac, ok) in disconnectResults)
+                {
                     var dev = FindDiscoveredDevice(mac);
                     if (dev != null)
                         dev.BleLink = ok ? "disconnected" : "disconnect failed";
                 }
-            });
+            }, DispatcherPriority.Background);
         }
         catch { }
     }
@@ -151,8 +285,13 @@ public partial class MainViewModel : ObservableObject
                     _identifyPendingByMac[mac] = true;
             }
 
-            // Update Host BLE row immediately (button pulses while pending, turns green while active)
-            Application.Current.Dispatcher.Invoke(() =>
+            // Extract remaining JsonElement fields before dispatch.
+            var requestId = root.TryGetProperty("requestId", out var rid) ? (rid.GetString() ?? "") : "";
+            var errorStep = dataEl.TryGetProperty("errorStep", out var es) ? (es.GetString() ?? "") : "";
+            var errorMsg  = dataEl.TryGetProperty("error",     out var ee) ? (ee.GetString() ?? "") : "";
+
+            // Update Host BLE row (button pulses while pending, turns green while active)
+            Application.Current.Dispatcher.InvokeAsync(() =>
             {
                 if (_hostBleRowsByMac.TryGetValue(mac, out var row) && row != null)
                 {
@@ -163,19 +302,12 @@ public partial class MainViewModel : ObservableObject
                 // Optional: show a brief status line
                 if (!string.IsNullOrWhiteSpace(stage))
                 {
-                    var requestId = root.TryGetProperty("requestId", out var rid) ? (rid.GetString() ?? "") : "";
                     if (stage.Equals("failed", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var step = dataEl.TryGetProperty("errorStep", out var es) ? (es.GetString() ?? "") : "";
-                        var err = dataEl.TryGetProperty("error", out var ee) ? (ee.GetString() ?? "") : "";
-                        ConnectionStatus = $"Identify failed {mac} {(!string.IsNullOrWhiteSpace(step) ? ("(" + step + ") ") : "")} {err}".Trim();
-                    }
+                        ConnectionStatus = $"Identify failed {mac} {(!string.IsNullOrWhiteSpace(errorStep) ? ("(" + errorStep + ") ") : "")} {errorMsg}".Trim();
                     else
-                    {
                         ConnectionStatus = $"Identify {mac}: {stage}{(string.IsNullOrWhiteSpace(requestId) ? "" : (" (" + requestId + ")"))}";
-                    }
                 }
-            });
+            }, DispatcherPriority.Background);
         }
         catch { }
     }
@@ -190,13 +322,13 @@ public partial class MainViewModel : ObservableObject
             var channel = root.TryGetProperty("channel", out var ch) ? (ch.GetString() ?? "") : "";
             var message = root.TryGetProperty("message", out var m) ? (m.GetString() ?? "") : "";
 
-            Application.Current.Dispatcher.Invoke(() =>
+            Application.Current.Dispatcher.InvokeAsync(() =>
             {
                 if (ok)
                     ConnectionStatus = $"[{cassia}] update channel set to '{channel}'.";
                 else
                     ConnectionStatus = $"[{cassia}] set-update-channel failed: {message}";
-            });
+            }, DispatcherPriority.Background);
         }
         catch
         {
@@ -217,7 +349,7 @@ public partial class MainViewModel : ObservableObject
                 ? d.GetInt32()
                 : 0;
 
-            Application.Current.Dispatcher.Invoke(() =>
+            Application.Current.Dispatcher.InvokeAsync(() =>
             {
                 if (!string.IsNullOrWhiteSpace(message))
                 {
@@ -229,7 +361,7 @@ public partial class MainViewModel : ObservableObject
                     ConnectionStatus = $"[{cassia}] reboot {stage} (delay {delaySeconds}s).";
                 else
                     ConnectionStatus = $"[{cassia}] reboot failed.";
-            });
+            }, DispatcherPriority.Background);
         }
         catch
         {
@@ -249,7 +381,7 @@ public partial class MainViewModel : ObservableObject
             var port = root.TryGetProperty("port", out var p) && p.ValueKind == JsonValueKind.Number ? p.GetInt32() : 0;
             var useTls = root.TryGetProperty("useTls", out var t) && t.ValueKind == JsonValueKind.True;
 
-            Application.Current.Dispatcher.Invoke(() =>
+            Application.Current.Dispatcher.InvokeAsync(() =>
             {
                 if (ok)
                 {
@@ -262,7 +394,7 @@ public partial class MainViewModel : ObservableObject
                 {
                     ConnectionStatus = $"[{cassia}] mqtt config failed: {message}";
                 }
-            });
+            }, DispatcherPriority.Background);
         }
         catch
         {
@@ -279,16 +411,26 @@ public partial class MainViewModel : ObservableObject
             if (!root.TryGetProperty("data", out var dataEl) || dataEl.ValueKind != JsonValueKind.Object)
                 return;
 
-            var stage = dataEl.TryGetProperty("stage", out var st) ? (st.GetString() ?? "") : "";
-            var mac = dataEl.TryGetProperty("mac", out var m) ? (m.GetString() ?? "") : "";
-            var model = dataEl.TryGetProperty("model", out var mo) ? (mo.GetString() ?? "") : "";
-            var color = dataEl.TryGetProperty("color", out var c) ? (c.GetString() ?? "") : "";
-            var error = dataEl.TryGetProperty("error", out var e) ? (e.GetString() ?? "") : "";
-            var rssi = dataEl.TryGetProperty("rssi", out var rs) && rs.ValueKind == JsonValueKind.Number ? rs.GetInt32() : 0;
-            var chip = dataEl.TryGetProperty("chip", out var ch) && ch.ValueKind == JsonValueKind.Number ? ch.GetInt32() : 0;
+            // Extract all fields from the JsonDocument before dispatching (doc is disposed after using block).
+            var stage     = dataEl.TryGetProperty("stage",  out var st) ? (st.GetString() ?? "") : "";
+            var mac       = dataEl.TryGetProperty("mac",    out var m)  ? (m.GetString()  ?? "") : "";
+            var model     = dataEl.TryGetProperty("model",  out var mo) ? (mo.GetString() ?? "") : "";
+            var color     = dataEl.TryGetProperty("color",  out var c)  ? (c.GetString()  ?? "") : "";
+            var error     = dataEl.TryGetProperty("error",  out var e)  ? (e.GetString()  ?? "") : "";
+            var rssi      = dataEl.TryGetProperty("rssi",   out var rs) && rs.ValueKind == JsonValueKind.Number ? rs.GetInt32() : 0;
+            var chip      = dataEl.TryGetProperty("chip",   out var ch) && ch.ValueKind == JsonValueKind.Number ? ch.GetInt32() : 0;
             var requestId = root.TryGetProperty("requestId", out var rid) ? (rid.GetString() ?? "") : "";
 
-            Application.Current.Dispatcher.Invoke(() =>
+            // Numeric aggregates — use -1 as sentinel for "not present in payload".
+            var requested   = dataEl.TryGetProperty("requested",   out var rq)  && rq.ValueKind  == JsonValueKind.Number ? rq.GetInt32()  : -1;
+            var tried       = dataEl.TryGetProperty("tried",       out var tr)  && tr.ValueKind  == JsonValueKind.Number ? tr.GetInt32()  : -1;
+            var connected   = dataEl.TryGetProperty("connected",   out var con) && con.ValueKind == JsonValueKind.Number ? con.GetInt32() : -1;
+            var failed      = dataEl.TryGetProperty("failed",      out var fa)  && fa.ValueKind  == JsonValueKind.Number ? fa.GetInt32()  : -1;
+            var minRssi     = dataEl.TryGetProperty("minRssi",     out var mr)  && mr.ValueKind  == JsonValueKind.Number ? mr.GetInt32()  : -1;
+            var disconnected= dataEl.TryGetProperty("disconnected",out var dis) && dis.ValueKind == JsonValueKind.Number ? dis.GetInt32() : 0;
+            var forceAll    = dataEl.TryGetProperty("forceAll",    out var faAll) && faAll.ValueKind == JsonValueKind.True;
+
+            Application.Current.Dispatcher.InvokeAsync(() =>
             {
                 if (stage.Equals("connected", StringComparison.OrdinalIgnoreCase))
                 {
@@ -314,68 +456,66 @@ public partial class MainViewModel : ObservableObject
                 }
                 else if (stage.Equals("started", StringComparison.OrdinalIgnoreCase))
                 {
-                    var requested = dataEl.TryGetProperty("requested", out var rq) && rq.ValueKind == JsonValueKind.Number ? rq.GetInt32() : 0;
-                    var minRssi = dataEl.TryGetProperty("minRssi", out var mr) && mr.ValueKind == JsonValueKind.Number ? mr.GetInt32() : LedRangeMinRssi;
-                    LedRangeRequestedTotal = requested;
+                    var req     = requested >= 0 ? requested : 0;
+                    var minR    = minRssi   >= 0 ? minRssi   : LedRangeMinRssi;
+                    LedRangeRequestedTotal = req;
                     LedRangeTriedCount = 0;
                     LedRangeConnectedCount = 0;
                     LedRangeFailedCount = 0;
-                    LedRangeProgressPercent = requested > 0 ? 0 : 100;
-                    LedRangeProgressText = $"0 / {requested} tried";
-                    LedRangeStatusText = $"{cassia}: started, requested {requested}, min RSSI {minRssi}";
+                    LedRangeProgressPercent = req > 0 ? 0 : 100;
+                    LedRangeProgressText = $"0 / {req} tried";
+                    LedRangeStatusText = $"{cassia}: started, requested {req}, min RSSI {minR}";
                 }
                 else if (stage.Equals("completed", StringComparison.OrdinalIgnoreCase))
                 {
-                    var requested = dataEl.TryGetProperty("requested", out var req) && req.ValueKind == JsonValueKind.Number ? req.GetInt32() : LedRangeRequestedTotal;
-                    var tried = dataEl.TryGetProperty("tried", out var tr) && tr.ValueKind == JsonValueKind.Number ? tr.GetInt32() : LedRangeTriedCount;
-                    var connected = dataEl.TryGetProperty("connected", out var con) && con.ValueKind == JsonValueKind.Number ? con.GetInt32() : 0;
-                    var failed = dataEl.TryGetProperty("failed", out var fa) && fa.ValueKind == JsonValueKind.Number ? fa.GetInt32() : 0;
-                    LedRangeRequestedTotal = requested;
-                    LedRangeTriedCount = tried;
-                    LedRangeConnectedCount = connected;
-                    LedRangeFailedCount = failed;
-                    LedRangeProgressPercent = requested > 0 ? Math.Clamp((100.0 * tried) / requested, 0, 100) : 100;
-                    LedRangeProgressText = $"{tried} / {requested} tried";
-                    LedRangeStatusText = $"{cassia}: completed. Connected {connected}, failed {failed}";
+                    var req  = requested  >= 0 ? requested  : LedRangeRequestedTotal;
+                    var tri  = tried      >= 0 ? tried      : LedRangeTriedCount;
+                    var conn = connected  >= 0 ? connected  : 0;
+                    var fail = failed     >= 0 ? failed     : 0;
+                    LedRangeRequestedTotal = req;
+                    LedRangeTriedCount = tri;
+                    LedRangeConnectedCount = conn;
+                    LedRangeFailedCount = fail;
+                    LedRangeProgressPercent = req > 0 ? Math.Clamp((100.0 * tri) / req, 0, 100) : 100;
+                    LedRangeProgressText = $"{tri} / {req} tried";
+                    LedRangeStatusText = $"{cassia}: completed. Connected {conn}, failed {fail}";
                 }
                 else if (stage.Equals("canceled", StringComparison.OrdinalIgnoreCase))
                 {
-                    var requested = dataEl.TryGetProperty("requested", out var req) && req.ValueKind == JsonValueKind.Number ? req.GetInt32() : LedRangeRequestedTotal;
-                    var tried = dataEl.TryGetProperty("tried", out var tr) && tr.ValueKind == JsonValueKind.Number ? tr.GetInt32() : LedRangeTriedCount;
-                    var connected = dataEl.TryGetProperty("connected", out var con) && con.ValueKind == JsonValueKind.Number ? con.GetInt32() : LedRangeConnectedCount;
-                    var failed = dataEl.TryGetProperty("failed", out var fa) && fa.ValueKind == JsonValueKind.Number ? fa.GetInt32() : LedRangeFailedCount;
-                    LedRangeRequestedTotal = requested;
-                    LedRangeTriedCount = tried;
-                    LedRangeConnectedCount = connected;
-                    LedRangeFailedCount = failed;
-                    LedRangeProgressPercent = requested > 0 ? Math.Clamp((100.0 * tried) / requested, 0, 100) : 100;
-                    LedRangeProgressText = $"{tried} / {requested} tried";
-                    LedRangeStatusText = $"{cassia}: canceled. Tried {tried}/{requested}.";
+                    var req  = requested  >= 0 ? requested  : LedRangeRequestedTotal;
+                    var tri  = tried      >= 0 ? tried      : LedRangeTriedCount;
+                    var conn = connected  >= 0 ? connected  : LedRangeConnectedCount;
+                    var fail = failed     >= 0 ? failed     : LedRangeFailedCount;
+                    LedRangeRequestedTotal = req;
+                    LedRangeTriedCount = tri;
+                    LedRangeConnectedCount = conn;
+                    LedRangeFailedCount = fail;
+                    LedRangeProgressPercent = req > 0 ? Math.Clamp((100.0 * tri) / req, 0, 100) : 100;
+                    LedRangeProgressText = $"{tri} / {req} tried";
+                    LedRangeStatusText = $"{cassia}: canceled. Tried {tri}/{req}.";
                 }
                 else if (stage.Equals("disconnect-completed", StringComparison.OrdinalIgnoreCase))
                 {
-                    var forceAll = dataEl.TryGetProperty("forceAll", out var faAll) && faAll.ValueKind == JsonValueKind.True;
-                    var disconnected = dataEl.TryGetProperty("disconnected", out var dis) && dis.ValueKind == JsonValueKind.Number ? dis.GetInt32() : 0;
-                    var failed = dataEl.TryGetProperty("failed", out var fa) && fa.ValueKind == JsonValueKind.Number ? fa.GetInt32() : 0;
+                    var fail = failed >= 0 ? failed : 0;
                     LedRangeStatusText = forceAll
-                    ? $"{cassia}: force disconnect completed. Disconnected {disconnected}, failed {failed}"
-                    : $"{cassia}: disconnect completed. Disconnected {disconnected}, failed {failed}";
+                        ? $"{cassia}: force disconnect completed. Disconnected {disconnected}, failed {fail}"
+                        : $"{cassia}: disconnect completed. Disconnected {disconnected}, failed {fail}";
                 }
 
-                var requestedFromStage = dataEl.TryGetProperty("requested", out var reqStage) && reqStage.ValueKind == JsonValueKind.Number ? reqStage.GetInt32() : LedRangeRequestedTotal;
-                var triedFromStage = dataEl.TryGetProperty("tried", out var trStage) && trStage.ValueKind == JsonValueKind.Number ? trStage.GetInt32() : LedRangeTriedCount;
-                var connectedFromStage = dataEl.TryGetProperty("connected", out var conStage) && conStage.ValueKind == JsonValueKind.Number ? conStage.GetInt32() : LedRangeConnectedCount;
-                var failedFromStage = dataEl.TryGetProperty("failed", out var faStage) && faStage.ValueKind == JsonValueKind.Number ? faStage.GetInt32() : LedRangeFailedCount;
-                LedRangeRequestedTotal = requestedFromStage;
-                LedRangeTriedCount = triedFromStage;
-                LedRangeConnectedCount = connectedFromStage;
-                LedRangeFailedCount = failedFromStage;
-                LedRangeProgressPercent = requestedFromStage > 0 ? Math.Clamp((100.0 * triedFromStage) / requestedFromStage, 0, 100) : 100;
-                LedRangeProgressText = $"{triedFromStage} / {requestedFromStage} tried";
+                var reqFinal  = requested  >= 0 ? requested  : LedRangeRequestedTotal;
+                var triFinal  = tried      >= 0 ? tried      : LedRangeTriedCount;
+                var connFinal = connected  >= 0 ? connected  : LedRangeConnectedCount;
+                var failFinal = failed     >= 0 ? failed     : LedRangeFailedCount;
+                LedRangeRequestedTotal = reqFinal;
+                LedRangeTriedCount = triFinal;
+                LedRangeConnectedCount = connFinal;
+                LedRangeFailedCount = failFinal;
+                LedRangeProgressPercent = reqFinal > 0 ? Math.Clamp((100.0 * triFinal) / reqFinal, 0, 100) : 100;
+                LedRangeProgressText = $"{triFinal} / {reqFinal} tried";
 
                 if (!string.IsNullOrWhiteSpace(requestId))
                     ConnectionStatus = $"LED range {stage} ({requestId})";
-            });
+            }, DispatcherPriority.Background);
         }
         catch { }
     }
@@ -548,6 +688,11 @@ public partial class MainViewModel : ObservableObject
             _progressByMac.Clear();
         }
 
+        // Only refresh the QueueView when sort order can actually change:
+        // new item added, device becomes terminal (sort key 0→1), or new run starts (sort key 1→0).
+        // Pure progress-% updates don't affect sort order — bindings handle the display directly.
+        var needsQueueRefresh = false;
+
         foreach (var p in batch)
         {
             // Protect terminal completion state from being overwritten by late/duplicate progress=100 "Programming" updates.
@@ -580,6 +725,7 @@ public partial class MainViewModel : ObservableObject
                     cs.LastUpgradeSuccessUtc = null;
                     cs.LastTargetFw = "";
                     cs.IsInQueue = true;
+                    needsQueueRefresh = true; // sort key can flip 1→0
                 }
                 else if (pctRounded >= 100 && IsNonTerminalStage(p.Stage)
                 && string.Equals(cs.ProcessStatus?.Trim(), "Device Upgrade Completed.", StringComparison.OrdinalIgnoreCase))
@@ -608,6 +754,7 @@ public partial class MainViewModel : ObservableObject
             if (terminalNow)
             {
                 cs.IsInQueue = false;
+                needsQueueRefresh = true; // sort key flips 0→1
             }
             else if (activeNow)
             {
@@ -619,6 +766,7 @@ public partial class MainViewModel : ObservableObject
                 cs.LastUpgradeSuccessUtc = null;
                 cs.LastTargetFw = "";
                 cs.IsInQueue = true;
+                needsQueueRefresh = true; // sort key can flip 1→0
             }
 
             cs.LastUpdateUtc = p.TimeUtc;
@@ -633,6 +781,7 @@ public partial class MainViewModel : ObservableObject
             {
                 qi = new QueueItem { Mac = p.Mac };
                 QueueItems.Add(qi);
+                needsQueueRefresh = true; // new item needs placement in sorted view
             }
 
             // Only apply if newer than the current queue row
@@ -666,7 +815,8 @@ public partial class MainViewModel : ObservableObject
             qi.LastUpdateUtc = p.TimeUtc;
         }
 
-        RequestQueueRefresh();
+        if (needsQueueRefresh)
+            RequestQueueRefresh();
     }
 
     private static bool IsTerminalQueueStatus(string? status)
