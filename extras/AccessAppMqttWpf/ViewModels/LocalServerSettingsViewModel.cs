@@ -169,9 +169,35 @@ public partial class LocalServerSettingsViewModel : ObservableObject, IDisposabl
                     return;
                 }
 
-                var proc = AccessAppLauncherService.StartAccessApp(exe, _main.LocalMqttServer.Port, _main.NetworkId,
+                string appNetworkId, appHost, appUser, appPass;
+                int appPort;
+                bool appTls;
+
+                if (UseSharedNetworkId)
+                {
+                    var mqttCfg = _store.Load().mqtt;
+                    appNetworkId = Environment.MachineName.ToLower();
+                    appHost      = mqttCfg.host;
+                    appPort      = mqttCfg.port;
+                    appTls       = mqttCfg.useTls;
+                    appUser      = mqttCfg.username;
+                    appPass      = mqttCfg.password;
+                }
+                else
+                {
+                    appNetworkId = _main.NetworkId;
+                    appHost      = "127.0.0.1";
+                    appPort      = _main.LocalMqttServer.Port;
+                    appTls       = false;
+                    appUser      = "local";
+                    appPass      = LocalMqttServerService.LocalToken;
+                }
+
+                var proc = AccessAppLauncherService.StartAccessApp(exe,
+                    networkId: appNetworkId,
                     cassia: Environment.MachineName.ToLower(),
-                    username: "local", password: LocalMqttServerService.LocalToken);
+                    host: appHost, port: appPort, useTls: appTls,
+                    username: appUser, password: appPass);
                 _main.SetAccessAppProcess(proc);
 
                 Application.Current.Dispatcher.InvokeAsync(() =>

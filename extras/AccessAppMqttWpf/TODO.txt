@@ -1,7 +1,9 @@
 ﻿CRITICAL:
 
 MAJOR:
+In local mode, we should always use the machine-name as networkID, if shared network id is active.
+The local instance of Access app should both connect to the local mqtt server, and the "prod.statistics" server (using the machine-name as netowrk id)
 
+This is needed to be able to remote-control the accessapp
 
 TRIVIAL:
-353-602111 is not reconized as M42MR (P42)
