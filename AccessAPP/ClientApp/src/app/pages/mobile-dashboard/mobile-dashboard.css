@@ -1,0 +1,536 @@
+/* ── Header ─────────────────────────────────────────────────────── */
+.mob-header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #fff;
+  border-bottom: 2px solid #e5e7eb;
+  padding: 0.75rem 1rem;
+}
+
+.mob-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #1e3a5f;
+}
+
+.mob-desktop-btn {
+  background: #f3f4f6;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 0.4rem 0.8rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  color: #374151;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+.mob-desktop-btn:hover { background: #e5e7eb; }
+
+/* ── Quick-action buttons ────────────────────────────────────────── */
+.mob-quick-actions {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+  flex-wrap: wrap;
+}
+
+.mob-group-btn {
+  flex: 1;
+  min-width: 100px;
+  padding: 0.65rem 0.5rem;
+  background: linear-gradient(135deg, #dbeafe, #bfdbfe);
+  color: #003c8f;
+  border: 1px solid #90cdf4;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+}
+.mob-group-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #bfdbfe, #93c5fd);
+  transform: scale(1.02);
+}
+.mob-group-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.mob-group-count {
+  background: #1e40af;
+  color: white;
+  border-radius: 9999px;
+  font-size: 0.72rem;
+  padding: 1px 6px;
+  font-weight: 700;
+}
+
+.mob-no-fw {
+  font-size: 0.72rem;
+  opacity: 0.65;
+  font-weight: 400;
+}
+
+/* ── Filter bar ──────────────────────────────────────────────────── */
+.mob-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 1rem;
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+  flex-wrap: wrap;
+}
+
+.mob-filter-label {
+  font-size: 0.85rem;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.mob-rssi-select {
+  padding: 0.3rem 0.5rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.mob-show-done-label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: #374151;
+  cursor: pointer;
+  user-select: none;
+  margin-left: auto;
+}
+
+/* ── Tab bar ─────────────────────────────────────────────────────── */
+.mob-tab-bar {
+  display: flex;
+  border-bottom: 2px solid #e5e7eb;
+  background: #f9fafb;
+}
+
+.mob-tab {
+  flex: 1;
+  padding: 0.65rem 0.25rem;
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  font-size: 0.9rem;
+  font-family: inherit;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+}
+
+.mob-tab-active {
+  color: #1e40af;
+  font-weight: 600;
+  border-bottom-color: #3b82f6;
+  background: #fff;
+}
+
+.mob-tab:hover:not(.mob-tab-active) { background: #f3f4f6; }
+
+.tab-count {
+  background: #3b82f6;
+  color: white;
+  border-radius: 9999px;
+  font-size: 0.68rem;
+  padding: 1px 6px;
+  font-weight: 700;
+}
+
+.tab-count-done {
+  background: #16a34a;
+}
+
+/* ── List container ──────────────────────────────────────────────── */
+.mob-list {
+  padding: 0.75rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+/* ── Device card ─────────────────────────────────────────────────── */
+.mob-device-card,
+.mob-queue-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+
+.mob-card-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.mob-card-top { font-size: 0.95rem; }
+
+/* Card color states */
+.card-queued  { background: rgba(96, 165, 250, 0.12); border-color: #93c5fd; }
+.card-success { background: rgba(34, 197, 94, 0.1);   border-color: #86efac; }
+.card-warn    { background: rgba(250, 204, 21, 0.12);  border-color: #fde047; }
+.card-failed  { background: rgba(239, 68, 68, 0.1);   border-color: #fca5a5; }
+
+/* ── Device name / MAC / RSSI ────────────────────────────────────── */
+.mob-device-name {
+  flex: 1;
+  font-size: 0.9rem;
+  color: #374151;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mob-mac {
+  font-family: monospace;
+  font-size: 0.82rem;
+  color: #6b7280;
+  flex: 1;
+}
+
+.mob-rssi {
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.rssi-weak { color: #dc2626; }
+.rssi-ok   { color: #16a34a; }
+
+.mob-lock { font-size: 0.9rem; }
+
+/* ── Type badge ──────────────────────────────────────────────────── */
+.type-badge {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 5px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  background: #dbeafe;
+  color: #1e40af;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.type-badge-unknown { background: #f3f4f6; color: #6b7280; }
+
+/* ── Inline progress ─────────────────────────────────────────────── */
+.mob-inline-progress {
+  position: relative;
+  flex: 1;
+  min-width: 80px;
+  height: 18px;
+  background: #e5e7eb;
+  border-radius: 9px;
+  overflow: hidden;
+}
+.mob-inline-bar {
+  position: absolute;
+  top: 0; left: 0;
+  height: 100%;
+  background: #3b82f6;
+  border-radius: 9px;
+  transition: width 0.4s ease-in-out;
+}
+.mob-inline-pct {
+  position: absolute;
+  width: 100%;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: #1e3a5f;
+  line-height: 18px;
+  mix-blend-mode: multiply;
+}
+
+.mob-status-text {
+  font-size: 0.8rem;
+  color: #1e40af;
+  white-space: nowrap;
+}
+.mob-status-queued {
+  font-size: 0.8rem;
+  color: #92400e;
+  background: #fef3c7;
+  padding: 1px 7px;
+  border-radius: 9999px;
+}
+
+.mob-fw-ver {
+  font-size: 0.8rem;
+  color: #6b7280;
+  font-family: monospace;
+}
+
+/* ── Queue + Queue action button ─────────────────────────────────── */
+.mob-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.25rem;
+}
+
+.mob-queue-single-btn {
+  padding: 0.35rem 0.9rem;
+  background: #dbeafe;
+  color: #1e40af;
+  border: 1px solid #93c5fd;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.mob-queue-single-btn:hover:not(:disabled) { background: #bfdbfe; }
+.mob-queue-single-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+  background: #f3f4f6;
+  color: #9ca3af;
+  border-color: #e5e7eb;
+}
+
+/* ── Status pills ────────────────────────────────────────────────── */
+.status-pill {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 9999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.pill-queued   { background: #fef3c7; color: #92400e; }
+.pill-progress { background: #dbeafe; color: #1e40af; }
+.pill-failed   { background: #fee2e2; color: #991b1b; }
+
+/* ── Big progress bar (queue tab) ────────────────────────────────── */
+.mob-queue-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.mob-big-progress {
+  position: relative;
+  flex: 1;
+  height: 22px;
+  background: #e5e7eb;
+  border-radius: 11px;
+  overflow: hidden;
+}
+.mob-big-bar {
+  position: absolute;
+  top: 0; left: 0;
+  height: 100%;
+  background: #4ade80;
+  border-radius: 11px;
+  transition: width 0.4s ease-in-out;
+}
+.mob-big-bar-fail { background: #f87171; }
+.mob-big-pct {
+  position: absolute;
+  width: 100%;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #1e3a5f;
+  line-height: 22px;
+  mix-blend-mode: multiply;
+}
+
+.mob-speed {
+  font-size: 0.75rem;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+/* ── Done result badges ──────────────────────────────────────────── */
+.dev-status-result {
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 9999px;
+}
+.dev-status-success { background: #d1fae5; color: #065f46; }
+.dev-status-warn    { background: #fef9c3; color: #713f12; }
+.dev-status-failed  { background: #fee2e2; color: #991b1b; }
+
+/* ── Firmware tab ────────────────────────────────────────────────── */
+.mob-fw-section { padding-top: 0.5rem; }
+
+.mob-fw-hint {
+  font-size: 0.85rem;
+  color: #6b7280;
+  margin: 0 0 0.75rem;
+  padding: 0.6rem 0.75rem;
+  background: #f0f9ff;
+  border-radius: 8px;
+  border-left: 3px solid #7dd3fc;
+}
+
+.mob-fw-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 0.6rem 0.75rem;
+  margin-bottom: 0.4rem;
+}
+
+.mob-fw-select {
+  flex: 1;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-family: monospace;
+  cursor: pointer;
+}
+
+.mob-latest-badge {
+  font-size: 0.72rem;
+  background: #d1fae5;
+  color: #065f46;
+  padding: 1px 7px;
+  border-radius: 9999px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ── Empty state ─────────────────────────────────────────────────── */
+.mob-empty {
+  text-align: center;
+  color: #9ca3af;
+  font-style: italic;
+  padding: 2rem 1rem;
+  font-size: 0.9rem;
+}
+
+/* ── Confirmation overlay ────────────────────────────────────────── */
+.mob-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 200;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+.mob-confirm-box {
+  background: #fff;
+  border-radius: 20px 20px 0 0;
+  padding: 1.5rem 1.25rem 2rem;
+  width: 100%;
+  max-width: 480px;
+  box-shadow: 0 -4px 24px rgba(0,0,0,0.18);
+}
+
+.mob-confirm-title {
+  margin: 0 0 0.5rem;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #1e3a5f;
+}
+
+.mob-confirm-body {
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+  color: #374151;
+}
+
+.mob-confirm-fw-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 1.25rem;
+}
+
+.mob-confirm-fw-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  background: #f9fafb;
+  border-radius: 8px;
+}
+
+.mob-confirm-fw-ver {
+  flex: 1;
+  font-family: monospace;
+  font-size: 0.88rem;
+  color: #374151;
+}
+
+.mob-confirm-count {
+  font-size: 0.82rem;
+  color: #6b7280;
+  font-weight: 600;
+}
+
+.mob-confirm-btns {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.mob-confirm-yes {
+  flex: 1;
+  padding: 0.75rem;
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  font-size: 1rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.mob-confirm-yes:hover { opacity: 0.9; }
+
+.mob-confirm-no {
+  flex: 1;
+  padding: 0.75rem;
+  background: #f3f4f6;
+  color: #374151;
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+  font-size: 1rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.mob-confirm-no:hover { background: #e5e7eb; }

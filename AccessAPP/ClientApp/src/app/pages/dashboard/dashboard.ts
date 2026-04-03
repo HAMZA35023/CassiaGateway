@@ -12,6 +12,7 @@ import { DeviceStorageService, FirmwareProgress } from '../../services/device-st
 import { ApiService } from '../../services/api.service';
 import { Router, RouterModule } from '@angular/router';
 import { finalize } from 'rxjs/operators';
+import { LayoutService } from '../../services/layout.service';
 
 type RowColor = 'queued' | 'failed' | 'success' | 'warn' | 'nofwread' | '';
 
@@ -76,7 +77,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
     private apiService: ApiService,
     private dialog: MatDialog,
     private deviceStorageService: DeviceStorageService,
-    private router: Router
+    private router: Router,
+    private layoutService: LayoutService
   ) {}
 
   ngOnInit(): void {
@@ -566,4 +568,9 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   viewLogs(): void { this.router.navigate(['/logs-dashboard']); }
+
+  switchToMobile(): void {
+    this.layoutService.setLayout('mobile');
+    this.router.navigate(['/mobile-dashboard']);
+  }
 }
