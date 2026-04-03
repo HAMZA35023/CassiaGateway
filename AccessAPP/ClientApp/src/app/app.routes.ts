@@ -24,5 +24,10 @@ export const routes: Routes = [
     path: 'led-range',
     loadComponent: () =>
       import('./pages/led-range/led-range').then(m => m.LedRangeComponent)
+  },
+  {
+    path: 'mobile-dashboard',
+    loadComponent: () =>
+      import('./pages/mobile-dashboard/mobile-dashboard').then(m => m.MobileDashboardComponent)
   }
 ];

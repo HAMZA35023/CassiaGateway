@@ -1,0 +1,221 @@
+<!-- ── Sticky header ────────────────────────────────────────────── -->
+<div class="mob-header">
+  <span class="mob-title">Firmware Updater</span>
+  <button class="mob-desktop-btn" (click)="switchToDesktop()" title="Switch to Desktop View">
+    🖥 Desktop
+  </button>
+</div>
+
+<!-- ── Loading overlay ─────────────────────────────────────────── -->
+<div class="loader-overlay" *ngIf="isLoading">
+  <div class="dots-loader"><span></span><span></span><span></span></div>
+</div>
+
+<!-- ── Quick-action buttons ────────────────────────────────────── -->
+<div class="mob-quick-actions">
+  <button *ngFor="let g of upgradeGroups"
+          class="mob-group-btn"
+          [disabled]="!hasAnyFirmware(g.types)"
+          (click)="queueGroup(g.label, g.types)">
+    Queue {{ g.label }}
+    <span class="mob-group-count" *ngIf="countEligible(g.types) as n">{{ n }}</span>
+    <span class="mob-no-fw" *ngIf="!hasAnyFirmware(g.types)">no fw</span>
+  </button>
+</div>
+
+<!-- ── Filter bar ───────────────────────────────────────────────── -->
+<div class="mob-filter-bar">
+  <label class="mob-filter-label">Min RSSI</label>
+  <select [(ngModel)]="minRssi" (ngModelChange)="applyFilters()" class="mob-rssi-select">
+    <option *ngFor="let opt of rssiOptions" [value]="opt.value">{{ opt.label }}</option>
+  </select>
+
+  <label class="mob-show-done-label">
+    <input type="checkbox" [(ngModel)]="showCompleted" (ngModelChange)="applyFilters()" />
+    Show completed
+  </label>
+</div>
+
+<!-- ── Inner tab bar ─────────────────────────────────────────────── -->
+<div class="mob-tab-bar">
+  <button class="mob-tab" [class.mob-tab-active]="activeTab === 'devices'" (click)="activeTab = 'devices'">
+    Devices
+    <span class="tab-count" *ngIf="visibleDevices.length">{{ visibleDevices.length }}</span>
+  </button>
+  <button class="mob-tab" [class.mob-tab-active]="activeTab === 'queue'" (click)="activeTab = 'queue'">
+    Queue
+    <span class="tab-count" *ngIf="queueItems.length">{{ queueItems.length }}</span>
+  </button>
+  <button class="mob-tab" [class.mob-tab-active]="activeTab === 'done'" (click)="activeTab = 'done'">
+    Done
+    <span class="tab-count tab-count-done" *ngIf="doneItems.length">{{ doneItems.length }}</span>
+  </button>
+  <button class="mob-tab" [class.mob-tab-active]="activeTab === 'fw'" (click)="activeTab = 'fw'">
+    Firmware
+  </button>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- DEVICES TAB                                                    -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div *ngIf="activeTab === 'devices'" class="mob-list">
+
+  <div *ngFor="let device of visibleDevices; trackBy: trackByMac"
+       class="mob-device-card"
+       [ngClass]="getCardColorClass(device)">
+
+    <div class="mob-card-row mob-card-top">
+      <span class="type-badge" [class.type-badge-unknown]="device.version === 'Unknown'">
+        {{ device.version }}
+      </span>
+      <span class="mob-device-name">{{ device.Name || '—' }}</span>
+      <span class="mob-rssi" [class.rssi-weak]="device.rssi < -75" [class.rssi-ok]="device.rssi >= -75">
+        {{ device.rssi }} dBm
+      </span>
+    </div>
+
+    <div class="mob-card-row">
+      <span class="mob-mac">{{ device.mac }}</span>
+      <span class="mob-lock" *ngIf="device.isLocked" title="Locked">🔒</span>
+    </div>
+
+    <!-- Inline progress when upgrading -->
+    <ng-container *ngIf="getProgress(device) as prog">
+      <div class="mob-card-row" *ngIf="prog.progress > 0 || prog.status === 'Queued'">
+        <div class="mob-inline-progress" *ngIf="prog.progress > 0">
+          <div class="mob-inline-bar" [style.width.%]="prog.progress"></div>
+          <span class="mob-inline-pct">{{ prog.progress | number:'1.0-0' }}%</span>
+        </div>
+        <span class="mob-status-text" [class.mob-status-queued]="prog.status === 'Queued'">
+          {{ prog.status === 'Queued' ? 'Queued' : prog.status }}
+        </span>
+      </div>
+      <div class="mob-card-row" *ngIf="prog.status === 'Device Upgrade Completed.'">
+        <span class="dev-status-result"
+              [class.dev-status-success]="prog.finalResult === 'Success'"
+              [class.dev-status-warn]="prog.finalResult === 'Warn'"
+              [class.dev-status-failed]="prog.finalResult === 'Failed'">
+          {{ prog.finalResult }}
+        </span>
+        <span class="mob-fw-ver">→ {{ prog.targetFirmwareVersion }}</span>
+      </div>
+    </ng-container>
+
+    <div class="mob-card-actions">
+      <button class="mob-queue-single-btn"
+              (click)="queueSingle(device)"
+              [disabled]="isDeviceActive(device)">
+        {{ isDeviceActive(device) ? 'In queue' : '+ Queue' }}
+      </button>
+    </div>
+  </div>
+
+  <div *ngIf="!visibleDevices.length && !isLoading" class="mob-empty">
+    No devices in range
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- QUEUE TAB                                                      -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div *ngIf="activeTab === 'queue'" class="mob-list">
+
+  <div *ngFor="let item of queueItems; trackBy: trackByMac" class="mob-queue-card">
+    <div class="mob-card-row mob-card-top">
+      <span class="type-badge">{{ item.detectorType || '?' }}</span>
+      <span class="mob-mac">{{ item.macAddress }}</span>
+      <span class="status-pill" [ngClass]="getQueueStatusClass(item)">{{ item.status }}</span>
+    </div>
+
+    <div class="mob-card-row" *ngIf="item.targetFirmwareVersion">
+      <span class="mob-fw-ver">Target: {{ item.targetFirmwareVersion }}</span>
+    </div>
+
+    <div class="mob-queue-progress" *ngIf="item.progress > 0">
+      <div class="mob-big-progress">
+        <div class="mob-big-bar"
+             [class.mob-big-bar-fail]="(item.finalResult ?? '') === 'Failed'"
+             [style.width.%]="item.progress">
+        </div>
+        <span class="mob-big-pct">{{ item.progress | number:'1.0-0' }}%</span>
+      </div>
+      <span class="mob-speed" *ngIf="item.speedPctPerMin">
+        {{ item.speedPctPerMin | number:'1.1-1' }} %/min
+      </span>
+    </div>
+  </div>
+
+  <div *ngIf="!queueItems.length" class="mob-empty">Queue is empty</div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- DONE TAB                                                       -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div *ngIf="activeTab === 'done'" class="mob-list">
+
+  <div *ngFor="let item of doneItems; trackBy: trackByMac"
+       class="mob-device-card"
+       [ngClass]="getDoneClass(item)">
+    <div class="mob-card-row mob-card-top">
+      <span class="type-badge">{{ item.detectorType || '?' }}</span>
+      <span class="mob-mac">{{ item.macAddress }}</span>
+      <span class="dev-status-result"
+            [class.dev-status-success]="item.finalResult === 'Success'"
+            [class.dev-status-warn]="item.finalResult === 'Warn'"
+            [class.dev-status-failed]="item.finalResult === 'Failed'">
+        {{ item.finalResult }}
+      </span>
+    </div>
+    <div class="mob-card-row" *ngIf="item.targetFirmwareVersion">
+      <span class="mob-fw-ver">→ {{ item.targetFirmwareVersion }}</span>
+    </div>
+  </div>
+
+  <div *ngIf="!doneItems.length" class="mob-empty">No completed upgrades yet</div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- FIRMWARE TAB                                                   -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div *ngIf="activeTab === 'fw'" class="mob-list mob-fw-section">
+  <p class="mob-fw-hint">
+    Quick-action buttons always use the version selected here.
+    Change from <strong>latest</strong> only when needed.
+  </p>
+
+  <div *ngFor="let type of fwTypeKeys" class="mob-fw-row">
+    <span class="type-badge">{{ type }}</span>
+    <select [(ngModel)]="selectedFirmwareByType[type]" class="mob-fw-select">
+      <option *ngFor="let v of firmwareMap[type]" [value]="v">{{ v }}</option>
+    </select>
+    <span class="mob-latest-badge" *ngIf="isLatestSelected(type)">latest</span>
+  </div>
+
+  <div *ngIf="!fwTypeKeys.length" class="mob-empty">No firmware uploaded yet</div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- CONFIRMATION OVERLAY                                           -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div class="mob-confirm-overlay" *ngIf="showConfirmation" (click)="cancelUpgrade()">
+  <div class="mob-confirm-box" (click)="$event.stopPropagation()">
+    <h3 class="mob-confirm-title">Queue {{ pendingLabel }}?</h3>
+    <p class="mob-confirm-body">
+      {{ pendingDevices.length }} device{{ pendingDevices.length !== 1 ? 's' : '' }} will be queued for firmware upgrade.
+    </p>
+
+    <!-- Per-type firmware summary -->
+    <div class="mob-confirm-fw-list">
+      <div *ngFor="let entry of pendingFwSummary" class="mob-confirm-fw-row">
+        <span class="type-badge">{{ entry.type }}</span>
+        <span class="mob-confirm-fw-ver">{{ entry.firmware }}</span>
+        <span class="mob-confirm-count">× {{ entry.count }}</span>
+      </div>
+    </div>
+
+    <div class="mob-confirm-btns">
+      <button class="mob-confirm-yes" (click)="confirmUpgrade()">Confirm</button>
+      <button class="mob-confirm-no" (click)="cancelUpgrade()">Cancel</button>
+    </div>
+  </div>
+</div>

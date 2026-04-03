@@ -7,8 +7,11 @@
 <div class="dashboard-wrapper">
   <div class="dashboard-header">
     <h1 class="dashboard-title">Detector Upgrades</h1>
-    <button class="settings-btn" (click)="setTab('runtime')" title="Runtime Variables"
-      [class.settings-btn-active]="activeTab === 'runtime'">⚙</button>
+    <div style="display:flex;gap:0.5rem;align-items:center">
+      <button class="settings-btn" (click)="switchToMobile()" title="Switch to Mobile View">📱</button>
+      <button class="settings-btn" (click)="setTab('runtime')" title="Runtime Variables"
+        [class.settings-btn-active]="activeTab === 'runtime'">⚙</button>
+    </div>
   </div>
 
   <!-- ── Tab bar ─────────────────────────────────────────────────────── -->
