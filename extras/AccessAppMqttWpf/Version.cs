@@ -2,5 +2,5 @@ namespace AccessAppMqttWpf;
 
 public static class AppInfo
 {
-    public const string AppVersion = "1.6.0";
+    public const string AppVersion = "1.6.2";
 }
