@@ -6,6 +6,7 @@ import { finalize } from 'rxjs/operators';
 import { ScannerService, ScannedDevice } from '../../services/scanner.service';
 import { FirmwareService } from '../../services/firmware.service';
 import { DeviceStorageService, FirmwareProgress } from '../../services/device-storage.service';
+import { ApiService } from '../../services/api.service';
 import { LayoutService } from '../../services/layout.service';
 
 interface MobileDevice {
@@ -17,11 +18,18 @@ interface MobileDevice {
   isLocked: boolean;
 }
 
+/** Parsed from the persistent upgrade log — survives backend reboots. */
+interface LogEntry {
+  result: string;       // 'Success' | 'Failed'
+  firmware: string;     // target firmware version
+  time: string;         // ISO-ish timestamp string from log
+}
+
 // Predefined upgrade groups shown as quick-action buttons
 const UPGRADE_GROUPS: { label: string; types: string[] }[] = [
-  { label: 'P46', types: ['P46'] },
-  { label: 'P47 + P48', types: ['P47', 'P48'] },
-  { label: 'P41 + P42', types: ['P41', 'P42'] },
+  { label: 'P46',        types: ['P46'] },
+  { label: 'P47 + P48',  types: ['P47', 'P48'] },
+  { label: 'P41 + P42',  types: ['P41', 'P42'] },
 ];
 
 @Component({
@@ -39,9 +47,7 @@ export class MobileDashboardComponent implements OnInit, OnDestroy {
 
   activeTab: 'devices' | 'queue' | 'done' | 'fw' = 'devices';
 
-  // All discovered devices
   allDevices: MobileDevice[] = [];
-  // Devices shown in the Devices tab (filtered)
   visibleDevices: MobileDevice[] = [];
 
   isLoading = true;
@@ -50,19 +56,23 @@ export class MobileDashboardComponent implements OnInit, OnDestroy {
   showCompleted = false;
 
   readonly rssiOptions = [
-    { label: 'All', value: -127 },
-    { label: '≥ -80 dBm', value: -80 },
-    { label: '≥ -75 dBm', value: -75 },
-    { label: '≥ -70 dBm', value: -70 },
-    { label: '≥ -65 dBm', value: -65 },
+    { label: 'All',       value: -127 },
+    { label: '≥ -80 dBm', value: -80  },
+    { label: '≥ -75 dBm', value: -75  },
+    { label: '≥ -70 dBm', value: -70  },
+    { label: '≥ -65 dBm', value: -65  },
   ];
 
-  // Firmware manifest: type → versions[] (sorted desc, [0] = latest)
   firmwareMap: { [type: string]: string[] } = {};
-  // Per-type selected firmware version (defaults to latest)
   selectedFirmwareByType: { [type: string]: string } = {};
 
   progressMap: Record<string, FirmwareProgress> = {};
+
+  /**
+   * Most recent completed upgrade per MAC, parsed from the persistent upgrade log.
+   * Populated once on init — survives backend reboots where progressMap would be empty.
+   */
+  logDoneMap = new Map<string, LogEntry>();
 
   showConfirmation = false;
   pendingDevices: { mac: string; version: string; selectedFirmware: string }[] = [];
@@ -72,11 +82,13 @@ export class MobileDashboardComponent implements OnInit, OnDestroy {
     private scanner: ScannerService,
     private firmware: FirmwareService,
     private storage: DeviceStorageService,
+    private api: ApiService,
     private router: Router,
     private layoutService: LayoutService
   ) {}
 
   ngOnInit(): void {
+    this.loadUpgradeLogs();
     this.loadDevices();
     this.intervals.push(setInterval(() => this.loadDevices(), 15000));
     this.loadFirmware();
@@ -91,6 +103,51 @@ export class MobileDashboardComponent implements OnInit, OnDestroy {
   switchToDesktop(): void {
     this.layoutService.setLayout('desktop');
     this.router.navigate(['/dashboard']);
+  }
+
+  // ── Persistent upgrade log ─────────────────────────────────────
+
+  /**
+   * Fetches the upgrade log text once on init and builds logDoneMap.
+   * For each MAC we keep only the most recent completed entry.
+   * This ensures completed devices are visible after a backend reboot.
+   */
+  private loadUpgradeLogs(): void {
+    this.api.getLogs().subscribe({
+      next: (text: string) => {
+        this.logDoneMap = this.parseLogToMap(text);
+        this.applyFilters();
+      },
+      error: () => { /* log unavailable — proceed with in-memory only */ }
+    });
+  }
+
+  private parseLogToMap(text: string): Map<string, LogEntry> {
+    const perMac = new Map<string, LogEntry>();
+
+    for (const line of text.split('\n')) {
+      // Only process completion lines — avoids logId-grouping complexity
+      if (!line.includes('Device Upgrade Completed.')) continue;
+
+      const time   = line.match(/time=([\d\-\.: ]+)/)?.[1]?.trim();
+      const mac    = line.match(/mac=([A-F0-9:]+)/i)?.[1];
+      const fw     = line.match(/\bfw=(\S+)/)?.[1] ?? '';
+      const status = line.match(/status=(\S+)/)?.[1]?.trim() ?? '';
+
+      if (!time || !mac) continue;
+
+      // status values from backend: 'Success' | 'Warn' | 'Failed'
+      const result = status === 'Success' ? 'Success'
+                   : status === 'Warn'    ? 'Warn'
+                   : 'Failed';
+
+      // Keep the most recent completion per MAC
+      const existing = perMac.get(mac);
+      if (!existing || time > existing.time)
+        perMac.set(mac, { result, firmware: fw, time });
+    }
+
+    return perMac;
   }
 
   // ── Devices ────────────────────────────────────────────────────
@@ -134,10 +191,7 @@ export class MobileDashboardComponent implements OnInit, OnDestroy {
     this.visibleDevices = this.allDevices.filter(d => {
       const rssiOk = this.minRssi === -127 || (d.rssi != null && d.rssi >= this.minRssi);
       if (!rssiOk) return false;
-      if (!this.showCompleted) {
-        const p = this.progressMap[d.mac];
-        if (p?.status === 'Device Upgrade Completed.') return false;
-      }
+      if (!this.showCompleted && this.isCompleted(d.mac)) return false;
       return true;
     });
   }
@@ -170,9 +224,7 @@ export class MobileDashboardComponent implements OnInit, OnDestroy {
     });
   }
 
-  get fwTypeKeys(): string[] {
-    return Object.keys(this.firmwareMap).sort();
-  }
+  get fwTypeKeys(): string[] { return Object.keys(this.firmwareMap).sort(); }
 
   isLatestSelected(type: string): boolean {
     const versions = this.firmwareMap[type];
@@ -199,6 +251,17 @@ export class MobileDashboardComponent implements OnInit, OnDestroy {
     return this.progressMap[device.mac];
   }
 
+  /**
+   * True when a device has a SUCCESSFUL completed upgrade.
+   * Failed / Warn devices are always shown so the user can re-queue them.
+   */
+  isCompleted(mac: string): boolean {
+    const p = this.progressMap[mac];
+    if (p?.status === 'Device Upgrade Completed.' && p.finalResult === 'Success') return true;
+    return this.logDoneMap.get(mac)?.result === 'Success';
+  }
+
+  /** True when the device is currently queued or being upgraded (this session only). */
   isDeviceActive(device: MobileDevice): boolean {
     const p = this.progressMap[device.mac];
     return !!p && p.status !== 'Device Upgrade Completed.';
@@ -210,29 +273,61 @@ export class MobileDashboardComponent implements OnInit, OnDestroy {
       .sort((a, b) => (a.status === 'Queued' ? 1 : 0) - (b.status === 'Queued' ? 1 : 0));
   }
 
+  /**
+   * Completed items for the Done tab.
+   * Merges live progressMap completions (current session) with the persistent log
+   * so the list survives a backend reboot. progressMap takes precedence for the
+   * same MAC (more up-to-date status).
+   */
   get doneItems(): FirmwareProgress[] {
-    return Object.values(this.progressMap)
-      .filter(p => p.status === 'Device Upgrade Completed.')
+    const items = new Map<string, FirmwareProgress>();
+
+    // Add log-based completions first (older/background data)
+    for (const [mac, entry] of this.logDoneMap) {
+      items.set(mac, {
+        macAddress: mac,
+        progress: 100,
+        status: 'Device Upgrade Completed.',
+        lastUpdated: entry.time,
+        showTick: true,
+        targetFirmwareVersion: entry.firmware,
+        finalResult: entry.result,
+      });
+    }
+
+    // Overwrite with live completions from this session (always more current)
+    for (const p of Object.values(this.progressMap)) {
+      if (p.status === 'Device Upgrade Completed.')
+        items.set(p.macAddress, p);
+    }
+
+    return [...items.values()]
       .sort((a, b) => (b.lastUpdated ?? '').localeCompare(a.lastUpdated ?? ''));
   }
 
   getCardColorClass(device: MobileDevice): string {
     const p = this.progressMap[device.mac];
-    if (!p) return '';
-    if (p.status === 'Device Upgrade Completed.') {
-      const r = (p.finalResult ?? '').toLowerCase();
-      if (r === 'success') return 'card-success';
-      if (r === 'warn') return 'card-warn';
-      return 'card-failed';
+    if (p) {
+      if (p.status === 'Device Upgrade Completed.') {
+        const r = (p.finalResult ?? '').toLowerCase();
+        if (r === 'success') return 'card-success';
+        if (r === 'warn')    return 'card-warn';
+        return 'card-failed';
+      }
+      if (p.status === 'Queued' || p.progress > 0) return 'card-queued';
     }
-    if (p.status === 'Queued' || p.progress > 0) return 'card-queued';
+    // Fall back to log entry if no live progress
+    const log = this.logDoneMap.get(device.mac);
+    if (log) return log.result === 'Success' ? 'card-success'
+                  : log.result === 'Warn'    ? 'card-warn'
+                  : 'card-failed';
     return '';
   }
 
   getDoneClass(item: FirmwareProgress): string {
     const r = (item.finalResult ?? '').toLowerCase();
     if (r === 'success') return 'card-success';
-    if (r === 'warn') return 'card-warn';
+    if (r === 'warn')    return 'card-warn';
     return 'card-failed';
   }
 
@@ -260,13 +355,11 @@ export class MobileDashboardComponent implements OnInit, OnDestroy {
       return;
     }
     const withFw = eligible.map(d => ({
-      mac: d.mac,
-      version: d.version,
+      mac: d.mac, version: d.version,
       selectedFirmware: this.selectedFirmwareByType[d.version] ?? ''
     }));
-    const noFw = withFw.filter(d => !d.selectedFirmware);
-    if (noFw.length) {
-      const missing = [...new Set(noFw.map(d => d.version))];
+    const missing = [...new Set(withFw.filter(d => !d.selectedFirmware).map(d => d.version))];
+    if (missing.length) {
       this.showToast('No firmware configured for: ' + missing.join(', ') + '. Check the Firmware tab.');
       return;
     }
@@ -296,7 +389,6 @@ export class MobileDashboardComponent implements OnInit, OnDestroy {
         targetFirmwareVersion: d.selectedFirmware, detectorType: d.version
       };
     });
-    // Map to shape expected by FirmwareService.bulkSensorUpgrade
     const devicesForService = this.pendingDevices.map(d => ({
       mac: d.mac, version: d.version, pin: '', sensorVersion: '',
       selectedFirmware: d.selectedFirmware
