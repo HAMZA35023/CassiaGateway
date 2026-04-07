@@ -1824,7 +1824,8 @@
 
 
 <!-- ===== Host BLE Scan ===== -->
-<TabItem Header="Host BLE Scan">
+<TabItem Header="Host BLE Scan"
+         Visibility="{Binding PowerUserOrDeveloper, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
     <Border Style="{StaticResource Card}">
         <DockPanel>
 
@@ -2127,7 +2128,8 @@
 
         
             <!-- ===== Notes ===== -->
-            <TabItem Header="Notes">
+            <TabItem Header="Notes"
+                     Visibility="{Binding PowerUserOrDeveloper, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
                 <Border Style="{StaticResource Card}">
                     <DockPanel>
                         <!-- Buttons -->
@@ -2179,8 +2181,8 @@
             </TabItem>
 
             <!-- ===== Developer (config check) ===== -->
-            <TabItem Header="Developer" x:Name="DeveloperTab"
-                     Visibility="{Binding DeveloperModeUnlocked, Converter={StaticResource BoolToVis}, TargetNullValue=Collapsed, FallbackValue=Collapsed}">
+            <TabItem Header="Validate-Config" x:Name="DeveloperTab"
+                     Visibility="{Binding PowerUserOrDeveloper, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
                 <Border Style="{StaticResource Card}">
                     <DockPanel>
 

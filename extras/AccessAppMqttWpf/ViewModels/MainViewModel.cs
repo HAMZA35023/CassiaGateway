@@ -331,6 +331,13 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string statusBarText = "Ready";
     [ObservableProperty] private string totalSpeedStatusText = "Speed: -- %/min";
     [ObservableProperty] private bool developerModeUnlocked = false;
+    [ObservableProperty] private bool powerUserModeUnlocked = false;
+
+    // True when either PowerUser or Developer mode is active — used for tab/feature visibility.
+    // Developer mode implicitly grants all PowerUser features.
+    public bool PowerUserOrDeveloper => PowerUserModeUnlocked || DeveloperModeUnlocked;
+
+    partial void OnPowerUserModeUnlockedChanged(bool value) => OnPropertyChanged(nameof(PowerUserOrDeveloper));
 
     // ---- LED range visualization (connect/login/LED by RSSI) ----
     public ObservableCollection<LedRangeDeviceRow> LedRangeConnectedDevices { get; } = new();
