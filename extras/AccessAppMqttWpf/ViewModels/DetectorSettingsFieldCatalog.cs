@@ -1027,7 +1027,8 @@ internal static class DetectorSettingsFieldCatalog
             new DetectorFieldOption(1, "DLZ"),
             new DetectorFieldOption(2, "SEZ"),
             new DetectorFieldOption(3, "MUZ"),
-            new DetectorFieldOption(4, "HVAC")
+            new DetectorFieldOption(4, "HVAC"),
+            new DetectorFieldOption(5, "LightLevelMemory")
         };
 
     private static IReadOnlyList<DetectorFieldOption> BuildDaliArcLevelOptions(bool includeMask)
