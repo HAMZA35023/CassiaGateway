@@ -961,7 +961,17 @@ Interlocked.Decrement(ref UpgradeDevicesInProgress);
             {
                 try
                 {
-                    await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, mac, 0, chip: GetChipForMac(mac)).ConfigureAwait(false);
+                    if (RuntimeVariables.RebootDetectorAfterUpgrade)
+                    {
+                        await Task.Delay(2000).ConfigureAwait(false);
+                        await RebootDeviceAsync(mac).ConfigureAwait(false);
+                        UpgradeLogger.Log(logId, mac, "Device rebooted after post-update settings", "Success", dev.FirmwareVersion);
+                        // Device drops BLE connection on reboot — no explicit disconnect needed.
+                    }
+                    else
+                    {
+                        await _connectService.DisconnectFromBleDevice(_gatewayIpAddress, mac, 0, chip: GetChipForMac(mac)).ConfigureAwait(false);
+                    }
                 }
                 catch
                 {
