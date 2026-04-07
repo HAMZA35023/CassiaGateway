@@ -480,6 +480,7 @@ namespace AccessAPP.Services
 
             bool ok = true;
             int writes = 0;
+            bool wroteUser = false, wroteWired = false, wroteDali = false, wroteBle = false, wroteDaliCommon = false;
 
             bool ShouldWrite(string? before, string? after)
                 => !writeOnlyChanged || !HexEquals(before, after);
@@ -495,7 +496,7 @@ namespace AccessAPP.Services
                 {
                     var r = await WriteWithRetryAsync(() => _ble.SetUserConfig(macAddress, target.UserConfigHex), "UserConfig").ConfigureAwait(false);
                     ok &= r;
-                    if (r) writes++;
+                    if (r) { writes++; wroteUser = true; }
                 }
             }
 
@@ -510,7 +511,7 @@ namespace AccessAPP.Services
                 {
                     var r = await WriteWithRetryAsync(() => _ble.SetWiredPushButtonList(macAddress, target.PushButtonsHex), "Wired PushButtons").ConfigureAwait(false);
                     ok &= r;
-                    if (r) writes++;
+                    if (r) { writes++; wroteWired = true; }
                 }
             }
 
@@ -525,7 +526,7 @@ namespace AccessAPP.Services
                 {
                     var r = await WriteWithRetryAsync(() => _ble.SetDaliPushButtonList(macAddress, target.DaliPushButtonsHex), "DALI PushButtons").ConfigureAwait(false);
                     ok &= r;
-                    if (r) writes++;
+                    if (r) { writes++; wroteDali = true; }
                 }
             }
 
@@ -540,7 +541,7 @@ namespace AccessAPP.Services
                 {
                     var r = await WriteWithRetryAsync(() => _ble.SetBLEPushButtonList(macAddress, target.BlePushButtonsHex), "BLE PushButtons").ConfigureAwait(false);
                     ok &= r;
-                    if (r) writes++;
+                    if (r) { writes++; wroteBle = true; }
                 }
             }
 
@@ -563,7 +564,7 @@ namespace AccessAPP.Services
                         () => _ble.SetDaliDeviceCommonParam(macAddress, target.DaliDeviceCommonParamHex, baselineHex),
                         "DALI Device Common Param").ConfigureAwait(false);
                     ok &= r;
-                    if (r) writes++;
+                    if (r) { writes++; wroteDaliCommon = true; }
                 }
             }
 
@@ -616,6 +617,47 @@ namespace AccessAPP.Services
                     ok &= r;
                     if (r) writes++;
                 }
+            }
+
+            // Read back and verify sections that were actually written.
+            if (ok && (wroteUser || wroteWired || wroteDali || wroteBle || wroteDaliCommon))
+            {
+                var verifyProfile = new SettingsBackupProfile(
+                    UserConfig:               wroteUser,
+                    WiredPushButtons:         wroteWired,
+                    DaliPushButtons:          wroteDali,
+                    DaliDeviceCommonParam:    wroteDaliCommon,
+                    BlePushButtons:           wroteBle,
+                    TunableWhiteList:         false,
+                    TunableWhitePreset:       false,
+                    TunableWhiteDefaultKelvin: false);
+
+                var verified = await CaptureSnapshotCoreAsync(macAddress, detectorType, firmwareVersion, verifyProfile).ConfigureAwait(false);
+
+                var mismatches = new List<string>();
+                if (wroteUser      && !HexEquals(verified.UserConfigHex,            target.UserConfigHex))
+                    mismatches.Add("UserConfig");
+                if (wroteWired     && !HexEquals(verified.PushButtonsHex,           target.PushButtonsHex))
+                    mismatches.Add("WiredPushButtons");
+                if (wroteDali      && !HexEquals(verified.DaliPushButtonsHex,       target.DaliPushButtonsHex))
+                    mismatches.Add("DaliPushButtons");
+                if (wroteDaliCommon && !HexEquals(verified.DaliDeviceCommonParamHex, target.DaliDeviceCommonParamHex))
+                    mismatches.Add("DaliDeviceCommonParam");
+                if (wroteBle       && !HexEquals(verified.BlePushButtonsHex,        target.BlePushButtonsHex))
+                    mismatches.Add("BlePushButtons");
+
+                if (mismatches.Count > 0)
+                {
+                    AppLog.Warn($"[SettingsPatch] Verify read-back mismatch for {macAddress}: {string.Join(", ", mismatches)}");
+                    return new ServiceResponse
+                    {
+                        Success = false,
+                        StatusCode = 500,
+                        Message = $"Detector settings write verification failed: {string.Join(", ", mismatches)} did not match after write."
+                    };
+                }
+
+                AppLog.Info($"[SettingsPatch] Verify read-back OK for {macAddress} ({writes} section(s)).");
             }
 
             return new ServiceResponse

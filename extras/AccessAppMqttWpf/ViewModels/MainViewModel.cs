@@ -788,7 +788,14 @@ public partial class MainViewModel : ObservableObject
             runDali102TotalNewScanAfterUpdate = profile.RunDali102TotalNewScanAfterUpdate;
             runDali103TotalNewScanAfterUpdate = profile.RunDali103TotalNewScanAfterUpdate;
 
-            var normalized = (profile.Settings ?? new DetectorSettingsPatchModel()).CloneNormalized();
+            // V2 profiles: recompute hex from FieldOverrides (source of truth) so stale Settings
+            // hex never silently drops fields that were added or changed since the last save.
+            DetectorSettingsPatchModel normalized;
+            if (profile.FieldOverrides?.Count > 0)
+                normalized = DetectorSettingsFieldCatalog.BuildPatchFromFieldOverrides(profile.FieldOverrides);
+            else
+                normalized = (profile.Settings ?? new DetectorSettingsPatchModel()).CloneNormalized();
+
             if (!normalized.HasAnyValue)
             {
                 if (!runDaliAddressAllToZone1AfterUpdate
