@@ -417,7 +417,12 @@ public partial class MainViewModel
         {
             var profileFw = NormaliseFwString(profile.FirmwareVersion.Trim());
             var fwKnown   = !string.IsNullOrWhiteSpace(deviceFw);
-            var fwMatch   = fwKnown && string.Equals(deviceFw, profileFw, StringComparison.OrdinalIgnoreCase);
+            // Strip leading 'v'/'V' before comparing — profile may store "v02.38" while
+            // the device response returns "02.38".
+            var fwMatch   = fwKnown && string.Equals(
+                deviceFw.TrimStart('v', 'V'),
+                profileFw.TrimStart('v', 'V'),
+                StringComparison.OrdinalIgnoreCase);
 
             fieldResults.Insert(0, new ConfigCheckFieldResult
             {
