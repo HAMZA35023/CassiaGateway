@@ -1,3 +1,4 @@
+using AccessAppMqttWpf.Models;
 using CommunityToolkit.Mvvm.ComponentModel;
 using System.Collections.ObjectModel;
 using System.Globalization;
@@ -1027,7 +1028,8 @@ internal static class DetectorSettingsFieldCatalog
             new DetectorFieldOption(1, "DLZ"),
             new DetectorFieldOption(2, "SEZ"),
             new DetectorFieldOption(3, "MUZ"),
-            new DetectorFieldOption(4, "HVAC")
+            new DetectorFieldOption(4, "HVAC"),
+            new DetectorFieldOption(5, "LightLevelMemory")
         };
 
     private static IReadOnlyList<DetectorFieldOption> BuildDaliArcLevelOptions(bool includeMask)
@@ -1281,5 +1283,71 @@ internal static class DetectorSettingsFieldCatalog
         }
 
         return list;
+    }
+
+    /// <summary>
+    /// Rebuilds a <see cref="DetectorSettingsPatchModel"/> from FieldOverrides (V2 profile source
+    /// of truth), bypassing potentially stale Settings hex.
+    /// </summary>
+    public static DetectorSettingsPatchModel BuildPatchFromFieldOverrides(
+        IReadOnlyList<DetectorSettingsFieldOverrideModel> overrides)
+    {
+        if (overrides == null || overrides.Count == 0)
+            return new DetectorSettingsPatchModel();
+
+        var userRows   = UserConfigFields.Select(d => new DetectorFieldRowViewModel(d)).ToList();
+        var wiredRows  = WiredPushButtonsFields.Select(d => new DetectorFieldRowViewModel(d)).ToList();
+        var bleRows    = BlePushButtonsFields.Select(d => new DetectorFieldRowViewModel(d)).ToList();
+        var daliRows   = DaliPushButtonsFields.Select(d => new DetectorFieldRowViewModel(d)).ToList();
+        var commonRows = DaliDeviceCommonParamFields.Select(d => new DetectorFieldRowViewModel(d)).ToList();
+
+        var rowByKey = userRows.Concat(wiredRows).Concat(bleRows).Concat(daliRows).Concat(commonRows)
+            .ToDictionary(r => r.Key, r => r, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var ov in overrides)
+        {
+            if (ov == null || string.IsNullOrWhiteSpace(ov.Key))
+                continue;
+            if (!rowByKey.TryGetValue(ov.Key, out var row))
+                continue;
+            if (row.TryImportProfileValue(ov.Value))
+                row.IsSelected = true;
+        }
+
+        var patch = new DetectorSettingsPatchModel();
+
+        BuildSectionFromRows(userRows,   UserConfigLength,            out var uVal, out var uMask);
+        BuildSectionFromRows(wiredRows,  WiredPushButtonsLength,      out var wVal, out var wMask);
+        BuildSectionFromRows(bleRows,    BlePushButtonsLength,        out var bVal, out var bMask);
+        BuildSectionFromRows(daliRows,   DaliPushButtonsLength,       out var dVal, out var dMask);
+        BuildSectionFromRows(commonRows, DaliDeviceCommonParamLength, out var cVal, out var cMask);
+
+        if (uVal != null) { patch.UserConfigHex = uVal; patch.UserConfigMaskHex = uMask; }
+        if (wVal != null) { patch.PushButtonsHex = wVal; patch.PushButtonsMaskHex = wMask; }
+        if (bVal != null) { patch.BlePushButtonsHex = bVal; patch.BlePushButtonsMaskHex = bMask; }
+        if (dVal != null) { patch.DaliPushButtonsHex = dVal; patch.DaliPushButtonsMaskHex = dMask; }
+        if (cVal != null) { patch.DaliDeviceCommonParamHex = cVal; patch.DaliDeviceCommonParamMaskHex = cMask; }
+
+        return patch.CloneNormalized();
+    }
+
+    private static void BuildSectionFromRows(
+        IReadOnlyList<DetectorFieldRowViewModel> rows,
+        int sectionLength,
+        out string? valueHex,
+        out string? maskHex)
+    {
+        var selected = rows.Where(r => r.IsSelected).ToList();
+        if (selected.Count == 0) { valueHex = null; maskHex = null; return; }
+
+        var valueBytes = new byte[sectionLength];
+        var maskBytes  = new byte[sectionLength];
+        foreach (var row in selected)
+            row.TryApplyTo(valueBytes, maskBytes, out _);
+
+        if (maskBytes.All(b => b == 0)) { valueHex = null; maskHex = null; return; }
+
+        valueHex = Convert.ToHexString(valueBytes);
+        maskHex  = Convert.ToHexString(maskBytes);
     }
 }
