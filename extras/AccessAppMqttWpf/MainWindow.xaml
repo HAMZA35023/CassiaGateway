@@ -2187,13 +2187,10 @@
                         <!-- Toolbar -->
                         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
                             <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center">
-                                <Button Style="{StaticResource GhostButton}" Padding="12,6" Margin="0,0,8,0"
-                                        Command="{Binding RefreshConfigCheckDevicesCommand}"
-                                        ToolTip="Merge current discovered devices into the list (auto-runs every 5 s)">
-                                    Refresh
-                                </Button>
+                                <!-- Validate selected — always visible, disabled while running -->
                                 <Button Padding="12,6" Margin="0,0,8,0"
-                                        Command="{Binding StartConfigCheckCommand}">
+                                        Command="{Binding StartConfigCheckCommand}"
+                                        ToolTip="Validate all checked devices once">
                                     <Button.Style>
                                         <Style TargetType="Button" BasedOn="{StaticResource PrimaryButton}">
                                             <Style.Triggers>
@@ -2203,12 +2200,55 @@
                                             </Style.Triggers>
                                         </Style>
                                     </Button.Style>
-                                    Check selected
+                                    Validate selected
                                 </Button>
-                                <Button Style="{StaticResource DangerButton}" Padding="12,6" Margin="0,0,8,0"
+                                <!-- Start Auto-check: visible only when auto is OFF -->
+                                <Button Padding="12,6" Margin="0,0,8,0"
+                                        Command="{Binding ToggleConfigCheckAutoCommand}"
+                                        ToolTip="Start auto-checking: devices with a profile and good RSSI are checked automatically every 5 s">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource SuccessButton}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding ConfigCheckAutoActive}" Value="True">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                    Start Auto-check
+                                </Button>
+                                <!-- Stop Auto-check: visible only when auto is ON -->
+                                <Button Padding="12,6" Margin="0,0,8,0"
+                                        Command="{Binding ToggleConfigCheckAutoCommand}"
+                                        ToolTip="Stop automatic checking">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource DangerButton}">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding ConfigCheckAutoActive}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                    Stop Auto-check
+                                </Button>
+                                <!-- Cancel in-progress run — always visible, red only while running -->
+                                <Button Padding="12,6" Margin="0,0,8,0"
                                         Command="{Binding StopConfigCheckCommand}"
-                                        IsEnabled="{Binding ConfigCheckRunning}">
-                                    Stop
+                                        ToolTip="Cancel the current validation run">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource GhostButton}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding ConfigCheckRunning}" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource BadBrush}"/>
+                                                    <Setter Property="Foreground" Value="White"/>
+                                                    <Setter Property="BorderBrush" Value="Transparent"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                    Cancel
                                 </Button>
                                 <Button Style="{StaticResource GhostButton}" Padding="12,6" Margin="0,0,16,0"
                                         Command="{Binding ClearCheckedConfigDevicesCommand}"

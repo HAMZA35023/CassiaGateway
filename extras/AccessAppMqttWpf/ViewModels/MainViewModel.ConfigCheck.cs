@@ -24,6 +24,9 @@ public partial class MainViewModel
     [ObservableProperty] private string configCheckStatus = "Ready";
     [ObservableProperty] private bool configCheckRunning;
 
+    // When true: auto-check newly discovered devices that have a profile and good RSSI
+    [ObservableProperty] private bool configCheckAutoActive;
+
     private CancellationTokenSource? _configCheckCts;
     private DispatcherTimer? _configCheckRefreshTimer;
 
@@ -36,7 +39,7 @@ public partial class MainViewModel
         {
             Interval = TimeSpan.FromSeconds(5)
         };
-        _configCheckRefreshTimer.Tick += (_, _) => MergeConfigCheckDevices();
+        _configCheckRefreshTimer.Tick += (_, _) => OnConfigCheckTimerTick();
         _configCheckRefreshTimer.Start();
     }
 
@@ -46,10 +49,34 @@ public partial class MainViewModel
         _configCheckRefreshTimer = null;
     }
 
+    private void OnConfigCheckTimerTick()
+    {
+        MergeConfigCheckDevices();
+
+        // When auto-active: kick off a check if there are pending selected rows
+        if (ConfigCheckAutoActive && !ConfigCheckRunning)
+        {
+            var hasPending = ConfigCheckRows.Any(r => r.IsSelected && !r.IsRunning);
+            if (hasPending)
+                _ = StartConfigCheckAsync();
+        }
+    }
+
     // ─── Commands ─────────────────────────────────────────────────────────────
 
     [RelayCommand]
+    private void ToggleConfigCheckAuto()
+    {
+        ConfigCheckAutoActive = !ConfigCheckAutoActive;
+    }
+
+    [RelayCommand]
     private async Task StartConfigCheck()
+    {
+        await StartConfigCheckAsync().ConfigureAwait(false);
+    }
+
+    private async Task StartConfigCheckAsync()
     {
         if (ConfigCheckRunning) return;
 
