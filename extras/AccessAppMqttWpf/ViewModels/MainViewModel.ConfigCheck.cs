@@ -10,13 +10,44 @@ namespace AccessAppMqttWpf.ViewModels;
 
 public partial class MainViewModel
 {
+    // ──────────────────────────────────────────────────
+    // How many devices one Cassia can handle in parallel
+    // ──────────────────────────────────────────────────
+    private const int ConfigCheckWorkersPerCassia = 2;
+
+    // RSSI threshold above which a newly discovered device is auto-checked
+    private const int ConfigCheckAutoCheckRssiThreshold = -75;
+
     public ObservableCollection<ConfigCheckDeviceRow> ConfigCheckRows { get; } = new();
 
     [ObservableProperty] private ConfigCheckDeviceRow? selectedConfigCheckRow;
     [ObservableProperty] private string configCheckStatus = "Ready";
     [ObservableProperty] private bool configCheckRunning;
+    [ObservableProperty] private bool configCheckVerifyFirmware;
 
     private CancellationTokenSource? _configCheckCts;
+    private DispatcherTimer? _configCheckRefreshTimer;
+
+    // ─── Timer-based auto-refresh ──────────────────────────────────────────────
+
+    internal void StartConfigCheckAutoRefresh()
+    {
+        if (_configCheckRefreshTimer != null) return;
+        _configCheckRefreshTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(5)
+        };
+        _configCheckRefreshTimer.Tick += (_, _) => MergeConfigCheckDevices();
+        _configCheckRefreshTimer.Start();
+    }
+
+    internal void StopConfigCheckAutoRefresh()
+    {
+        _configCheckRefreshTimer?.Stop();
+        _configCheckRefreshTimer = null;
+    }
+
+    // ─── Commands ─────────────────────────────────────────────────────────────
 
     [RelayCommand]
     private async Task StartConfigCheck()
@@ -54,9 +85,102 @@ public partial class MainViewModel
     [RelayCommand]
     private void RefreshConfigCheckDevices()
     {
+        MergeConfigCheckDevices();
+    }
+
+    [RelayCommand]
+    private void ClearCheckedConfigDevices()
+    {
         Application.Current.Dispatcher.Invoke(() =>
         {
-            ConfigCheckRows.Clear();
+            var toRemove = ConfigCheckRows
+                .Where(r => r.IsDone || r.IsSkipped)
+                .ToList();
+            foreach (var r in toRemove)
+                ConfigCheckRows.Remove(r);
+
+            ConfigCheckStatus = $"{ConfigCheckRows.Count} device(s) remaining.";
+        }, DispatcherPriority.Background);
+    }
+
+    [RelayCommand]
+    private async Task ApplyConfigToRow(ConfigCheckDeviceRow row)
+    {
+        if (row == null || row.IsRunning) return;
+
+        var profilePath = GetDetectorSettingsProfileForModel(row.Model);
+        if (string.IsNullOrWhiteSpace(profilePath) || !File.Exists(profilePath)) return;
+
+        var json    = await File.ReadAllTextAsync(profilePath).ConfigureAwait(false);
+        var profile = DetectorSettingsProfileModel.Parse(json);
+        if (profile?.FieldOverrides == null || profile.FieldOverrides.Count == 0) return;
+
+        var patch  = DetectorSettingsFieldCatalog.BuildPatchFromFieldOverrides(profile.FieldOverrides);
+        var device = _devices.FirstOrDefault(d => string.Equals(d.Mac, row.Mac, StringComparison.OrdinalIgnoreCase));
+        var fw     = (device?.CurrentFw ?? profile.FirmwareVersion ?? "").Trim();
+
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            row.IsRunning    = true;
+            row.IsDone       = false;
+            row.HasError     = false;
+            row.IsSkipped    = false;
+            row.StatusText   = "Applying…";
+            row.FieldResults.Clear();
+            row.MismatchCount = 0;
+        }, DispatcherPriority.Background);
+
+        try
+        {
+            var result = await ApplyDetectorSettingsAsync(
+                row.Cassia,
+                row.Mac,
+                row.Model,
+                pincode: "",
+                firmwareVersion: fw,
+                patch: patch,
+                writeOnlyChanged: false,
+                timeout: TimeSpan.FromSeconds(90)).ConfigureAwait(false);
+
+            if (result == null || !result.Success)
+            {
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    row.IsRunning = false;
+                    row.HasError  = true;
+                    row.IsDone    = true;
+                    row.StatusText = $"Apply error — {result?.Message ?? "no response"}";
+                }, DispatcherPriority.Background);
+                return;
+            }
+
+            // Re-check to verify the write took effect
+            Application.Current.Dispatcher.Invoke(
+                () => row.StatusText = "Verifying…",
+                DispatcherPriority.Background);
+
+            await CheckDeviceAsync(row, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                row.IsRunning  = false;
+                row.HasError   = true;
+                row.IsDone     = true;
+                row.StatusText = $"Error: {ex.Message}";
+            }, DispatcherPriority.Background);
+        }
+    }
+
+    // ─── Device list merge (adds new, updates RSSI/Cassia, auto-checks) ────────
+
+    internal void MergeConfigCheckDevices()
+    {
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            var existingByMac = ConfigCheckRows
+                .ToDictionary(r => r.Mac, r => r, StringComparer.OrdinalIgnoreCase);
 
             foreach (var device in _devices)
             {
@@ -69,33 +193,87 @@ public partial class MainViewModel
                     : Path.GetFileNameWithoutExtension(profilePath);
 
                 var cassia = ResolveCheckCassia(device);
+                var rssi = device.BestRssi;
 
-                ConfigCheckRows.Add(new ConfigCheckDeviceRow
+                var fw = (device.CurrentFw ?? "").Trim();
+
+                if (existingByMac.TryGetValue(device.Mac ?? "", out var existing))
                 {
-                    Mac = device.Mac ?? "",
-                    Model = model,
-                    ProfileName = profileName,
-                    Cassia = cassia,
-                    StatusText = "Pending",
-                });
+                    // Update live fields
+                    existing.Cassia      = cassia;
+                    existing.Rssi        = rssi;
+                    existing.FwCurrent   = fw;
+                    existing.ProfileName = profileName;
+
+                    // Auto-check if RSSI crossed threshold and not yet done
+                    if (rssi >= ConfigCheckAutoCheckRssiThreshold
+                        && !existing.IsDone
+                        && !existing.IsRunning
+                        && !existing.IsSelected)
+                    {
+                        existing.IsSelected = true;
+                    }
+                }
+                else
+                {
+                    var autoCheck = rssi >= ConfigCheckAutoCheckRssiThreshold;
+                    ConfigCheckRows.Add(new ConfigCheckDeviceRow
+                    {
+                        Mac         = device.Mac ?? "",
+                        Model       = model,
+                        ProfileName = profileName,
+                        Cassia      = cassia,
+                        Rssi        = rssi,
+                        FwCurrent   = fw,
+                        IsSelected  = autoCheck,
+                        StatusText  = "Pending",
+                    });
+                }
             }
 
-            ConfigCheckStatus = $"Ready — {ConfigCheckRows.Count} device(s) loaded.";
+            ConfigCheckStatus = $"{ConfigCheckRows.Count} device(s) — {ConfigCheckRows.Count(r => r.IsSelected && !r.IsDone && !r.IsRunning)} pending.";
         }, DispatcherPriority.Background);
     }
+
+    // ─── Check runner ──────────────────────────────────────────────────────────
 
     private async Task RunConfigCheckAsync(CancellationToken ct)
     {
         var rows = await Application.Current.Dispatcher.InvokeAsync(
-            () => ConfigCheckRows.Where(r => r.IsSelected).ToList(),
+            () => ConfigCheckRows.Where(r => r.IsSelected && !r.IsRunning).ToList(),
             DispatcherPriority.Background);
 
-        int done = 0;
-        int total = rows.Count;
+        if (rows.Count == 0)
+        {
+            Application.Current.Dispatcher.Invoke(
+                () => ConfigCheckStatus = "Nothing to check — select devices first.",
+                DispatcherPriority.Background);
+            return;
+        }
 
-        foreach (var row in rows)
+        // Group by Cassia so each Cassia runs up to ConfigCheckWorkersPerCassia in parallel
+        var byCassia = rows.GroupBy(r => r.Cassia, StringComparer.OrdinalIgnoreCase).ToList();
+
+        int total = rows.Count;
+        int done = 0;
+
+        Application.Current.Dispatcher.Invoke(
+            () => ConfigCheckStatus = $"Checking 0/{total}…",
+            DispatcherPriority.Background);
+
+        // Semaphore per Cassia: keyed by name (case-insensitive)
+        var semaphores = byCassia.ToDictionary(
+            g => g.Key,
+            _ => new SemaphoreSlim(ConfigCheckWorkersPerCassia, ConfigCheckWorkersPerCassia),
+            StringComparer.OrdinalIgnoreCase);
+
+        var tasks = rows.Select(async row =>
         {
             ct.ThrowIfCancellationRequested();
+
+            var sem = semaphores.TryGetValue(row.Cassia, out var s) ? s : null;
+            if (sem != null)
+                await sem.WaitAsync(ct).ConfigureAwait(false);
 
             Application.Current.Dispatcher.Invoke(() =>
             {
@@ -106,7 +284,6 @@ public partial class MainViewModel
                 row.StatusText = "Checking…";
                 row.FieldResults.Clear();
                 row.MismatchCount = 0;
-                ConfigCheckStatus = $"Checking {row.Mac} ({done + 1}/{total})…";
             }, DispatcherPriority.Background);
 
             try
@@ -132,16 +309,28 @@ public partial class MainViewModel
                     row.StatusText = $"Error: {ex.Message}";
                 }, DispatcherPriority.Background);
             }
+            finally
+            {
+                sem?.Release();
+                var d = Interlocked.Increment(ref done);
+                Application.Current.Dispatcher.Invoke(
+                    () => ConfigCheckStatus = $"Checking {d}/{total}…",
+                    DispatcherPriority.Background);
+            }
+        });
 
-            done++;
+        try
+        {
+            await Task.WhenAll(tasks).ConfigureAwait(false);
         }
+        catch (OperationCanceledException) { throw; }
+        catch { /* individual errors already captured */ }
 
         var mismatched = rows.Count(r => r.MismatchCount > 0);
         var errors = rows.Count(r => r.HasError);
-        Application.Current.Dispatcher.Invoke(() =>
-        {
-            ConfigCheckStatus = $"Done — {done} checked, {mismatched} with mismatches, {errors} errors.";
-        }, DispatcherPriority.Background);
+        Application.Current.Dispatcher.Invoke(
+            () => ConfigCheckStatus = $"Done — {done} checked, {mismatched} mismatch(es), {errors} error(s).",
+            DispatcherPriority.Background);
     }
 
     private async Task CheckDeviceAsync(ConfigCheckDeviceRow row, CancellationToken ct)
@@ -174,8 +363,7 @@ public partial class MainViewModel
             return;
         }
 
-        var cassiaName = row.Cassia;
-        if (string.IsNullOrWhiteSpace(cassiaName))
+        if (string.IsNullOrWhiteSpace(row.Cassia))
         {
             Application.Current.Dispatcher.Invoke(() =>
             {
@@ -191,14 +379,13 @@ public partial class MainViewModel
             string.Equals(d.Mac, row.Mac, StringComparison.OrdinalIgnoreCase));
 
         var fw = (device?.CurrentFw ?? profile.FirmwareVersion ?? "").Trim();
-        var pincode = "";
 
         var result = await RequestDetectorSettingsAsync(
-            cassiaName,
+            row.Cassia,
             row.Mac,
             row.Model,
-            pincode,
-            fw,
+            pincode: "",
+            firmwareVersion: fw,
             timeout: TimeSpan.FromSeconds(30)).ConfigureAwait(false);
 
         if (result == null || !result.Success)
@@ -214,7 +401,34 @@ public partial class MainViewModel
         }
 
         var actualPatch = DetectorSettingsPatchModel.FromJsonNode(result.Settings);
-        var fieldResults = CompareProfileAgainstDevice(profile.FieldOverrides, actualPatch);
+        var fieldResults = CompareProfileAgainstDevice(profile.FieldOverrides, actualPatch).ToList();
+
+        // firmwareVersion in the result is now the actual version read from the device during
+        // the same BLE session as the settings read — no extra round-trip needed.
+        var deviceFwFromResult = result.FirmwareVersion.Trim();
+        if (!string.IsNullOrWhiteSpace(deviceFwFromResult))
+        {
+            Application.Current.Dispatcher.Invoke(
+                () => row.FwCurrent = deviceFwFromResult,
+                DispatcherPriority.Background);
+        }
+
+        // Optionally prepend a firmware version check row
+        if (ConfigCheckVerifyFirmware && !string.IsNullOrWhiteSpace(profile.FirmwareVersion))
+        {
+            var profileFw = profile.FirmwareVersion.Trim();
+            var fwMatch   = string.Equals(deviceFwFromResult, profileFw, StringComparison.OrdinalIgnoreCase);
+
+            fieldResults.Insert(0, new ConfigCheckFieldResult
+            {
+                Key      = "_firmware",
+                Label    = "Firmware version",
+                Expected = profileFw,
+                Actual   = string.IsNullOrWhiteSpace(deviceFwFromResult) ? "(not read)" : deviceFwFromResult,
+                IsMatch  = fwMatch,
+            });
+        }
+
         var mismatches = fieldResults.Count(r => !r.IsMatch && !r.NotInCatalog && !r.NotReadable);
 
         Application.Current.Dispatcher.Invoke(() =>
@@ -227,17 +441,19 @@ public partial class MainViewModel
             row.IsRunning = false;
             row.IsDone = true;
             row.HasError = false;
+            row.IsSelected = false;
             row.StatusText = mismatches == 0
                 ? $"OK — all {fieldResults.Count} fields match"
                 : $"{mismatches} mismatch(es) of {fieldResults.Count} fields";
         }, DispatcherPriority.Background);
     }
 
+    // ─── Comparison ───────────────────────────────────────────────────────────
+
     private static IReadOnlyList<ConfigCheckFieldResult> CompareProfileAgainstDevice(
         IReadOnlyList<DetectorSettingsFieldOverrideModel> overrides,
         DetectorSettingsPatchModel actualPatch)
     {
-        // Build rows for every section and load actual device values into them.
         var userRows   = DetectorSettingsFieldCatalog.UserConfigFields
             .Select(d => new DetectorFieldRowViewModel(d)).ToList();
         var wiredRows  = DetectorSettingsFieldCatalog.WiredPushButtonsFields
@@ -251,12 +467,17 @@ public partial class MainViewModel
 
         static byte[] ParseHex(string? hex, int length)
         {
-            var result = new byte[length];
-            if (string.IsNullOrWhiteSpace(hex)) return result;
+            var buf = new byte[length];
+            if (string.IsNullOrWhiteSpace(hex)) return buf;
             var clean = hex.Trim();
-            var bytes = Convert.FromHexString(clean.Length % 2 == 1 ? "0" + clean : clean);
-            Buffer.BlockCopy(bytes, 0, result, 0, Math.Min(bytes.Length, result.Length));
-            return result;
+            var src = Convert.FromHexString(clean.Length % 2 == 1 ? "0" + clean : clean);
+            Buffer.BlockCopy(src, 0, buf, 0, Math.Min(src.Length, buf.Length));
+            return buf;
+        }
+
+        static void LoadRows(IEnumerable<DetectorFieldRowViewModel> rows, byte[] bytes)
+        {
+            foreach (var r in rows) r.LoadFromBytes(bytes);
         }
 
         LoadRows(userRows,   ParseHex(actualPatch.UserConfigHex,            DetectorSettingsFieldCatalog.UserConfigLength));
@@ -268,33 +489,30 @@ public partial class MainViewModel
         var rowByKey = userRows.Concat(wiredRows).Concat(bleRows).Concat(daliRows).Concat(commonRows)
             .ToDictionary(r => r.Key, r => r, StringComparer.OrdinalIgnoreCase);
 
-        var results = new List<ConfigCheckFieldResult>();
-
-        // Track which sections are actually available from the device response.
         bool hasUser   = !string.IsNullOrWhiteSpace(actualPatch.UserConfigHex);
         bool hasWired  = !string.IsNullOrWhiteSpace(actualPatch.PushButtonsHex);
         bool hasBle    = !string.IsNullOrWhiteSpace(actualPatch.BlePushButtonsHex);
         bool hasDali   = !string.IsNullOrWhiteSpace(actualPatch.DaliPushButtonsHex);
         bool hasCommon = !string.IsNullOrWhiteSpace(actualPatch.DaliDeviceCommonParamHex);
 
-        var sectionAvailable = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["user"]  = hasUser,
-            ["wired"] = hasWired,
-            ["ble"]   = hasBle,
-            ["dali"]  = hasDali,
-            ["dali.common"] = hasCommon,
-        };
-
         bool SectionAvailable(string key)
         {
-            if (key.StartsWith("user.", StringComparison.OrdinalIgnoreCase))  return hasUser;
-            if (key.StartsWith("wired.", StringComparison.OrdinalIgnoreCase)) return hasWired;
-            if (key.StartsWith("ble.", StringComparison.OrdinalIgnoreCase))   return hasBle;
+            if (key.StartsWith("user.",        StringComparison.OrdinalIgnoreCase)) return hasUser;
+            if (key.StartsWith("wired.",       StringComparison.OrdinalIgnoreCase)) return hasWired;
+            if (key.StartsWith("ble.",         StringComparison.OrdinalIgnoreCase)) return hasBle;
             if (key.StartsWith("dali.common.", StringComparison.OrdinalIgnoreCase)) return hasCommon;
-            if (key.StartsWith("dali.", StringComparison.OrdinalIgnoreCase))  return hasDali;
+            if (key.StartsWith("dali.",        StringComparison.OrdinalIgnoreCase)) return hasDali;
             return true;
         }
+
+        static string NormaliseBool(string v) => v.Trim().ToLowerInvariant() switch
+        {
+            "1" or "true"  => "true",
+            "0" or "false" => "false",
+            var x          => x
+        };
+
+        var results = new List<ConfigCheckFieldResult>();
 
         foreach (var ov in overrides)
         {
@@ -304,11 +522,8 @@ public partial class MainViewModel
             {
                 results.Add(new ConfigCheckFieldResult
                 {
-                    Key = ov.Key,
-                    Expected = ov.Value,
-                    Actual = "",
-                    IsMatch = false,
-                    NotInCatalog = true,
+                    Key = ov.Key, Expected = ov.Value, Actual = "",
+                    IsMatch = false, NotInCatalog = true,
                 });
                 continue;
             }
@@ -317,57 +532,31 @@ public partial class MainViewModel
             {
                 results.Add(new ConfigCheckFieldResult
                 {
-                    Key = ov.Key,
-                    Label = row.Label,
-                    Expected = ov.Value,
-                    Actual = "",
-                    IsMatch = false,
-                    NotReadable = true,
+                    Key = ov.Key, Label = row.Label, Expected = ov.Value, Actual = "",
+                    IsMatch = false, NotReadable = true,
                 });
                 continue;
             }
 
             var actualValue = row.ExportProfileValue();
-            // Normalise bool representations ("true"/"false" vs "1"/"0").
-            var expectedNorm = NormaliseBool(ov.Value);
-            var actualNorm   = NormaliseBool(actualValue);
-            var isMatch = string.Equals(expectedNorm, actualNorm, StringComparison.OrdinalIgnoreCase);
+            var isMatch = string.Equals(NormaliseBool(ov.Value), NormaliseBool(actualValue),
+                StringComparison.OrdinalIgnoreCase);
 
             results.Add(new ConfigCheckFieldResult
             {
-                Key      = ov.Key,
-                Label    = row.Label,
-                Expected = ov.Value,
-                Actual   = actualValue,
-                IsMatch  = isMatch,
+                Key = ov.Key, Label = row.Label,
+                Expected = ov.Value, Actual = actualValue,
+                IsMatch = isMatch,
             });
         }
 
         return results;
-
-        static void LoadRows(IEnumerable<DetectorFieldRowViewModel> rows, byte[] bytes)
-        {
-            foreach (var r in rows)
-                r.LoadFromBytes(bytes);
-        }
-
-        static string NormaliseBool(string v)
-        {
-            return v.Trim().ToLowerInvariant() switch
-            {
-                "1" or "true"  => "true",
-                "0" or "false" => "false",
-                var x          => x
-            };
-        }
     }
 
     private static string ResolveCheckCassia(DiscoveredDevice device)
     {
-        if (!string.IsNullOrWhiteSpace(device.AssignedCassia))
-            return device.AssignedCassia.Trim();
-        if (!string.IsNullOrWhiteSpace(device.BestCassia))
-            return device.BestCassia.Trim();
+        if (!string.IsNullOrWhiteSpace(device.AssignedCassia)) return device.AssignedCassia.Trim();
+        if (!string.IsNullOrWhiteSpace(device.BestCassia))     return device.BestCassia.Trim();
         return "";
     }
 }

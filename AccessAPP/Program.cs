@@ -664,11 +664,22 @@ using (var scope = app.Services.CreateScope())
                 var snapshot = await firmwareUpgradeService.SettingsBackupService
                     .CaptureSnapshotAsync(mac, detectorType, fw).ConfigureAwait(false);
 
+                // Read firmware version on the same connected session — no extra connect needed
+                var fwRead = "";
+                try
+                {
+                    fwRead = await firmwareUpgradeService.ReadFirmwareVersionAsync(mac).ConfigureAwait(false);
+                }
+                catch (Exception fwEx)
+                {
+                    AppLog.Warn($"[DetectorSettings] FW read failed for {mac}: {fwEx.Message}");
+                }
+
                 results.Add(new
                 {
                     mac,
                     detectorType,
-                    firmwareVersion = fw,
+                    firmwareVersion = string.IsNullOrWhiteSpace(fwRead) ? fw : fwRead,
                     success = true,
                     settings = DetectorSettingsPatch.FromSnapshot(snapshot).CloneNormalized()
                 });

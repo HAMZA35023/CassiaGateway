@@ -868,4 +868,23 @@ public partial class MainWindow : Window
         catch { }
     }
 
+    private void MainTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (DataContext is not MainViewModel vm) return;
+        if (e.Source is not TabControl) return;
+
+        var isDeveloperTabSelected = MainTabControl.SelectedItem is TabItem ti
+            && ti.Name == "DeveloperTab";
+
+        if (isDeveloperTabSelected)
+        {
+            vm.StartConfigCheckAutoRefresh();
+            vm.MergeConfigCheckDevices();
+        }
+        else
+        {
+            vm.StopConfigCheckAutoRefresh();
+        }
+    }
+
 }
