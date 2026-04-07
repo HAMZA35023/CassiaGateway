@@ -2277,7 +2277,15 @@
                                     </Style>
                                 </DataGrid.RowStyle>
                                 <DataGrid.Columns>
-                                    <DataGridCheckBoxColumn Header="✓" Binding="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" Width="36"/>
+                                    <DataGridTemplateColumn Header="✓" Width="36" CanUserSort="False">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                          HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                          Focusable="False"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
                                     <DataGridTextColumn Header="MAC"      Binding="{Binding Mac}"         Width="150" IsReadOnly="True"/>
                                     <DataGridTextColumn Header="Model"    Binding="{Binding Model}"        Width="60"  IsReadOnly="True"/>
                                     <DataGridTextColumn Header="FW"       Binding="{Binding FwCurrent}"    Width="80"  IsReadOnly="True"/>
