@@ -1455,8 +1455,9 @@ try
                 ReturnCodes local_status = 0x00;
                 string firmwarePath = "";
 
-                // Phase 1 - Return relative path string
-                firmwarePath = FirmwareResolver.ResolveFirmwareFile(DetectorType, FirmwareVersion, bActor, isBootloader);
+                // Phase 1 - Resolve firmware path relative to app base directory
+                firmwarePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory,
+                    FirmwareResolver.ResolveFirmwareFile(DetectorType, FirmwareVersion, bActor, isBootloader));
                 AppLog.Info($"Firmware path resolved: {firmwarePath}");
 if (!File.Exists(firmwarePath))
                 {
