@@ -1047,10 +1047,17 @@ using (var scope = app.Services.CreateScope())
 
     mqttService.GetFirmwareManifestRequested += async cmd =>
     {
-        var resp = manifestSvc.GetFirmwareManifest();
-
-        // Optional: if you later add DetectorType filtering, do it here using cmd.DetectorType
-        await mqttService.PublishFirmwareManifestAsync(resp);
+        try
+        {
+            var resp = manifestSvc.GetFirmwareManifest();
+            AppLog.Info($"[FwManifest] GetFirmwareManifest: success={resp.Success}, entries={resp.FirmwareManifest?.Count ?? 0}, message={resp.Message}");
+            await mqttService.PublishFirmwareManifestAsync(resp);
+            AppLog.Debug("[FwManifest] Published fw-manifest response.");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error($"[FwManifest] Error handling get-fw-manifest: {ex.Message}", ex);
+        }
     };
 
     mqttService.SelfUpdateRequested += async cmd =>
