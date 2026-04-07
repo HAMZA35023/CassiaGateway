@@ -136,7 +136,7 @@ namespace AccessAPP.Services
             }
         }
 
-        private async Task<string> ReadFirmwareVersionAsync(string macAddress)
+        internal async Task<string> ReadFirmwareVersionAsync(string macAddress)
         {
             string sensorInfo = await ReadFirmwarePartWithRetryAsync(macAddress, "Sensor", "01290107005A5E").ConfigureAwait(false);
             string actorInfo = await ReadFirmwarePartWithRetryAsync(macAddress, "Actor", "012B01070032B3").ConfigureAwait(false);

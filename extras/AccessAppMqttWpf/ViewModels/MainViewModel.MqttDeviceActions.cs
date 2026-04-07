@@ -25,6 +25,52 @@ namespace AccessAppMqttWpf.ViewModels;
 
 public partial class MainViewModel : ObservableObject
 {
+    // Awaitable fw-version requests keyed by MAC (case-insensitive)
+    private readonly object _fwVersionLock = new();
+    private readonly Dictionary<string, TaskCompletionSource<string>> _fwVersionPending
+        = new(StringComparer.OrdinalIgnoreCase);
+
+    // Fire a get-fw-version to one device and await its result (or timeout).
+    internal async Task<string?> RequestFwVersionAsync(
+        string cassiaName,
+        string macAddress,
+        TimeSpan? timeout = null)
+    {
+        if (!IsConnected) return null;
+
+        var mac = macAddress.Trim();
+        var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        lock (_fwVersionLock)
+            _fwVersionPending[mac] = tcs;
+
+        var topic = BuildCmdTopic(cassiaName, "get-fw-version");
+        var payload = new { sensors = new[] { mac }, pincode = DefaultPincode };
+
+        try
+        {
+            await _mqtt.PublishJsonAsync(topic, payload, retain: false, qos: 1, ct: _appCts.Token)
+                       .ConfigureAwait(false);
+        }
+        catch
+        {
+            lock (_fwVersionLock) _fwVersionPending.Remove(mac);
+            return null;
+        }
+
+        using var cts = new CancellationTokenSource(timeout ?? TimeSpan.FromSeconds(30));
+        try
+        {
+            await using (cts.Token.Register(() => tcs.TrySetCanceled()))
+                return await tcs.Task.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            lock (_fwVersionLock) _fwVersionPending.Remove(mac);
+            return null;
+        }
+    }
+
     private void HandleFwVersionTele(string cassia, string payload)
     {
         try
@@ -50,6 +96,19 @@ public partial class MainViewModel : ObservableObject
                 if (string.IsNullOrWhiteSpace(app))
                     app = (ver ?? "").Trim();
                 fwResults.Add((mac, app));
+            }
+
+            // Resolve any awaiting RequestFwVersionAsync callers
+            lock (_fwVersionLock)
+            {
+                foreach (var (mac, app) in fwResults)
+                {
+                    if (_fwVersionPending.TryGetValue(mac, out var tcs))
+                    {
+                        tcs.TrySetResult(app);
+                        _fwVersionPending.Remove(mac);
+                    }
+                }
             }
 
             Application.Current.Dispatcher.InvokeAsync(() =>

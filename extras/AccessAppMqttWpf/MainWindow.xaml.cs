@@ -105,16 +105,25 @@ public partial class MainWindow : Window
 
     private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key != Key.D) return;
         if (!Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) return;
         if (!Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)) return;
-
         if (DataContext is not MainViewModel vm) return;
-        if (vm.DeveloperModeUnlocked) return;
 
-        vm.DeveloperModeUnlocked = true;
-        vm.ConnectionStatus = "Developer actions unlocked.";
-        e.Handled = true;
+        if (e.Key == Key.D)
+        {
+            if (vm.DeveloperModeUnlocked) return;
+            vm.DeveloperModeUnlocked = true;
+            vm.ConnectionStatus = "Developer actions unlocked.";
+            e.Handled = true;
+        }
+        else if (e.Key == Key.P)
+        {
+            vm.PowerUserModeUnlocked = !vm.PowerUserModeUnlocked;
+            vm.ConnectionStatus = vm.PowerUserModeUnlocked
+                ? "Power user mode enabled."
+                : "Power user mode disabled.";
+            e.Handled = true;
+        }
     }
 
     private void ThemeLight_Click(object sender, RoutedEventArgs e)
@@ -866,6 +875,25 @@ public partial class MainWindow : Window
             move.IsEnabled = move.Items.Count > 0;
         }
         catch { }
+    }
+
+    private void MainTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (DataContext is not MainViewModel vm) return;
+        if (e.Source is not TabControl) return;
+
+        var isDeveloperTabSelected = MainTabControl.SelectedItem is TabItem ti
+            && ti.Name == "DeveloperTab";
+
+        if (isDeveloperTabSelected)
+        {
+            vm.StartConfigCheckAutoRefresh();
+            vm.MergeConfigCheckDevices();
+        }
+        else
+        {
+            vm.StopConfigCheckAutoRefresh();
+        }
     }
 
 }

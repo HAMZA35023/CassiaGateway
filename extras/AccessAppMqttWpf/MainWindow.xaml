@@ -1303,7 +1303,7 @@
 
         <!-- ================= RIGHT PANEL ================= -->
         <DockPanel Grid.Column="2">
-            <TabControl Style="{StaticResource TabControlStyle}">
+            <TabControl Style="{StaticResource TabControlStyle}" SelectionChanged="MainTabControl_SelectionChanged" x:Name="MainTabControl">
 
 
             <!-- ===== Devices ===== -->
@@ -1824,7 +1824,8 @@
 
 
 <!-- ===== Host BLE Scan ===== -->
-<TabItem Header="Host BLE Scan">
+<TabItem Header="Host BLE Scan"
+         Visibility="{Binding PowerUserOrDeveloper, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
     <Border Style="{StaticResource Card}">
         <DockPanel>
 
@@ -2127,7 +2128,8 @@
 
         
             <!-- ===== Notes ===== -->
-            <TabItem Header="Notes">
+            <TabItem Header="Notes"
+                     Visibility="{Binding PowerUserOrDeveloper, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
                 <Border Style="{StaticResource Card}">
                     <DockPanel>
                         <!-- Buttons -->
@@ -2177,6 +2179,231 @@
                     </DockPanel>
                 </Border>
             </TabItem>
+
+            <!-- ===== Developer (config check) ===== -->
+            <TabItem Header="Validate-Config" x:Name="DeveloperTab"
+                     Visibility="{Binding PowerUserOrDeveloper, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
+                <Border Style="{StaticResource Card}">
+                    <DockPanel>
+
+                        <!-- Toolbar -->
+                        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+                            <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center">
+                                <!-- Validate selected — always visible, disabled while running -->
+                                <Button Padding="12,6" Margin="0,0,8,0"
+                                        Command="{Binding StartConfigCheckCommand}"
+                                        ToolTip="Validate all checked devices once">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource PrimaryButton}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding ConfigCheckRunning}" Value="True">
+                                                    <Setter Property="IsEnabled" Value="False"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                    Validate selected
+                                </Button>
+                                <!-- Start Auto-check: visible only when auto is OFF -->
+                                <Button Padding="12,6" Margin="0,0,8,0"
+                                        Command="{Binding ToggleConfigCheckAutoCommand}"
+                                        ToolTip="Start auto-checking: devices with a profile and good RSSI are checked automatically every 5 s">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource SuccessButton}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding ConfigCheckAutoActive}" Value="True">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                    Start Auto-check
+                                </Button>
+                                <!-- Stop Auto-check: visible only when auto is ON -->
+                                <Button Padding="12,6" Margin="0,0,8,0"
+                                        Command="{Binding ToggleConfigCheckAutoCommand}"
+                                        ToolTip="Stop automatic checking">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource DangerButton}">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding ConfigCheckAutoActive}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                    Stop Auto-check
+                                </Button>
+                                <!-- Cancel in-progress run — always visible, red only while running -->
+                                <Button Padding="12,6" Margin="0,0,8,0"
+                                        Command="{Binding StopConfigCheckCommand}"
+                                        ToolTip="Cancel the current validation run">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource GhostButton}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding ConfigCheckRunning}" Value="True">
+                                                    <Setter Property="Background" Value="{DynamicResource BadBrush}"/>
+                                                    <Setter Property="Foreground" Value="White"/>
+                                                    <Setter Property="BorderBrush" Value="Transparent"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                    Cancel
+                                </Button>
+                                <Button Style="{StaticResource GhostButton}" Padding="12,6" Margin="0,0,16,0"
+                                        Command="{Binding ClearCheckedConfigDevicesCommand}"
+                                        ToolTip="Remove devices that have already been checked or skipped">
+                                    Clear checked
+                                </Button>
+                            </StackPanel>
+                            <TextBlock Text="{Binding ConfigCheckStatus}"
+                                       VerticalAlignment="Center"
+                                       Foreground="{DynamicResource MutedBrush}"
+                                       TextTrimming="CharacterEllipsis"/>
+                        </DockPanel>
+
+                        <!-- Split: device list (top) + field detail (bottom) -->
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="5"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+
+                            <!-- Device rows -->
+                            <DataGrid Grid.Row="0"
+                                      ItemsSource="{Binding ConfigCheckRows}"
+                                      SelectedItem="{Binding SelectedConfigCheckRow}"
+                                      AutoGenerateColumns="False"
+                                      IsReadOnly="False"
+                                      CanUserAddRows="False"
+                                      CanUserDeleteRows="False"
+                                      SelectionMode="Single"
+                                      HeadersVisibility="Column"
+                                      GridLinesVisibility="Horizontal"
+                                      HorizontalScrollBarVisibility="Auto"
+                                      VerticalScrollBarVisibility="Auto">
+                                <DataGrid.RowStyle>
+                                    <Style TargetType="DataGridRow">
+                                        <Style.Triggers>
+                                            <!-- In progress: blue -->
+                                            <DataTrigger Binding="{Binding IsRunning}" Value="True">
+                                                <Setter Property="Background" Value="{StaticResource QueueRowBrush}"/>
+                                            </DataTrigger>
+                                            <!-- Error: red -->
+                                            <DataTrigger Binding="{Binding HasError}" Value="True">
+                                                <Setter Property="Background" Value="{StaticResource FailedRowBrush}"/>
+                                            </DataTrigger>
+                                            <!-- Done + mismatches: yellow/warn -->
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding IsDone}" Value="True"/>
+                                                    <Condition Binding="{Binding HasError}" Value="False"/>
+                                                    <Condition Binding="{Binding IsSkipped}" Value="False"/>
+                                                </MultiDataTrigger.Conditions>
+                                                <Setter Property="Background" Value="{StaticResource WarnRowBrush}"/>
+                                            </MultiDataTrigger>
+                                            <!-- Done + all match: green -->
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding IsDone}" Value="True"/>
+                                                    <Condition Binding="{Binding HasError}" Value="False"/>
+                                                    <Condition Binding="{Binding IsSkipped}" Value="False"/>
+                                                    <Condition Binding="{Binding MismatchCount}" Value="0"/>
+                                                </MultiDataTrigger.Conditions>
+                                                <Setter Property="Background" Value="{StaticResource DoneRowBrush}"/>
+                                            </MultiDataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGrid.RowStyle>
+                                <DataGrid.Columns>
+                                    <DataGridTemplateColumn Header="✓" Width="36" CanUserSort="False">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                          HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                          Focusable="False"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="MAC"      Binding="{Binding Mac}"         Width="150" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="Model"    Binding="{Binding Model}"        Width="60"  IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="FW"       Binding="{Binding FwCurrent}"    Width="80"  IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="RSSI"     Binding="{Binding RssiDisplay}"  Width="55"  IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="Profile"  Binding="{Binding ProfileName}"  Width="200" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="Cassia"   Binding="{Binding Cassia}"       Width="140" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="Mismatches" Binding="{Binding MismatchCount}" Width="90" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="Status"   Binding="{Binding StatusText}"   Width="*"   IsReadOnly="True"/>
+                                    <DataGridTemplateColumn Header="" Width="60" CanUserSort="False">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Button Content="Apply" Padding="8,2"
+                                                        IsEnabled="{Binding CanApply}"
+                                                        Command="{Binding DataContext.ApplyConfigToRowCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                        CommandParameter="{Binding}">
+                                                    <Button.Style>
+                                                        <Style TargetType="Button" BasedOn="{StaticResource GhostButton}"/>
+                                                    </Button.Style>
+                                                </Button>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
+
+                            <GridSplitter Grid.Row="1" Height="5" HorizontalAlignment="Stretch" Background="{DynamicResource BorderBrush}"/>
+
+                            <!-- Field detail for selected device -->
+                            <DataGrid Grid.Row="2"
+                                      ItemsSource="{Binding SelectedConfigCheckRow.FieldResults}"
+                                      AutoGenerateColumns="False"
+                                      IsReadOnly="True"
+                                      CanUserAddRows="False"
+                                      CanUserDeleteRows="False"
+                                      SelectionMode="Single"
+                                      HeadersVisibility="Column"
+                                      GridLinesVisibility="Horizontal"
+                                      HorizontalScrollBarVisibility="Auto"
+                                      VerticalScrollBarVisibility="Auto">
+                                <DataGrid.RowStyle>
+                                    <Style TargetType="DataGridRow">
+                                        <Style.Triggers>
+                                            <!-- Real mismatch (not unreadable/unknown/info): red -->
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding IsMatch}"      Value="False"/>
+                                                    <Condition Binding="{Binding NotInCatalog}" Value="False"/>
+                                                    <Condition Binding="{Binding NotReadable}"  Value="False"/>
+                                                    <Condition Binding="{Binding IsInfoRow}"    Value="False"/>
+                                                </MultiDataTrigger.Conditions>
+                                                <Setter Property="Background" Value="{StaticResource FailedRowBrush}"/>
+                                            </MultiDataTrigger>
+                                            <!-- Not readable (section unavailable): muted -->
+                                            <DataTrigger Binding="{Binding NotReadable}" Value="True">
+                                                <Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding NotInCatalog}" Value="True">
+                                                <Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGrid.RowStyle>
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="" Binding="{Binding MatchGlyph}" Width="28"/>
+                                    <DataGridTextColumn Header="Field key" Binding="{Binding Key}" Width="280"/>
+                                    <DataGridTextColumn Header="Label" Binding="{Binding Label}" Width="200"/>
+                                    <DataGridTextColumn Header="Expected" Binding="{Binding Expected}" Width="100"/>
+                                    <DataGridTextColumn Header="Actual" Binding="{Binding Actual}" Width="100"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Grid>
+
+                    </DockPanel>
+                </Border>
+            </TabItem>
+
 </TabControl>
         </DockPanel>
         </Grid>

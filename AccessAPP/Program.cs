@@ -664,11 +664,22 @@ using (var scope = app.Services.CreateScope())
                 var snapshot = await firmwareUpgradeService.SettingsBackupService
                     .CaptureSnapshotAsync(mac, detectorType, fw).ConfigureAwait(false);
 
+                // Read firmware version on the same connected session — no extra connect needed
+                var fwRead = "";
+                try
+                {
+                    fwRead = await firmwareUpgradeService.ReadFirmwareVersionAsync(mac).ConfigureAwait(false);
+                }
+                catch (Exception fwEx)
+                {
+                    AppLog.Warn($"[DetectorSettings] FW read failed for {mac}: {fwEx.Message}");
+                }
+
                 results.Add(new
                 {
                     mac,
                     detectorType,
-                    firmwareVersion = fw,
+                    firmwareVersion = string.IsNullOrWhiteSpace(fwRead) ? fw : fwRead,
                     success = true,
                     settings = DetectorSettingsPatch.FromSnapshot(snapshot).CloneNormalized()
                 });
@@ -1036,10 +1047,17 @@ using (var scope = app.Services.CreateScope())
 
     mqttService.GetFirmwareManifestRequested += async cmd =>
     {
-        var resp = manifestSvc.GetFirmwareManifest();
-
-        // Optional: if you later add DetectorType filtering, do it here using cmd.DetectorType
-        await mqttService.PublishFirmwareManifestAsync(resp);
+        try
+        {
+            var resp = manifestSvc.GetFirmwareManifest();
+            AppLog.Info($"[FwManifest] GetFirmwareManifest: success={resp.Success}, entries={resp.FirmwareManifest?.Count ?? 0}, message={resp.Message}");
+            await mqttService.PublishFirmwareManifestAsync(resp);
+            AppLog.Debug("[FwManifest] Published fw-manifest response.");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error($"[FwManifest] Error handling get-fw-manifest: {ex.Message}", ex);
+        }
     };
 
     mqttService.SelfUpdateRequested += async cmd =>

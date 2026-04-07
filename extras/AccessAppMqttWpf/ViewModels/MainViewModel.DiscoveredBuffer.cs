@@ -31,6 +31,7 @@ public partial class MainViewModel : ObservableObject
     partial void OnDeveloperModeUnlockedChanged(bool value)
     {
         PerfLog.Enabled = value;
+        OnPropertyChanged(nameof(PowerUserOrDeveloper));
     }
 
     // ---- Discovered batching ----
