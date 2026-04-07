@@ -44,6 +44,8 @@ public sealed class ConfigCheckFieldResult
     public bool IsMatch { get; init; }
     public bool NotInCatalog { get; init; }
     public bool NotReadable { get; init; }
+    // True for informational rows (firmware) that should not trigger row coloring
+    public bool IsInfoRow { get; init; }
 
     public string MatchGlyph =>
         NotInCatalog || NotReadable ? "-" : (IsMatch ? "✓" : "✗");

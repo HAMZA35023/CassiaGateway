@@ -23,7 +23,6 @@ public partial class MainViewModel
     [ObservableProperty] private ConfigCheckDeviceRow? selectedConfigCheckRow;
     [ObservableProperty] private string configCheckStatus = "Ready";
     [ObservableProperty] private bool configCheckRunning;
-    [ObservableProperty] private bool configCheckVerifyFirmware;
 
     private CancellationTokenSource? _configCheckCts;
     private DispatcherTimer? _configCheckRefreshTimer;
@@ -195,14 +194,12 @@ public partial class MainViewModel
                 var cassia = ResolveCheckCassia(device);
                 var rssi = device.BestRssi;
 
-                var fw = (device.CurrentFw ?? "").Trim();
-
                 if (existingByMac.TryGetValue(device.Mac ?? "", out var existing))
                 {
-                    // Update live fields
+                    // Update live fields — FwCurrent is intentionally NOT updated here;
+                    // it is only populated from the get-detector-settings BLE response.
                     existing.Cassia      = cassia;
                     existing.Rssi        = rssi;
-                    existing.FwCurrent   = fw;
                     existing.ProfileName = profileName;
 
                     // Auto-check if RSSI crossed threshold and not yet done
@@ -224,7 +221,6 @@ public partial class MainViewModel
                         ProfileName = profileName,
                         Cassia      = cassia,
                         Rssi        = rssi,
-                        FwCurrent   = fw,
                         IsSelected  = autoCheck,
                         StatusText  = "Pending",
                     });
@@ -403,29 +399,34 @@ public partial class MainViewModel
         var actualPatch = DetectorSettingsPatchModel.FromJsonNode(result.Settings);
         var fieldResults = CompareProfileAgainstDevice(profile.FieldOverrides, actualPatch).ToList();
 
-        // firmwareVersion in the result is now the actual version read from the device during
-        // the same BLE session as the settings read — no extra round-trip needed.
-        var deviceFwFromResult = result.FirmwareVersion.Trim();
-        if (!string.IsNullOrWhiteSpace(deviceFwFromResult))
+        // firmwareVersion in the result is the actual version read from the device on the same
+        // BLE session. Normalise to "Sensor App" short form (e.g. "v02.28") like the rest of the app.
+        var rawDeviceFw  = result.FirmwareVersion.Trim();
+        var deviceFw     = NormaliseFwString(rawDeviceFw);
+
+        if (!string.IsNullOrWhiteSpace(deviceFw))
         {
             Application.Current.Dispatcher.Invoke(
-                () => row.FwCurrent = deviceFwFromResult,
+                () => row.FwCurrent = deviceFw,
                 DispatcherPriority.Background);
         }
 
-        // Optionally prepend a firmware version check row
-        if (ConfigCheckVerifyFirmware && !string.IsNullOrWhiteSpace(profile.FirmwareVersion))
+        // Always prepend a firmware row when the profile specifies an expected version.
+        // IsInfoRow = true so the row never triggers background coloring.
+        if (!string.IsNullOrWhiteSpace(profile.FirmwareVersion))
         {
-            var profileFw = profile.FirmwareVersion.Trim();
-            var fwMatch   = string.Equals(deviceFwFromResult, profileFw, StringComparison.OrdinalIgnoreCase);
+            var profileFw = NormaliseFwString(profile.FirmwareVersion.Trim());
+            var fwKnown   = !string.IsNullOrWhiteSpace(deviceFw);
+            var fwMatch   = fwKnown && string.Equals(deviceFw, profileFw, StringComparison.OrdinalIgnoreCase);
 
             fieldResults.Insert(0, new ConfigCheckFieldResult
             {
-                Key      = "_firmware",
-                Label    = "Firmware version",
-                Expected = profileFw,
-                Actual   = string.IsNullOrWhiteSpace(deviceFwFromResult) ? "(not read)" : deviceFwFromResult,
-                IsMatch  = fwMatch,
+                Key       = "_firmware",
+                Label     = "Firmware version",
+                Expected  = profileFw,
+                Actual    = fwKnown ? deviceFw : "(not read)",
+                IsMatch   = fwMatch,
+                IsInfoRow = true,
             });
         }
 
@@ -558,5 +559,16 @@ public partial class MainViewModel
         if (!string.IsNullOrWhiteSpace(device.AssignedCassia)) return device.AssignedCassia.Trim();
         if (!string.IsNullOrWhiteSpace(device.BestCassia))     return device.BestCassia.Trim();
         return "";
+    }
+
+    // Normalise a raw FW string (e.g. "Sensor: App: 02.28 Boot: 1.05 | Actor: ...")
+    // to the short sensor-app form used everywhere else (e.g. "02.28").
+    // Falls back to the raw string if parsing fails.
+    private static string NormaliseFwString(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return raw;
+        var m = SensorAppFromStatusRx.Match(raw);
+        if (m.Success) return m.Groups["app"].Value.Trim();
+        return raw;
     }
 }

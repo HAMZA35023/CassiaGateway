@@ -2215,11 +2215,6 @@
                                         ToolTip="Remove devices that have already been checked or skipped">
                                     Clear checked
                                 </Button>
-                                <CheckBox Content="Verify firmware"
-                                          IsChecked="{Binding ConfigCheckVerifyFirmware}"
-                                          VerticalAlignment="Center"
-                                          Margin="0,0,0,0"
-                                          ToolTip="Also compare the device firmware version against the profile's expected firmware"/>
                             </StackPanel>
                             <TextBlock Text="{Binding ConfigCheckStatus}"
                                        VerticalAlignment="Center"
@@ -2325,16 +2320,17 @@
                                 <DataGrid.RowStyle>
                                     <Style TargetType="DataGridRow">
                                         <Style.Triggers>
-                                            <!-- Mismatch: red background -->
+                                            <!-- Real mismatch (not unreadable/unknown/info): red -->
                                             <MultiDataTrigger>
                                                 <MultiDataTrigger.Conditions>
-                                                    <Condition Binding="{Binding IsMatch}"     Value="False"/>
+                                                    <Condition Binding="{Binding IsMatch}"      Value="False"/>
                                                     <Condition Binding="{Binding NotInCatalog}" Value="False"/>
                                                     <Condition Binding="{Binding NotReadable}"  Value="False"/>
+                                                    <Condition Binding="{Binding IsInfoRow}"    Value="False"/>
                                                 </MultiDataTrigger.Conditions>
                                                 <Setter Property="Background" Value="{StaticResource FailedRowBrush}"/>
                                             </MultiDataTrigger>
-                                            <!-- Not readable (section unavailable): muted foreground -->
+                                            <!-- Not readable (section unavailable): muted -->
                                             <DataTrigger Binding="{Binding NotReadable}" Value="True">
                                                 <Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/>
                                             </DataTrigger>
