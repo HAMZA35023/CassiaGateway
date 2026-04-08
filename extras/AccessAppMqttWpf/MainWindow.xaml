@@ -2253,12 +2253,11 @@
                                     </Button.Style>
                                     Cancel
                                 </Button>
-                                <Button Style="{StaticResource GhostButton}" Padding="12,6" Margin="0,0,16,0"
+                                <Button Style="{StaticResource GhostButton}" Padding="12,6" Margin="0,0,8,0"
                                         Command="{Binding ClearCheckedConfigDevicesCommand}"
                                         ToolTip="Remove devices that have already been checked or skipped">
                                     Clear checked
                                 </Button>
-                                <Separator Style="{StaticResource VerticalSeparator}" Margin="8,0"/>
                                 <!-- Filters -->
                                 <CheckBox VerticalAlignment="Center" Margin="8,0"
                                           IsChecked="{Binding HideNoProfile}"
@@ -2269,6 +2268,11 @@
                                           IsChecked="{Binding HideOk}"
                                           ToolTip="Hide devices with all fields matching">
                                     Hide OK
+                                </CheckBox>
+                                <CheckBox VerticalAlignment="Center" Margin="8,0"
+                                          IsChecked="{Binding HideOutOfRange}"
+                                          ToolTip="Hide devices that are no longer in range (RSSI -127)">
+                                    Hide out-of-range
                                 </CheckBox>
                                 <TextBlock Text="Min RSSI:" VerticalAlignment="Center" Margin="8,0,4,0"/>
                                 <ComboBox Width="60" VerticalAlignment="Center" Margin="0,0,8,0"
