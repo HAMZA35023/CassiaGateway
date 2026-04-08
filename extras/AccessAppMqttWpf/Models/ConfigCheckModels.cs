@@ -35,6 +35,17 @@ public partial class ConfigCheckDeviceRow : ObservableObject
     public ObservableCollection<ConfigCheckFieldResult> FieldResults { get; } = new();
 }
 
+public sealed class ConfigCheckModelFilter : ObservableObject
+{
+    public string Model { get; init; } = "";
+    private bool _isChecked;
+    public bool IsChecked
+    {
+        get => _isChecked;
+        set => SetProperty(ref _isChecked, value);
+    }
+}
+
 public sealed class ConfigCheckFieldResult
 {
     public string Key { get; init; } = "";

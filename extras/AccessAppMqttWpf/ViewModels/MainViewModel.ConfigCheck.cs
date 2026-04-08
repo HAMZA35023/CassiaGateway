@@ -25,7 +25,7 @@ public partial class MainViewModel
 
     public ObservableCollection<ConfigCheckDeviceRow> ConfigCheckRows { get; } = new();
     public ICollectionView ConfigCheckView { get; private set; } = null!;
-    public ObservableCollection<string> ConfigCheckModelsList { get; } = new();
+    public ObservableCollection<ConfigCheckModelFilter> ConfigCheckModelFilters { get; } = new();
 
     [ObservableProperty] private ConfigCheckDeviceRow? selectedConfigCheckRow;
     [ObservableProperty] private string configCheckStatus = "Ready";
@@ -37,7 +37,9 @@ public partial class MainViewModel
     [ObservableProperty] private bool hideOk;
     [ObservableProperty] private bool hideOutOfRange;
     [ObservableProperty] private int minRssiToCheck = -90;
-    [ObservableProperty] private string? filterByModel;
+
+    // MACs deliberately cleared by the user — not re-added by MergeConfigCheckDevices
+    private readonly HashSet<string> _configCheckClearedMacs = new(StringComparer.OrdinalIgnoreCase);
 
     private CancellationTokenSource? _configCheckCts;
     private DispatcherTimer? _configCheckRefreshTimer;
@@ -62,6 +64,14 @@ public partial class MainViewModel
             if (e.OldItems != null)
                 foreach (ConfigCheckDeviceRow row in e.OldItems)
                     row.PropertyChanged -= OnConfigCheckRowPropertyChanged;
+        };
+
+        // Re-apply filter when any model checkbox changes
+        ConfigCheckModelFilters.CollectionChanged += (_, e) =>
+        {
+            if (e.NewItems != null)
+                foreach (ConfigCheckModelFilter f in e.NewItems)
+                    f.PropertyChanged += (_, _) => RefreshConfigCheckView();
         };
     }
 
@@ -171,9 +181,13 @@ public partial class MainViewModel
                 .Where(r => r.IsDone || r.IsSkipped)
                 .ToList();
             foreach (var r in toRemove)
+            {
+                _configCheckClearedMacs.Add(r.Mac);
                 ConfigCheckRows.Remove(r);
+            }
 
             ConfigCheckStatus = $"{ConfigCheckRows.Count} device(s) remaining.";
+            UpdateConfigCheckModelsList();
         }, DispatcherPriority.Background);
     }
 
@@ -264,7 +278,11 @@ public partial class MainViewModel
                 var model = (device.SensorModel ?? "").Trim().ToUpperInvariant();
                 if (string.IsNullOrWhiteSpace(model)) continue;
 
-                activeMacs.Add(device.Mac ?? "");
+                var mac = device.Mac ?? "";
+                activeMacs.Add(mac);
+
+                // Skip devices the user has deliberately cleared
+                if (_configCheckClearedMacs.Contains(mac)) continue;
 
                 var profilePath = GetDetectorSettingsProfileForModel(model);
                 var profileName = string.IsNullOrWhiteSpace(profilePath)
@@ -319,6 +337,15 @@ public partial class MainViewModel
         }, DispatcherPriority.Background);
     }
 
+    // Returns true if any model filter checkbox is checked
+    private bool AnyModelFilterActive() => ConfigCheckModelFilters.Any(f => f.IsChecked);
+
+    private bool ModelPassesFilter(string model)
+    {
+        if (!AnyModelFilterActive()) return true;
+        return ConfigCheckModelFilters.Any(f => f.IsChecked && f.Model.Equals(model, StringComparison.OrdinalIgnoreCase));
+    }
+
     // Check if a row is visible in the view.
     // Min RSSI is intentionally NOT applied here — once a row is added to the list it stays visible.
     // RSSI only gates auto-selection and which rows get validated.
@@ -330,7 +357,7 @@ public partial class MainViewModel
             return false;
         if (HideOutOfRange && row.Rssi == -127)
             return false;
-        if (!string.IsNullOrWhiteSpace(FilterByModel) && !row.Model.Equals(FilterByModel, StringComparison.OrdinalIgnoreCase))
+        if (!ModelPassesFilter(row.Model))
             return false;
         return true;
     }
@@ -342,7 +369,7 @@ public partial class MainViewModel
             return false;
         if (row.Rssi != int.MinValue && row.Rssi < MinRssiToCheck)
             return false;
-        if (!string.IsNullOrWhiteSpace(FilterByModel) && !row.Model.Equals(FilterByModel, StringComparison.OrdinalIgnoreCase))
+        if (!ModelPassesFilter(row.Model))
             return false;
         return true;
     }
@@ -357,30 +384,32 @@ public partial class MainViewModel
         }, DispatcherPriority.Background);
     }
 
-    // Update the list of available models
+    // Sync model filter checkboxes — adds new models, preserves existing checked state, removes gone models
     private void UpdateConfigCheckModelsList()
     {
-        Application.Current.Dispatcher.Invoke(() =>
-        {
-            var models = ConfigCheckRows
-                .Select(r => r.Model)
-                .Where(m => !string.IsNullOrWhiteSpace(m))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(m => m)
-                .ToList();
+        var models = ConfigCheckRows
+            .Select(r => r.Model)
+            .Where(m => !string.IsNullOrWhiteSpace(m))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(m => m)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            ConfigCheckModelsList.Clear();
-            ConfigCheckModelsList.Add(""); // Empty option for "all models"
-            foreach (var model in models)
-                ConfigCheckModelsList.Add(model);
-        }, DispatcherPriority.Background);
+        // Remove filters for models that no longer exist
+        foreach (var f in ConfigCheckModelFilters.ToList())
+            if (!models.Contains(f.Model))
+                ConfigCheckModelFilters.Remove(f);
+
+        // Add new models
+        var existing = ConfigCheckModelFilters.Select(f => f.Model).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var model in models.OrderBy(m => m))
+            if (!existing.Contains(model))
+                ConfigCheckModelFilters.Add(new ConfigCheckModelFilter { Model = model });
     }
 
     partial void OnHideNoProfileChanged(bool value) => RefreshConfigCheckView();
     partial void OnHideOkChanged(bool value) => RefreshConfigCheckView();
     partial void OnHideOutOfRangeChanged(bool value) => RefreshConfigCheckView();
     partial void OnMinRssiToCheckChanged(int value) => RefreshConfigCheckView();
-    partial void OnFilterByModelChanged(string? value) => RefreshConfigCheckView();
 
     // ─── Check runner ──────────────────────────────────────────────────────────
 

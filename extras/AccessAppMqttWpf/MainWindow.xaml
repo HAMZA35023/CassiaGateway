@@ -2285,12 +2285,21 @@
                                     <System:Int32>-70</System:Int32>
                                     <System:Int32>-65</System:Int32>
                                 </ComboBox>
-                                <TextBlock Text="Model:" VerticalAlignment="Center" Margin="8,0,4,0"/>
-                                <ComboBox Width="80" VerticalAlignment="Center" Margin="0,0,16,0"
-                                          ItemsSource="{Binding ConfigCheckModelsList}"
-                                          SelectedValue="{Binding FilterByModel}"
-                                          ToolTip="Filter by sensor model">
-                                </ComboBox>
+                                <TextBlock Text="Models:" VerticalAlignment="Center" Margin="8,0,4,0"/>
+                                <ItemsControl ItemsSource="{Binding ConfigCheckModelFilters}" VerticalAlignment="Center">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <StackPanel Orientation="Horizontal"/>
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <CheckBox Content="{Binding Model}"
+                                                      IsChecked="{Binding IsChecked, Mode=TwoWay}"
+                                                      VerticalAlignment="Center" Margin="4,0"/>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
                             </StackPanel>
                             <TextBlock Text="{Binding ConfigCheckStatus}"
                                        VerticalAlignment="Center"
