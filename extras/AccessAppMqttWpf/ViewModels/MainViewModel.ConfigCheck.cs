@@ -1,9 +1,13 @@
 using AccessAppMqttWpf.Models;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using System;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.IO;
+using System.Linq;
 using System.Windows;
+using System.Windows.Data;
 using System.Windows.Threading;
 
 namespace AccessAppMqttWpf.ViewModels;
@@ -19,6 +23,8 @@ public partial class MainViewModel
     private const int ConfigCheckAutoCheckRssiThreshold = -75;
 
     public ObservableCollection<ConfigCheckDeviceRow> ConfigCheckRows { get; } = new();
+    public ICollectionView ConfigCheckView { get; private set; } = null!;
+    public ObservableCollection<string> ConfigCheckModelsList { get; } = new();
 
     [ObservableProperty] private ConfigCheckDeviceRow? selectedConfigCheckRow;
     [ObservableProperty] private string configCheckStatus = "Ready";
@@ -26,9 +32,45 @@ public partial class MainViewModel
 
     // When true: auto-check newly discovered devices that have a profile and good RSSI
     [ObservableProperty] private bool configCheckAutoActive;
+    [ObservableProperty] private bool hideNoProfile;
+    [ObservableProperty] private bool hideOk;
+    [ObservableProperty] private int minRssiToCheck = -90;
+    [ObservableProperty] private string? filterByModel;
 
     private CancellationTokenSource? _configCheckCts;
     private DispatcherTimer? _configCheckRefreshTimer;
+
+    // ─── Initialize view with filtering ──────────────────────────────────────────
+
+    internal void InitConfigCheckView()
+    {
+        ConfigCheckView = CollectionViewSource.GetDefaultView(ConfigCheckRows);
+        ConfigCheckView.Filter = obj =>
+        {
+            if (obj is not ConfigCheckDeviceRow row) return false;
+
+            // Hide if no profile and hideNoProfile is checked
+            if (HideNoProfile && row.ProfileName == "(no profile)")
+                return false;
+
+            // Hide if status is "OK" and hideOk is checked
+            if (HideOk && row.StatusText.StartsWith("OK"))
+                return false;
+
+            // Hide if RSSI is below minRssiToCheck threshold
+            if (row.Rssi != int.MinValue && row.Rssi < MinRssiToCheck)
+                return false;
+
+            // Filter by model if specified
+            if (!string.IsNullOrWhiteSpace(FilterByModel))
+            {
+                if (!row.Model.Equals(FilterByModel, StringComparison.OrdinalIgnoreCase))
+                    return false;
+            }
+
+            return true;
+        };
+    }
 
     // ─── Timer-based auto-refresh ──────────────────────────────────────────────
 
@@ -255,8 +297,43 @@ public partial class MainViewModel
             }
 
             ConfigCheckStatus = $"{ConfigCheckRows.Count} device(s) — {ConfigCheckRows.Count(r => r.IsSelected && !r.IsDone && !r.IsRunning)} pending.";
+            UpdateConfigCheckModelsList();
         }, DispatcherPriority.Background);
     }
+
+    // Refresh the filter when settings change
+    internal void RefreshConfigCheckView()
+    {
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            if (ConfigCheckView is ICollectionView view)
+                view.Refresh();
+        }, DispatcherPriority.Background);
+    }
+
+    // Update the list of available models
+    private void UpdateConfigCheckModelsList()
+    {
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            var models = ConfigCheckRows
+                .Select(r => r.Model)
+                .Where(m => !string.IsNullOrWhiteSpace(m))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(m => m)
+                .ToList();
+
+            ConfigCheckModelsList.Clear();
+            ConfigCheckModelsList.Add(""); // Empty option for "all models"
+            foreach (var model in models)
+                ConfigCheckModelsList.Add(model);
+        }, DispatcherPriority.Background);
+    }
+
+    partial void OnHideNoProfileChanged(bool value) => RefreshConfigCheckView();
+    partial void OnHideOkChanged(bool value) => RefreshConfigCheckView();
+    partial void OnMinRssiToCheckChanged(int value) => RefreshConfigCheckView();
+    partial void OnFilterByModelChanged(string? value) => RefreshConfigCheckView();
 
     // ─── Check runner ──────────────────────────────────────────────────────────
 

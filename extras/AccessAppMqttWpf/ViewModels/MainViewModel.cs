@@ -528,6 +528,7 @@ public partial class MainViewModel : ObservableObject
 
 
         InitQueueView();
+        InitConfigCheckView();
         _gatewayStaleTimer = new System.Windows.Threading.DispatcherTimer
         {
             Interval = TimeSpan.FromSeconds(10) // responsive, but cheap
