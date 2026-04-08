@@ -261,6 +261,8 @@ public partial class MainViewModel
         }
     }
 
+    private static readonly TimeSpan ConfigCheckRssiStaleAfter = TimeSpan.FromSeconds(60);
+
     // ─── Device list merge (adds new, updates RSSI/Cassia, auto-checks) ────────
 
     internal void MergeConfigCheckDevices()
@@ -270,8 +272,7 @@ public partial class MainViewModel
             var existingByMac = ConfigCheckRows
                 .ToDictionary(r => r.Mac, r => r, StringComparer.OrdinalIgnoreCase);
 
-            // Build a set of MACs currently visible in _devices for out-of-range detection
-            var activeMacs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var now = DateTimeOffset.UtcNow;
 
             foreach (var device in _devices)
             {
@@ -279,10 +280,10 @@ public partial class MainViewModel
                 if (string.IsNullOrWhiteSpace(model)) continue;
 
                 var mac = device.Mac ?? "";
-                activeMacs.Add(mac);
+                var rssi = device.BestRssi;
 
-                // Skip devices the user has deliberately cleared
-                if (_configCheckClearedMacs.Contains(mac)) continue;
+                // Only count as a "fresh" update when RSSI is a real value
+                if (rssi == int.MinValue) continue;
 
                 var profilePath = GetDetectorSettingsProfileForModel(model);
                 var profileName = string.IsNullOrWhiteSpace(profilePath)
@@ -290,17 +291,18 @@ public partial class MainViewModel
                     : Path.GetFileNameWithoutExtension(profilePath);
 
                 var cassia = ResolveCheckCassia(device);
-                var rssi = device.BestRssi;
 
-                if (existingByMac.TryGetValue(device.Mac ?? "", out var existing))
+                // If the MAC was cleared but now has a fresh RSSI, un-clear it so it can reappear
+                if (_configCheckClearedMacs.Contains(mac))
+                    _configCheckClearedMacs.Remove(mac);
+
+                if (existingByMac.TryGetValue(mac, out var existing))
                 {
-                    // Update live fields — FwCurrent is intentionally NOT updated here;
-                    // it is only populated from the get-detector-settings BLE response.
-                    existing.Cassia      = cassia;
-                    existing.Rssi        = rssi;
-                    existing.ProfileName = profileName;
+                    existing.Cassia             = cassia;
+                    existing.Rssi               = rssi;
+                    existing.LastRssiUpdatedUtc = now;
+                    existing.ProfileName        = profileName;
 
-                    // Auto-check if RSSI crossed threshold and not yet done
                     if (rssi >= ConfigCheckAutoCheckRssiThreshold
                         && !existing.IsDone
                         && !existing.IsRunning
@@ -314,22 +316,27 @@ public partial class MainViewModel
                     var autoCheck = rssi >= ConfigCheckAutoCheckRssiThreshold;
                     ConfigCheckRows.Add(new ConfigCheckDeviceRow
                     {
-                        Mac         = device.Mac ?? "",
-                        Model       = model,
-                        ProfileName = profileName,
-                        Cassia      = cassia,
-                        Rssi        = rssi,
-                        IsSelected  = autoCheck,
-                        StatusText  = "Pending",
+                        Mac                 = mac,
+                        Model               = model,
+                        ProfileName         = profileName,
+                        Cassia              = cassia,
+                        Rssi                = rssi,
+                        LastRssiUpdatedUtc  = now,
+                        IsSelected          = autoCheck,
+                        StatusText          = "Pending",
                     });
                 }
             }
 
-            // Rows that are no longer in _devices show RSSI -127 (out of range)
-            foreach (var row in existingByMac.Values)
+            // Mark rows stale when no RSSI update for 60 s
+            foreach (var row in ConfigCheckRows)
             {
-                if (!activeMacs.Contains(row.Mac))
+                if (row.LastRssiUpdatedUtc != DateTimeOffset.MinValue
+                    && (now - row.LastRssiUpdatedUtc) > ConfigCheckRssiStaleAfter
+                    && row.Rssi != -127)
+                {
                     row.Rssi = -127;
+                }
             }
 
             ConfigCheckStatus = $"{ConfigCheckRows.Count} device(s) — {ConfigCheckRows.Count(r => r.IsSelected && !r.IsDone && !r.IsRunning)} pending.";
