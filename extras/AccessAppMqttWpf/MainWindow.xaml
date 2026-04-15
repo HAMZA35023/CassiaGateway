@@ -4,6 +4,7 @@
         xmlns:conv="clr-namespace:AccessAppMqttWpf.Converters"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:System="clr-namespace:System;assembly=mscorlib"
         mc:Ignorable="d"
         Title="AC Controller for AccessAPP"
         Height="941" Width="1715"
@@ -2181,7 +2182,7 @@
             </TabItem>
 
             <!-- ===== Developer (config check) ===== -->
-            <TabItem Header="Validate-Config" x:Name="DeveloperTab"
+            <TabItem Header="Validate-Config" x:Name="ValidateConfigTab"
                      Visibility="{Binding PowerUserOrDeveloper, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
                 <Border Style="{StaticResource Card}">
                     <DockPanel>
@@ -2252,11 +2253,53 @@
                                     </Button.Style>
                                     Cancel
                                 </Button>
-                                <Button Style="{StaticResource GhostButton}" Padding="12,6" Margin="0,0,16,0"
+                                <Button Style="{StaticResource GhostButton}" Padding="12,6" Margin="0,0,8,0"
                                         Command="{Binding ClearCheckedConfigDevicesCommand}"
                                         ToolTip="Remove devices that have already been checked or skipped">
                                     Clear checked
                                 </Button>
+                                <!-- Filters -->
+                                <CheckBox VerticalAlignment="Center" Margin="8,0"
+                                          IsChecked="{Binding HideNoProfile}"
+                                          ToolTip="Hide devices without a profile">
+                                    Hide (no profile)
+                                </CheckBox>
+                                <CheckBox VerticalAlignment="Center" Margin="8,0"
+                                          IsChecked="{Binding HideOk}"
+                                          ToolTip="Hide devices with all fields matching">
+                                    Hide OK
+                                </CheckBox>
+                                <CheckBox VerticalAlignment="Center" Margin="8,0"
+                                          IsChecked="{Binding HideOutOfRange}"
+                                          ToolTip="Hide devices that are no longer in range (RSSI -127)">
+                                    Hide out-of-range
+                                </CheckBox>
+                                <TextBlock Text="Min RSSI:" VerticalAlignment="Center" Margin="8,0,4,0"/>
+                                <ComboBox Width="60" VerticalAlignment="Center" Margin="0,0,8,0"
+                                          SelectedValue="{Binding MinRssiToCheck}"
+                                          ToolTip="Minimum RSSI threshold for checking devices">
+                                    <System:Int32>-90</System:Int32>
+                                    <System:Int32>-85</System:Int32>
+                                    <System:Int32>-80</System:Int32>
+                                    <System:Int32>-75</System:Int32>
+                                    <System:Int32>-70</System:Int32>
+                                    <System:Int32>-65</System:Int32>
+                                </ComboBox>
+                                <TextBlock Text="Models:" VerticalAlignment="Center" Margin="8,0,4,0"/>
+                                <ItemsControl ItemsSource="{Binding ConfigCheckModelFilters}" VerticalAlignment="Center">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <StackPanel Orientation="Horizontal"/>
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <CheckBox Content="{Binding Model}"
+                                                      IsChecked="{Binding IsChecked, Mode=TwoWay}"
+                                                      VerticalAlignment="Center" Margin="4,0"/>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
                             </StackPanel>
                             <TextBlock Text="{Binding ConfigCheckStatus}"
                                        VerticalAlignment="Center"
@@ -2274,7 +2317,7 @@
 
                             <!-- Device rows -->
                             <DataGrid Grid.Row="0"
-                                      ItemsSource="{Binding ConfigCheckRows}"
+                                      ItemsSource="{Binding ConfigCheckView}"
                                       SelectedItem="{Binding SelectedConfigCheckRow}"
                                       AutoGenerateColumns="False"
                                       IsReadOnly="False"

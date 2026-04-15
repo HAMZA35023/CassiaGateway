@@ -19,6 +19,9 @@ public partial class ConfigCheckDeviceRow : ObservableObject
     [ObservableProperty] private bool hasError;
     [ObservableProperty] private bool isSkipped;
 
+    // Timestamp of last real RSSI update from a live scan — used to detect out-of-range (stale > 60 s)
+    public DateTimeOffset LastRssiUpdatedUtc { get; set; } = DateTimeOffset.MinValue;
+
     public string RssiDisplay => Rssi == int.MinValue ? "" : Rssi.ToString();
 
     partial void OnRssiChanged(int value)       => OnPropertyChanged(nameof(RssiDisplay));
@@ -33,6 +36,17 @@ public partial class ConfigCheckDeviceRow : ObservableObject
     partial void OnMismatchCountChanged(int value) => OnPropertyChanged(nameof(CanApply));
 
     public ObservableCollection<ConfigCheckFieldResult> FieldResults { get; } = new();
+}
+
+public sealed class ConfigCheckModelFilter : ObservableObject
+{
+    public string Model { get; init; } = "";
+    private bool _isChecked;
+    public bool IsChecked
+    {
+        get => _isChecked;
+        set => SetProperty(ref _isChecked, value);
+    }
 }
 
 public sealed class ConfigCheckFieldResult

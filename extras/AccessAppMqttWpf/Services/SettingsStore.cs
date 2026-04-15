@@ -103,6 +103,9 @@ public sealed class AccessAppSettings
     // Host BLE tab: if true, remove rows that are no longer present in latest scan snapshot.
     public bool hostBleAutoRemoveStaleDevices { get; set; } = false;
 
+    // Power user mode: unlocks extra tabs/features without requiring Ctrl+Shift+D developer mode.
+    public bool powerUserMode { get; set; } = false;
+
     /// <summary>
     /// Remembers the selected firmware per detector model across app restarts/resync.
     /// Keys are typically "P41", "P42", "P46", "P47", "P48".

@@ -1,9 +1,14 @@
 using AccessAppMqttWpf.Models;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.IO;
+using System.Linq;
 using System.Windows;
+using System.Windows.Data;
 using System.Windows.Threading;
 
 namespace AccessAppMqttWpf.ViewModels;
@@ -19,6 +24,8 @@ public partial class MainViewModel
     private const int ConfigCheckAutoCheckRssiThreshold = -75;
 
     public ObservableCollection<ConfigCheckDeviceRow> ConfigCheckRows { get; } = new();
+    public ICollectionView ConfigCheckView { get; private set; } = null!;
+    public ObservableCollection<ConfigCheckModelFilter> ConfigCheckModelFilters { get; } = new();
 
     [ObservableProperty] private ConfigCheckDeviceRow? selectedConfigCheckRow;
     [ObservableProperty] private string configCheckStatus = "Ready";
@@ -26,9 +33,60 @@ public partial class MainViewModel
 
     // When true: auto-check newly discovered devices that have a profile and good RSSI
     [ObservableProperty] private bool configCheckAutoActive;
+    [ObservableProperty] private bool hideNoProfile;
+    [ObservableProperty] private bool hideOk;
+    [ObservableProperty] private bool hideOutOfRange;
+    [ObservableProperty] private int minRssiToCheck = -90;
+
+    // MACs deliberately cleared by the user — not re-added by MergeConfigCheckDevices
+    private readonly HashSet<string> _configCheckClearedMacs = new(StringComparer.OrdinalIgnoreCase);
 
     private CancellationTokenSource? _configCheckCts;
     private DispatcherTimer? _configCheckRefreshTimer;
+
+    // ─── Initialize view with filtering ──────────────────────────────────────────
+
+    internal void InitConfigCheckView()
+    {
+        ConfigCheckView = CollectionViewSource.GetDefaultView(ConfigCheckRows);
+        ConfigCheckView.Filter = obj =>
+        {
+            if (obj is not ConfigCheckDeviceRow row) return false;
+            return RowMatchesFilters(row);
+        };
+
+        // Re-apply filter whenever a row's relevant properties change
+        ConfigCheckRows.CollectionChanged += (_, e) =>
+        {
+            if (e.NewItems != null)
+                foreach (ConfigCheckDeviceRow row in e.NewItems)
+                    row.PropertyChanged += OnConfigCheckRowPropertyChanged;
+            if (e.OldItems != null)
+                foreach (ConfigCheckDeviceRow row in e.OldItems)
+                    row.PropertyChanged -= OnConfigCheckRowPropertyChanged;
+        };
+
+        // Re-apply filter when any model checkbox changes
+        ConfigCheckModelFilters.CollectionChanged += (_, e) =>
+        {
+            if (e.NewItems != null)
+                foreach (ConfigCheckModelFilter f in e.NewItems)
+                    f.PropertyChanged += (_, _) => RefreshConfigCheckView();
+        };
+    }
+
+    private void OnConfigCheckRowPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        // Refresh filter when properties that affect visibility change
+        // Rssi is included because -127 (out of range) can hide rows when HideOutOfRange is set
+        if (e.PropertyName is nameof(ConfigCheckDeviceRow.StatusText)
+                           or nameof(ConfigCheckDeviceRow.ProfileName)
+                           or nameof(ConfigCheckDeviceRow.Rssi)
+                           or nameof(ConfigCheckDeviceRow.Model))
+        {
+            RefreshConfigCheckView();
+        }
+    }
 
     // ─── Timer-based auto-refresh ──────────────────────────────────────────────
 
@@ -53,10 +111,10 @@ public partial class MainViewModel
     {
         MergeConfigCheckDevices();
 
-        // When auto-active: kick off a check if there are pending selected rows
+        // When auto-active: kick off a check if there are pending selected rows that pass check filters
         if (ConfigCheckAutoActive && !ConfigCheckRunning)
         {
-            var hasPending = ConfigCheckRows.Any(r => r.IsSelected && !r.IsRunning);
+            var hasPending = ConfigCheckRows.Any(r => r.IsSelected && !r.IsRunning && RowPassesCheckFilters(r));
             if (hasPending)
                 _ = StartConfigCheckAsync();
         }
@@ -123,9 +181,13 @@ public partial class MainViewModel
                 .Where(r => r.IsDone || r.IsSkipped)
                 .ToList();
             foreach (var r in toRemove)
+            {
+                _configCheckClearedMacs.Add(r.Mac);
                 ConfigCheckRows.Remove(r);
+            }
 
             ConfigCheckStatus = $"{ConfigCheckRows.Count} device(s) remaining.";
+            UpdateConfigCheckModelsList();
         }, DispatcherPriority.Background);
     }
 
@@ -199,6 +261,8 @@ public partial class MainViewModel
         }
     }
 
+    private static readonly TimeSpan ConfigCheckRssiStaleAfter = TimeSpan.FromSeconds(60);
+
     // ─── Device list merge (adds new, updates RSSI/Cassia, auto-checks) ────────
 
     internal void MergeConfigCheckDevices()
@@ -208,10 +272,18 @@ public partial class MainViewModel
             var existingByMac = ConfigCheckRows
                 .ToDictionary(r => r.Mac, r => r, StringComparer.OrdinalIgnoreCase);
 
+            var now = DateTimeOffset.UtcNow;
+
             foreach (var device in _devices)
             {
                 var model = (device.SensorModel ?? "").Trim().ToUpperInvariant();
                 if (string.IsNullOrWhiteSpace(model)) continue;
+
+                var mac = device.Mac ?? "";
+                var rssi = device.BestRssi;
+
+                // Only count as a "fresh" update when RSSI is a real value
+                if (rssi == int.MinValue) continue;
 
                 var profilePath = GetDetectorSettingsProfileForModel(model);
                 var profileName = string.IsNullOrWhiteSpace(profilePath)
@@ -219,17 +291,18 @@ public partial class MainViewModel
                     : Path.GetFileNameWithoutExtension(profilePath);
 
                 var cassia = ResolveCheckCassia(device);
-                var rssi = device.BestRssi;
 
-                if (existingByMac.TryGetValue(device.Mac ?? "", out var existing))
+                // If the MAC was cleared but now has a fresh RSSI, un-clear it so it can reappear
+                if (_configCheckClearedMacs.Contains(mac))
+                    _configCheckClearedMacs.Remove(mac);
+
+                if (existingByMac.TryGetValue(mac, out var existing))
                 {
-                    // Update live fields — FwCurrent is intentionally NOT updated here;
-                    // it is only populated from the get-detector-settings BLE response.
-                    existing.Cassia      = cassia;
-                    existing.Rssi        = rssi;
-                    existing.ProfileName = profileName;
+                    existing.Cassia             = cassia;
+                    existing.Rssi               = rssi;
+                    existing.LastRssiUpdatedUtc = now;
+                    existing.ProfileName        = profileName;
 
-                    // Auto-check if RSSI crossed threshold and not yet done
                     if (rssi >= ConfigCheckAutoCheckRssiThreshold
                         && !existing.IsDone
                         && !existing.IsRunning
@@ -243,27 +316,114 @@ public partial class MainViewModel
                     var autoCheck = rssi >= ConfigCheckAutoCheckRssiThreshold;
                     ConfigCheckRows.Add(new ConfigCheckDeviceRow
                     {
-                        Mac         = device.Mac ?? "",
-                        Model       = model,
-                        ProfileName = profileName,
-                        Cassia      = cassia,
-                        Rssi        = rssi,
-                        IsSelected  = autoCheck,
-                        StatusText  = "Pending",
+                        Mac                 = mac,
+                        Model               = model,
+                        ProfileName         = profileName,
+                        Cassia              = cassia,
+                        Rssi                = rssi,
+                        LastRssiUpdatedUtc  = now,
+                        IsSelected          = autoCheck,
+                        StatusText          = "Pending",
                     });
                 }
             }
 
+            // Mark rows stale when no RSSI update for 60 s
+            foreach (var row in ConfigCheckRows)
+            {
+                if (row.LastRssiUpdatedUtc != DateTimeOffset.MinValue
+                    && (now - row.LastRssiUpdatedUtc) > ConfigCheckRssiStaleAfter
+                    && row.Rssi != -127)
+                {
+                    row.Rssi = -127;
+                }
+            }
+
             ConfigCheckStatus = $"{ConfigCheckRows.Count} device(s) — {ConfigCheckRows.Count(r => r.IsSelected && !r.IsDone && !r.IsRunning)} pending.";
+            UpdateConfigCheckModelsList();
         }, DispatcherPriority.Background);
     }
+
+    // Returns true if any model filter checkbox is checked
+    private bool AnyModelFilterActive() => ConfigCheckModelFilters.Any(f => f.IsChecked);
+
+    private bool ModelPassesFilter(string model)
+    {
+        if (!AnyModelFilterActive()) return true;
+        return ConfigCheckModelFilters.Any(f => f.IsChecked && f.Model.Equals(model, StringComparison.OrdinalIgnoreCase));
+    }
+
+    // Check if a row is visible in the view.
+    // Min RSSI is intentionally NOT applied here — once a row is added to the list it stays visible.
+    // RSSI only gates auto-selection and which rows get validated.
+    private bool RowMatchesFilters(ConfigCheckDeviceRow row)
+    {
+        if (HideNoProfile && row.ProfileName == "(no profile)")
+            return false;
+        if (HideOk && row.StatusText.StartsWith("OK"))
+            return false;
+        if (HideOutOfRange && row.Rssi == -127)
+            return false;
+        if (!ModelPassesFilter(row.Model))
+            return false;
+        return true;
+    }
+
+    // Check if a row should be included in a validation run (RSSI gated here).
+    private bool RowPassesCheckFilters(ConfigCheckDeviceRow row)
+    {
+        if (HideNoProfile && row.ProfileName == "(no profile)")
+            return false;
+        if (row.Rssi != int.MinValue && row.Rssi < MinRssiToCheck)
+            return false;
+        if (!ModelPassesFilter(row.Model))
+            return false;
+        return true;
+    }
+
+    // Refresh the filter when settings change
+    internal void RefreshConfigCheckView()
+    {
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            if (ConfigCheckView is ICollectionView view)
+                view.Refresh();
+        }, DispatcherPriority.Background);
+    }
+
+    // Sync model filter checkboxes — adds new models, preserves existing checked state, removes gone models
+    private void UpdateConfigCheckModelsList()
+    {
+        var models = ConfigCheckRows
+            .Select(r => r.Model)
+            .Where(m => !string.IsNullOrWhiteSpace(m))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(m => m)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // Remove filters for models that no longer exist
+        foreach (var f in ConfigCheckModelFilters.ToList())
+            if (!models.Contains(f.Model))
+                ConfigCheckModelFilters.Remove(f);
+
+        // Add new models
+        var existing = ConfigCheckModelFilters.Select(f => f.Model).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var model in models.OrderBy(m => m))
+            if (!existing.Contains(model))
+                ConfigCheckModelFilters.Add(new ConfigCheckModelFilter { Model = model });
+    }
+
+    partial void OnHideNoProfileChanged(bool value) => RefreshConfigCheckView();
+    partial void OnHideOkChanged(bool value) => RefreshConfigCheckView();
+    partial void OnHideOutOfRangeChanged(bool value) => RefreshConfigCheckView();
+    partial void OnMinRssiToCheckChanged(int value) => RefreshConfigCheckView();
 
     // ─── Check runner ──────────────────────────────────────────────────────────
 
     private async Task RunConfigCheckAsync(CancellationToken ct)
     {
         var rows = await Application.Current.Dispatcher.InvokeAsync(
-            () => ConfigCheckRows.Where(r => r.IsSelected && !r.IsRunning).ToList(),
+            () => ConfigCheckRows.Where(r => r.IsSelected && !r.IsRunning && RowPassesCheckFilters(r)).ToList(),
             DispatcherPriority.Background);
 
         if (rows.Count == 0)

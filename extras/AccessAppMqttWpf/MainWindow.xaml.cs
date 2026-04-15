@@ -883,7 +883,7 @@ public partial class MainWindow : Window
         if (e.Source is not TabControl) return;
 
         var isDeveloperTabSelected = MainTabControl.SelectedItem is TabItem ti
-            && ti.Name == "DeveloperTab";
+            && ti.Name == "ValidateConfigTab";
 
         if (isDeveloperTabSelected)
         {

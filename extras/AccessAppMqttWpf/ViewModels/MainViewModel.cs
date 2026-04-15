@@ -337,7 +337,11 @@ public partial class MainViewModel : ObservableObject
     // Developer mode implicitly grants all PowerUser features.
     public bool PowerUserOrDeveloper => PowerUserModeUnlocked || DeveloperModeUnlocked;
 
-    partial void OnPowerUserModeUnlockedChanged(bool value) => OnPropertyChanged(nameof(PowerUserOrDeveloper));
+    partial void OnPowerUserModeUnlockedChanged(bool value)
+    {
+        OnPropertyChanged(nameof(PowerUserOrDeveloper));
+        _store.Save(BuildSettingsSnapshot(_store.Load()));
+    }
 
     // ---- LED range visualization (connect/login/LED by RSSI) ----
     public ObservableCollection<LedRangeDeviceRow> LedRangeConnectedDevices { get; } = new();
@@ -403,6 +407,7 @@ public partial class MainViewModel : ObservableObject
         AutoSetWorkersByModelEnabled = s.accessapp.autoSetWorkersByModel;
         ProductionUpdateEnabled = s.accessapp.productionUpdate;
         HostBleAutoRemoveStaleDevices = s.accessapp.hostBleAutoRemoveStaleDevices;
+        PowerUserModeUnlocked = s.accessapp.powerUserMode;
 
         // Firmware selections: remember across restarts/resync.
         try
@@ -528,6 +533,7 @@ public partial class MainViewModel : ObservableObject
 
 
         InitQueueView();
+        InitConfigCheckView();
         _gatewayStaleTimer = new System.Windows.Threading.DispatcherTimer
         {
             Interval = TimeSpan.FromSeconds(10) // responsive, but cheap
@@ -1703,6 +1709,7 @@ public partial class MainViewModel : ObservableObject
             autoSetWorkersByModel = AutoSetWorkersByModelEnabled,
             productionUpdate = ProductionUpdateEnabled,
             hostBleAutoRemoveStaleDevices = HostBleAutoRemoveStaleDevices,
+            powerUserMode = PowerUserModeUnlocked,
             selectedFirmwareByModel = fwMap
         };
 
